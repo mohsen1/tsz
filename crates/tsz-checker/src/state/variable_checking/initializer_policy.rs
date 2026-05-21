@@ -596,7 +596,6 @@ impl<'a> CheckerState<'a> {
                                     facts.initializer,
                                 );
                                 if self.ctx.diagnostics.len() == diags_before {
-                                    // to an index-signature type) instead of on the outer assignment.
                                     // Only attempt elaboration when overall assignment fails AND
                                     // the initializer reaches an object literal through paren or
                                     // comma-expression wrappers (e.g. `var x: T = (void 0, {...})`).
@@ -604,16 +603,16 @@ impl<'a> CheckerState<'a> {
                                     // on unrelated initializers (`null as any`, identifiers, ...)
                                     // has cache side-effects that perturb downstream JSX and
                                     // contextual-typing decisions (`callsOnComplexSignatures`).
-                                    if self.initializer_reaches_object_literal_through_wrappers(
+                                    if !(self.initializer_reaches_object_literal_through_wrappers(
                                         facts.initializer,
-                                    ) && !self.is_assignable_to(checked_init_type, declared_type)
+                                    ) && !self
+                                        .is_assignable_to(checked_init_type, declared_type)
                                         && self
                                             .try_elaborate_object_literal_properties_for_var_init(
                                                 facts.initializer,
                                                 declared_type,
-                                            )
+                                            ))
                                     {
-                                    } else {
                                         // Disable callable-with-type-params suppression
                                         // for variable declarations. The suppression is
                                         // designed for class member checks (TS2416/TS2720)
@@ -686,10 +685,8 @@ impl<'a> CheckerState<'a> {
                     jsdoc_declared_type,
                 );
             }
-            // Type annotation determines the final type
             return (declared_type, jsdoc_declared_type);
         }
-        // No type annotation - infer from initializer
         if facts.initializer.is_some() {
             self.report_malformed_jsdoc_satisfies_tags(facts.decl_idx);
             self.report_duplicate_jsdoc_satisfies_tags(facts.decl_idx);
