@@ -66,40 +66,21 @@ impl<'a> CheckerState<'a> {
         facts
     }
 
-    /// Structural detector for the `react16.d.ts` `.props` shape that the JSX
-    /// TS2322 target-display takeover targets: an intersection containing at
-    /// least one `Application` whose base is a type alias named `Readonly`.
-    /// Restricts the takeover to the wrapper shape `tsc`'s printer
-    /// abbreviates to `Readonly<...>`, so adjacent JSX class-component tests
-    /// whose `.props` lacks `Readonly` keep their legacy display.
+    /// Thin orchestrator over the JSX-boundary helper. The structural
+    /// `Readonly`-wrapper detection lives in `query_boundaries::checkers::jsx`
+    /// (`class_props_is_readonly_wrapper_intersection`) so the
+    /// checker-side call site keeps a single direct dependency on the
+    /// boundary surface rather than three on `query_boundaries::common`
+    /// (#8225 quarantine-budget rule).
     pub(in crate::checkers_domain::jsx) fn jsx_class_props_is_readonly_wrapper(
         &self,
         class_props: TypeId,
     ) -> bool {
-        let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, class_props)
-        else {
-            return false;
-        };
-        for member in members {
-            let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, member)
-            else {
-                continue;
-            };
-            let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
-            else {
-                continue;
-            };
-            let Some(name_atom) = self.ctx.definition_store.get_name(def_id) else {
-                continue;
-            };
-            if self.ctx.types.resolve_atom_ref(name_atom).as_ref() == "Readonly" {
-                return true;
-            }
-        }
-        false
+        crate::query_boundaries::checkers::jsx::class_props_is_readonly_wrapper_intersection(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            class_props,
+        )
     }
 }
 

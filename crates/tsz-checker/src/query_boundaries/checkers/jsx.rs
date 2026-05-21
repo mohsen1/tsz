@@ -70,6 +70,37 @@ pub(crate) fn contains_anonymous_object_surface(
     contains_anonymous_object_surface_inner(db, def_store, type_id, &mut Vec::new())
 }
 
+/// Detect the `react16.d.ts` `.props` shape that the JSX TS2322
+/// target-display takeover targets: an intersection containing at least one
+/// `Application` whose base is a type alias named `Readonly`. The match
+/// follows the same `"Readonly"` built-in-name convention used in
+/// `tsz_solver::relations::subtype::core`, `…::generics`, and
+/// `tsz_checker::state::type_resolution::core`. Used by the JSX validator
+/// to restrict the display takeover to the wrapper shape `tsc`'s printer
+/// abbreviates to `Readonly<...>`.
+pub(crate) fn class_props_is_readonly_wrapper_intersection(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    class_props: TypeId,
+) -> bool {
+    let Some(members) = crate::query_boundaries::common::intersection_members(db, class_props)
+    else {
+        return false;
+    };
+    members.iter().any(|&member| {
+        let Some(app) = crate::query_boundaries::common::type_application(db, member) else {
+            return false;
+        };
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(db, app.base) else {
+            return false;
+        };
+        let Some(name_atom) = def_store.get_name(def_id) else {
+            return false;
+        };
+        db.resolve_atom_ref(name_atom).as_ref() == "Readonly"
+    })
+}
+
 fn contains_anonymous_object_surface_inner(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,
