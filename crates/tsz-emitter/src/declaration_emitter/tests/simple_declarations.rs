@@ -4866,6 +4866,38 @@ var x = foo(5);
 }
 
 #[test]
+fn test_js_var_with_attached_jsdoc_preserves_mutable_declaration_kind() {
+    let output = emit_js_dts(
+        r#"
+/** {@link https://example.test} */
+var linked = true;
+
+/** Plain docs */
+var count = 1, label = "x";
+
+var narrow = false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var linked: boolean;"),
+        "Expected documented JS var boolean literal to widen as mutable: {output}"
+    );
+    assert!(
+        output.contains("declare var count: number, label: string;"),
+        "Expected documented JS var group to keep var and widen literals: {output}"
+    );
+    assert!(
+        output.contains("declare const narrow: false;"),
+        "Undocumented JS var promotion should stay unchanged: {output}"
+    );
+    assert!(
+        !output.contains("declare const linked: true;"),
+        "Did not expect attached JSDoc JS var to be promoted to const: {output}"
+    );
+}
+
+#[test]
 fn test_ts_late_bound_function_assignments_ignore_block_scoped_shadow() {
     let source = r#"
 export function X() {}
