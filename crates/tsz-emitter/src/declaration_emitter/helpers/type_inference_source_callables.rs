@@ -534,6 +534,23 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn anonymous_module_exports_class_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        if !self.expression_is_anonymous_module_exports_class_reference(new_expr.expression) {
+            return None;
+        }
+
+        self.nameable_new_expression_type_text(expr_idx)
+    }
+
     fn inherited_generic_class_new_expression_type_text(
         &self,
         new_expr: &tsz_parser::parser::node::CallExprData,
