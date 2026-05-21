@@ -2,6 +2,7 @@
 
 mod arithmetic_ops;
 mod assignment_ops;
+mod callable_union_assignment;
 mod commonjs_assignment;
 mod destructuring;
 mod js_constructor_provisional;

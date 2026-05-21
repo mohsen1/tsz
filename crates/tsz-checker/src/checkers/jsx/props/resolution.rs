@@ -1702,7 +1702,11 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                if !crate::query_boundaries::checkers::jsx::types_are_assignable(
+                    self,
+                    attrs_type,
+                    raw_props_type,
+                ) {
                     let display_props_type = component_type
                         .filter(|&component| {
                             crate::query_boundaries::checkers::jsx::is_type_parameter_like(
@@ -1739,7 +1743,10 @@ impl<'a> CheckerState<'a> {
                         })
                         .unwrap_or(raw_props_type);
                     let mut target = self
-                        .jsx_library_managed_structural_props_display(display_props_type)
+                        .jsx_library_managed_attributes_application_display(display_props_type)
+                        .or_else(|| {
+                            self.jsx_library_managed_structural_props_display(display_props_type)
+                        })
                         .unwrap_or_else(|| self.format_type(display_props_type));
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
@@ -2146,5 +2153,21 @@ impl<'a> CheckerState<'a> {
         self.get_symbol_globally(sym_id)
             .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
             .then_some(args)
+    }
+
+    fn jsx_library_managed_attributes_application_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let args = self.jsx_library_managed_attributes_application_args(type_id)?;
+        if args.len() != 2 {
+            return None;
+        }
+        Some(format!(
+            "LibraryManagedAttributes<{}, {}>",
+            self.format_type(args[0]),
+            self.jsx_library_managed_structural_props_display(args[1])
+                .unwrap_or_else(|| self.format_type(args[1]))
+        ))
     }
 }

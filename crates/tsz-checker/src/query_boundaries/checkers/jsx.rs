@@ -1,5 +1,6 @@
 //! JSX checker query boundaries.
 
+use crate::state::CheckerState;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
 
@@ -80,6 +81,14 @@ pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -
 
 pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
+}
+
+pub(crate) fn types_are_assignable(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    checker.is_assignable_to(source, target)
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

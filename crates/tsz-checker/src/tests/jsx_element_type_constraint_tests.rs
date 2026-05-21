@@ -159,13 +159,83 @@ const b = <Count extra />;
             .iter()
             .filter(|diag| {
                 diag.code == 2322
-                    && diag
+                    && (diag
                         .message_text
                         .contains("not assignable to type 'JSX.ComponentLike")
+                        || diag
+                            .message_text
+                            .contains("not assignable to type 'ComponentLike"))
             })
             .count()
             == 0,
         "ElementType constructor alias assignment should not emit TS2322 for primitive returns. Got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_element_type_react_node_constructor_alias_does_not_leak_component_assignment() {
+    let source = r#"
+declare namespace React {
+    interface ReactElement<P = any> {}
+    interface ReactPortal {}
+    class Component<P, S = any> {
+        constructor(props: P);
+        props: P;
+    }
+}
+type React18ReactFragment = ReadonlyArray<React18ReactNode>;
+type React18ReactNode =
+    | React.ReactElement<any>
+    | string
+    | number
+    | React18ReactFragment
+    | React.ReactPortal
+    | boolean
+    | null
+    | undefined
+    | Promise<React18ReactNode>;
+type NewElementConstructor<P> =
+    | ((props: P) => React18ReactNode)
+    | (new (props: P) => React.Component<P, any>);
+type MergePropTypes<P, T> = P;
+type Defaultize<P, D> = P;
+declare namespace PropTypes {
+    type InferProps<T> = any;
+}
+declare global {
+    namespace JSX {
+        interface Element extends React.ReactElement<any> {}
+        interface IntrinsicAttributes {}
+        interface IntrinsicElements { div: {}; }
+        type ElementType = string | NewElementConstructor<any>;
+        type LibraryManagedAttributes<C, P> =
+            C extends { propTypes: infer T; defaultProps: infer D; }
+                ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                : C extends { propTypes: infer T; }
+                    ? MergePropTypes<P, PropTypes.InferProps<T>>
+                    : C extends { defaultProps: infer D; }
+                        ? Defaultize<P, D>
+                        : P;
+    }
+}
+
+let Component: NewElementConstructor<{ title: string }>;
+const RenderText = ({ title }: { title: string }) => title;
+const RenderCount = ({ title }: { title: string }) => title.length;
+Component = RenderText;
+Component = RenderCount;
+<RenderText excessProp />;
+<RenderCount excessProp />;
+"#;
+    let diagnostics = diagnostics(source);
+    assert!(
+        diagnostics.iter().all(|diag| {
+            diag.code != 2322
+                || !diag
+                    .message_text
+                    .contains("not assignable to type 'NewElementConstructor")
+        }),
+        "ElementType validation should not leak constructor-alias TS2322, got: {diagnostics:?}"
     );
 }
 
