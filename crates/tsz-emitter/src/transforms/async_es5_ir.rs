@@ -1028,10 +1028,16 @@ impl<'a> AsyncES5Transformer<'a> {
             name: error_name.clone().into(),
             initializer: None,
         });
-        current_statements.push(IRNode::VarDecl {
-            name: result_name.clone().into(),
-            initializer: None,
-        });
+        // Only hoist `result_N` when the region awaits disposal. For pure-`using`
+        // regions tsc emits `__disposeResources(env_N);` as a plain expression
+        // statement and never assigns to `result_N`, so it never declares the
+        // variable either.
+        if using_async {
+            current_statements.push(IRNode::VarDecl {
+                name: result_name.clone().into(),
+                initializer: None,
+            });
+        }
         current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
             IRNode::GeneratorLabel,
             IRNode::number(start_label.to_string()),
@@ -1109,13 +1115,22 @@ impl<'a> AsyncES5Transformer<'a> {
         });
 
         *current_label = finally_label;
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-            IRNode::id(result_name.clone()),
-            IRNode::CallExpr {
-                callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
-                arguments: vec![IRNode::id(env_name)],
-            },
-        ))));
+        // For pure-`using` regions tsc emits the dispose call as a bare
+        // expression statement; only `await using` regions need the
+        // `result_N = __disposeResources(env_N);` capture so the value can be
+        // awaited before endfinally.
+        let dispose_call = IRNode::CallExpr {
+            callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+            arguments: vec![IRNode::id(env_name)],
+        };
+        if using_async {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(result_name.clone()),
+                dispose_call,
+            ))));
+        } else {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(dispose_call)));
+        }
 
         if using_async {
             current_statements.push(IRNode::IfBreak {
