@@ -67,6 +67,8 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "best-common-type fallback candidate subtype reduction",
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^BCT candidates=200$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-bct-candidates-200>.ts",
       issue: 8857,
       url: "https://github.com/mohsen1/tsz/issues/8857",
     },
@@ -78,6 +80,8 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "class declaration/member-table construction and checker/binder symbol lookup pressure",
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 classes$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-classes>.ts",
       issue: 8858,
       url: "https://github.com/mohsen1/tsz/issues/8858",
     },
