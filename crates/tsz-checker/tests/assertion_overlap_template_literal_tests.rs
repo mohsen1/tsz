@@ -2,7 +2,8 @@
 //! template-literal / string-intrinsic types.
 //!
 //! Casting a string-literal type whose value does not match a template-literal
-//! pattern (e.g. `"x" as `a${number}b``) is legal in tsc: the source literal
+//! pattern (for example asserting the literal "x" to a number-placeholder
+//! template) is legal in tsc: the source literal
 //! widens to `string`, and a template-literal type is a subtype of `string`,
 //! so the two sufficiently overlap. tsz used to require the literal *value* to
 //! match the pattern and emitted a false TS2352. The rule is structural: any
@@ -13,12 +14,12 @@
 use crate::test_utils::check_source_strict_codes as check_strict;
 
 fn ts2352(source: &str) -> bool {
-    check_strict(source).iter().any(|c| *c == 2352)
+    check_strict(source).contains(&2352)
 }
 
-/// `"x" as `a${number}b`` — non-matching literal text, template with a
-/// `${number}` placeholder. Legal: literal widens to `string`, template is a
-/// `string` subtype. (Reported repro.)
+/// Non-matching literal text asserted to a number-placeholder template. Legal:
+/// the literal widens to `string`, and the template is a `string` subtype.
+/// (Reported repro.)
 #[test]
 fn string_literal_to_number_template_no_ts2352() {
     assert!(
@@ -27,7 +28,7 @@ fn string_literal_to_number_template_no_ts2352() {
     );
 }
 
-/// `"x" as `${number}`` — bare numeric template.
+/// String literal asserted to a bare numeric template.
 #[test]
 fn string_literal_to_bare_number_template_no_ts2352() {
     assert!(
@@ -36,7 +37,7 @@ fn string_literal_to_bare_number_template_no_ts2352() {
     );
 }
 
-/// `"x" as `a${string}`` — string-placeholder template.
+/// String literal asserted to a string-placeholder template.
 #[test]
 fn string_literal_to_string_template_no_ts2352() {
     assert!(
