@@ -1579,7 +1579,7 @@ impl<'a> CheckerState<'a> {
 
                 let decorator_type = self.compute_type_of_node(decorator.expression);
                 let actual_this_type =
-                    self.decorator_receiver_type(decorator_type, decorator.expression);
+                    self.call_site_receiver_type(decorator_type, decorator.expression);
 
                 if let Some(first_arg) = es_member_first_arg {
                     self.check_es_member_decorator_call_signature(
@@ -1674,7 +1674,7 @@ impl<'a> CheckerState<'a> {
                                 let is_constructor_parameter =
                                     node.kind == syntax_kind_ext::CONSTRUCTOR;
                                 let actual_this_type = self
-                                    .decorator_receiver_type(decorator_type, decorator.expression);
+                                    .call_site_receiver_type(decorator_type, decorator.expression);
                                 self.check_parameter_decorator_call_signature(
                                     modifier_idx,
                                     decorator_type,

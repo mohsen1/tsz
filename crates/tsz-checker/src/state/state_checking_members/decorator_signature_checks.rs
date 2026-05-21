@@ -150,28 +150,6 @@ impl<'a> CheckerState<'a> {
         self.is_assignable_to(decorator_type, function_type)
     }
 
-    /// Receiver to thread into the call resolver for a decorator whose
-    /// callee was resolved from `decorator_expr`.
-    ///
-    /// Returns `Some(receiver)` only when the decorator's signature carries
-    /// an explicit, non-trivial `this:` constraint that a real receiver is
-    /// needed to satisfy. The dominant `this`-less case returns `None`,
-    /// keeping generic-inference inputs unchanged for the common shape.
-    pub(crate) fn decorator_receiver_type(
-        &mut self,
-        decorator_type: TypeId,
-        decorator_expr: NodeIndex,
-    ) -> Option<TypeId> {
-        if crate::query_boundaries::class_type::callable_requires_explicit_receiver(
-            self.ctx.types,
-            decorator_type,
-        ) {
-            self.access_receiver_type(decorator_expr)
-        } else {
-            None
-        }
-    }
-
     fn global_function_type_id(&mut self) -> Option<TypeId> {
         let lib_binders = self.get_lib_binders();
         let sym_id = self
