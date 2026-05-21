@@ -1343,26 +1343,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn rewrite_variance_annotations_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !source_text.contains("interface Baz<out T>")
-            || !source_text.contains("interface Baz<in T>")
-            || !source_text.contains("let Anon = class <out T>")
-            || !source_text.contains("foo(): InstanceType<(typeof Anon<T>)>")
-        {
-            return;
-        }
-
-        self.ctx.diagnostics.retain(|diag| {
-            !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.message_text.contains("Type '(Anonymous class)")
-                && diag
-                    .message_text
-                    .contains("is not assignable to type 'InstanceType<Anon<T>>'."))
-        });
-    }
-
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
         tsz_common::comments::source_has_ts_nocheck_directive(source)
     }
