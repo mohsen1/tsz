@@ -2807,13 +2807,15 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             }
         }
 
-        // Validate `this` after final substitution so generic `this` params are fully
-        // instantiated (e.g. `this: T` -> `this: Y`).
+        // Validate `this` after final substitution (`this: T` -> `this: Y`). A
+        // resolved `this: void` opts out per tsc's `thisType !== voidType` gate.
         if let Some(expected_this) = func.this_type {
             let expected_this =
                 instantiate_call_type(self.interner, expected_this, &final_subst, actual_this_type);
             let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-            if !self.checker.is_assignable_to(actual_this, expected_this) {
+            if expected_this != TypeId::VOID
+                && !self.checker.is_assignable_to(actual_this, expected_this)
+            {
                 return CallResult::ThisTypeMismatch {
                     expected_this,
                     actual_this,

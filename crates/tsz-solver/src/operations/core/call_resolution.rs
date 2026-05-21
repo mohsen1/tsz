@@ -18,6 +18,14 @@ use crate::types::{
 };
 use rustc_hash::FxHashSet;
 
+/// Returns the declared `this` type only when it constrains the receiver. Per
+/// tsc's `checkApplicableSignature` gate (`thisType !== voidType`, source of
+/// TS2684), a callable declared `this: void` opts out of the receiver check
+/// and accepts any receiver — even one not structurally assignable to `void`.
+pub(crate) fn receiver_constraining_this_type(this_type: Option<TypeId>) -> Option<TypeId> {
+    this_type.filter(|&t| t != TypeId::VOID)
+}
+
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn generic_function_shape_for_inference(
         &mut self,
@@ -980,7 +988,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 // the matched overloads across all members.
                 let unified_this = unified_sigs
                     .iter()
-                    .filter_map(|s| s.this_type)
+                    .filter_map(|s| receiver_constraining_this_type(s.this_type))
                     .reduce(|a, b| self.interner.intersection2(a, b));
 
                 if let Some(combined_this) = unified_this {
@@ -1502,30 +1510,32 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         // Check `this` context if specified by the function shape.
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
-        // argument errors (TS2345) before `this` context errors (TS2684).
-        let deferred_this_error = if let Some(expected_this) = func.this_type {
-            if let Some(actual_this) = self.actual_this_type {
-                if !self.checker.is_assignable_to(actual_this, expected_this) {
+        // argument errors (TS2345) before `this` context errors (TS2684). A
+        // declared `this: void` opts out (see `receiver_constraining_this_type`).
+        let deferred_this_error =
+            if let Some(expected_this) = receiver_constraining_this_type(func.this_type) {
+                if let Some(actual_this) = self.actual_this_type {
+                    if !self.checker.is_assignable_to(actual_this, expected_this) {
+                        Some(CallResult::ThisTypeMismatch {
+                            expected_this,
+                            actual_this,
+                            emit_not_callable: false,
+                        })
+                    } else {
+                        None
+                    }
+                } else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
                     Some(CallResult::ThisTypeMismatch {
                         expected_this,
-                        actual_this,
+                        actual_this: TypeId::VOID,
                         emit_not_callable: false,
                     })
                 } else {
                     None
                 }
-            } else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
-                Some(CallResult::ThisTypeMismatch {
-                    expected_this,
-                    actual_this: TypeId::VOID,
-                    emit_not_callable: false,
-                })
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         // Check argument count
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
