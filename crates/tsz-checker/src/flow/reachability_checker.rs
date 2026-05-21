@@ -210,17 +210,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let resolved = self.resolve_type_for_property_access(object_type);
-        // Use the solver's property access to find the method type and check
-        // if it has a never return type.
-        if let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
-            self.ctx
-                .types
-                .resolve_property_access(resolved, property_name)
-        {
-            return query::function_return_type(self.ctx.types, type_id) == Some(TypeId::NEVER);
-        }
-
-        false
+        query::property_access_function_returns_never(self.ctx.types, resolved, property_name)
     }
 
     fn symbol_explicitly_returns_never(&mut self, sym_id: tsz_binder::SymbolId) -> bool {

@@ -9,7 +9,7 @@ use tsz_common::perf_counters::{
     record_direct_source_file_type_alias_type_reference_rejection_kind,
 };
 use tsz_parser::NodeIndex;
-use tsz_parser::parser::node::{NodeArena, TypeAliasData};
+use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 
 pub(crate) fn record_source_alias_rejection_kinds(
@@ -21,9 +21,12 @@ pub(crate) fn record_source_alias_rejection_kinds(
     let node_idx = type_alias.type_node;
     let body_kind = body_rejection_kind(arena, node_idx);
     record_direct_source_file_type_alias_body_rejection_kind(body_kind);
-    if body_kind == DirectSourceFileTypeAliasBodyRejectionKind::TypeReference && enabled_fast() {
-        record_direct_source_file_type_alias_type_reference_rejection_kind(
-            type_reference_rejection_kind(arena, delegate_binder, node_idx, type_param_names),
+    if enabled_fast() {
+        record_type_reference_rejection_kinds_in_node(
+            arena,
+            delegate_binder,
+            node_idx,
+            type_param_names,
         );
     }
 }
@@ -134,6 +137,44 @@ fn type_reference_rejection_kind(
     }
 
     Kind::UnresolvedIdentifier
+}
+
+fn record_type_reference_rejection_kinds_in_node(
+    arena: &NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+) {
+    for kind in
+        type_reference_rejection_kinds_in_node(arena, delegate_binder, root_idx, type_param_names)
+    {
+        record_direct_source_file_type_alias_type_reference_rejection_kind(kind);
+    }
+}
+
+fn type_reference_rejection_kinds_in_node(
+    arena: &NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+) -> Vec<DirectSourceFileTypeAliasTypeReferenceRejectionKind> {
+    let mut kinds = Vec::new();
+    let mut stack = vec![root_idx];
+    while let Some(node_idx) = stack.pop() {
+        let Some(node) = arena.get(node_idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            kinds.push(type_reference_rejection_kind(
+                arena,
+                delegate_binder,
+                node_idx,
+                type_param_names,
+            ));
+        }
+        stack.extend(arena.get_children(node_idx));
+    }
+    kinds
 }
 
 fn resolve_import_symbol_for_attribution_no_cache(
@@ -250,10 +291,8 @@ mod tests {
     use tsz_binder::SymbolTable;
     use tsz_parser::parser::ParserState;
 
-    #[test]
-    fn source_file_alias_type_reference_attribution_resolves_import_alias_target() {
-        let mut parser =
-            ParserState::new("fixture.ts".to_string(), "type Box = Alias;".to_string());
+    fn alias_body_from_source(source: &str) -> (NodeArena, NodeIndex) {
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
         let root = parser.parse_source_file();
         let arena = parser.get_arena().clone();
         let source_file = arena
@@ -263,6 +302,7 @@ mod tests {
             .statements
             .nodes
             .iter()
+            .rev()
             .copied()
             .find_map(|idx| {
                 arena
@@ -271,6 +311,12 @@ mod tests {
                     .map(|alias| alias.type_node)
             })
             .expect("type alias body");
+        (arena, alias_body)
+    }
+
+    #[test]
+    fn source_file_alias_type_reference_attribution_resolves_import_alias_target() {
+        let (arena, alias_body) = alias_body_from_source("type Box = Alias;");
 
         let mut binder = BinderState::new();
         let target_sym = binder
@@ -303,27 +349,7 @@ mod tests {
 
     #[test]
     fn source_file_alias_type_reference_attribution_prefers_shadowing_array_symbol() {
-        let mut parser = ParserState::new(
-            "fixture.ts".to_string(),
-            "type Box = Array<string>;".to_string(),
-        );
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena().clone();
-        let source_file = arena
-            .get_source_file_at(root)
-            .expect("source file should parse");
-        let alias_body = source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .find_map(|idx| {
-                arena
-                    .get(idx)
-                    .and_then(|node| arena.get_type_alias(node))
-                    .map(|alias| alias.type_node)
-            })
-            .expect("type alias body");
+        let (arena, alias_body) = alias_body_from_source("type Box = Array<string>;");
 
         let mut binder = BinderState::new();
         let array_sym = binder
@@ -342,27 +368,7 @@ mod tests {
 
     #[test]
     fn source_file_alias_type_reference_attribution_resolves_imported_array_symbol() {
-        let mut parser = ParserState::new(
-            "fixture.ts".to_string(),
-            "type Box = Array<string>;".to_string(),
-        );
-        let root = parser.parse_source_file();
-        let arena = parser.get_arena().clone();
-        let source_file = arena
-            .get_source_file_at(root)
-            .expect("source file should parse");
-        let alias_body = source_file
-            .statements
-            .nodes
-            .iter()
-            .copied()
-            .find_map(|idx| {
-                arena
-                    .get(idx)
-                    .and_then(|node| arena.get_type_alias(node))
-                    .map(|alias| alias.type_node)
-            })
-            .expect("type alias body");
+        let (arena, alias_body) = alias_body_from_source("type Box = Array<string>;");
 
         let mut binder = BinderState::new();
         let target_sym = binder
@@ -391,5 +397,38 @@ mod tests {
             0,
             "attribution must not populate semantic import-resolution caches",
         );
+    }
+
+    #[test]
+    fn source_file_alias_type_reference_attribution_walks_composite_bodies() {
+        let (arena, alias_body) = alias_body_from_source(
+            "type Box<T> = T | null;\ntype Item = string;\ntype Result<T> = Box<T> | Item;",
+        );
+        let mut binder = BinderState::new();
+        let box_sym = binder
+            .symbols
+            .alloc(symbol_flags::TYPE_ALIAS, "Box".to_string());
+        let item_sym = binder
+            .symbols
+            .alloc(symbol_flags::TYPE_ALIAS, "Item".to_string());
+        binder.file_locals.set("Box".to_string(), box_sym);
+        binder.file_locals.set("Item".to_string(), item_sym);
+
+        let kinds = type_reference_rejection_kinds_in_node(
+            &arena,
+            &binder,
+            alias_body,
+            &[String::from("T")],
+        );
+
+        assert!(kinds.contains(
+            &DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasWithArguments,
+        ));
+        assert!(kinds.contains(
+            &DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasNoArguments,
+        ));
+        assert!(kinds.contains(
+            &DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeParameter,
+        ));
     }
 }

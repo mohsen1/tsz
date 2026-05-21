@@ -9,8 +9,8 @@ use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
-    IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags, PropertyInfo, SymbolRef,
-    TupleElement, TypeData, TypeId, TypeListId,
+    IndexSignature, IntrinsicKind, LiteralValue, MappedType, MappedTypeId, ObjectFlags,
+    PropertyInfo, SymbolRef, TupleElement, TypeData, TypeId, TypeListId,
 };
 use rustc_hash::FxHashSet;
 use smallvec::SmallVec;
@@ -20,6 +20,38 @@ use super::super::evaluate::{
     ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
     ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID, TypeEvaluator,
 };
+
+/// Append the keyof key-types contributed by an object's index signatures.
+///
+/// `ObjectShape.string_index` is reused for both string- and symbol-keyed
+/// signatures (discriminated by `key_type`), so a naive "if `string_index` is
+/// Some -> push string|number" classification mis-reports the keyof for
+/// objects whose only index signature is symbol-keyed. The keyof of
+/// `{ [k: symbol]: V }` is `symbol`, not `string | number`.
+///
+/// - Symbol-keyed signature: contributes `symbol`.
+/// - String-keyed signature: contributes `string | number` (string indexes
+///   are implicitly numeric-key-compatible in TS).
+/// - Number-keyed signature (only when no string-slot signature is present):
+///   contributes `number`, except for enum namespace types where tsc excludes
+///   the implicit `[index: number]: string` from `keyof typeof E`.
+fn extend_keyof_with_index_signature_keys(
+    key_types: &mut Vec<TypeId>,
+    string_or_symbol_index: Option<&IndexSignature>,
+    number_index: Option<&IndexSignature>,
+    is_enum_namespace: bool,
+) {
+    if let Some(idx) = string_or_symbol_index {
+        if idx.key_type == TypeId::SYMBOL {
+            key_types.push(TypeId::SYMBOL);
+        } else {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+        }
+    } else if number_index.is_some() && !is_enum_namespace {
+        key_types.push(TypeId::NUMBER);
+    }
+}
 
 /// Tracks the types of keys found during keyof evaluation.
 pub(crate) struct KeyofKeySet {
@@ -442,17 +474,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
-                    if shape.string_index.is_some() {
-                        key_types.push(TypeId::STRING);
-                        key_types.push(TypeId::NUMBER);
-                    } else if shape.number_index.is_some()
-                        // Enum namespace types carry `[index: number]: string` only for
-                        // reverse-lookup bracket access (E[0]). tsc excludes this from
-                        // `keyof typeof E` — the keyof is just the named member keys.
-                        && !shape.flags.contains(ObjectFlags::ENUM_NAMESPACE)
-                    {
-                        key_types.push(TypeId::NUMBER);
-                    }
+                    extend_keyof_with_index_signature_keys(
+                        &mut key_types,
+                        shape.string_index.as_ref(),
+                        shape.number_index.as_ref(),
+                        shape.flags.contains(ObjectFlags::ENUM_NAMESPACE),
+                    );
 
                     if key_types.is_empty() {
                         TypeId::NEVER
@@ -473,12 +500,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .map(|p| self.property_name_to_key_type(p))
                         .collect();
 
-                    if shape.string_index.is_some() {
-                        key_types.push(TypeId::STRING);
-                        key_types.push(TypeId::NUMBER);
-                    } else if shape.number_index.is_some() {
-                        key_types.push(TypeId::NUMBER);
-                    }
+                    extend_keyof_with_index_signature_keys(
+                        &mut key_types,
+                        shape.string_index.as_ref(),
+                        shape.number_index.as_ref(),
+                        false,
+                    );
 
                     if key_types.is_empty() {
                         TypeId::NEVER
