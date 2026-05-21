@@ -944,22 +944,46 @@ impl<'a> CheckerState<'a> {
 
                     let mut function_param_diagnostic_span = None;
                     let contextual_expected_type = if let Some(fn_span) = value_node_fn_span {
-                        // Refine union prop types to callable members (e.g. `Fn | undefined`
-                        // → `Fn`) before has_function_context so optional callback props are
-                        // correctly identified as callable.
-                        let refined =
-                            self.refine_jsx_callable_contextual_type(expected_context_type);
-                        let has_function_context =
+                        // Determine whether contextual typing applies to this arrow function.
+                        // For union props (e.g. `(e: MouseEvent) => void | undefined`),
+                        // extract callable members first — the raw union fails
+                        // `has_function_context`. For non-union non-callable types (e.g.
+                        // `ReactNode`), exit early without calling
+                        // `refine_jsx_callable_contextual_type` to avoid unnecessary
+                        // `resolve_type_for_property_access` side-effects in its fallback path.
+                        let is_directly_callable =
                             crate::query_boundaries::common::function_shape_for_type(
                                 self.ctx.types,
-                                refined,
+                                expected_context_type,
                             )
                             .is_some()
                                 || crate::query_boundaries::common::call_signatures_for_type(
                                     self.ctx.types,
-                                    refined,
+                                    expected_context_type,
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
+                        let is_union = !is_directly_callable
+                            && crate::query_boundaries::common::union_members(
+                                self.ctx.types,
+                                expected_context_type,
+                            )
+                            .is_some();
+                        let refined = if is_directly_callable || is_union {
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
+                        } else {
+                            expected_context_type
+                        };
+                        let has_function_context = is_directly_callable
+                            || crate::query_boundaries::common::function_shape_for_type(
+                                self.ctx.types,
+                                refined,
+                            )
+                            .is_some()
+                            || crate::query_boundaries::common::call_signatures_for_type(
+                                self.ctx.types,
+                                refined,
+                            )
+                            .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
                             let actual_type = self.compute_type_of_node(value_node_idx);
                             if let Some(entry) = provided_attrs.last_mut() {
