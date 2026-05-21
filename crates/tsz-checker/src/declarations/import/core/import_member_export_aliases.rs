@@ -98,10 +98,29 @@ impl<'a> CheckerState<'a> {
         import_name: &str,
     ) -> Option<String> {
         let source_file = arena.source_files.first()?;
+        Self::scan_statements_for_renamed_export(arena, &source_file.statements.nodes, import_name)
+    }
+
+    /// Walk an explicit statement list looking for a rename of `import_name`.
+    ///
+    /// Returns `Some(exported_name)` when `import_name` is declared in the
+    /// statements but is only exported under a different name (via
+    /// `export { import_name as exported_name }` without a `from` clause).
+    /// Returns `None` when the name is directly exported (so no TS2460 is
+    /// warranted) or when no rename is found.
+    ///
+    /// Shared between the file-module path (top-level source-file statements)
+    /// and the ambient-module path (statements inside a `declare module "X"
+    /// { ... }` block) so both surfaces enforce identical rename detection.
+    fn scan_statements_for_renamed_export(
+        arena: &NodeArena,
+        statements: &[NodeIndex],
+        import_name: &str,
+    ) -> Option<String> {
         let mut direct_export = false;
         let mut renamed_export = None;
 
-        for &stmt_idx in &source_file.statements.nodes {
+        for &stmt_idx in statements {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
@@ -196,6 +215,61 @@ impl<'a> CheckerState<'a> {
         if direct_export { None } else { renamed_export }
     }
 
+    /// Look for `import_name`-renamed-as-X inside a `declare module "<name>"
+    /// { ... }` block that matches `module_name`. Returns the renamed alias if
+    /// found.
+    ///
+    /// Ambient modules with string-literal names live as `MODULE_DECLARATION`
+    /// nodes at file scope, with their `export { Orig as Renamed }` clauses
+    /// nested in a `MODULE_BLOCK`. The file-module walk over top-level
+    /// statements never enters these blocks, so this helper performs the same
+    /// rename detection scoped to the matching ambient module body.
+    fn scan_ambient_module_for_renamed_export(
+        arena: &NodeArena,
+        module_name: &str,
+        import_name: &str,
+    ) -> Option<String> {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let source_file = arena.source_files.first()?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = arena.get_module(stmt_node) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module_decl.name) else {
+                continue;
+            };
+            // Ambient modules have a string-literal name; namespace declarations
+            // (identifier names) are not module imports.
+            let Some(lit) = arena.get_literal(name_node) else {
+                continue;
+            };
+            if lit.text != module_name && lit.text != normalized {
+                continue;
+            }
+            let Some(body_node) = arena.get(module_decl.body) else {
+                continue;
+            };
+            let Some(block) = arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(stmts) = block.statements.as_ref() else {
+                continue;
+            };
+            if let Some(renamed) =
+                Self::scan_statements_for_renamed_export(arena, &stmts.nodes, import_name)
+            {
+                return Some(renamed);
+            }
+        }
+        None
+    }
+
     pub(super) fn local_named_export_alias_for_module(
         &self,
         module_name: &str,
@@ -210,18 +284,49 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             self.ctx.resolve_import_target(module_name)
-        }?;
-        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let renamed = self.local_named_export_alias_for_import(arena, import_name)?;
+        };
 
-        // When the target module also re-exports `import_name` via `export * from "..."`,
-        // the original name is a valid export alongside the renamed alias. Suppress TS2460
-        // in that case — both names are valid import targets, matching tsc behaviour.
-        if self.is_exported_via_wildcard_reexport(target_idx, import_name) {
-            return None;
+        // File-module path: when the specifier resolves to a concrete file,
+        // scan that file's top-level statements (same behaviour as before).
+        if let Some(target_idx) = target_idx {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(renamed) = self.local_named_export_alias_for_import(arena, import_name) {
+                // When the target module also re-exports `import_name` via
+                // `export * from "..."`, the original name is a valid export
+                // alongside the renamed alias. Suppress TS2460 in that case —
+                // both names are valid import targets, matching tsc behaviour.
+                if !self.is_exported_via_wildcard_reexport(target_idx, import_name) {
+                    return Some(renamed);
+                }
+            }
+            // The resolved file may also contain `declare module "<module_name>"
+            // { ... }` blocks (e.g. path-mapped specifier landing in a `.d.ts`
+            // that augments an ambient module). Check those bodies too.
+            if let Some(renamed) =
+                Self::scan_ambient_module_for_renamed_export(arena, module_name, import_name)
+            {
+                return Some(renamed);
+            }
         }
 
-        Some(renamed)
+        // Ambient-module path: when the specifier names an ambient module
+        // (`declare module "X" { ... }`) declared in any project file, scan
+        // every loaded arena for a matching block. `resolve_import_target`
+        // does not map string-literal ambient names to file indices, so this
+        // fallback is the only way the rename is reachable.
+        if let Some(all_arenas) = self.ctx.all_arenas.as_ref() {
+            for arena in all_arenas.iter() {
+                if let Some(renamed) = Self::scan_ambient_module_for_renamed_export(
+                    arena.as_ref(),
+                    module_name,
+                    import_name,
+                ) {
+                    return Some(renamed);
+                }
+            }
+        }
+
+        None
     }
 
     /// Returns true when any `export * from "..."` in the file at `file_idx` directly
