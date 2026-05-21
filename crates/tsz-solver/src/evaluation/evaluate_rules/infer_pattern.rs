@@ -912,6 +912,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if source_elem.rest || pattern_elem.rest {
                     return false;
                 }
+                // Optional source cannot fill a required pattern slot.
+                if source_elem.optional && !pattern_elem.optional {
+                    return false;
+                }
                 let source_type = if source_elem.optional {
                     self.interner()
                         .union2(source_elem.type_id, TypeId::UNDEFINED)
@@ -935,6 +939,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let source_elem = &source_elems[rest_source_end + i];
                 let pattern_elem = &pattern_elems[rest_index + 1 + i];
                 if source_elem.rest || pattern_elem.rest {
+                    return false;
+                }
+                if source_elem.optional && !pattern_elem.optional {
                     return false;
                 }
                 let source_type = if source_elem.optional {
@@ -1019,6 +1026,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_elem = &source_elems[i];
             let pattern_elem = &pattern_elems[i];
             if source_elem.rest || pattern_elem.rest {
+                return false;
+            }
+            if source_elem.optional && !pattern_elem.optional {
                 return false;
             }
             let source_type = if source_elem.optional {
