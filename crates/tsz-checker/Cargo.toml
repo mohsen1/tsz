@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "ts2371_binding_pattern_default_tests"
+path = "tests/ts2371_binding_pattern_default_tests.rs"
+
+[[test]]
 name = "extract_alias_distributive_mapped_tests"
 path = "tests/extract_alias_distributive_mapped_tests.rs"
 
