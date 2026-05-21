@@ -241,6 +241,16 @@ impl<'a> NamespaceES5Transformer<'a> {
         Some((ns_name, names))
     }
 
+    pub fn collect_namespace_block_scope_shadowed_names(
+        &self,
+        ns_idx: NodeIndex,
+    ) -> std::collections::HashSet<String> {
+        let Some((_parts, innermost_body)) = self.collect_all_namespace_parts(ns_idx) else {
+            return std::collections::HashSet::new();
+        };
+        collect_namespace_function_scope_reference_names(self.arena, innermost_body)
+    }
+
     /// Extract leading comments from source text that fall within [`from_pos`, `to_pos`) range.
     /// Returns `IRNode::Raw` nodes since the text already includes comment delimiters.
     fn extract_comments_in_range(&self, from_pos: u32, to_pos: u32) -> Vec<IRNode> {
@@ -1957,6 +1967,10 @@ impl<'a> NamespaceES5Transformer<'a> {
                 Some(IRNode::Sequence(decls))
             }
         } else {
+            if self.variable_statement_has_binding_pattern(var_idx) {
+                return Some(IRNode::ASTRef(var_idx));
+            }
+
             let empty_decl_keyword =
                 self.declaration_keyword_from_var_declarations(&var_data.declarations);
             let (decls, temps) = convert_variable_declarations(
@@ -1967,6 +1981,28 @@ impl<'a> NamespaceES5Transformer<'a> {
             self.hoisted_temps.borrow_mut().extend(temps);
             Some(IRNode::Sequence(decls))
         }
+    }
+
+    fn variable_statement_has_binding_pattern(&self, var_idx: NodeIndex) -> bool {
+        let Some(var_data) = self.arena.get_variable_at(var_idx) else {
+            return false;
+        };
+
+        var_data.declarations.nodes.iter().any(|&decl_list_idx| {
+            self.arena
+                .get_variable_at(decl_list_idx)
+                .is_some_and(|decl_list| {
+                    decl_list.declarations.nodes.iter().any(|&decl_idx| {
+                        let Some(decl) = self.arena.get_variable_declaration_at(decl_idx) else {
+                            return false;
+                        };
+                        self.arena.get(decl.name).is_some_and(|name| {
+                            name.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || name.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        })
+                    })
+                })
+        })
     }
 
     /// Transform an enum in namespace. When `force_export` is true, the enum

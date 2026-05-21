@@ -23,23 +23,33 @@ scripts/agents/list-owned-work.sh Studio-B
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- `#9819` merged during the 2026-05-21 audit window and now serves as the
-  recursive-utility hotspot guard for this lane.
-- Issue context: `#8868`, `#8870`, `#8858`, `#8356`, `#7574`, `#7378`,
-  `#7531`, `#8857`, and the closed-but-informative `#8869`.
+- `#9819` and `#9829` merged during the 2026-05-21 audit window and now serve
+  as the three-point recursive-utility hotspot guard for this lane. `#8870` is
+  closed.
+- Issue context: `#8356`, `#7574`, `#7378`, `#7531`, and the
+  closed-but-informative `#8857`/`#8858`/`#8868`/`#8869`/`#8870`.
 - Related recent merges to inspect for benchmark-readiness guardrails:
   `#9813`, `#9794`, `#9789`, `#9626`, `#9587`, and `#9581`.
 - Track: roadmap Tracks 2 and 10.
-- Next concrete step: use `#9819`, `#8868`, and `#7378` to decide whether the
-  next slice is semantic recursion work, measurement readiness, or residency
-  attribution.
+- Next concrete step: use the `#9819`/`#9829` guard and the closed `#8868`
+  attribution evidence to decide whether the next slice is semantic recursion
+  work or source-file type-alias delegation caching for `#8356`/`#7378`.
 
 ## Existing Work To Inspect First
 
 - Recent Studio-A merges tightened readiness and duplicate winner-row checks;
   do not bypass those artifacts when proving a performance win.
-- `#9819` adds a recursive utility alias hotspot; keep it as a benchmark guard
-  rather than a broad speed-tuning branch.
+- `#9819`/`#9829` add recursive utility alias hotspot rows; keep them as
+  benchmark guards rather than broad speed-tuning branches.
+- `#9836` made the residual synthetic-row attribution commands visible in the
+  tsgo-winner report. `#8857` and `#8858` are now closed; use them only as
+  prior attribution and timing-mode context if either row regresses in a future
+  complete dashboard snapshot.
+- `#8868` is closed as the current-head `ts-toolbelt-project` attribution
+  checkpoint. The matching-env counter probe showed `DelegateCrossArenaSymbol`
+  dominates `with_parent_cache` construction, with source-file type-alias
+  residues such as `Exclude`, `Naked`, `_Omit`, and `KeySet`; do not route that
+  row as a diagnostic blocker unless a matching-env artifact turns red.
 - If a benchmark row is red because of diagnostics, hand it to the owning
   semantic lane before measuring runtime.
 

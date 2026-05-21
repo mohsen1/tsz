@@ -701,7 +701,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
             && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
-                crate::state_type_analysis::cross_file::CrossFileQueryKind::SymbolType
+                crate::state_type_analysis::cross_file::CrossFileQueryKind::Symbol
                     .as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,

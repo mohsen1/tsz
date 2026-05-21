@@ -4786,3 +4786,105 @@ bar("hi", () => 42);
         "type mismatch (string vs number for T) should still produce an error. Got: {diags:#?}"
     );
 }
+
+// ─── Issue #9714: Object.values literal preservation/widening ────────────────
+
+/// Regression: `Object.values` over an `as const`-flagged source must preserve
+/// the property literal types in the inferred element type.
+///
+/// Structural rule: when inference resolves T from an index signature
+/// (`{ [s: string]: T }`) under a `priority_implies_combination` candidate
+/// set, the result is `getUnionType(candidates, UnionReduction.Subtype)` —
+/// a subtype-reduced union of the candidate types, NOT
+/// `getCommonSupertype`/`best_common_type`. The latter collapses same-base
+/// literal candidates (`1`, `2`) to their primitive (`number`), which is
+/// only legal after the later `getWidenedType` step (gated on candidate
+/// freshness).
+#[test]
+fn object_values_with_as_const_property_preserves_literal_element_type() {
+    // Two name choices for the iteration var equivalent shape so a hardcoded
+    // string match on `a`/`b` would break the test.
+    let preserved_a_b = r#"
+const o = { a: 1 as const, b: 2 as const };
+const v = Object.values(o);
+const probe: (1 | 2)[] = v;
+"#;
+    let preserved_x_y = r#"
+const o = { x: "hi" as const, y: "lo" as const };
+const v = Object.values(o);
+const probe: ("hi" | "lo")[] = v;
+"#;
+    for source in [preserved_a_b, preserved_x_y] {
+        let diags = relevant_default_lib_diagnostics(source);
+        assert!(
+            lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+            "Object.values must preserve `as const` property literals in inferred element. Got: {diags:#?}"
+        );
+    }
+}
+
+/// Regression: `Object.values` over an outer-`as const` source must preserve
+/// the property literal types in the inferred element type, mirroring the
+/// per-property `as const` case.
+#[test]
+fn object_values_with_whole_as_const_preserves_literal_element_type() {
+    let source = r#"
+const o = { a: 1, b: 2 } as const;
+const v = Object.values(o);
+const probe: readonly (1 | 2)[] = v;
+const probe_mutable: (1 | 2)[] = v;
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "Object.values on `{{...}} as const` must preserve property literals. Got: {diags:#?}"
+    );
+}
+
+/// Negative control: `Object.values` over a plain fresh object literal widens
+/// each property to its primitive (matching tsc's `getWidenedLiteralType` for
+/// fresh literal candidates). The element type must therefore be
+/// `(string | number)`, not the literal union `(1 | "x")`.
+#[test]
+fn object_values_with_fresh_object_literal_widens_element_type() {
+    let source = r#"
+const o = { a: 1, b: "x" };
+const v = Object.values(o);
+const probe: (string | number)[] = v;
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "Object.values on a fresh object literal must widen literal element types. Got: {diags:#?}"
+    );
+
+    // Negative: assigning to the literal-preserving type should now fail
+    // (would have been accepted before the fix when literals leaked through).
+    let source_strict = r#"
+const o = { a: 1, b: "x" };
+const v = Object.values(o);
+const probe: (1 | "x")[] = v;
+"#;
+    let diags = relevant_default_lib_diagnostics(source_strict);
+    assert!(
+        has_any_diagnostic_code(&diags, &[2322, 2345]),
+        "fresh-literal Object.values output must NOT be assignable to a literal-preserving target. Got: {diags:#?}"
+    );
+}
+
+/// Negative control: explicit `{ a: number; b: number }` source stays as
+/// `number[]` (no change). Guards against an over-broad fix that would force
+/// every Object.values invocation onto a literal-preserving path.
+#[test]
+fn object_values_with_explicit_primitive_property_type_stays_primitive() {
+    let source = r#"
+const o: { a: number; b: number } = { a: 1, b: 2 };
+const v = Object.values(o);
+const probe: number[] = v;
+"#;
+    let diags = relevant_default_lib_diagnostics(source);
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2322, 2345]),
+        "Object.values on an explicitly-typed primitive object stays primitive. Got: {diags:#?}"
+    );
+}

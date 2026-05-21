@@ -9,6 +9,7 @@
 
 mod computation;
 mod conditional_mapped_annotation;
+mod symbol_key_routing;
 
 use crate::context::TypingRequest;
 use crate::state::CheckerState;
