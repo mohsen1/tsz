@@ -483,7 +483,7 @@ impl<'a> CheckerState<'a> {
                 let atom = self.ctx.types.intern_string(&name);
                 let default = default_str
                     .as_deref()
-                    .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 let info = TypeParamInfo {
                     name: atom,
                     constraint: None,
@@ -507,7 +507,7 @@ impl<'a> CheckerState<'a> {
                     let atom = self.ctx.types.intern_string(&name);
                     let default = default_str
                         .as_deref()
-                        .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
                     let info = TypeParamInfo {
                         name: atom,
                         constraint: None,

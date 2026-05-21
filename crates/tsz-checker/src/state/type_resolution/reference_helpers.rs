@@ -664,7 +664,7 @@ impl<'a> CheckerState<'a> {
             }
             let default = default_str
                 .as_deref()
-                .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                .and_then(|s| self.resolve_jsdoc_reference(s));
             params.push(tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
                 constraint: None,

@@ -1619,7 +1619,7 @@ impl<'a> CheckerState<'a> {
             }
             let default = default_str
                 .as_deref()
-                .and_then(Self::resolve_primitive_jsdoc_default);
+                .and_then(crate::types_domain::queries::lib_resolution::keyword_name_to_type_id);
             params.push(tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
                 constraint: None,
@@ -1782,7 +1782,7 @@ impl<'a> CheckerState<'a> {
             }
             let default = default_str
                 .as_deref()
-                .and_then(|s| checker.resolve_jsdoc_reference(s.trim()));
+                .and_then(|s| checker.resolve_jsdoc_reference(s));
             params.push(tsz_solver::TypeParamInfo {
                 name: checker.ctx.types.intern_string(&name),
                 constraint: None,

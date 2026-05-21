@@ -120,7 +120,7 @@ impl CheckerState<'_> {
                     let atom = self.ctx.types.intern_string(&name);
                     let default = default_str
                         .as_deref()
-                        .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
                     template_types.entry(name).or_insert_with(|| {
                         self.ctx
                             .types
@@ -186,7 +186,7 @@ impl CheckerState<'_> {
                 let atom = self.ctx.types.intern_string(&name);
                 let default = default_str
                     .as_deref()
-                    .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 function_template_types.entry(name).or_insert_with(|| {
                     self.ctx
                         .types
@@ -406,7 +406,7 @@ impl CheckerState<'_> {
                             let atom = self.ctx.types.intern_string(&name);
                             let default = default_str
                                 .as_deref()
-                                .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                                .and_then(|s| self.resolve_jsdoc_reference(s));
                             return Some(self.ctx.types.factory().type_param(
                                 tsz_solver::TypeParamInfo {
                                     name: atom,
@@ -481,7 +481,7 @@ impl CheckerState<'_> {
                         let atom = self.ctx.types.intern_string(&name);
                         let default = default_str
                             .as_deref()
-                            .and_then(|s| self.resolve_jsdoc_reference(s.trim()));
+                            .and_then(|s| self.resolve_jsdoc_reference(s));
                         return Some(self.ctx.types.factory().type_param(TypeParamInfo {
                             name: atom,
                             constraint: None,

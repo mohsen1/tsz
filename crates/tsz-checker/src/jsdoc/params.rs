@@ -2571,37 +2571,19 @@ impl<'a> CheckerState<'a> {
 
     /// Extract `@template` type parameter names from a `JSDoc` comment.
     ///
-    /// Returns `(name, is_const)` pairs. The `is_const` flag is true when
-    /// the `const` modifier precedes the type parameter name (e.g.,
-    /// `@template const T`).
+    /// Returns `(name, is_const, default_type_str)` triples. `is_const` is true when
+    /// the `const` modifier precedes the type parameter name (e.g. `@template const T`).
+    /// `default_type_str` is `Some(expr)` when the bracket-default form `[T=expr]` is
+    /// used (e.g. `@template [T=string]` → `Some("string")`); otherwise `None`.
     ///
-    /// Supports simple forms like:
+    /// Supports:
     /// - `@template T`
     /// - `@template T,U`
     /// - `@template const T`
     /// - `@template const T, U` (both T and U are const per tsc)
-    /// Resolve a JSDoc `@template` default type string to a well-known primitive `TypeId`.
-    /// Used by arena-only (non-`&mut self`) paths that cannot call the full JSDoc resolver.
-    pub(crate) fn resolve_primitive_jsdoc_default(s: &str) -> Option<tsz_solver::TypeId> {
-        match s.trim() {
-            "string" => Some(tsz_solver::TypeId::STRING),
-            "number" => Some(tsz_solver::TypeId::NUMBER),
-            "boolean" => Some(tsz_solver::TypeId::BOOLEAN),
-            "any" => Some(tsz_solver::TypeId::ANY),
-            "never" => Some(tsz_solver::TypeId::NEVER),
-            "null" => Some(tsz_solver::TypeId::NULL),
-            "undefined" => Some(tsz_solver::TypeId::UNDEFINED),
-            "object" => Some(tsz_solver::TypeId::OBJECT),
-            "symbol" => Some(tsz_solver::TypeId::SYMBOL),
-            "bigint" => Some(tsz_solver::TypeId::BIGINT),
-            "void" => Some(tsz_solver::TypeId::VOID),
-            "unknown" => Some(tsz_solver::TypeId::UNKNOWN),
-            _ => None,
-        }
-    }
-
+    /// - `@template [T=string]` (T with default `string`)
     pub(crate) fn jsdoc_template_type_params(jsdoc: &str) -> Vec<(String, bool, Option<String>)> {
-        let mut out: Vec<(String, bool, Option<String>)> = Vec::new();
+        let mut out = Vec::new();
         for line in jsdoc.lines() {
             let trimmed = line.trim().trim_start_matches('*').trim();
             let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "template") else {
