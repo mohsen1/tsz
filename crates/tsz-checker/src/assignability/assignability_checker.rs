@@ -2574,23 +2574,19 @@ impl<'a> CheckerState<'a> {
                 if target_arg.is_any() {
                     return false;
                 }
-                // When variance for this parameter is `rejection_unreliable`
-                // (e.g. the type parameter only appears inside a template
-                // literal interpolation, where stringification can make a
-                // structurally valid assignment look like a covariant
-                // failure), the structural check that already passed is the
-                // authoritative signal. Forcing strict covariance here would
-                // override that with a spurious rejection — for example
-                // `AGen<number>` should be assignable to `AGen<string>` when
-                // `type AGen<T> = { field: \`a${T}\` }` because
-                // \`a${number}\` <: \`a${string}\`.
-                if let Some(ref vs) = variances
-                    && let Some(variance) = vs.get(i)
-                    && variance.rejection_unreliable()
-                {
-                    return false;
+                let variance = variances.as_ref().and_then(|vs| vs.get(i)).copied();
+                match variance {
+                    // Variance is unreliable or requires a structural fallback — the
+                    // structural check is authoritative; don't force a rejection here.
+                    Some(v) if v.rejection_unreliable() || v.needs_structural_fallback() => false,
+                    // K in `{ [P in K]: V }` is CONTRAVARIANT: a source with wider keys
+                    // covers a target with narrower keys, so reverse the direction.
+                    Some(v) if v.is_contravariant() => {
+                        !self.is_assignable_to(target_arg, source_arg)
+                    }
+                    // Covariant or unknown: source must be assignable to target.
+                    _ => !self.is_assignable_to(source_arg, target_arg),
                 }
-                !self.is_assignable_to(source_arg, target_arg)
             },
         )
     }
