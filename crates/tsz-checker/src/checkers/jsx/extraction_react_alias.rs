@@ -187,8 +187,8 @@ impl<'a> CheckerState<'a> {
         }
         let alias_evaluated = self.evaluate_type_with_env(alias);
         if alias_evaluated != TypeId::ERROR
-            && self.is_assignable_to(alias_evaluated, props_type)
-            && self.is_assignable_to(props_type, alias_evaluated)
+            && self.diagnostic_relation_boolean_guard(alias_evaluated, props_type)
+            && self.diagnostic_relation_boolean_guard(props_type, alias_evaluated)
         {
             self.ctx.types.store_display_alias(props_type, alias);
         }

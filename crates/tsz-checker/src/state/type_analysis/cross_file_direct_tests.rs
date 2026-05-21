@@ -8,37 +8,27 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_common::perf_counters::{CrossArenaSymbolMissSource, DirectActualLibAliasBodyOutcome};
 use tsz_parser::parser::{ParserState, syntax_kind_ext};
-use tsz_solver::TypeId;
 use tsz_solver::def::DefinitionStore;
+use tsz_solver::{StringIntrinsicKind, TypeId};
 
 #[test]
-fn direct_actual_lib_alias_admission_list_is_track7_ratchet() {
-    const DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING: usize = 28;
+fn generic_actual_lib_alias_body_shape_classifier_is_structural() {
+    let types = TypeInterner::new();
+    let union = types.union(vec![TypeId::STRING, TypeId::NUMBER]);
+    let string_intrinsic = types.string_intrinsic(StringIntrinsicKind::Uppercase, TypeId::STRING);
 
-    let admitted = super::DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSIONS;
-    assert_eq!(
-        admitted.len(),
-        DIRECT_ACTUAL_LIB_ALIAS_BODY_ADMISSION_CEILING,
-        "Track 7 actual-lib alias admissions are transitional; replace \
-         name-only admissions with stable lib identity queries before growing \
-         this ceiling.",
+    assert!(
+        super::generic_actual_lib_alias_body_has_direct_shape(&types, union),
+        "union alias bodies are structurally admissible",
     );
     assert!(
-        admitted.windows(2).all(|pair| pair[0] < pair[1]),
-        "Keep actual-lib alias admissions sorted so additions are reviewable: {admitted:?}",
+        super::generic_actual_lib_alias_body_has_direct_shape(&types, string_intrinsic),
+        "string intrinsic alias bodies are structurally admissible",
     );
-    for name in admitted {
-        assert!(
-            super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} must be admitted by the shared classifier",
-        );
-    }
-    for name in ["Array", "Date", "Iterator", "Promise", "ReadonlyArray"] {
-        assert!(
-            !super::is_direct_actual_lib_alias_body_admitted(name),
-            "{name} is an interface/value helper, not a type-alias body admission",
-        );
-    }
+    assert!(
+        !super::generic_actual_lib_alias_body_has_direct_shape(&types, TypeId::STRING),
+        "primitive bodies are not generic alias admission proof",
+    );
 }
 
 fn parse_interface_declarations(

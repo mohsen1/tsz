@@ -714,28 +714,20 @@ class C {
 }
 
 #[test]
-fn test_prepare_test_dir_injects_target_default_libs() {
+fn test_prepare_test_dir_preserves_target_default_lib_resolution() {
     let options = HashMap::from([("target".to_string(), "esnext".to_string())]);
     let prepared = prepare_test_dir("", &[], &options, Some("ts"), &[], Some(&[])).unwrap();
     let tsconfig = std::fs::read_to_string(prepared.temp_dir.path().join("tsconfig.json"))
         .expect("tsconfig should be written");
     let parsed: serde_json::Value =
         serde_json::from_str(&tsconfig).expect("tsconfig should be valid json");
-    let libs = parsed["compilerOptions"]["lib"]
-        .as_array()
-        .expect("target-only options should inject the default lib chain");
-
     assert!(
-        libs.iter().any(|lib| lib == "es5"),
-        "default lib chain should include es5, got: {libs:?}"
+        parsed["compilerOptions"]["target"] == "esnext",
+        "target should be preserved in generated tsconfig: {parsed:?}"
     );
     assert!(
-        libs.iter().any(|lib| lib == "es2015.promise"),
-        "default lib chain should include Promise support, got: {libs:?}"
-    );
-    assert!(
-        !libs.iter().any(|lib| lib == "esnext.typedarrays"),
-        "default lib chain should not include invalid tsconfig lib values, got: {libs:?}"
+        parsed["compilerOptions"].get("lib").is_none(),
+        "target-only options must leave lib absent so tsz resolves the same default full lib set as tsc: {parsed:?}"
     );
 }
 

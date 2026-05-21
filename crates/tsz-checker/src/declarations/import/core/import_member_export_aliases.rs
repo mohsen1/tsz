@@ -5,6 +5,15 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_scanner::SyntaxKind;
 
+/// Result of scanning a statement list for direct/renamed exports of a single
+/// name. Tracked separately so callers can aggregate across multiple
+/// ambient-module blocks and arenas before deciding whether to emit TS2460.
+#[derive(Default, Clone)]
+struct RenameScan {
+    direct_export: bool,
+    renamed_export: Option<String>,
+}
+
 impl<'a> CheckerState<'a> {
     /// Check if a declaration's name matches the expected string.
     pub(super) fn declaration_name_matches_string(
@@ -98,19 +107,52 @@ impl<'a> CheckerState<'a> {
         import_name: &str,
     ) -> Option<String> {
         let source_file = arena.source_files.first()?;
-        let mut direct_export = false;
-        let mut renamed_export = None;
+        let scan = Self::scan_statements_for_renamed_export(
+            arena,
+            &source_file.statements.nodes,
+            import_name,
+            /*implicit_export_of_declarations=*/ false,
+        );
+        if scan.direct_export {
+            None
+        } else {
+            scan.renamed_export
+        }
+    }
 
-        for &stmt_idx in &source_file.statements.nodes {
+    /// Walk an explicit statement list looking for a direct or renamed export
+    /// of `import_name`.
+    ///
+    /// `implicit_export_of_declarations` controls whether *unmodified*
+    /// declarations count as direct exports. Set `true` for an ambient module
+    /// body that has no external module indicator (no `import` / `export *` /
+    /// `export = ` / `export { ... }` / namespace-export-declaration), so that
+    /// tsc's "all declarations are implicitly exported" semantics are mirrored.
+    ///
+    /// Shared between the file-module path (top-level source-file statements)
+    /// and the ambient-module path (statements inside a `declare module "X"
+    /// { ... }` block) so both surfaces enforce identical rename detection.
+    fn scan_statements_for_renamed_export(
+        arena: &NodeArena,
+        statements: &[NodeIndex],
+        import_name: &str,
+        implicit_export_of_declarations: bool,
+    ) -> RenameScan {
+        let mut out = RenameScan::default();
+
+        for &stmt_idx in statements {
             let Some(stmt_node) = arena.get(stmt_idx) else {
                 continue;
             };
-            if arena
+            let has_export_modifier = arena
                 .get_declaration_modifiers(stmt_node)
-                .is_some_and(|mods| arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword))
-                && Self::declaration_name_matches_string(arena, stmt_idx, import_name)
-            {
-                direct_export = true;
+                .is_some_and(|mods| arena.has_modifier_ref(Some(mods), SyntaxKind::ExportKeyword));
+            let name_matches = Self::declaration_name_matches_string(arena, stmt_idx, import_name);
+            // Direct export of `import_name` either via explicit `export` modifier
+            // or via the ambient-module implicit-export rule (when the enclosing
+            // body has no external module indicator).
+            if name_matches && (has_export_modifier || implicit_export_of_declarations) {
+                out.direct_export = true;
                 continue;
             }
             if stmt_node.kind != syntax_kind_ext::EXPORT_DECLARATION {
@@ -136,7 +178,7 @@ impl<'a> CheckerState<'a> {
                         import_name,
                     )
                 {
-                    direct_export = true;
+                    out.direct_export = true;
                 }
                 continue;
             }
@@ -186,14 +228,101 @@ impl<'a> CheckerState<'a> {
                 let exported_name = arena.resolve_identifier_text(exported_ident);
 
                 if exported_name == import_name {
-                    direct_export = true;
-                } else if renamed_export.is_none() {
-                    renamed_export = Some(exported_name.to_string());
+                    out.direct_export = true;
+                } else if out.renamed_export.is_none() {
+                    out.renamed_export = Some(exported_name.to_string());
                 }
             }
         }
 
-        if direct_export { None } else { renamed_export }
+        out
+    }
+
+    /// Detect whether an ambient-module body acts as an "external module"
+    /// (has at least one import/export/export-assignment statement). When
+    /// this is true, declarations need explicit `export` modifiers to be
+    /// part of the module's public surface; otherwise tsc treats every
+    /// declaration as implicitly exported.
+    fn ambient_module_body_has_external_indicator(arena: &NodeArena, stmts: &[NodeIndex]) -> bool {
+        for &stmt_idx in stmts {
+            let Some(node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            match node.kind {
+                syntax_kind_ext::IMPORT_DECLARATION
+                | syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                | syntax_kind_ext::EXPORT_DECLARATION
+                | syntax_kind_ext::EXPORT_ASSIGNMENT
+                | syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION => return true,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// Aggregate direct/renamed export information across every
+    /// `declare module "<module_name>" { ... }` block in `arena`. The
+    /// aggregate matters because the same ambient module is often augmented
+    /// in multiple blocks: a rename in one block must not produce TS2460
+    /// when another block directly exports the same name (via explicit
+    /// `export` modifier or via the implicit-export rule for bodies without
+    /// an external module indicator).
+    fn scan_ambient_module_for_renamed_export(
+        arena: &NodeArena,
+        module_name: &str,
+        import_name: &str,
+    ) -> RenameScan {
+        let normalized = module_name.trim_matches('"').trim_matches('\'');
+        let mut aggregate = RenameScan::default();
+        let Some(source_file) = arena.source_files.first() else {
+            return aggregate;
+        };
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module_decl) = arena.get_module(stmt_node) else {
+                continue;
+            };
+            let Some(name_node) = arena.get(module_decl.name) else {
+                continue;
+            };
+            // Ambient modules have a string-literal name; namespace declarations
+            // (identifier names) are not module imports.
+            let Some(lit) = arena.get_literal(name_node) else {
+                continue;
+            };
+            if lit.text != module_name && lit.text != normalized {
+                continue;
+            }
+            let Some(body_node) = arena.get(module_decl.body) else {
+                continue;
+            };
+            let Some(block) = arena.get_module_block(body_node) else {
+                continue;
+            };
+            let Some(stmts) = block.statements.as_ref() else {
+                continue;
+            };
+            let has_indicator =
+                Self::ambient_module_body_has_external_indicator(arena, &stmts.nodes);
+            let scan = Self::scan_statements_for_renamed_export(
+                arena,
+                &stmts.nodes,
+                import_name,
+                /*implicit_export_of_declarations=*/ !has_indicator,
+            );
+            if scan.direct_export {
+                aggregate.direct_export = true;
+            }
+            if aggregate.renamed_export.is_none() {
+                aggregate.renamed_export = scan.renamed_export;
+            }
+        }
+        aggregate
     }
 
     pub(super) fn local_named_export_alias_for_module(
@@ -210,18 +339,65 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             self.ctx.resolve_import_target(module_name)
-        }?;
-        let arena = self.ctx.get_arena_for_file(target_idx as u32);
-        let renamed = self.local_named_export_alias_for_import(arena, import_name)?;
+        };
 
-        // When the target module also re-exports `import_name` via `export * from "..."`,
-        // the original name is a valid export alongside the renamed alias. Suppress TS2460
-        // in that case — both names are valid import targets, matching tsc behaviour.
-        if self.is_exported_via_wildcard_reexport(target_idx, import_name) {
-            return None;
+        // File-module path: when the specifier resolves to a concrete file,
+        // scan that file's top-level statements first (same behaviour as
+        // before this fix — preserves the wildcard-reexport suppression).
+        if let Some(target_idx) = target_idx {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            if let Some(renamed) = self.local_named_export_alias_for_import(arena, import_name) {
+                // When the target module also re-exports `import_name` via
+                // `export * from "..."`, the original name is a valid export
+                // alongside the renamed alias. Suppress TS2460 in that case —
+                // both names are valid import targets, matching tsc behaviour.
+                if !self.is_exported_via_wildcard_reexport(target_idx, import_name) {
+                    return Some(renamed);
+                }
+            }
         }
 
-        Some(renamed)
+        // Ambient-module path: aggregate direct + renamed scans across every
+        // `declare module "<module_name>" { ... }` block in every loaded
+        // arena. A direct export in any block trumps a rename anywhere else,
+        // matching tsc's behaviour for augmented ambient modules.
+        let mut aggregate = RenameScan::default();
+        if let Some(target_idx) = target_idx {
+            let arena = self.ctx.get_arena_for_file(target_idx as u32);
+            let scan =
+                Self::scan_ambient_module_for_renamed_export(arena, module_name, import_name);
+            if scan.direct_export {
+                aggregate.direct_export = true;
+            }
+            if aggregate.renamed_export.is_none() {
+                aggregate.renamed_export = scan.renamed_export;
+            }
+        }
+        if let Some(all_arenas) = self.ctx.all_arenas.as_ref() {
+            for arena in all_arenas.iter() {
+                if aggregate.direct_export {
+                    // Direct export wins — short-circuit further scans.
+                    break;
+                }
+                let scan = Self::scan_ambient_module_for_renamed_export(
+                    arena.as_ref(),
+                    module_name,
+                    import_name,
+                );
+                if scan.direct_export {
+                    aggregate.direct_export = true;
+                }
+                if aggregate.renamed_export.is_none() {
+                    aggregate.renamed_export = scan.renamed_export;
+                }
+            }
+        }
+
+        if aggregate.direct_export {
+            None
+        } else {
+            aggregate.renamed_export
+        }
     }
 
     /// Returns true when any `export * from "..."` in the file at `file_idx` directly

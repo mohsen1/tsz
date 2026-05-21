@@ -114,36 +114,45 @@ impl Hash for DiagnosticFingerprint {
     }
 }
 
+/// Payload for a [`TestResult::Fail`] result.
+///
+/// Boxed inside the variant to keep the `TestResult` enum small; the `Fail`
+/// variant carries eight `Vec`s and a `HashMap` that would otherwise dominate
+/// the enum's stack size and force `clippy::large_enum_variant` suppressions
+/// on every match arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestResultFail {
+    /// Expected error codes (from TSC)
+    pub expected: Vec<u32>,
+    /// Actual error codes (from tsz)
+    pub actual: Vec<u32>,
+    /// Missing error codes (present in TSC but not tsz)
+    pub missing: Vec<u32>,
+    /// Extra error codes (present in tsz but not TSC)
+    pub extra: Vec<u32>,
+    /// Missing diagnostic fingerprints (present in TSC but not tsz)
+    pub missing_fingerprints: Vec<DiagnosticFingerprint>,
+    /// Extra diagnostic fingerprints (present in tsz but not TSC)
+    pub extra_fingerprints: Vec<DiagnosticFingerprint>,
+    /// Full expected diagnostic fingerprints after conformance filtering.
+    pub expected_fingerprints: Vec<DiagnosticFingerprint>,
+    /// Full actual diagnostic fingerprints after conformance filtering.
+    pub actual_fingerprints: Vec<DiagnosticFingerprint>,
+    /// Resolved compiler options used
+    pub options: std::collections::HashMap<String, String>,
+    /// Known conformance debt reason. These are reported separately and are
+    /// never counted as raw passes.
+    pub known_failure: Option<&'static str>,
+}
+
 /// Test comparison result
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::large_enum_variant)]
 pub enum TestResult {
     /// Test passed (results match)
     Pass,
-    /// Test failed with specific mismatches
-    Fail {
-        /// Expected error codes (from TSC)
-        expected: Vec<u32>,
-        /// Actual error codes (from tsz)
-        actual: Vec<u32>,
-        /// Missing error codes (present in TSC but not tsz)
-        missing: Vec<u32>,
-        /// Extra error codes (present in tsz but not TSC)
-        extra: Vec<u32>,
-        /// Missing diagnostic fingerprints (present in TSC but not tsz)
-        missing_fingerprints: Vec<DiagnosticFingerprint>,
-        /// Extra diagnostic fingerprints (present in tsz but not TSC)
-        extra_fingerprints: Vec<DiagnosticFingerprint>,
-        /// Full expected diagnostic fingerprints after conformance filtering.
-        expected_fingerprints: Vec<DiagnosticFingerprint>,
-        /// Full actual diagnostic fingerprints after conformance filtering.
-        actual_fingerprints: Vec<DiagnosticFingerprint>,
-        /// Resolved compiler options used
-        options: std::collections::HashMap<String, String>,
-        /// Known conformance debt reason. These are reported separately and are
-        /// never counted as raw passes.
-        known_failure: Option<&'static str>,
-    },
+    /// Test failed with specific mismatches; payload is boxed to keep the
+    /// variant small.
+    Fail(Box<TestResultFail>),
     /// Test was skipped (@noCheck, @skip, etc.)
     Skipped(&'static str),
     /// Compiler crashed
