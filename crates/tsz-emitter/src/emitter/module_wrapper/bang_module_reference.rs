@@ -44,8 +44,7 @@ impl<'a> Printer<'a> {
                         return false;
                     };
                     module_name.contains('!')
-                        && (source_text.contains(&format!("\"{module_name}\""))
-                            || source_text.contains(&format!("'{module_name}'")))
+                        && Self::source_imports_module_specifier(source_text, module_name)
                 })
             });
 
@@ -58,17 +57,31 @@ impl<'a> Printer<'a> {
 
     fn source_imports_bang_module_specifier(source_text: &str) -> bool {
         source_text.lines().any(|line| {
-            let trimmed = line.trim_start();
-            (trimmed.starts_with("import ")
-                || (trimmed.starts_with("export ")
-                    && (trimmed.contains(" from ") || trimmed.contains("require(")))
-                || trimmed.contains("require(")
-                || trimmed.contains(" from "))
-                && Self::quoted_text_contains_bang(line)
+            Self::is_module_specifier_line(line) && Self::quoted_text_contains_bang(line)
         })
     }
 
+    fn source_imports_module_specifier(source_text: &str, module_name: &str) -> bool {
+        source_text.lines().any(|line| {
+            Self::is_module_specifier_line(line)
+                && Self::quoted_text_matches(line, |text| text == module_name)
+        })
+    }
+
+    fn is_module_specifier_line(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        trimmed.starts_with("import ")
+            || (trimmed.starts_with("export ")
+                && (trimmed.contains(" from ") || trimmed.contains("require(")))
+            || trimmed.contains("require(")
+            || trimmed.contains(" from ")
+    }
+
     fn quoted_text_contains_bang(text: &str) -> bool {
+        Self::quoted_text_matches(text, |quoted| quoted.contains('!'))
+    }
+
+    fn quoted_text_matches(text: &str, mut predicate: impl FnMut(&str) -> bool) -> bool {
         let mut rest = text;
         while let Some(quote_start) = rest.find(['"', '\'']) {
             rest = &rest[quote_start..];
@@ -76,7 +89,7 @@ impl<'a> Printer<'a> {
             let Some(quote_end) = rest[1..].find(quote) else {
                 return false;
             };
-            if rest[1..1 + quote_end].contains('!') {
+            if predicate(&rest[1..1 + quote_end]) {
                 return true;
             }
             rest = &rest[1 + quote_end + 1..];

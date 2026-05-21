@@ -876,6 +876,40 @@ export const y = value;
 }
 
 #[test]
+fn amd_known_declaration_bang_module_ignores_non_import_text() {
+    let declarations = r#"declare module "loader!module" {
+    export const value: number;
+}
+"#;
+    let source = r#"/// <reference path="types.d.ts"/>
+
+export const msg = "loader!module";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut declaration_file = parser.arena.source_files[0].clone();
+    declaration_file.file_name = "types.d.ts".to_string();
+    declaration_file.text = std::sync::Arc::from(declarations);
+    declaration_file.is_declaration_file = true;
+    parser.arena.source_files.push(declaration_file);
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        !output.contains("/// <reference"),
+        "Known .d.ts files should not be preserved just because ordinary source text mentions their bang module.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_missing_declaration_fallback_ignores_exported_string_with_bang() {
     let source = r#"/// <reference path="missing.d.ts"/>
 export const msg = "Hello!";
