@@ -5,7 +5,8 @@ directory is intentionally not a replacement for `docs/plan/ROADMAP.md`.
 Durable project direction, public metrics, and release gates stay in the
 roadmap; these files turn that direction into editable per-session goals.
 
-Snapshot date: 2026-05-20.
+Snapshot date: 2026-05-21 follow-up. The original launch baseline was
+2026-05-20.
 
 ## Current Shape
 
@@ -13,27 +14,28 @@ The active roadmap says the phase boundary is project compatibility first:
 match `tsc` results on real projects, then tune speed once rows are green or
 the first blocker is runtime, OOM, timeout, or residency.
 
-Current GitHub state at launch:
+Current GitHub state after the first runway-drain pass:
 
 | Surface | Count |
 | --- | ---: |
-| Open PRs | 254 |
-| Draft PRs | 246 |
-| Ready PRs without `WIP` | 8 |
-| PRs with `WIP` label | 235 |
-| Stacked PR children | 9 |
-| Open issues | 95 |
-| Open issues with `WIP` | 66 |
-| Open urgent issues | 5 |
-| Open benchmark/performance issues | 15 |
-| Open solver issues | 25 |
-| Open checker issues | 21 |
-| Open emitter/emit issues | 17 |
-| Open LSP issues | 5 |
-| Open tech-debt issues | 22 |
+| Open PRs | 59 |
+| Draft PRs | 50 |
+| Ready PRs without `WIP` | 9 |
+| PRs with `WIP` label | 0 |
+| Stacked PR children | 3 |
+| Open issues | 117 |
+| Open issues with `WIP` | 2 |
+| Open urgent issues | 3 |
+| Open benchmark/performance issues | 20 |
+| Open solver issues | 21 |
+| Open checker issues | 25 |
+| Open emitter/emit issues | 20 |
+| Open LSP issues | 12 |
+| Open tech-debt issues | 77 |
 
-Ready PRs should be drained before opening new work in the same lane:
-`#9314`, `#9313`, `#9307`, `#9304`, `#9298`, `#9297`, `#9287`, and `#9103`.
+Ready PRs are now mostly blocked on CI/review state, not `WIP` labels. Drain
+them by fixing the current blocker or letting enabled auto-merge complete; do
+not repeatedly re-arm auto-merge without resolving the blocker.
 
 ## Agent Labels
 
@@ -46,6 +48,11 @@ Each session owns work through exactly one GitHub label:
 | Studio | `agent:Studio-A`, `agent:Studio-B`, `agent:Studio-C`, `agent:Studio-D`, `agent:Studio-E`, `agent:Studio-F` |
 | Always-on reviewer | `agent:Reviewer` |
 
+Claude Code and other runner-backed agents may do work in any of these lanes.
+Their generated names, for example `claude-sonnet-*`, `dreamy-*`, or
+machine/model aliases, are contributor identity only. They are not ownership
+labels and must not be turned into new `agent:*` lanes.
+
 Rules:
 
 1. For the initial launch, apply `agent:*` labels to PRs only. Do not label
@@ -53,11 +60,25 @@ Rules:
 2. A labelled PR may have at most one `agent:*` label.
 3. The label means "owns the next concrete step", not permanent subsystem
    ownership.
-4. If a session pauses or abandons work, it comments with `AgentName:`, current
+4. Use only the canonical labels in the table above. If a PR has a generated
+   runner label such as `agent:claude-sonnet-*`, `agent:dreamy-*`, or a typo
+   such as `agnet:*`, replace it with the correct lane before marking the PR
+   ready or enabling auto-merge.
+5. If a Claude Code session was launched without a lane assignment, it may sign
+   comments with its runner-generated name, but it should not claim ownership
+   with a new `agent:*` label. A maintainer or coordinator should assign one of
+   the canonical lanes first.
+6. If a session pauses or abandons work, it comments with `AgentName:`, current
    findings, next action, then removes its `agent:*` label.
-5. Every PR body and substantive PR comment includes the same `AgentName`.
-6. Draft PRs are coordination state. Do not merge anything draft, labelled
+7. Every PR body and substantive PR comment includes the same `AgentName`.
+8. Draft PRs are coordination state. Do not merge anything draft, labelled
    `WIP`, titled `[WIP]`, or described as blocked/not ready.
+
+Run the label audit before large PR-garden passes:
+
+```bash
+scripts/agents/ensure-agent-labels.sh --audit
+```
 
 ## Source-Of-Truth Goal Loop
 
@@ -161,7 +182,8 @@ inspect, non-overlap notes, and a launch checklist.
 ## Launch Checklist
 
 1. Merge this coordination PR or explicitly tell sessions to read this branch.
-2. Run `scripts/agents/ensure-agent-labels.sh`.
+2. Run `scripts/agents/ensure-agent-labels.sh` and
+   `scripts/agents/ensure-agent-labels.sh --audit`.
 3. For each session, run `scripts/agents/disk-preflight.sh <AgentName>`.
 4. Give each Codex session the `/goal` prompt from
    `docs/plan/agents/LAUNCH.md`.
