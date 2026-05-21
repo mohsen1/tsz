@@ -90,7 +90,7 @@ impl<'a> CheckerState<'a> {
                 crate::query_boundaries::common::PropertyAccessResult::Success {
                     type_id,
                     ..
-                } if self.is_assignable_to(type_id, prop.type_id)
+                } if self.diagnostic_relation_boolean_guard(type_id, prop.type_id)
             )
         })
     }
