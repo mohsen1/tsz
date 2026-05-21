@@ -69,6 +69,52 @@ pub use tsz_common::checker_options::CheckerOptions;
 pub use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::node::NodeArena;
 
+/// Whether a file-local `name -> sym_id` entry owned by `file_idx` should be
+/// published into the cross-file `global_file_locals_index`.
+///
+/// This mirrors [`tsz_binder::Symbol::is_cross_file_global`] so the index agrees
+/// with `program.globals`: pure type-only top-level declarations of an external
+/// module stay file-scoped, so an unqualified reference from a sibling file that
+/// never imported the name resolves to nothing (`TS2304`) instead of leaking.
+///
+/// Only symbols genuinely declared in `file_idx` are classified. Lib symbols and
+/// entries folded in from `program.globals` (which carry another file's
+/// `decl_file_idx`) are always kept, so lib/global resolution is unaffected.
+pub(crate) fn file_local_entry_is_globally_visible(
+    binder: &BinderState,
+    arena: Option<&NodeArena>,
+    file_idx: usize,
+    name: &str,
+    sym_id: SymbolId,
+) -> bool {
+    let Some(sym) = binder.get_symbol(sym_id) else {
+        return true;
+    };
+    // Lib symbols are resolved through `lib_contexts` and get folded into many
+    // files' locals; never reclassify them against a hosting module's context.
+    if binder.lib_symbol_ids.contains(&sym_id) {
+        return true;
+    }
+    // Entries folded in from `program.globals` carry the originating file's
+    // `decl_file_idx`; they are already governed by that file's classification,
+    // so keep them. A symbol declared in this file (`decl_file_idx == file_idx`)
+    // — or any local of a raw, unmerged per-file binder, which leaves
+    // `decl_file_idx == u32::MAX` while owning all of its locals — is classified
+    // here.
+    if sym.decl_file_idx != u32::MAX && sym.decl_file_idx != file_idx as u32 {
+        return true;
+    }
+    let is_declaration_file = arena
+        .and_then(|arena| arena.source_files.first())
+        .is_some_and(|sf| sf.is_declaration_file);
+    let is_global_augmentation = binder.global_augmentations.contains_key(name);
+    sym.is_cross_file_global(
+        binder.is_external_module,
+        is_declaration_file,
+        is_global_augmentation,
+    )
+}
+
 /// T2.2 cross-file type-parameter memoization map.
 ///
 /// Keyed by `(target_file_idx, decl_idx)` — never by user-chosen
@@ -1822,7 +1868,11 @@ impl ProgramContext {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
+            let arena = self.all_arenas.get(file_idx).map(Arc::as_ref);
             for (name, &sym_id) in binder.file_locals.iter() {
+                if !file_local_entry_is_globally_visible(binder, arena, file_idx, name, sym_id) {
+                    continue;
+                }
                 file_locals_index
                     .entry(name.to_string())
                     .or_insert_with(|| {
