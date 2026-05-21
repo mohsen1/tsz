@@ -185,6 +185,22 @@ impl<'a> DeclarationEmitter<'a> {
                         call,
                         type_text,
                     )?;
+                    let source_matches_current_file = scratch
+                        .arena_source_file(source_arena)
+                        .and_then(|source_file| {
+                            scratch.current_file_path.as_deref().map(|current| {
+                                scratch.paths_refer_to_same_source_file(
+                                    current,
+                                    &source_file.file_name,
+                                )
+                            })
+                        })
+                        .unwrap_or(false);
+                    let type_text = if source_matches_current_file {
+                        type_text
+                    } else {
+                        scratch.qualify_foreign_imported_names_in_text(source_arena, &type_text)
+                    };
                     Some(
                         scratch
                             .expand_inexact_optional_alias_reference_text(source_arena, &type_text)

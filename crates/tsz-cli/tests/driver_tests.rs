@@ -7067,6 +7067,65 @@ fn compile_respects_no_emit_on_error() {
 }
 
 #[test]
+fn compile_dts_qualifies_imported_return_type_reused_from_another_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "target": "es2015",
+            "declaration": true,
+            "allowArbitraryExtensions": true,
+            "outDir": "dist"
+          },
+          "files": ["foo.d.html.ts", "reexporter.ts", "index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("foo.d.html.ts"),
+        "export declare class CustomHtmlRepresentationThing {}\n",
+    );
+    write_file(
+        &base.join("reexporter.ts"),
+        r#"import { CustomHtmlRepresentationThing } from "./foo.html";
+
+export function func() {
+    return new CustomHtmlRepresentationThing();
+}
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import { func } from "./reexporter";
+export const c = func();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains(
+            r#"export declare const c: import("./foo.html").CustomHtmlRepresentationThing;"#
+        ),
+        "Expected cross-file inferred return type to be qualified: {dts}"
+    );
+    assert!(
+        !dts.contains("c: CustomHtmlRepresentationThing"),
+        "Expected no unbound local name from reexporter scope: {dts}"
+    );
+}
+
+#[test]
 fn compile_namespace_import_reserved_statement_starters_emit_recovered_payload() {
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
