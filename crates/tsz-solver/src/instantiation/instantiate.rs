@@ -851,11 +851,6 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.array(instantiated_elem)
             }
 
-            // Tuple: instantiate all elements, flattening variadic spreads.
-            // When a rest element `...T` is instantiated and T resolves to a
-            // tuple type `[A, B, C]`, the spread is flattened into individual
-            // elements `A, B, C` (matching tsc's instantiateMappedTupleType
-            // behavior for variadic tuple types).
             TypeData::Tuple(elements) => {
                 use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
                 let elements = self.interner.tuple_list(*elements);
@@ -866,8 +861,16 @@ impl<'a> TypeInstantiator<'a> {
                 // single physical rest element by the soft gate but the total
                 // represented length still exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
                 let mut represented_len: usize = 0;
+                // Only normalize (merge adjacent Array rests) when substitution
+                // actually occurred. Pre-existing concrete tuples (e.g. annotation
+                // types with no free type params) must not be normalized here —
+                // tsc keeps them in their original form even after re-instantiation.
+                let mut changed = false;
                 for e in elements.iter() {
                     let inst_type = self.instantiate(e.type_id);
+                    if inst_type != e.type_id {
+                        changed = true;
+                    }
                     if e.rest {
                         // Check if the instantiated type is a tuple — if so,
                         // flatten its elements into the parent tuple.
@@ -893,6 +896,7 @@ impl<'a> TypeInstantiator<'a> {
                                     rest: true,
                                 });
                             } else {
+                                changed = true; // flattening always changes structure
                                 for ie in inner.iter() {
                                     instantiated.push(TupleElement {
                                         type_id: ie.type_id,
@@ -921,6 +925,9 @@ impl<'a> TypeInstantiator<'a> {
                         });
                         represented_len = represented_len.saturating_add(1);
                     }
+                }
+                if !changed {
+                    return self.interner.intern(*key);
                 }
                 self.interner.tuple_normalized(instantiated)
             }
