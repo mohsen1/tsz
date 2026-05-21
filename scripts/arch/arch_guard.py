@@ -357,7 +357,7 @@ TRAIT_METHOD_COUNT_CHECKS = [
         "Solver boundary: TypeDatabase method count (#8205)",
         ROOT / "crates" / "tsz-solver" / "src" / "caches" / "db.rs",
         "TypeDatabase",
-        78,
+        77,
     ),
 ]
 
@@ -510,7 +510,7 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        3363,
+        3373,
     ),
 ]
 
@@ -716,6 +716,15 @@ REGEX_LINE_COUNT_CHECKS = [
             r"RelationCacheKey::(?:subtype|assignability)\s*\(|"
             r"RelationFlags::from_bits_truncate\s*\(|"
             r"CachedAnyMode::from_legacy_u8\s*\()"
+        ),
+        0,
+    ),
+    (
+        "Solver relation boundary: relation engines avoid packed apply_flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations"],
+        re.compile(
+            r"\bfn\s+apply_flags\s*\([^)]*\bflags\s*:\s*u16"
+            r"|\.\s*apply_flags\s*\(\s*policy\.flags\s*\)"
         ),
         0,
     ),
