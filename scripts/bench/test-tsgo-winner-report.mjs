@@ -216,6 +216,47 @@ withTempDir((dir) => {
   assert.equal(importedReport.worst.name, "ts-toolbelt-project");
 });
 
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "BCT candidates=200",
+        lines: 428,
+        kb: 36,
+        tsz_ms: 169.77,
+        tsgo_ms: 156.16,
+        winner: "tsgo",
+        factor: 1.09,
+      },
+      {
+        name: "200 classes",
+        lines: 9203,
+        kb: 162,
+        tsz_ms: 145.09,
+        tsgo_ms: 137.01,
+        winner: "tsgo",
+        factor: 1.06,
+      },
+    ],
+  });
+
+  const report = createTsgoWinnerReport(JSON.parse(fs.readFileSync(input, "utf8")), input);
+  const byName = new Map(report.rows.map((row) => [row.name, row]));
+  assert.match(
+    byName.get("BCT candidates=200").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-bct-candidates-200>\.ts/,
+  );
+  assert.match(
+    byName.get("200 classes").loss_closure.attribution_command,
+    /TSZ_PERF_COUNTERS=1 .*<generated-200-classes>\.ts/,
+  );
+  assert.deepEqual(report.totals.missing_attribution_rows, [
+    "200 classes",
+    "BCT candidates=200",
+  ]);
+});
+
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
 // Single-file duplicate names are not project rows and remain eligible.
 withTempDir((dir) => {
