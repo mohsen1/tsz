@@ -1992,6 +1992,12 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if prop.initializer.is_some()
+                && let Some(type_text) =
+                    self.anonymous_module_exports_class_new_expression_type_text(prop.initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
             } else if let Some(type_id) = self.get_node_type_or_names(&[prop_idx, prop.name]) {
                 // Readonly literal preservation (matches tsc `const`-like emit).
                 if is_readonly

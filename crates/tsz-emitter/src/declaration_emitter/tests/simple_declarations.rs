@@ -5846,6 +5846,10 @@ module.exports.Sub = class {
         !output.contains("export class Sub"),
         "Did not expect the secondary class assignment to also emit as a named export: {output}"
     );
+    assert!(
+        output.contains("instance: import(\".\");"),
+        "Expected `new module.exports()` instance fields to use the module self-import surface: {output}"
+    );
 }
 
 #[test]
