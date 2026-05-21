@@ -1143,6 +1143,9 @@ impl<'a> CheckerState<'a> {
     /// JSDoc `@typedef` (resolved through the JSDoc typedef table). When
     /// both forms could resolve the name, the binder wins so existing
     /// class-target semantics (private/protected → TS2720) are preserved.
+    /// Returns `None` when neither resolution path produces a target — the
+    /// caller silently skips such entries, matching tsc's behavior for
+    /// unresolved heritage names in JS files.
     pub(crate) fn resolve_jsdoc_implements_target(
         &mut self,
         target_name: &str,
