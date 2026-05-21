@@ -288,12 +288,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             pattern_params.len()
         };
 
-        // A source callable with fewer parameters than the inference pattern is
-        // still assignable to it (extra trailing positions are simply ignored
-        // at the call site), so tsc takes the true branch and leaves the
-        // unmatched `infer` slots at their default of `unknown`. Match the
-        // overlapping prefix and default the rest rather than failing the
-        // relation and forcing the false branch.
+        // A source callable with fewer parameters is still assignable to the
+        // inference pattern (extra trailing positions are ignored at the call
+        // site); tsc takes the true branch and defaults the unmatched `infer`
+        // slots to `unknown`. Match the overlapping prefix, default the rest.
         let matched_count = source_params.len().min(fixed_param_count);
 
         let mut local_visited = FxHashSet::default();
@@ -325,11 +323,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         if let Some(rest_param) = trailing_rest_param {
-            let remaining_params = if source_params.len() > fixed_param_count {
-                &source_params[fixed_param_count..]
-            } else {
-                &[][..]
-            };
+            let remaining_params = source_params.get(fixed_param_count..).unwrap_or(&[]);
             if self.type_contains_infer(rest_param.type_id) {
                 if !self.match_co_located_intersect_pairs(
                     &fixed_pairs,
