@@ -2201,6 +2201,102 @@ mod diagnostics_report_tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn basic_golden_full_output() {
+        let report = DiagnosticsReport {
+            files_count: 5,
+            lines: FileLinesStats {
+                library: 1000,
+                definitions: 200,
+                typescript: 300,
+                javascript: 50,
+                json: 10,
+                other: 0,
+            },
+            error_count: 3,
+            has_phase_timings: true,
+            io_read_secs: 0.10,
+            parse_bind_secs: 0.20,
+            check_secs: 0.30,
+            emit_secs: 0.05,
+            total_secs: 0.65,
+            ..DiagnosticsReport::default()
+        };
+        let out = render_diagnostics_report(&report, false);
+        let expected = "\n\
+Files:                         5\n\
+Lines of Library:              1000\n\
+Lines of Definitions:          200\n\
+Lines of TypeScript:           300\n\
+Lines of JavaScript:           50\n\
+Lines of JSON:                 10\n\
+Lines of Other:                0\n\
+Errors:                        3\n\
+I/O Read:                      0.10s\n\
+Parse & Bind:                  0.20s\n\
+Check:                         0.30s\n\
+Emit:                          0.05s\n\
+Total time:                    0.65s\n";
+        assert_eq!(out, expected, "basic golden mismatch:\n{out}");
+    }
+
+    #[test]
+    fn extended_golden_full_output() {
+        let report = DiagnosticsReport {
+            files_count: 2,
+            lines: FileLinesStats {
+                library: 500,
+                definitions: 0,
+                typescript: 100,
+                javascript: 0,
+                json: 0,
+                other: 0,
+            },
+            error_count: 0,
+            has_phase_timings: false,
+            total_secs: 1.00,
+            // Extended fields
+            memory_used_kb: 8192,
+            emitted_files_count: 1,
+            total_diagnostics: 0,
+            request_cache_hits: 90,
+            request_cache_misses: 10,
+            contextual_cache_bypasses: 2,
+            clear_type_cache_recursive_calls: 1,
+            property_access_cache_hits: 45,
+            property_access_cache_lookups: 50,
+            interned_types_count: 0,
+            interner_kb: 0.0,
+            has_query_cache: false,
+            has_def_store: false,
+            has_residency: false,
+            has_module_deps: false,
+            perf_counter_dump: String::new(),
+            ..DiagnosticsReport::default()
+        };
+        let out = render_diagnostics_report(&report, true);
+        let expected = "\n\
+Files:                         2\n\
+Lines of Library:              500\n\
+Lines of Definitions:          0\n\
+Lines of TypeScript:           100\n\
+Lines of JavaScript:           0\n\
+Lines of JSON:                 0\n\
+Lines of Other:                0\n\
+Errors:                        0\n\
+Total time:                    1.00s\n\
+Emitted files:                 1\n\
+Total diagnostics:             0\n\
+Request cache hits:            90\n\
+Request cache misses:          10\n\
+Request cache hit rate:        90.0%\n\
+Contextual cache bypasses:     2\n\
+clear_type_cache_recursive:    1\n\
+Access request-cache hit rate: 90.0% (45/50)\n\
+Memory used:                   8192K\n";
+        assert_eq!(out, expected, "extended golden mismatch:\n{out}");
+    }
 }
 
 fn reject_tsconfig_only_cli_options(args: &CliArgs) {
