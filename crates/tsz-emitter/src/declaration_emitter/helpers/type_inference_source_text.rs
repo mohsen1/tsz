@@ -214,8 +214,11 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         }
 
+        // Peel redundant parens: `X<(<T>() => T)>` and `X< <T>() => T >` are
+        // equivalent — the PARENTHESIZED_TYPE handler strips them on emit.
+        let peeled = self.peel_paren(type_arg_idx);
         self.arena
-            .get(type_arg_idx)
+            .get(peeled)
             .and_then(|node| self.arena.get_function_type(node))
             .is_some_and(|func| {
                 !func
