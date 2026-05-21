@@ -735,6 +735,18 @@ impl<'a> CheckerState<'a> {
         if let Some(ref prev) = prev_enclosing_class {
             self.ctx.enclosing_class_chain.push(prev.class_idx);
         }
+        // Capture the previously-cached class instance type before the
+        // environment-building snapshot is dropped below. Member checking
+        // recomputes types with a refreshed view, but callers that re-enter
+        // the class type lookup from within a member's own compute (e.g.,
+        // an arrow property initializer asking for its lexical `this`) must
+        // not trigger a recursive rebuild — that would re-enter the
+        // in-progress initializer and return `TypeId::ERROR` for it. The
+        // snapshot preserved here is consumed by such re-entrant lookups
+        // (see `class_property_arrow_lexical_this_type`).
+        let prior_instance_type_snapshot =
+            self.ctx.class_instance_type_cache.get(&stmt_idx).copied();
+
         self.ctx.enclosing_class = Some(EnclosingClassInfo {
             name: class_name,
             class_idx: stmt_idx,
@@ -744,7 +756,7 @@ impl<'a> CheckerState<'a> {
             in_static_property_initializer: false,
             in_static_member: false,
             has_super_call_in_current_constructor: false,
-            cached_instance_this_type: None,
+            cached_instance_this_type: prior_instance_type_snapshot,
             type_param_names: class_type_param_names,
             class_type_parameters: _type_params,
         });

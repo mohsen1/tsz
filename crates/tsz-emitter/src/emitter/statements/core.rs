@@ -837,7 +837,68 @@ impl<'a> Printer<'a> {
             && !self.in_namespace_iife
             && is_var_declaration
         {
+            // Collect deferred named exports before the mutable emit call.
+            // When a `var` is assigned inside a nested block (if/for/while body) and
+            // its name is re-exported via `export { name }`, tsc emits
+            // `exports_1("name", name)` after the assignment statement.
+            // Top-level `var` statements are handled by the System execute loops
+            // (which call emit_system_variable_initializers directly, bypassing this
+            // path), so this deferred-export path only activates for vars inside
+            // nested blocks where the outer loop already skipped the export { name }
+            // declaration.
+            let deferred_exports: Vec<(String, String)> = if let Some(bindings) =
+                deferred_export_bindings.as_ref()
+                && !bindings.is_empty()
+                && !self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                let mut result = Vec::new();
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if decl.initializer.is_none() {
+                            continue;
+                        }
+                        let Some(name_node) = self.arena.get(decl.name) else {
+                            continue;
+                        };
+                        if name_node.kind != SyntaxKind::Identifier as u16 {
+                            continue;
+                        }
+                        let local_name = self.get_identifier_text_idx(decl.name);
+                        if local_name.is_empty() {
+                            continue;
+                        }
+                        if let Some(export_name) = bindings.get(&local_name).cloned() {
+                            result.push((local_name, export_name));
+                        }
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            };
+
             self.emit_system_variable_initializers(node);
+
+            for (local_name, export_name) in deferred_exports {
+                self.write_line();
+                self.write_export_binding_start(&export_name);
+                self.write(&local_name);
+                self.write_export_binding_end();
+            }
             return;
         }
 

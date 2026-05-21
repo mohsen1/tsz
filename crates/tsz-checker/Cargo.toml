@@ -330,6 +330,10 @@ name = "module_augmentation_isolation_tests"
 path = "tests/module_augmentation_isolation_tests.rs"
 
 [[test]]
+name = "ambient_module_renamed_export_ts2460_tests"
+path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
@@ -772,6 +776,10 @@ path = "tests/mapped_type_interface_tests.rs"
 [[test]]
 name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
+
+[[test]]
+name = "homomorphic_remove_optional_conditional_tests"
+path = "tests/homomorphic_remove_optional_conditional_tests.rs"
 
 [[test]]
 name = "ts2344_self_referential_interface_constraint"
@@ -1288,6 +1296,10 @@ path = "tests/generic_property_mismatch_display_tests.rs"
 [[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
+
+[[test]]
+name = "class_arrow_property_type_inference_tests"
+path = "tests/class_arrow_property_type_inference_tests.rs"
 
 [[test]]
 name = "class_implements_index_signature_tests"

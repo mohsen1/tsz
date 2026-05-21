@@ -274,6 +274,11 @@ pub struct TypeInstantiator<'a> {
     /// `instantiate_type_with_this`) where the substitution legitimately
     /// means "specialize this method body for this class".
     pub shallow_this_only: bool,
+    /// When `Some((source, iter_var, declared_type))`, any `IndexAccess(source, K)` where
+    /// `K` is a `TypeParameter` with name == `iter_var` is replaced with `declared_type`
+    /// instead of being evaluated. Used in homomorphic `-?` mapped type evaluation to feed
+    /// the declared (non-optional) property type into the template, matching tsc behavior.
+    pub declared_index_type: Option<(TypeId, Atom, TypeId)>,
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
@@ -293,6 +298,7 @@ impl<'a> TypeInstantiator<'a> {
             preserve_unsubstituted_type_params: false,
             this_type: None,
             shallow_this_only: false,
+            declared_index_type: None,
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,
@@ -1753,7 +1759,24 @@ impl<'a> TypeInstantiator<'a> {
             // Index access: instantiate both parts and evaluate immediately
             // Task #46: Meta-type reduction for O(1) equality
             TypeData::IndexAccess(obj, idx) => {
+                // For homomorphic -? mapped type evaluation, T[K] must use the
+                // declared property type (without the `| undefined` that
+                // `optional_property_type` adds for read access). Check *idx
+                // BEFORE instantiation so we can detect the iteration variable
+                // (K → key_literal substitution hasn't happened yet).
+                let is_iter_var = self.declared_index_type.is_some_and(|(_, iter_var, _)| {
+                    matches!(
+                        self.interner.lookup(*idx),
+                        Some(TypeData::TypeParameter(p)) if p.name == iter_var
+                    )
+                });
                 let inst_obj = self.instantiate(*obj);
+                if let Some((override_source, _, replacement)) = self.declared_index_type
+                    && is_iter_var
+                    && inst_obj == override_source
+                {
+                    return replacement;
+                }
                 let inst_idx = self.instantiate(*idx);
                 // Don't eagerly evaluate if either part still contains type parameters.
                 // This prevents premature evaluation of `T[K]` or `T[keyof T]` where T
@@ -2111,6 +2134,38 @@ pub(crate) fn instantiate_type_with_shadowed(
         return TypeId::ERROR;
     }
     result
+}
+
+/// Like [`instantiate_type_preserving`] but also replaces every
+/// `IndexAccess(source, K)` in the template with `declared_type`, where `K`
+/// is any `TypeParameter` whose name equals `iter_var`.
+///
+/// This is used for homomorphic `-?` mapped type evaluation. When `-?` strips
+/// the optional modifier, tsc feeds the DECLARED property type (without the
+/// `| undefined` that normal read access adds for optional properties) into the
+/// template. Applying this substitution before the `K → key_literal` step
+/// ensures that conditional and other composite templates that reference `T[K]`
+/// see the de-optionalized type, matching tsc behavior.
+pub(crate) fn instantiate_type_preserving_with_declared(
+    interner: &dyn TypeDatabase,
+    type_id: TypeId,
+    substitution: &TypeSubstitution,
+    source: TypeId,
+    iter_var: Atom,
+    declared_type: TypeId,
+) -> TypeId {
+    if type_id.is_intrinsic() {
+        return type_id;
+    }
+    let mut instantiator = TypeInstantiator::new(interner, substitution);
+    instantiator.preserve_unsubstituted_type_params = true;
+    instantiator.declared_index_type = Some((source, iter_var, declared_type));
+    let result = instantiator.instantiate(type_id);
+    if instantiator.depth_exceeded {
+        TypeId::ERROR
+    } else {
+        result
+    }
 }
 
 /// Cache-aware variant of [`instantiate_type`].
