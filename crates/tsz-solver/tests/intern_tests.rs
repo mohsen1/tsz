@@ -1911,7 +1911,9 @@ fn test_string_intrinsic_same_kind_collapsed() {
 }
 
 // =============================================================================
-// Adjacent rest-array normalization in tuple()
+// Adjacent rest-array normalization in tuple_normalized()
+// tuple()         → raw construction, no adjacent-rest merging
+// tuple_normalized() → instantiation path, merges adjacent concrete rest arrays
 // =============================================================================
 
 fn rest_elem(type_id: TypeId) -> TupleElement {
@@ -1932,7 +1934,7 @@ fn fixed_elem(type_id: TypeId) -> TupleElement {
     }
 }
 
-/// `[...number[], ...string[]]` → `(number | string)[]`.
+/// `[...number[], ...string[]]` → `(number | string)[]` via `tuple_normalized`.
 /// Two adjacent unbounded rest arrays collapse to a plain array with a union element type.
 #[test]
 fn tuple_two_adjacent_rest_arrays_collapse_to_array() {
@@ -1940,7 +1942,7 @@ fn tuple_two_adjacent_rest_arrays_collapse_to_array() {
     let num_arr = db.array(TypeId::NUMBER);
     let str_arr = db.array(TypeId::STRING);
 
-    let result = db.tuple(vec![rest_elem(num_arr), rest_elem(str_arr)]);
+    let result = db.tuple_normalized(vec![rest_elem(num_arr), rest_elem(str_arr)]);
 
     let expected_elem = db.union(vec![TypeId::NUMBER, TypeId::STRING]);
     let expected = db.array(expected_elem);
@@ -1958,7 +1960,7 @@ fn tuple_adjacent_rest_arrays_renamed_types() {
     let bool_arr = db.array(TypeId::BOOLEAN);
     let num_arr = db.array(TypeId::NUMBER);
 
-    let result = db.tuple(vec![rest_elem(bool_arr), rest_elem(num_arr)]);
+    let result = db.tuple_normalized(vec![rest_elem(bool_arr), rest_elem(num_arr)]);
 
     let expected_elem = db.union(vec![TypeId::BOOLEAN, TypeId::NUMBER]);
     let expected = db.array(expected_elem);
@@ -1972,7 +1974,7 @@ fn tuple_adjacent_rest_arrays_renamed_types() {
 #[test]
 fn tuple_three_adjacent_rest_arrays_collapse_to_array() {
     let db = TypeInterner::new();
-    let result = db.tuple(vec![
+    let result = db.tuple_normalized(vec![
         rest_elem(db.array(TypeId::NUMBER)),
         rest_elem(db.array(TypeId::STRING)),
         rest_elem(db.array(TypeId::BOOLEAN)),
@@ -2012,7 +2014,7 @@ fn tuple_single_trailing_rest_array_unchanged() {
 #[test]
 fn tuple_fixed_prefix_plus_two_rest_arrays_merges_rests() {
     let db = TypeInterner::new();
-    let result = db.tuple(vec![
+    let result = db.tuple_normalized(vec![
         fixed_elem(TypeId::BOOLEAN),
         rest_elem(db.array(TypeId::NUMBER)),
         rest_elem(db.array(TypeId::STRING)),
@@ -2037,7 +2039,32 @@ fn tuple_fixed_prefix_plus_two_rest_arrays_merges_rests() {
     );
 }
 
-/// CONTROL: type-parameter rest elements must NOT be merged (not yet instantiated).
+/// CONTROL: `tuple()` (raw path) must NOT merge adjacent concrete rest arrays.
+/// Only `tuple_normalized()` (instantiation path) may collapse them.
+#[test]
+fn tuple_raw_keeps_adjacent_rest_arrays() {
+    let db = TypeInterner::new();
+    let num_arr = db.array(TypeId::NUMBER);
+    let str_arr = db.array(TypeId::STRING);
+
+    let result = db.tuple(vec![rest_elem(num_arr), rest_elem(str_arr)]);
+
+    // Raw tuple() must keep two separate rest elements
+    let Some(TypeData::Tuple(list_id)) = db.lookup(result) else {
+        panic!(
+            "expected Tuple from raw tuple(), got {:?}",
+            db.lookup(result)
+        );
+    };
+    let elems = db.tuple_list(list_id);
+    assert_eq!(
+        elems.len(),
+        2,
+        "raw tuple() must not merge adjacent rest arrays"
+    );
+}
+
+/// CONTROL: type-parameter rest elements must NOT be merged even via `tuple_normalized`.
 #[test]
 fn tuple_type_param_rest_elements_not_merged() {
     let db = TypeInterner::new();
@@ -2068,11 +2095,11 @@ fn tuple_type_param_rest_elements_not_merged() {
 }
 
 /// Adjacent rest elements with bare (non-array-wrapped) element types are merged
-/// into a single rest element with a union array type.
+/// via `tuple_normalized` (the evaluate.rs / instantiation path).
 #[test]
 fn tuple_adjacent_rest_elements_with_bare_element_types_merged() {
     let db = TypeInterner::new();
-    let result = db.tuple(vec![rest_elem(TypeId::NUMBER), rest_elem(TypeId::STRING)]);
+    let result = db.tuple_normalized(vec![rest_elem(TypeId::NUMBER), rest_elem(TypeId::STRING)]);
 
     let expected_elem = db.union(vec![TypeId::NUMBER, TypeId::STRING]);
     let expected = db.array(expected_elem);

@@ -236,6 +236,8 @@ pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal + TypeDisplayP
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn array(&self, element: TypeId) -> TypeId;
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
+    /// Like [`tuple`] but also merges adjacent concrete rest arrays (for instantiation paths).
+    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId;
     fn object_with_flags_and_symbol(
@@ -602,6 +604,10 @@ impl TypeDatabase for TypeInterner {
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         Self::tuple(self, elements)
+    }
+
+    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
+        Self::tuple_normalized(self, elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {

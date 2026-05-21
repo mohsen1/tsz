@@ -1133,13 +1133,8 @@ impl TypeInterner {
     /// Normalizes optional element types: when exact optional properties are
     /// disabled, strips explicit `undefined` from `optional=true` union types
     /// since optionality already implies `| undefined`.
-    ///
-    /// Also normalizes adjacent rest elements whose types are concrete arrays:
-    /// `[...X[], ...Y[]]` → `(X | Y)[]`.  When the merged result has no fixed
-    /// elements it degenerates into a plain array.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let elements = self.normalize_optional_tuple_elements(elements);
-        let elements = self.merge_adjacent_rest_arrays(elements);
         // A single anonymous rest element wrapping an Array collapses to a plain array type.
         if elements.len() == 1
             && elements[0].rest
@@ -1151,6 +1146,18 @@ impl TypeInterner {
         }
         let list_id = self.intern_tuple_list(elements);
         self.intern(TypeData::Tuple(list_id))
+    }
+
+    /// Like [`tuple`], but also merges consecutive concrete rest elements:
+    /// `[...X[], ...Y[]]` → `(X | Y)[]`.
+    ///
+    /// Use this variant in the **instantiation path** where type parameters have already been
+    /// substituted and adjacent rest arrays must be collapsed (matching tsc's normalization of
+    /// instantiated variadic tuples).  Do **not** use this from checker code that constructs
+    /// types from explicit type annotations — tsc keeps those un-normalized even when TS1265
+    /// is emitted, so using `tuple()` there is the correct matching behaviour.
+    pub fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
+        self.tuple(self.merge_adjacent_rest_arrays(elements))
     }
 
     /// Merge consecutive concrete rest elements into a single rest element whose type

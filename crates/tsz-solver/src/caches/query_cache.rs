@@ -1089,6 +1089,10 @@ impl TypeDatabase for QueryCache<'_> {
         self.interner.tuple(elements)
     }
 
+    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
+        self.interner.tuple_normalized(elements)
+    }
+
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
         self.interner.object(properties)
     }

@@ -922,7 +922,7 @@ impl<'a> TypeInstantiator<'a> {
                         represented_len = represented_len.saturating_add(1);
                     }
                 }
-                self.interner.tuple(instantiated)
+                self.interner.tuple_normalized(instantiated)
             }
 
             // Object: instantiate all property types
