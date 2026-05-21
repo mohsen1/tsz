@@ -674,29 +674,6 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             return Some(ty);
         }
 
-        // Issue #8720: for cross-file class `DefId`s, prefer the shared
-        // `class_to_instance` slot before consulting the SYMBOL_TYPE cache
-        // below. The SYMBOL_TYPE cache caches `get_type_of_symbol(class_sym)`
-        // results, which is the **constructor** type for class symbols
-        // (value side). Returning the constructor here would make
-        // `Lazy(class_def_id)` in type position resolve to the constructor
-        // TypeId — which is registered to the `ClassConstructor` companion
-        // DefId — and the formatter would render the type as
-        // `typeof ClassName` in TS2345/TS2322 diagnostics.
-        if self
-            .definition_store
-            .get_kind(def_id)
-            .is_some_and(|kind| kind == tsz_solver::def::DefKind::Class)
-            && let Some(instance_type) = self.definition_store.get_class_instance_type(def_id)
-        {
-            tracing::trace!(
-                def_id = def_id.0,
-                type_id = instance_type.0,
-                "resolve_lazy: cross-file class_to_instance"
-            );
-            return Some(instance_type);
-        }
-
         // Fallback: check the canonical cross-file query cache (SYMBOL_TYPE bucket).
         // When a symbol from another file (e.g., an interface referenced in a
         // property type) was resolved by that file's checker, the result is

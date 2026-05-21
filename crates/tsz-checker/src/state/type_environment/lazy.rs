@@ -1363,19 +1363,6 @@ impl<'a> CheckerState<'a> {
                 // assignable to type 'Dataset'` in parser harness regressions).
                 // Also check class_instance_type_cache for in-progress builds
                 // (Phase 2 partial type), preventing constructor type fallback.
-                //
-                // Issue #8720 fix: also consult the shared
-                // `DefinitionStore::get_class_instance_type` slot, which the
-                // producer's checker populates once the class type is built.
-                // Without this step, cross-file consumers whose local caches
-                // are empty fall through to `get_type_of_symbol` — which
-                // returns the constructor (value-side) type — and stamp
-                // `def_types[class_def_id] = constructor` into their own
-                // `type_env`. That cascade makes `Lazy(class_def_id)` resolve
-                // to the constructor TypeId (registered to the
-                // `ClassConstructor` companion DefId) and the formatter
-                // renders the type as `typeof ClassName` in TS2345/TS2322
-                // diagnostics.
                 self.ctx
                     .symbol_instance_types
                     .get(&sym_id)
@@ -1385,7 +1372,6 @@ impl<'a> CheckerState<'a> {
                             .primary_declaration()
                             .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
                     })
-                    .or_else(|| self.ctx.definition_store.get_class_instance_type(def_id))
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {
                 self.get_type_of_symbol(sym_id)
@@ -1411,29 +1397,9 @@ impl<'a> CheckerState<'a> {
         }
 
         if resolved != TypeId::ERROR && resolved != TypeId::ANY {
-            // Issue #8720: skip write-through for class DefIds. The value
-            // returned for a class symbol in TYPE position is its instance
-            // type, but `def_types[class_def_id]` is the cache that
-            // value-position resolvers read (for `typeof C` / bare value
-            // references — they expect the constructor). Writing the
-            // instance type there would shadow the constructor and break
-            // value-position lookups (e.g. TS2468 `Cannot find global value
-            // 'Promise'` after `Lazy(Promise_def_id)` resolves to the
-            // instance type via the shared `class_to_instance` slot). The
-            // class instance type is already published in the shared
-            // `DefinitionStore::class_to_instance` slot (where consumers
-            // read it via `TypeEnvironment::resolve_lazy`), so the
-            // write-through is redundant for the class case as well.
-            let is_class_def = self
-                .ctx
-                .definition_store
-                .get_kind(def_id)
-                .is_some_and(|kind| kind == tsz_solver::def::DefKind::Class);
-            if !is_class_def {
-                // Carry type params so Application evaluation via TypeEnvironment can
-                // instantiate generic types correctly across checker contexts.
-                self.try_insert_def_in_type_env(def_id, resolved);
-            }
+            // Carry type params so Application evaluation via TypeEnvironment can
+            // instantiate generic types correctly across checker contexts.
+            self.try_insert_def_in_type_env(def_id, resolved);
         }
         Some(resolved)
     }

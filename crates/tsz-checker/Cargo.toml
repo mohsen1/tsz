@@ -1465,9 +1465,5 @@ path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 
-[[test]]
-name = "cross_file_class_instance_type_display_tests"
-path = "tests/cross_file_class_instance_type_display_tests.rs"
-
 [lints]
 workspace = true

@@ -2591,21 +2591,6 @@ impl<'a> CheckerState<'a> {
                             env.insert_class_instance_type(def_id, *instance_type);
                         }
                     }
-                    // Issue #8720 fix: also publish the instance type into the
-                    // shared `DefinitionStore` so cross-file consumers can
-                    // resolve `Lazy(class_def_id)` in TYPE position without
-                    // their local `class_instance_types` cache being warm. The
-                    // `body` slot still holds the constructor TypeId
-                    // (write-through from `insert_def` above) for value-
-                    // position lookups (`typeof C`, bare `C` value
-                    // references); the shared `class_instance_types` slot is
-                    // what cross-file resolvers consult before falling back to
-                    // `body`.
-                    if let Some(def_id) = def_id {
-                        self.ctx
-                            .definition_store
-                            .register_class_instance_type(def_id, *instance_type);
-                    }
                     // Register class extends relationship for nominal instanceof narrowing.
                     // Look up the parent class via InheritanceGraph (SymbolId-based) and
                     // convert to DefId so the solver can walk the extends chain.
@@ -2691,15 +2676,6 @@ impl<'a> CheckerState<'a> {
                         env.insert_def_with_params(def_id, result, type_params);
                     }
                     env.insert_class_instance_type(def_id, *instance_type);
-                    // See the matching comment in the type_env block above:
-                    // publish the instance type into the shared
-                    // `DefinitionStore` so cross-file consumers resolving
-                    // `Lazy(class_def_id)` in TYPE position consult this slot
-                    // before falling back to `body` (which holds the
-                    // constructor for value-position lookups).
-                    self.ctx
-                        .definition_store
-                        .register_class_instance_type(def_id, *instance_type);
                 } else {
                     let lib_params = if type_params.is_empty() {
                         self.ctx.get_def_type_params(def_id)
