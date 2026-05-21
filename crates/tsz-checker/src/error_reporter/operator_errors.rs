@@ -238,13 +238,24 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Under `strictNullChecks`, emit TS18047/TS18048 if `operand_type` contains
-    /// a nullish union member. Shared by the unary `+`, `-`, and `~` arms.
+    /// a nullish union member AND the non-nullish part is arithmetic (number/bigint/enum).
+    ///
+    /// When the non-nullish part is non-arithmetic (e.g. `string | undefined`), tsc
+    /// emits TS2362 for the type mismatch rather than TS18048 for the nullish member.
+    /// This guard mirrors the identical check in the `++`/`--` arm.
     pub(crate) fn check_nullish_unary_operand(&mut self, operand: NodeIndex, operand_type: TypeId) {
-        if self.ctx.strict_null_checks() {
-            let (_, nullish_cause) = self.split_nullish_type(operand_type);
-            if let Some(cause) = nullish_cause {
-                self.emit_nullish_operand_error(operand, cause);
-            }
+        if !self.ctx.strict_null_checks() {
+            return;
+        }
+        let (non_nullish, nullish_cause) = self.split_nullish_type(operand_type);
+        let Some(cause) = nullish_cause else { return };
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
+        let nullish_can_flow_to_arithmetic = non_nullish.is_none_or(|ty| {
+            let evaluated = self.evaluate_type_with_env(ty);
+            evaluator.is_arithmetic_operand(evaluated) || self.is_enum_like_type(ty)
+        });
+        if nullish_can_flow_to_arithmetic {
+            self.emit_nullish_operand_error(operand, cause);
         }
     }
 
