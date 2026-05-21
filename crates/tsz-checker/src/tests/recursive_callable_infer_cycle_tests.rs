@@ -59,7 +59,7 @@ const _ok: string = r;
     assert_no_ts2322(&source, "BoxVal<StringBox> = string");
 }
 
-/// Lifting a StringBox must not crash.
+/// Lifting a `StringBox` must not crash.
 #[test]
 fn simple_box_lift_no_crash() {
     let source = format!(
