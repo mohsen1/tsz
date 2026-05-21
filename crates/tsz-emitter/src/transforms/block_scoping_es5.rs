@@ -183,7 +183,12 @@ impl BlockScopeState {
     /// declaration currently has the same name; otherwise the lowered `var`
     /// would leak out of the block.
     pub fn register_block_scoped_class(&mut self, original_name: &str) -> String {
-        if self.function_scope_marks.last().copied().unwrap_or(false) {
+        // An empty scope stack means there is no enclosing block at all — the
+        // class sits at module/script top level (e.g. inside a System/AMD/UMD
+        // wrapper that never opened a block scope). At top level the lowered
+        // `var` *is* the binding, so it must reuse the name rather than getting
+        // a synthetic `Name_1` that would diverge from the hoisted declaration.
+        if self.function_scope_marks.last().copied().unwrap_or(true) {
             return self.register_variable(original_name);
         }
 
