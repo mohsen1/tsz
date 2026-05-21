@@ -2308,7 +2308,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(crate) fn parse_jsdoc_return_type_text(jsdoc: &str) -> Option<String> {
         for raw_line in jsdoc.lines() {
-            let line = raw_line.trim_start_matches('*').trim();
+            let line = raw_line.trim().trim_start_matches('*').trim();
             let Some(rest) = line
                 .strip_prefix("@returns")
                 .or_else(|| line.strip_prefix("@return"))
@@ -2687,14 +2687,92 @@ impl<'a> DeclarationEmitter<'a> {
             .unwrap_or_default()
     }
 
-    pub(crate) fn jsdoc_template_params_for_pos(&self, pos: u32) -> Vec<String> {
-        for jsdoc in self.leading_jsdoc_comment_chain_for_pos(pos) {
-            let params = Self::parse_jsdoc_template_params(&jsdoc);
-            if !params.is_empty() {
-                return params;
+    pub(in crate::declaration_emitter) fn jsdoc_template_params_for_class_declaration(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
+        let mut params = Vec::new();
+        let mut seen = FxHashSet::default();
+        for jsdoc in self.jsdoc_chain_for_class_declaration(class_idx, class) {
+            for param in Self::parse_jsdoc_template_params(&jsdoc) {
+                let key = Self::jsdoc_template_param_name_key(&param).to_string();
+                if seen.insert(key) {
+                    params.push(param);
+                }
             }
         }
-        Vec::new()
+        params
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_template_param_name(param: &str) -> &str {
+        Self::jsdoc_template_param_name_key(param)
+    }
+
+    pub(in crate::declaration_emitter) fn jsdoc_extends_type_for_class_declaration(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Option<String> {
+        for jsdoc in self.jsdoc_chain_for_class_declaration(class_idx, class) {
+            for raw_line in jsdoc.lines() {
+                let line = raw_line.trim().trim_start_matches('*').trim();
+                let rest = line
+                    .strip_prefix("@extends")
+                    .or_else(|| line.strip_prefix("@augments"));
+                let Some(rest) = rest else {
+                    continue;
+                };
+                let rest = Self::trim_jsdoc_same_line_following_tags(rest.trim_start());
+                let Some((type_expr, _)) = Self::parse_jsdoc_braced_type_and_name(rest) else {
+                    continue;
+                };
+                let type_text = Self::normalize_jsdoc_type_text(type_expr, false);
+                return Some(self.jsdoc_type_text_for_declaration_emit(&type_text));
+            }
+        }
+        None
+    }
+
+    fn jsdoc_chain_for_class_declaration(
+        &self,
+        class_idx: NodeIndex,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> Vec<String> {
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return Vec::new();
+        };
+        let jsdoc_template_anchor = class
+            .modifiers
+            .as_ref()
+            .and_then(|mods| mods.nodes.first().copied())
+            .and_then(|mod_idx| self.arena.get(mod_idx))
+            .map(|mod_node| mod_node.pos)
+            .unwrap_or(class_node.pos);
+
+        let mut chain = self.current_statement_jsdoc_chain.clone();
+        if chain.is_empty() {
+            chain = self.leading_jsdoc_comment_chain_for_pos(jsdoc_template_anchor);
+        }
+        if chain.is_empty() {
+            chain = self.leading_jsdoc_comment_chain_for_pos(class_node.pos);
+        }
+        if chain.is_empty() {
+            if let Some(name_node) = self.arena.get(class.name) {
+                chain = self.leading_jsdoc_comment_chain_for_pos(name_node.pos);
+            }
+        }
+        if chain.is_empty()
+            && let Some(jsdoc) = self.function_like_jsdoc_for_node(class_idx)
+        {
+            chain.push(jsdoc);
+        }
+        if chain.is_empty()
+            && let Some(jsdoc) = self.function_like_jsdoc_for_node(class.name)
+        {
+            chain.push(jsdoc);
+        }
+        chain
     }
 
     pub(crate) fn jsdoc_has_readonly_for_node(&self, idx: NodeIndex) -> bool {
@@ -2736,7 +2814,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn jsdoc_has_function_signature_tags(jsdoc: &str) -> bool {
         jsdoc.lines().any(|raw_line| {
-            let line = raw_line.trim_start_matches('*').trim();
+            let line = raw_line.trim().trim_start_matches('*').trim();
             line.starts_with("@param")
                 || line.starts_with("@returns")
                 || line.starts_with("@return")

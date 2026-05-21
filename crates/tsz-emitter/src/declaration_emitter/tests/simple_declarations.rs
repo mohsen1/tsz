@@ -6430,8 +6430,8 @@ export class Box {
     );
 
     assert!(
-        output.contains("export class Box {"),
-        "Expected the JS class declaration to be preserved: {output}"
+        output.contains("export class Box<T> {"),
+        "Expected JSDoc class templates to surface in declaration emit: {output}"
     );
     assert!(
         output.contains("static readonly kind: string;"),
@@ -6465,6 +6465,173 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_template_parameters_drive_new_expression_return() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template Item, Meta
+ */
+export class Store {
+    /**
+     * @param {Item} item
+     * @param {Meta} meta
+     */
+    constructor(item, meta) {}
+
+    /**
+     * @template Value, Label
+     * @param {Value} value
+     * @param {Label} label
+     */
+    static make(value, label) { return new Store(value, label); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Store<Item, Meta> {"),
+        "Expected class-level JSDoc templates to emit as type parameters: {output}"
+    );
+    assert!(
+        output.contains(
+            "static make<Value, Label>(value: Value, label: Label): Store<Value, Label>;"
+        ),
+        "Expected constructor parameter JSDoc to infer returned class type arguments: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_extends_preserves_type_arguments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template Payload
+ */
+export class Base {
+    /** @param {Payload} value */
+    constructor(value) { this.value = value; }
+}
+
+/**
+ * @template Entry
+ * @extends {Base<Entry>}
+ */
+export class Derived extends Base {
+    /** @param {Entry} value */
+    constructor(value) { super(value); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Derived<Entry> extends Base<Entry> {"),
+        "Expected JSDoc @extends type arguments to be preserved in class heritage: {output}"
+    );
+}
+
+#[test]
+fn test_js_local_class_named_exports_emit_at_export_surface() {
+    let output = emit_js_dts(
+        r#"
+export class Before {}
+class Plain {}
+export { Plain };
+class Hidden {}
+export { Hidden as Public };
+export class After {}
+"#,
+    );
+
+    let before_pos = output
+        .find("export class Before")
+        .expect("Expected exported class before local export-list classes");
+    let after_pos = output
+        .find("export class After")
+        .expect("Expected later exported class to stay in source order");
+    let plain_pos = output
+        .find("export class Plain")
+        .expect("Expected plain local class export to emit at final export surface");
+    let hidden_pos = output
+        .find("declare class Hidden")
+        .expect("Expected aliased local class export dependency");
+    let alias_pos = output
+        .find("export { Hidden as Public };")
+        .expect("Expected aliased local class export line");
+
+    assert!(
+        before_pos < after_pos
+            && after_pos < plain_pos
+            && plain_pos < hidden_pos
+            && hidden_pos < alias_pos,
+        "Expected local class export-list declarations to be scheduled with final export surface: {output}"
+    );
+    assert!(
+        !output.contains("export { Plain };"),
+        "Expected plain local class export list to fold into class declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_extending_any_value_uses_synthetic_base_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+var base = /** @type {*} */(null);
+export class Derived extends base {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const Derived_base: any;"),
+        "Expected any-valued JS base expression to get a synthetic class extends alias: {output}"
+    );
+    assert!(
+        output.contains("export class Derived extends Derived_base {"),
+        "Expected class to extend the synthetic base alias instead of raw value name: {output}"
+    );
+    assert!(
+        output.contains("[x: string]: any;"),
+        "Expected any base alias to contribute tsc's broad instance index signature: {output}"
+    );
+    assert!(
+        !output.contains("extends base"),
+        "Did not expect raw JS value base to leak into declaration heritage: {output}"
+    );
+    assert!(
+        !output.contains("declare const base:"),
+        "Expected the synthetic base alias to replace the private raw base dependency: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_extending_lib_constructor_keeps_nameable_heritage() {
+    let output = emit_js_dts_with_usage_analysis_and_lib(
+        r#"
+export class FancyError extends Error {
+    constructor(status) {
+        super(String(status));
+    }
+}
+"#,
+        r#"
+interface Error {}
+interface ErrorConstructor {
+    new(message?: string): Error;
+}
+declare var Error: ErrorConstructor;
+"#,
+    );
+
+    assert!(
+        output.contains("export class FancyError extends Error {"),
+        "Expected lib constructor heritage to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("FancyError_base"),
+        "Did not expect a synthetic base alias for lib constructors: {output}"
     );
 }
 

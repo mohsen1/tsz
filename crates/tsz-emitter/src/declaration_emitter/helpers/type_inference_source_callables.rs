@@ -1,6 +1,7 @@
 //! Source callable and new-expression helpers for declaration type inference.
 
 use super::super::DeclarationEmitter;
+use rustc_hash::FxHashMap;
 use tsz_binder::{SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -484,6 +485,11 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return Some(inferred);
             }
+            if let Some(inferred) =
+                self.jsdoc_generic_class_new_expression_type_text(expr_idx, new_expr, &base_text)
+            {
+                return Some(inferred);
+            }
             if let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) {
                 let inferred = self.print_type_id_for_inferred_declaration(type_id);
                 if inferred.starts_with(&format!("{base_text}<")) {
@@ -609,6 +615,141 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(format!("{base_text}<{}>", inferred_args.join(", ")));
         }
 
+        None
+    }
+
+    fn jsdoc_generic_class_new_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        new_expr: &tsz_parser::parser::node::CallExprData,
+        base_text: &str,
+    ) -> Option<String> {
+        let args = new_expr.arguments.as_ref()?;
+        if args.nodes.is_empty() {
+            return None;
+        }
+        let ident = self.get_identifier_text(new_expr.expression)?;
+        let mut class_declarations = Vec::new();
+        if let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &ident)
+            && let Some(symbol) = self.binder.and_then(|binder| binder.symbols.get(sym_id))
+            && symbol.flags & symbol_flags::CLASS != 0
+        {
+            class_declarations.extend(symbol.declarations.iter().copied());
+        }
+        if class_declarations.is_empty()
+            && let Some(class_idx) = self.js_new_expression_class_declaration(expr_idx)
+        {
+            class_declarations.push(class_idx);
+        }
+        if class_declarations.is_empty() {
+            class_declarations.extend(self.arena.nodes.iter().enumerate().filter_map(
+                |(idx, node)| {
+                    self.arena.get_class(node).and_then(|class| {
+                        (self.get_identifier_text(class.name).as_deref() == Some(ident.as_str()))
+                            .then_some(NodeIndex(idx as u32))
+                    })
+                },
+            ));
+        }
+
+        for decl_idx in class_declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            let class_data = self.arena.get_class(decl_node)?;
+            let jsdoc_type_params =
+                self.jsdoc_template_params_for_class_declaration(decl_idx, class_data);
+            if jsdoc_type_params.is_empty() {
+                continue;
+            }
+
+            let type_param_names = jsdoc_type_params
+                .iter()
+                .map(|param| Self::jsdoc_template_param_name(param).to_string())
+                .collect::<Vec<_>>();
+            let mut inferred = FxHashMap::default();
+            let ctor_idx = class_data
+                .members
+                .nodes
+                .iter()
+                .copied()
+                .find(|&member_idx| {
+                    self.arena
+                        .get(member_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::CONSTRUCTOR)
+                })?;
+            let ctor_node = self.arena.get(ctor_idx)?;
+            let ctor = self.arena.get_constructor(ctor_node)?;
+            for (position, (&param_idx, &arg_idx)) in ctor
+                .parameters
+                .nodes
+                .iter()
+                .zip(args.nodes.iter())
+                .enumerate()
+            {
+                let Some(param_type) = self
+                    .jsdoc_param_decl_for_parameter(param_idx, position)
+                    .map(|decl| self.jsdoc_type_text_for_declaration_emit(&decl.type_text))
+                    .or_else(|| self.relaxed_jsdoc_param_type_for_parameter(param_idx, position))
+                else {
+                    continue;
+                };
+                let Some(param_name) = Self::simple_type_reference_name(&param_type) else {
+                    continue;
+                };
+                if !type_param_names.iter().any(|name| name == &param_name) {
+                    continue;
+                }
+                let Some(arg_type) = self
+                    .preferred_expression_type_text(arg_idx)
+                    .filter(|text| !text.is_empty() && text != "any")
+                    .or_else(|| self.enclosing_method_parameter_jsdoc_type_text(arg_idx))
+                    .filter(|text| !text.is_empty() && text != "any")
+                    .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
+                    .filter(|text| !text.is_empty() && text != "any")
+                else {
+                    continue;
+                };
+                inferred.entry(param_name).or_insert(arg_type);
+            }
+
+            let args = type_param_names
+                .iter()
+                .map(|name| inferred.get(name).cloned())
+                .collect::<Option<Vec<_>>>()?;
+            return Some(format!("{base_text}<{}>", args.join(", ")));
+        }
+
+        None
+    }
+
+    fn relaxed_jsdoc_param_type_for_parameter(
+        &self,
+        param_idx: NodeIndex,
+        position: usize,
+    ) -> Option<String> {
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let jsdoc = self.nearest_jsdoc_comment_for_pos_relaxed(param_node.pos)?;
+        let params = Self::parse_jsdoc_param_decls(&jsdoc);
+        let found = if let Some(name) = self.get_identifier_text(param.name) {
+            params.into_iter().find(|decl| decl.name == name)
+        } else {
+            params.into_iter().nth(position)
+        }?;
+        Some(self.jsdoc_type_text_for_declaration_emit(&found.type_text))
+    }
+
+    fn enclosing_method_parameter_jsdoc_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        let arg_name = self.get_identifier_text(arg_idx)?;
+        let method = self.enclosing_method_for_node(arg_idx)?;
+        for (position, &param_idx) in method.parameters.nodes.iter().enumerate() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self.get_identifier_text(param.name).as_deref() != Some(arg_name.as_str()) {
+                continue;
+            }
+            let jsdoc_param = self.jsdoc_param_decl_for_parameter(param_idx, position)?;
+            return Some(self.jsdoc_type_text_for_declaration_emit(&jsdoc_param.type_text));
+        }
         None
     }
 
