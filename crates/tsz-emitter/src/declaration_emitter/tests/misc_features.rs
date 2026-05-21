@@ -2003,6 +2003,8 @@ const zero = 0 || "";
 const one = 1 || "";
 const zeroBig = 0n || "";
 const oneBig = 1n || "";
+const falsyUnion = (0 as 0 | false) || "fallback";
+const nullishFalsy = (null as null | undefined | "") || "fallback";
 "#,
     );
 
@@ -2021,6 +2023,14 @@ const oneBig = 1n || "";
     assert!(
         output.contains("declare const oneBig: 1n;"),
         "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
+    );
+    assert!(
+        output.contains("declare const falsyUnion: \"fallback\";"),
+        "Expected all-falsy unions to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const nullishFalsy: \"fallback\";"),
+        "Expected nullish/falsy unions to expose the fallback literal: {output}"
     );
 }
 
