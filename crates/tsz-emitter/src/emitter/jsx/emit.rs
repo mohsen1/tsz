@@ -391,7 +391,7 @@ impl<'a> Printer<'a> {
             let gap_end = std::cmp::min(comment_pos as usize, bytes.len());
             if bytes[gap_start..gap_end]
                 .iter()
-                .any(|&b| b == b'\n' || b == b'\r')
+                .any(|&b| !matches!(b, b' ' | b'\t'))
             {
                 break;
             }

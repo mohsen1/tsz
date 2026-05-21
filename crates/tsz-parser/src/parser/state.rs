@@ -261,6 +261,14 @@ pub struct ParserState {
     /// A JSX closing tag had trailing attributes (`</div {...props}>`). The
     /// tail is recovered as source-level syntax after the JSX expression.
     pub(crate) recover_jsx_closing_tag_trailing_tail: bool,
+    /// A JSX closing tag had a second namespace separator (`</a:b:c>`). The
+    /// parsed closing name stops at `a:b`; the `:c` tail is recovered by the
+    /// surrounding expression/declaration parser.
+    pub(crate) recover_jsx_closing_tag_extra_namespace_tail: bool,
+    /// A TSX expression started with an invalid namespace head (`<:a`). The `<`
+    /// is recovered as the initializer expression and the `:a` tail belongs to
+    /// declaration/expression recovery.
+    pub(crate) recover_jsx_invalid_namespace_head_tail: bool,
     /// Set when `parse_namespace_import` encountered a reserved word that also
     /// starts a statement (e.g. `while` in `import * as while from "foo"`).
     /// Signals `parse_import_declaration_with_modifiers` to bail out of import
@@ -369,6 +377,8 @@ impl ParserState {
             recover_jsx_missing_attr_initializer_head: false,
             suppress_next_jsx_head_missing_semicolon: false,
             recover_jsx_closing_tag_trailing_tail: false,
+            recover_jsx_closing_tag_extra_namespace_tail: false,
+            recover_jsx_invalid_namespace_head_tail: false,
             namespace_import_yielded_to_statement: false,
         }
     }
@@ -418,6 +428,8 @@ impl ParserState {
         self.recover_jsx_missing_attr_initializer_head = false;
         self.suppress_next_jsx_head_missing_semicolon = false;
         self.recover_jsx_closing_tag_trailing_tail = false;
+        self.recover_jsx_closing_tag_extra_namespace_tail = false;
+        self.recover_jsx_invalid_namespace_head_tail = false;
         self.namespace_import_yielded_to_statement = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.

@@ -796,6 +796,20 @@ const b = <video data-\u0076ideo />;"#;
     }
 
     #[test]
+    fn jsx_classic_variable_statement_trailing_comment_stays_after_semicolon() {
+        let source = "const x = <ns:Upcase />; // kept";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("const x = React.createElement(\"ns:Upcase\", null); // kept"),
+            "Classic JSX transform should leave statement comments after the emitted semicolon.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("React.createElement(\"ns:Upcase\", null) // kept"),
+            "Classic JSX transform must not attach a statement comment before the semicolon.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_classic_self_closing_trailing_comment_ignores_attribute_string_slash_gt() {
         let source = "const x = (\n  <Item label=\"/>\"\n    value={1} /> // kept\n);";
         let output = emit_jsx_react(source);

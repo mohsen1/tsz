@@ -2737,6 +2737,8 @@ impl ParserState {
         self.suppress_next_jsx_missing_brace_at_semicolon = false;
         self.recover_jsx_missing_attr_initializer_head = false;
         self.recover_jsx_closing_tag_trailing_tail = false;
+        self.recover_jsx_closing_tag_extra_namespace_tail = false;
+        self.recover_jsx_invalid_namespace_head_tail = false;
         self.suppress_next_jsx_head_missing_semicolon = false;
 
         self.arena.add_expr_statement(

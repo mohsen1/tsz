@@ -2828,8 +2828,9 @@ impl ParserState {
                         }
                         // Match tsc's `"<:a ...>"` TSX recovery: `<` is not a JSX
                         // opener unless the lookahead token is identifier/keyword
-                        // or `>`. Consume the invalid namespace head and let the
-                        // following identifier surface as the missing-comma site.
+                        // or `>`. Consume the invalid `<` and let the following
+                        // namespace tail surface in declaration-list recovery.
+                        let invalid_head_start = self.token_pos();
                         self.next_token();
                         if next_token_is_dot && self.is_token(SyntaxKind::DotToken) {
                             self.parse_error_at_current_token(
@@ -2842,16 +2843,19 @@ impl ParserState {
                                 "Expression expected.",
                                 diagnostic_codes::EXPRESSION_EXPECTED,
                             );
-                            self.next_token();
-                            if self.is_identifier_or_keyword() {
-                                self.parse_identifier_name();
-                            }
-                            if self.is_identifier_or_keyword() {
-                                self.parse_error_at_current_token(
-                                    "',' expected.",
-                                    diagnostic_codes::EXPECTED,
-                                );
-                            }
+                            self.recover_jsx_invalid_namespace_head_tail = true;
+                            let missing_left = self.create_missing_expression();
+                            let missing_right = self.create_missing_expression();
+                            return self.arena.add_binary_expr(
+                                syntax_kind_ext::BINARY_EXPRESSION,
+                                invalid_head_start,
+                                self.token_pos(),
+                                BinaryExprData {
+                                    left: missing_left,
+                                    operator_token: SyntaxKind::LessThanToken as u16,
+                                    right: missing_right,
+                                },
+                            );
                         }
                         NodeIndex::NONE
                     }

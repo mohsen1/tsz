@@ -2095,31 +2095,25 @@ impl ParserState {
         // In JSX mode, </ is scanned as a single LessThanSlashToken
         self.parse_expected(SyntaxKind::LessThanSlashToken);
         let tag_name = self.parse_jsx_element_name();
-        let end_pos = self.token_end();
+        let tag_name_end = self
+            .arena
+            .get(tag_name)
+            .map_or(self.token_pos(), |node| node.end);
+        let end_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
+            self.token_end()
+        } else {
+            tag_name_end
+        };
         if self.is_token(SyntaxKind::OpenBraceToken) {
             self.recover_jsx_closing_tag_trailing_tail = true;
         }
         if !self.parse_expected(SyntaxKind::GreaterThanToken) {
             if self.is_token(SyntaxKind::ColonToken) {
-                // Match tsc's malformed namespaced-closing-tag recovery: report
-                // the missing `>` at the stray `:`, then consume the dangling
-                // namespace tail so outer expression recovery resumes at the real
-                // `>`/`;` tokens instead of the extra identifier segment.
-                self.next_token();
-                self.scanner.scan_jsx_identifier();
-                if self.is_identifier_or_keyword() {
-                    self.parse_identifier_name();
-                }
-                let closing_head_has_dot = self
-                    .get_source_text()
-                    .get(start_pos as usize..self.token_pos() as usize)
-                    .is_some_and(|head| head.contains('.'));
-                if !closing_head_has_dot && self.is_token(SyntaxKind::GreaterThanToken) {
-                    self.parse_error_at_current_token(
-                        "',' expected.",
-                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
-                    );
-                }
+                // Match tsc's malformed namespaced-closing-tag recovery: the
+                // closing name stops after the first namespace pair (`</a:b`).
+                // A later separator belongs to the outer malformed syntax, where
+                // declaration/expression recovery can preserve the tail.
+                self.recover_jsx_closing_tag_extra_namespace_tail = true;
             } else if self.is_token(SyntaxKind::DotToken) {
                 // For a malformed namespaced close like `</b:c.x>`, tsc drops
                 // the stray `.` and lets `x >` recover as a following expression.

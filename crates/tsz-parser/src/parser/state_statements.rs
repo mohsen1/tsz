@@ -7,8 +7,8 @@ use super::state::{
 use crate::parser::{
     NodeIndex, NodeList,
     node::{
-        BlockData, FunctionData, IdentifierData, ImportDeclData, LabeledData, QualifiedNameData,
-        SourceFileData, VariableData, VariableDeclarationData,
+        BinaryExprData, BlockData, ExprStatementData, FunctionData, IdentifierData, ImportDeclData,
+        LabeledData, QualifiedNameData, SourceFileData, VariableData, VariableDeclarationData,
     },
     parse_rules::{
         is_identifier_or_contextual_keyword, is_identifier_or_keyword, look_ahead_is,
@@ -2032,6 +2032,28 @@ impl ParserState {
                 if self.is_token(SyntaxKind::ColonToken) {
                     use tsz_common::diagnostics::diagnostic_codes;
 
+                    let recover_invalid_jsx_namespace_head =
+                        self.recover_jsx_invalid_namespace_head_tail;
+                    if self.recover_jsx_closing_tag_extra_namespace_tail
+                        || recover_invalid_jsx_namespace_head
+                    {
+                        let snapshot = self.scanner.save_state();
+                        let current = self.current_token;
+                        self.next_token();
+                        let colon_followed_by_declaration =
+                            self.is_identifier_or_keyword() && !self.is_reserved_word();
+                        self.scanner.restore_state(snapshot);
+                        self.current_token = current;
+
+                        if colon_followed_by_declaration {
+                            self.next_token();
+                            if recover_invalid_jsx_namespace_head {
+                                self.recover_jsx_invalid_namespace_head_tail = false;
+                            }
+                            continue;
+                        }
+                    }
+
                     let use_failed_async_arrow_recovery =
                         self.pending_failed_async_arrow_colon_recovery;
                     self.pending_failed_async_arrow_colon_recovery = false;
@@ -2310,6 +2332,15 @@ impl ParserState {
                     break;
                 }
 
+                if self.recover_jsx_closing_tag_extra_namespace_tail
+                    && self.is_token(SyntaxKind::GreaterThanToken)
+                {
+                    self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+                    self.recover_jsx_closing_namespace_tail_greater_statement();
+                    self.recover_jsx_closing_tag_extra_namespace_tail = false;
+                    break;
+                }
+
                 // No ASI - emit ',' expected for the unexpected token and stop.
                 // Use position-only dedup for normal tokens, not the broader
                 // distance heuristic: tsc still reports adjacent declaration-list
@@ -2562,6 +2593,34 @@ impl ParserState {
                 initializer,
             },
         )
+    }
+
+    fn recover_jsx_closing_namespace_tail_greater_statement(&mut self) {
+        let start_pos = self.token_pos();
+        let left = self.create_missing_expression();
+        self.next_token();
+        let right = self.create_missing_expression();
+        self.parse_error_at_current_token(
+            "Expression expected.",
+            diagnostic_codes::EXPRESSION_EXPECTED,
+        );
+        let expr = self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            start_pos,
+            self.token_pos(),
+            BinaryExprData {
+                left,
+                operator_token: SyntaxKind::GreaterThanToken as u16,
+                right,
+            },
+        );
+        let stmt = self.arena.add_expr_statement(
+            syntax_kind_ext::EXPRESSION_STATEMENT,
+            start_pos,
+            self.token_full_start(),
+            ExprStatementData { expression: expr },
+        );
+        self.pending_recovered_expression_statements.push(stmt);
     }
 
     fn parse_variable_declaration_with_flags_pre_checks(&mut self, flags: u16) {

@@ -1,3 +1,4 @@
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source_named;
 use tsz_common::diagnostics::diagnostic_codes;
 
@@ -125,6 +126,52 @@ fn jsx_tag_cannot_start_with_namespace_colon_in_expression_context() {
             ),
         ],
         "expected tsc-style recovery when JSX tag starts with ':', got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_tag_starting_with_namespace_colon_preserves_declaration_tail() {
+    let source = "var begin = <:a attr={\"value\"} />;\n";
+    let (parser, root) = parse_source_named("test.tsx", source);
+    let source_file = parser.arena.get_source_file_at(root).expect("source file");
+    let stmt = parser
+        .arena
+        .get(source_file.statements.nodes[0])
+        .expect("variable statement");
+    assert_eq!(stmt.kind, syntax_kind_ext::VARIABLE_STATEMENT);
+    let var_stmt = parser.arena.get_variable(stmt).expect("variable data");
+    let decl_list_node = parser
+        .arena
+        .get(var_stmt.declarations.nodes[0])
+        .expect("declaration list");
+    let decl_list = parser
+        .arena
+        .get_variable(decl_list_node)
+        .expect("declaration-list data");
+
+    let names: Vec<_> = decl_list
+        .declarations
+        .nodes
+        .iter()
+        .map(|&decl_idx| {
+            let decl_node = parser.arena.get(decl_idx).expect("declaration node");
+            let decl = parser
+                .arena
+                .get_variable_declaration(decl_node)
+                .expect("declaration data");
+            parser
+                .arena
+                .get(decl.name)
+                .and_then(|name| parser.arena.get_identifier(name))
+                .map(|ident| ident.escaped_text.clone())
+                .expect("identifier name")
+        })
+        .collect();
+
+    assert_eq!(
+        names,
+        vec!["begin", "a", "attr"],
+        "invalid JSX namespace head should leave declaration-list tail intact"
     );
 }
 
