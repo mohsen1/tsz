@@ -625,24 +625,6 @@ fn probe_two_param_only_u_returns_object_preserves_non_fresh() {
         &func,
         &[empty_target, non_fresh_src],
     );
-    eprintln!(
-        "U-only result: {result:?} data: {:?}",
-        interner.lookup(result)
-    );
-    if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
-        interner.lookup(result)
-    {
-        let shape = interner.object_shape(shape_id);
-        eprintln!("U-only result shape flags: {:?}", shape.flags);
-        for prop in &shape.properties {
-            eprintln!(
-                "  prop {:?} type {:?} data {:?}",
-                prop.name,
-                prop.type_id,
-                interner.lookup(prop.type_id)
-            );
-        }
-    }
     assert_eq!(
         result,
         non_fresh_src,
@@ -735,11 +717,6 @@ fn probe_merge_t_u_call_preserves_non_fresh_object_literal_property() {
             .map(|p| p.type_id),
         _ => None,
     };
-    eprintln!("merge<T,U> result data: {:?}", interner.lookup(result));
-    eprintln!(
-        "merge<T,U> prop_a_type: {prop_a_type:?} (one literal = {one:?}, NUMBER = {:?})",
-        TypeId::NUMBER
-    );
     assert_eq!(
         prop_a_type,
         Some(one),
@@ -780,10 +757,6 @@ fn probe_infer_u_from_non_fresh_object_literal_property() {
     let var = ctx.find_type_param(u_name).unwrap();
     let result = ctx.resolve_with_constraints(var).unwrap();
 
-    eprintln!("Result: {result:?}");
-    eprintln!("Result data: {:?}", interner.lookup(result));
-    eprintln!("Original: {non_fresh_obj:?}");
-    eprintln!("Original data: {:?}", interner.lookup(non_fresh_obj));
     assert_eq!(
         result, non_fresh_obj,
         "Non-fresh {{ a: 1 }} object should be preserved through inference, not widened"
