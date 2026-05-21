@@ -62,7 +62,7 @@ impl<'a> CheckerState<'a> {
             let Some(actual) = arg_elements.get(consumed) else {
                 break;
             };
-            if !self.is_assignable_to_with_env(actual.type_id, fixed.type_id) {
+            if !self.diagnostic_relation_boolean_guard_with_env(actual.type_id, fixed.type_id) {
                 break;
             }
             consumed += 1;
