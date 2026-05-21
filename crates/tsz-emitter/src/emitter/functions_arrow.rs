@@ -22,8 +22,7 @@ enum NativeArrowParamPrologueEntry {
 
 #[derive(Clone, Copy)]
 struct AsyncArrowGeneratorHoistStart {
-    byte_offset: usize,
-    line_no: u32,
+    anchor: super::hoist_anchor::HoistAnchor,
     assignment_start: usize,
     for_of_start: usize,
     value_start: usize,
@@ -1560,8 +1559,7 @@ impl<'a> Printer<'a> {
 
     const fn begin_async_arrow_generator_hoists(&self) -> AsyncArrowGeneratorHoistStart {
         AsyncArrowGeneratorHoistStart {
-            byte_offset: self.writer.len(),
-            line_no: self.writer.current_line(),
+            anchor: self.capture_hoist_anchor(),
             assignment_start: self.hoisted_assignment_temps.len(),
             for_of_start: self.hoisted_for_of_temps.len(),
             value_start: self.hoisted_assignment_value_temps.len(),
@@ -1569,6 +1567,8 @@ impl<'a> Printer<'a> {
     }
 
     fn insert_async_arrow_generator_hoists(&mut self, start: AsyncArrowGeneratorHoistStart) {
+        let indent = self.writer.indent_string_at(start.anchor.indent_level);
+
         let mut ref_vars = Vec::new();
         ref_vars.extend(
             self.hoisted_assignment_temps
@@ -1576,10 +1576,9 @@ impl<'a> Printer<'a> {
         );
         ref_vars.extend(self.hoisted_for_of_temps.drain(start.for_of_start..));
         if !ref_vars.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
             let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
             self.writer
-                .insert_line_at(start.byte_offset, start.line_no, &var_decl);
+                .insert_line_at(start.anchor.byte_offset, start.anchor.line_no, &var_decl);
         }
 
         if !self.hoisted_assignment_value_temps[start.value_start..].is_empty() {
@@ -1587,10 +1586,9 @@ impl<'a> Printer<'a> {
                 .hoisted_assignment_value_temps
                 .drain(start.value_start..)
                 .collect::<Vec<_>>();
-            let indent = " ".repeat(self.writer.indent_width() as usize);
             let var_decl = format!("{}var {};", indent, value_vars.join(", "));
             self.writer
-                .insert_line_at(start.byte_offset, start.line_no, &var_decl);
+                .insert_line_at(start.anchor.byte_offset, start.anchor.line_no, &var_decl);
         }
     }
 

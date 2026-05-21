@@ -414,8 +414,7 @@ impl<'a> Printer<'a> {
         self.skip_block_opening_line_comments(block_node, block);
         self.emit_pending_new_target_capture();
         self.emit_param_prologue(transforms);
-        let hoisted_var_byte_offset =
-            is_function_body_block.then_some((self.writer.len(), self.writer.current_line()));
+        let hoist_anchor = is_function_body_block.then(|| self.capture_hoist_anchor());
 
         for &stmt_idx in &block.statements.nodes {
             let before_len = self.writer.len();
@@ -426,8 +425,8 @@ impl<'a> Printer<'a> {
         }
 
         self.ctx.block_scope_state.exit_scope();
-        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        if let Some(anchor) = hoist_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
         }
         self.decrease_indent();
         self.write("}");

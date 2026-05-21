@@ -462,8 +462,7 @@ impl<'a> Printer<'a> {
         self.write(") {");
         self.write_line();
         self.increase_indent();
-        let block_scoped_temp_byte_offset = self.writer.len();
-        let block_scoped_temp_line = self.writer.current_line();
+        let block_scoped_temp_anchor = self.capture_hoist_anchor();
 
         // Emit the body statements inside the IIFE
         self.ctx.block_scope_state.enter_function_scope();
@@ -486,7 +485,9 @@ impl<'a> Printer<'a> {
         self.ctx.block_scope_state.exit_scope();
 
         if !self.block_scoped_private_temps.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self
+                .writer
+                .indent_string_at(block_scoped_temp_anchor.indent_level);
             let temp_decls = self
                 .block_scoped_private_temps
                 .iter()
@@ -494,8 +495,8 @@ impl<'a> Printer<'a> {
                 .collect::<Vec<_>>()
                 .join(", ");
             self.writer.insert_line_at(
-                block_scoped_temp_byte_offset,
-                block_scoped_temp_line,
+                block_scoped_temp_anchor.byte_offset,
+                block_scoped_temp_anchor.line_no,
                 &format!("{indent}var {temp_decls};"),
             );
             self.block_scoped_private_temps.clear();
