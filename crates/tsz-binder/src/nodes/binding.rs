@@ -769,6 +769,8 @@ impl BinderState {
                         self.bind_expression(arena, loop_data.condition);
 
                         let pre_condition_flow = self.current_flow;
+                        let condition_is_syntactically_true =
+                            Self::is_syntactically_true_condition(arena, loop_data.condition);
                         let true_flow = self.create_flow_condition(
                             flow_flags::TRUE_CONDITION,
                             pre_condition_flow,
@@ -776,17 +778,21 @@ impl BinderState {
                         );
                         self.add_antecedent(loop_label, true_flow);
 
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        self.add_antecedent(post_loop, pre_condition_flow);
-                        self.add_antecedent(post_loop, false_flow);
+                        if !condition_is_syntactically_true {
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                pre_condition_flow,
+                                loop_data.condition,
+                            );
+                            self.add_antecedent(post_loop, pre_condition_flow);
+                            self.add_antecedent(post_loop, false_flow);
+                        }
                     } else {
                         self.bind_expression(arena, loop_data.condition);
 
                         let pre_condition_flow = self.current_flow;
+                        let condition_is_syntactically_true =
+                            Self::is_syntactically_true_condition(arena, loop_data.condition);
                         let true_flow = self.create_flow_condition(
                             flow_flags::TRUE_CONDITION,
                             pre_condition_flow,
@@ -796,14 +802,16 @@ impl BinderState {
                         self.bind_node(arena, loop_data.statement);
                         self.add_antecedent(loop_label, self.current_flow);
 
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
                         // FIX: Don't add pre_loop_flow as antecedent to merge_label
                         // The exit path must go through false_flow to preserve narrowing
-                        self.add_antecedent(post_loop, false_flow);
+                        if !condition_is_syntactically_true {
+                            let false_flow = self.create_flow_condition(
+                                flow_flags::FALSE_CONDITION,
+                                pre_condition_flow,
+                                loop_data.condition,
+                            );
+                            self.add_antecedent(post_loop, false_flow);
+                        }
                     }
 
                     self.break_targets.pop();
@@ -1022,6 +1030,24 @@ impl BinderState {
                 self.bind_node_by_node_kind_tail(arena, node, idx);
             }
         }
+    }
+
+    fn is_syntactically_true_condition(arena: &NodeArena, condition: NodeIndex) -> bool {
+        let Some(node) = arena.get(condition) else {
+            return false;
+        };
+
+        if node.kind == SyntaxKind::TrueKeyword as u16 {
+            return true;
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(parenthesized) = arena.get_parenthesized(node)
+        {
+            return Self::is_syntactically_true_condition(arena, parenthesized.expression);
+        }
+
+        false
     }
 
     #[inline]
