@@ -330,6 +330,24 @@ impl<'a> DeclarationEmitter<'a> {
         self.jsdoc_name_like_type_expr_for_pos(node.pos)
     }
 
+    pub(in crate::declaration_emitter) fn jsdoc_preserves_js_var_keyword<I>(
+        &self,
+        stmt_pos: u32,
+        decls: I,
+    ) -> bool
+    where
+        I: IntoIterator<Item = (NodeIndex, NodeIndex)>,
+    {
+        !self
+            .leading_jsdoc_comment_chain_for_pos(stmt_pos)
+            .is_empty()
+            || self.jsdoc_name_like_type_expr_for_pos(stmt_pos).is_some()
+            || decls.into_iter().any(|(decl_idx, decl_name)| {
+                self.jsdoc_name_like_type_expr_for_node(decl_idx).is_some()
+                    || self.jsdoc_name_like_type_expr_for_node(decl_name).is_some()
+            })
+    }
+
     pub(in crate::declaration_emitter) fn leading_jsdoc_comment_chain_for_pos(
         &self,
         pos: u32,
