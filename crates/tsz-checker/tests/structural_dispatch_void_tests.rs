@@ -18,7 +18,7 @@
 //! An `ERROR` return propagates through assignability checks and produces
 //! "uncoded diagnostics" — diagnostics without a standard TS error code.
 //!
-//! Adjacent-case coverage (per CLAUDE.md §25/§26):
+//! Adjacent-case coverage (per `CLAUDE.md` §25/§26):
 //! - import declaration node family: `import { X } from '...'`
 //! - export declaration node family: `export { X }`
 //! - parameter declaration: `(x: T) => void`
