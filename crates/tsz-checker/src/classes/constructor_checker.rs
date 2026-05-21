@@ -1238,11 +1238,24 @@ impl<'a> CheckerState<'a> {
         &self,
         var_decl: &tsz_parser::parser::node::VariableDeclarationData,
     ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
-        if var_decl.initializer.is_none() {
+        self.constructor_accessibility_mismatch_for_var_decl_by_nodes(
+            var_decl.name,
+            var_decl.type_annotation,
+            var_decl.initializer,
+        )
+    }
+
+    pub(crate) fn constructor_accessibility_mismatch_for_var_decl_by_nodes(
+        &self,
+        _name: tsz_parser::parser::NodeIndex,
+        annotation: tsz_parser::parser::NodeIndex,
+        initializer: tsz_parser::parser::NodeIndex,
+    ) -> Option<(Option<MemberAccessLevel>, Option<MemberAccessLevel>)> {
+        if initializer.is_none() {
             return None;
         }
-        let source_sym = self.class_symbol_from_expression(var_decl.initializer)?;
-        let target_sym = self.class_symbol_from_type_annotation(var_decl.type_annotation)?;
+        let source_sym = self.class_symbol_from_expression(initializer)?;
+        let target_sym = self.class_symbol_from_type_annotation(annotation)?;
         let source_level = self.class_constructor_access_level(source_sym);
         let target_level = self.class_constructor_access_level(target_sym);
         if source_level.is_none() && target_level.is_none() {

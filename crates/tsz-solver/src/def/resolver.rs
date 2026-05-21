@@ -707,12 +707,21 @@ impl TypeEnvironment {
     }
 
     /// Register a class `DefId`'s instance type.
+    ///
+    /// Writes to the local per-environment cache and, when a shared
+    /// `DefinitionStore` is attached, also publishes the instance type into
+    /// the shared `class_to_instance` slot so cross-file consumers can
+    /// resolve `Lazy(class_def_id)` in type position without their own
+    /// `class_instance_types` cache being warm.
     pub fn insert_class_instance_type(&mut self, def_id: DefId, instance_type: TypeId) {
         self.class_instance_types.insert(def_id.0, instance_type);
         // Reverse map: allow looking up which class a resolved instance type came from.
         // This is critical for instanceof narrowing to identify class types after
         // they've been resolved from Lazy(DefId) to Object types.
         self.instance_type_to_class.insert(instance_type.0, def_id);
+        if let Some(ref store) = self.definition_store {
+            store.register_class_instance_type(def_id, instance_type);
+        }
         self.bump_generation();
     }
 
@@ -1266,6 +1275,86 @@ mod tests {
         assert!(
             env.resolver_generation() > gen_before_mutation,
             "store mutation must still be visible after idempotent reinstall"
+        );
+    }
+
+    /// Issue #8720 infrastructure: `insert_class_instance_type` must write
+    /// through to the shared `DefinitionStore::class_to_instance` slot when a
+    /// store is attached, so any checker can observe the producer's instance
+    /// type cross-file. This is the foundation for a follow-up that wires
+    /// type-position class lookups through a boundary helper.
+    ///
+    /// The full `resolve_lazy` consumer path is intentionally out of scope
+    /// for this PR — generic `resolve_lazy(class_def_id)` is read by both
+    /// type-position and value-position callers, so the shared slot must be
+    /// consulted only behind a position-aware boundary, not in the generic
+    /// resolver.
+    #[test]
+    fn insert_class_instance_type_writes_through_to_shared_store() {
+        let store = Arc::new(DefinitionStore::new());
+        let class_def = DefId(8);
+        let instance_type = TypeId(64);
+
+        let mut env = TypeEnvironment::new();
+        env.set_definition_store(Arc::clone(&store));
+        env.insert_class_instance_type(class_def, instance_type);
+
+        assert_eq!(
+            store.get_class_instance_type(class_def),
+            Some(instance_type)
+        );
+    }
+
+    /// `insert_class_instance_type` on a store-less environment must still
+    /// populate the local cache (used during checker setup before the store
+    /// is wired). The local cache is consulted by `resolve_lazy` today; the
+    /// shared cache write-through is purely additive.
+    #[test]
+    fn insert_class_instance_type_without_store_populates_local_only() {
+        let class_def = DefId(8);
+        let instance_type = TypeId(64);
+        let interner = crate::construction::TypeInterner::new();
+
+        let mut env = TypeEnvironment::new();
+        env.insert_class_instance_type(class_def, instance_type);
+
+        // Local cache is populated.
+        assert_eq!(
+            env.class_instance_types.get(&class_def.0),
+            Some(&instance_type)
+        );
+        // `resolve_lazy` finds it through the local cache.
+        assert_eq!(env.resolve_lazy(class_def, &interner), Some(instance_type));
+    }
+
+    /// The shared slot has independent producer/consumer semantics — a
+    /// consumer that never received an `insert_class_instance_type` call
+    /// (cross-file scenario) can still read the producer's published value
+    /// via `DefinitionStore::get_class_instance_type`. This pins the
+    /// infrastructure invariant the future boundary helper will rely on.
+    #[test]
+    fn shared_class_to_instance_visible_to_independent_environments() {
+        let store = Arc::new(DefinitionStore::new());
+        let class_def = DefId(101);
+        let instance_type = TypeId(202);
+
+        // Producer environment publishes via the write-through path.
+        let mut producer_env = TypeEnvironment::new();
+        producer_env.set_definition_store(Arc::clone(&store));
+        producer_env.insert_class_instance_type(class_def, instance_type);
+
+        // A separate consumer environment with no local entry can still
+        // read the producer's instance type through the shared store.
+        let consumer_env = TypeEnvironment::new();
+        assert_eq!(
+            consumer_env.class_instance_types.get(&class_def.0),
+            None,
+            "consumer's local cache must remain cold"
+        );
+        assert_eq!(
+            store.get_class_instance_type(class_def),
+            Some(instance_type),
+            "shared slot must be visible to any checker holding the store"
         );
     }
 

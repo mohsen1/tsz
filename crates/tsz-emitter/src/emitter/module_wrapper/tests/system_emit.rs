@@ -2163,3 +2163,91 @@ x,y,a1,b1,d1;
         "Named import references should still substitute through the module temp.\nOutput:\n{output}"
     );
 }
+
+/// When a source file contains `/// <amd-module name='X'/>`, the
+/// `System.register` call must include `"X"` as the first argument, matching tsc behavior for
+/// `--module system` with the `amd-module` pragma.
+#[test]
+fn system_amd_module_name_directive_names_the_register_call() {
+    let source = "/// <amd-module name='NamedModule'/>\nexport function foo() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"NamedModule\","),
+        "amd-module directive must name the System.register call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function foo() { }"),
+        "Exported function should appear inside the System wrapper.\nOutput:\n{output}"
+    );
+}
+
+/// The `bundled_module_name` printer option also names the `System.register`
+/// call (used for out-file bundled output). The `amd-module` directive takes
+/// precedence when both are present.
+#[test]
+fn system_bundled_module_name_option_names_the_register_call() {
+    let source = "export function bar() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            bundled_module_name: Some("BundledModule".to_string()),
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"BundledModule\","),
+        "bundled_module_name option must name the System.register call.\nOutput:\n{output}"
+    );
+}
+
+/// When both `/// <amd-module name='X'/>` and `bundled_module_name` are present,
+/// the directive takes precedence (matching tsc behavior for amd-module overriding
+/// the bundled name).
+#[test]
+fn system_amd_module_directive_overrides_bundled_module_name() {
+    let source = "/// <amd-module name='DirectiveName'/>\nexport function baz() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            bundled_module_name: Some("BundledName".to_string()),
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"DirectiveName\","),
+        "amd-module directive should take precedence over bundled_module_name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"BundledName\""),
+        "bundled_module_name should be suppressed when amd-module directive is present.\nOutput:\n{output}"
+    );
+}
