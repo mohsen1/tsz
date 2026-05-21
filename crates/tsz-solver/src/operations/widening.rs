@@ -158,13 +158,45 @@ pub fn widen_argument_type_for_display(
 /// (e.g., `(x: 1 | 2) => void` → `(x: number) => void`) creates a resolved T
 /// that is structurally incompatible with the original arg type under strict
 /// function type checking, causing false TS2322.
+///
+/// Non-fresh object/object-with-index types are returned unchanged, mirroring
+/// tsc's `getWidenedType` which is a no-op for types without the
+/// `RequiresWidening` flag. In tsz that flag is approximated by
+/// `ObjectFlags::FRESH_LITERAL` on the object's shape, which is stripped when
+/// the object is bound to a `const` variable
+/// (`state/variable_checking/core.rs::widen_freshness`) or otherwise marked
+/// non-fresh (`as const`, type assertions, type annotations). Without this
+/// gate the single-type-parameter fast path
+/// (`generic_call::normalization::resolve_trivial_single_type_param_call`)
+/// would deep-widen `{ a: 1 }` → `{ a: number }` for `id<U>(u: U)` calls on
+/// non-fresh sources, contradicting tsc parity (issue #9782) and the slow
+/// path's own `FRESH_LITERAL` gate at `inference/infer_resolve.rs:801`.
 pub fn widen_type_for_inference(
     db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
 ) -> TypeId {
+    if is_non_fresh_object_type(db, type_id) {
+        return type_id;
+    }
     use rustc_hash::FxHashMap;
     let mut cache = FxHashMap::default();
     widen_type_cached(db, type_id, &mut cache, true, false, true, false)
+}
+
+/// Returns true when `type_id` is an object/object-with-index whose shape
+/// lacks the `FRESH_LITERAL` flag. Other type shapes return false so the
+/// caller falls through to its usual widening path.
+fn is_non_fresh_object_type(db: &dyn crate::construction::TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => !db
+            .object_shape(shape_id)
+            .flags
+            .contains(ObjectFlags::FRESH_LITERAL),
+        _ => false,
+    }
 }
 
 /// Display-widen a type for TS2403 (subsequent variable declaration) messages.
@@ -722,6 +754,13 @@ fn widen_type_cached(
 ///
 /// This differs from `widen_type` which recursively widens everything including
 /// union members and direct literals. This function only enters objects/arrays/tuples.
+///
+/// Only fresh object literal shapes (those carrying `ObjectFlags::FRESH_LITERAL`)
+/// have their property types widened. Non-fresh objects — from `const` variable
+/// references whose freshness has already been stripped, from type assertions /
+/// annotations, or from `as const` typing — preserve their literal property types
+/// through inference. This mirrors tsc's `getWidenedType`, which is a no-op for
+/// types without the `RequiresWidening` flag (issue #9782).
 pub(crate) fn widen_object_literal_properties(
     db: &dyn crate::construction::TypeDatabase,
     type_id: TypeId,
@@ -730,9 +769,13 @@ pub(crate) fn widen_object_literal_properties(
         return type_id;
     }
     match db.lookup(type_id) {
-        // Objects: recursively widen mutable property types
+        // Objects: recursively widen mutable property types when the shape itself
+        // is a fresh object literal. Non-fresh shapes pass through unchanged.
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
+            if !shape.flags.contains(ObjectFlags::FRESH_LITERAL) {
+                return type_id;
+            }
             let mut new_props = Vec::with_capacity(shape.properties.len());
             let mut changed = false;
 

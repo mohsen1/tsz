@@ -631,7 +631,11 @@ fn test_widen_type_for_inference_does_not_recurse_into_function() {
 // -------- widen_object_literal_properties (pub(crate)) -----------------------
 
 #[test]
-fn test_widen_object_literal_properties_widens_mutable_props() {
+fn test_widen_object_literal_properties_widens_mutable_props_on_fresh_object() {
+    // Only fresh object literals (those carrying `FRESH_LITERAL`) have their
+    // property types widened during inference. This mirrors tsc's
+    // `getWidenedType`, which is a no-op for types without the
+    // `RequiresWidening` flag. See `widen_object_literal_properties` doc.
     let interner = TypeInterner::new();
     let lit = interner.literal_number(1.0);
     let props = vec![PropertyInfo {
@@ -649,14 +653,57 @@ fn test_widen_object_literal_properties_widens_mutable_props() {
         is_symbol_named: false,
         single_quoted_name: false,
     }];
-    let obj = interner.object(props);
-    let widened = widen_object_literal_properties(&interner, obj);
+    let fresh_obj = interner.object_fresh(props);
+    let widened = widen_object_literal_properties(&interner, fresh_obj);
     match interner.lookup(widened) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = interner.object_shape(shape_id);
             assert_eq!(shape.properties[0].type_id, TypeId::NUMBER);
         }
         other => panic!("Expected widened object, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_widen_object_literal_properties_skips_non_fresh_object() {
+    // Non-fresh objects (e.g., from `const` variable references after
+    // freshness widening, or from `as const` typing) preserve their literal
+    // property types through `widen_object_literal_properties`. Mirrors
+    // tsc's `getWidenedType` no-op on types lacking `RequiresWidening`
+    // (issue #9782).
+    let interner = TypeInterner::new();
+    let lit = interner.literal_number(1.0);
+    let prop_name = interner.intern_string("x");
+    let props = vec![PropertyInfo {
+        name: prop_name,
+        type_id: lit,
+        write_type: lit,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }];
+    let non_fresh_obj = interner.object(props);
+    let widened = widen_object_literal_properties(&interner, non_fresh_obj);
+    assert_eq!(
+        widened, non_fresh_obj,
+        "Non-fresh object should be preserved unchanged"
+    );
+    match interner.lookup(widened) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = interner.object_shape(shape_id);
+            assert_eq!(
+                shape.properties[0].type_id, lit,
+                "Property literal type preserved, not widened"
+            );
+        }
+        other => panic!("Expected object, got {other:?}"),
     }
 }
 

@@ -502,6 +502,295 @@ fn test_non_fresh_object_property_literal_is_not_widened() {
 }
 
 #[test]
+fn probe_id_u_call_preserves_non_fresh_object_literal_property() {
+    // Generic call `id<U>(u: U): U` with a non-fresh `{ a: 1 }` argument
+    // must return `{ a: 1 }`, not deep-widen to `{ a: number }`. This is the
+    // single-TP fast path; the bug in #9782 is that this path calls
+    // `widen_type_for_inference` unconditionally on the argument.
+    use crate::types::{FunctionShape, ParamInfo, TypeParamInfo};
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let u_name = interner.intern_string("U");
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let one = interner.literal_number(1.0);
+    let prop_name = interner.intern_string("a");
+    let prop = crate::types::PropertyInfo::new(prop_name, one);
+    let non_fresh_obj = interner.object_with_flags(vec![prop], crate::types::ObjectFlags::empty());
+
+    let func = FunctionShape {
+        type_params: vec![TypeParamInfo {
+            name: u_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        }],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("u")),
+            type_id: u_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let result = infer_generic_function(&interner, &mut checker, &func, &[non_fresh_obj]);
+    assert_eq!(
+        result,
+        non_fresh_obj,
+        "id(src) where src has non-fresh {{ a: 1 }} should return non-fresh \
+         {{ a: 1 }}, not a widened {{ a: number }}. Got data: {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn probe_two_param_only_u_returns_object_preserves_non_fresh() {
+    // Probe whether the slow path with 2 TPs and 2 params but returning ONLY U
+    // (no intersection) preserves the non-fresh `{ a: 1 }` argument.
+    use crate::types::{FunctionShape, ParamInfo, TypeParamInfo};
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let one = interner.literal_number(1.0);
+    let prop_name = interner.intern_string("a");
+    let prop = crate::types::PropertyInfo::new(prop_name, one);
+    let non_fresh_src = interner.object_with_flags(vec![prop], crate::types::ObjectFlags::empty());
+    let empty_target = interner.object(Vec::new());
+
+    let func = FunctionShape {
+        type_params: vec![
+            TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: u_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("s")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: u_type, // ONLY U, no intersection
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &func,
+        &[empty_target, non_fresh_src],
+    );
+    eprintln!(
+        "U-only result: {result:?} data: {:?}",
+        interner.lookup(result)
+    );
+    if let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
+        interner.lookup(result)
+    {
+        let shape = interner.object_shape(shape_id);
+        eprintln!("U-only result shape flags: {:?}", shape.flags);
+        for prop in &shape.properties {
+            eprintln!(
+                "  prop {:?} type {:?} data {:?}",
+                prop.name,
+                prop.type_id,
+                interner.lookup(prop.type_id)
+            );
+        }
+    }
+    assert_eq!(
+        result,
+        non_fresh_src,
+        "Two-TP slow path with return=U should preserve non-fresh {{ a: 1 }}; got data: {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn probe_merge_t_u_call_preserves_non_fresh_object_literal_property() {
+    // Two-type-parameter `merge<T, U>(t: T, s: U): T & U` — slow path —
+    // must also preserve the non-fresh literal property type of `src` when
+    // inferring U. Mirrors the reported `Object.assign(target, source)` bug.
+    use crate::types::{FunctionShape, ParamInfo, TypeParamInfo};
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let one = interner.literal_number(1.0);
+    let prop_name = interner.intern_string("a");
+    let prop = crate::types::PropertyInfo::new(prop_name, one);
+    let non_fresh_src = interner.object_with_flags(vec![prop], crate::types::ObjectFlags::empty());
+    let empty_target = interner.object(Vec::new());
+    let return_ty = interner.intersection(vec![t_type, u_type]);
+
+    let func = FunctionShape {
+        type_params: vec![
+            TypeParamInfo {
+                name: t_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+            TypeParamInfo {
+                name: u_name,
+                constraint: None,
+                default: None,
+                is_const: false,
+            },
+        ],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("t")),
+                type_id: t_type,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("s")),
+                type_id: u_type,
+                optional: false,
+                rest: false,
+            },
+        ],
+        this_type: None,
+        return_type: return_ty,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let result = infer_generic_function(
+        &interner,
+        &mut checker,
+        &func,
+        &[empty_target, non_fresh_src],
+    );
+
+    // Result should be {} & { a: 1 } which simplifies to { a: 1 }.
+    let prop_a_type = match interner.lookup(result) {
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => interner
+            .object_shape(shape_id)
+            .properties
+            .iter()
+            .find(|p| p.name == prop_name)
+            .map(|p| p.type_id),
+        _ => None,
+    };
+    eprintln!("merge<T,U> result data: {:?}", interner.lookup(result));
+    eprintln!(
+        "merge<T,U> prop_a_type: {prop_a_type:?} (one literal = {one:?}, NUMBER = {:?})",
+        TypeId::NUMBER
+    );
+    assert_eq!(
+        prop_a_type,
+        Some(one),
+        "merge({{}}, src) where src has non-fresh {{ a: 1 }} should preserve \
+         the literal `1` in the inferred T & U result"
+    );
+}
+
+#[test]
+fn probe_infer_u_from_non_fresh_object_literal_property() {
+    // Inferring U from a non-fresh object `{ a: 1 }` argument should preserve
+    // the literal property type `1` (not widen to `number`). Mirrors tsc's
+    // `getWidenedType` no-op on types without the `RequiresWidening` flag.
+    let interner = TypeInterner::new();
+    let mut ctx = InferenceContext::new(&interner);
+
+    let u_name = interner.intern_string("U");
+    let _var = ctx.fresh_type_param(u_name, false);
+    let u_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let one = interner.literal_number(1.0);
+    let prop_name = interner.intern_string("a");
+    let prop = crate::types::PropertyInfo::new(prop_name, one);
+    // Build the object with FRESH_LITERAL EXPLICITLY OFF.
+    let non_fresh_obj = interner.object_with_flags(vec![prop], crate::types::ObjectFlags::empty());
+
+    ctx.infer_from_types(
+        non_fresh_obj,
+        u_type,
+        crate::types::InferencePriority::NakedTypeVariable,
+    )
+    .unwrap();
+    let var = ctx.find_type_param(u_name).unwrap();
+    let result = ctx.resolve_with_constraints(var).unwrap();
+
+    eprintln!("Result: {result:?}");
+    eprintln!("Result data: {:?}", interner.lookup(result));
+    eprintln!("Original: {non_fresh_obj:?}");
+    eprintln!("Original data: {:?}", interner.lookup(non_fresh_obj));
+    assert_eq!(
+        result, non_fresh_obj,
+        "Non-fresh {{ a: 1 }} object should be preserved through inference, not widened"
+    );
+}
+
+#[test]
 fn test_resolve_upper_bound_only() {
     let interner = TypeInterner::new();
     let mut ctx = InferenceContext::new(&interner);
