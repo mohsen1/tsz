@@ -1378,6 +1378,11 @@ impl<'a> Printer<'a> {
         self.ctx.auto_detect_module = enabled;
     }
 
+    /// Mark this printer as emitting a `--module none --outFile` bundle.
+    pub const fn set_module_none_out_file(&mut self, enabled: bool) {
+        self.ctx.module_none_out_file = enabled;
+    }
+
     /// Set the source text (for detecting single-line constructs).
     pub fn set_source_text(&mut self, text: &'a str) {
         self.source_text = Some(text);

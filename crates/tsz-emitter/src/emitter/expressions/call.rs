@@ -345,15 +345,21 @@ impl<'a> Printer<'a> {
             }
         }
 
-        // CJS dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
+        let should_lower_dynamic_import_to_require = self.ctx.is_effectively_commonjs()
+            || (self.ctx.module_none_out_file && self.ctx.needs_es2020_lowering);
+
+        // CJS-like dynamic import: `import("mod")` → `Promise.resolve().then(() => __importStar(require("mod")))`
         // For non-string-literal specifiers, tsc evaluates the expression eagerly:
         //   `import(expr)` → `Promise.resolve(\`${expr}\`).then(s => __importStar(require(s)))`
         // In CommonJS module mode, dynamic import() expressions need to be transformed
         // to use require() wrapped in __importStar for proper ESM/CJS interop.
+        // `--module none --outFile` script bundles use the same expression
+        // lowering for targets below native dynamic import without making the
+        // source a CommonJS module.
         // Use is_effectively_commonjs() to also catch the case where module is temporarily
         // set to None during CJS export body emission (e.g., inside exported async functions).
         // Skip for node module CJS files where native import() is supported.
-        if self.ctx.is_effectively_commonjs()
+        if should_lower_dynamic_import_to_require
             && !self.ctx.options.resolved_node_module_to_cjs
             && let Some(expr_node) = self.arena.get(call.expression)
             && expr_node.kind == SyntaxKind::ImportKeyword as u16
@@ -377,14 +383,7 @@ impl<'a> Printer<'a> {
                 // Simple string or no args:
                 //   Promise.resolve().then(() => __importStar(require("mod")))
                 //   Promise.resolve().then(() => __importStar(require()))
-                self.write("Promise.resolve().then(() => ");
-                self.write_helper("__importStar");
-                self.write("(require(");
-                // Only emit the first argument (module specifier); drop any extra args
-                if let Some(first) = first_arg {
-                    self.emit_maybe_rewritten_module_specifier_arg(first);
-                }
-                self.write(")))");
+                self.emit_dynamic_import_commonjs_branch(first_arg, None);
             } else {
                 // Expression specifier with rewrite helper wrapping
                 self.write("Promise.resolve(`${");
