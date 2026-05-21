@@ -2674,6 +2674,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     }
 
     /// Match template literal spans against a pattern.
+    ///
+    /// A captured `infer` slot always lands in the string domain: when the
+    /// source segment is a non-string-domain type (e.g. `number`, `bigint`),
+    /// it is wrapped as a single-placeholder template `` `${T}` `` before
+    /// being bound. This mirrors tsc's `getStringLikeTypeForType`.
     pub(crate) fn match_template_literal_spans(
         &self,
         source: TypeId,
@@ -2699,10 +2704,37 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return checker.is_subtype_of(source, type_id);
         }
 
-        if source_spans.len() != pattern_spans.len() {
-            return false;
+        if source_spans.len() == pattern_spans.len()
+            && source_spans
+                .iter()
+                .zip(pattern_spans.iter())
+                .all(|(s, p)| s.is_text() == p.is_text())
+        {
+            return self.match_template_literal_spans_aligned(
+                source_spans,
+                pattern_spans,
+                bindings,
+                checker,
+            );
         }
 
+        // Fall back to general cursor-based matching that allows source text
+        // spans to be split to align with pattern texts and infer slots.
+        self.match_template_literal_spans_general(source_spans, pattern_spans, bindings, checker)
+    }
+
+    /// Structural match: pattern and source share the same span shape
+    /// (text-vs-type alignment), so each pattern span pairs with the
+    /// corresponding source span. Text spans must match exactly; type spans
+    /// bind via `bind_infer` with the source segment promoted to a
+    /// string-domain type (see `string_like_type_for_type`).
+    fn match_template_literal_spans_aligned(
+        &self,
+        source_spans: &[TemplateSpan],
+        pattern_spans: &[TemplateSpan],
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
         for (source_span, pattern_span) in source_spans.iter().zip(pattern_spans.iter()) {
             match pattern_span {
                 TemplateSpan::Text(text) => match source_span {
@@ -2715,7 +2747,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             let text_value = self.interner().resolve_atom_ref(*text);
                             self.interner().literal_string(text_value.as_ref())
                         }
-                        TemplateSpan::Type(source_type) => *source_type,
+                        TemplateSpan::Type(source_type) => {
+                            crate::type_queries::extended::string_like_type_for_type(
+                                self.interner(),
+                                *source_type,
+                            )
+                        }
                     };
                     if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
                         if !self.bind_infer(&info, inferred, bindings, checker) {
@@ -2730,4 +2767,281 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         true
     }
+
+    /// General template-literal pattern matcher: walks both source and
+    /// pattern with a cursor that can split source text spans to align with
+    /// the pattern's text and infer spans. Mirrors tsc's
+    /// `inferFromLiteralPartsToTemplateLiteralType` for the `TemplateLiteral`
+    /// source case where structural span alignment does not hold.
+    ///
+    /// Captures are always promoted to string-domain types: a source `Type`
+    /// span captured into an `infer` slot is wrapped as `` `${T}` `` unless
+    /// the source type is already a string subtype.
+    fn match_template_literal_spans_general(
+        &self,
+        source_spans: &[TemplateSpan],
+        pattern_spans: &[TemplateSpan],
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        // Pre-resolve source text atoms once: `resolve_atom_ref` acquires a
+        // RwLock and bumps an Arc refcount, and the cursor revisits the same
+        // source text span across consume/find/capture operations.
+        let source_texts: Vec<Option<std::sync::Arc<str>>> = source_spans
+            .iter()
+            .map(|s| match s {
+                TemplateSpan::Text(atom) => Some(self.interner().resolve_atom_ref(*atom)),
+                TemplateSpan::Type(_) => None,
+            })
+            .collect();
+
+        // Cursor: `(s_idx, s_offset)`. `s_offset` is only meaningful when
+        // `source_spans[s_idx]` is a `Text` span — `Type` spans are consumed
+        // atomically with `s_offset == 0`.
+        let mut s_idx: usize = 0;
+        let mut s_offset: usize = 0;
+
+        for (p_idx, pattern_span) in pattern_spans.iter().enumerate() {
+            match *pattern_span {
+                TemplateSpan::Text(text_atom) => {
+                    let text_arc = self.interner().resolve_atom_ref(text_atom);
+                    if !consume_source_text(
+                        text_arc.as_ref(),
+                        &mut s_idx,
+                        &mut s_offset,
+                        source_spans,
+                        &source_texts,
+                    ) {
+                        return false;
+                    }
+                }
+                TemplateSpan::Type(pattern_type) => {
+                    let info = match self.interner().lookup(pattern_type) {
+                        Some(TypeData::Infer(info)) => Some(info),
+                        _ => None,
+                    };
+
+                    let next_anchor = pattern_spans.get(p_idx + 1).and_then(|s| match s {
+                        TemplateSpan::Text(atom) => Some(*atom),
+                        TemplateSpan::Type(_) => None,
+                    });
+                    let is_last_span = p_idx + 1 == pattern_spans.len();
+
+                    let captured = if is_last_span {
+                        let result = self.capture_source_between(
+                            s_idx,
+                            s_offset,
+                            source_spans.len(),
+                            0,
+                            source_spans,
+                            &source_texts,
+                        );
+                        s_idx = source_spans.len();
+                        s_offset = 0;
+                        result
+                    } else if let Some(anchor_atom) = next_anchor {
+                        let anchor_arc = self.interner().resolve_atom_ref(anchor_atom);
+                        let Some((end_idx, end_offset)) = find_anchor_in_source(
+                            anchor_arc.as_ref(),
+                            s_idx,
+                            s_offset,
+                            source_spans,
+                            &source_texts,
+                        ) else {
+                            return false;
+                        };
+                        let result = self.capture_source_between(
+                            s_idx,
+                            s_offset,
+                            end_idx,
+                            end_offset,
+                            source_spans,
+                            &source_texts,
+                        );
+                        s_idx = end_idx;
+                        s_offset = end_offset;
+                        result
+                    } else {
+                        // Two adjacent pattern `Type` spans
+                        // (e.g. `${infer A}${infer B}`): give the first infer
+                        // a single source `Type` segment when one is at the
+                        // cursor, otherwise an empty string.
+                        self.capture_one_source_type(
+                            &mut s_idx,
+                            &mut s_offset,
+                            source_spans,
+                            &source_texts,
+                        )
+                    };
+
+                    if let Some(info) = info {
+                        if !self.bind_infer(&info, captured, bindings, checker) {
+                            return false;
+                        }
+                    } else if !checker.is_subtype_of(captured, pattern_type) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        source_fully_consumed(s_idx, s_offset, source_spans, &source_texts)
+    }
+
+    fn capture_source_between(
+        &self,
+        start_idx: usize,
+        start_offset: usize,
+        end_idx: usize,
+        end_offset: usize,
+        source_spans: &[TemplateSpan],
+        source_texts: &[Option<std::sync::Arc<str>>],
+    ) -> TypeId {
+        let stop = end_idx.min(source_spans.len());
+        let mut captured: Vec<TemplateSpan> =
+            Vec::with_capacity(stop.saturating_sub(start_idx) + 1);
+        let mut i = start_idx;
+        let mut offset = start_offset;
+        while i < stop {
+            match source_spans[i] {
+                TemplateSpan::Text(_) => {
+                    let src = source_texts[i].as_ref().expect("text span").as_ref();
+                    let slice = &src[offset..src.len()];
+                    if !slice.is_empty() {
+                        captured.push(TemplateSpan::Text(self.interner().intern_string(slice)));
+                    }
+                }
+                TemplateSpan::Type(t) => {
+                    captured.push(TemplateSpan::Type(t));
+                }
+            }
+            i += 1;
+            offset = 0;
+        }
+        if i == end_idx
+            && end_idx < source_spans.len()
+            && let TemplateSpan::Text(_) = source_spans[end_idx]
+        {
+            let src = source_texts[end_idx].as_ref().expect("text span").as_ref();
+            if end_offset > offset {
+                let slice = &src[offset..end_offset];
+                if !slice.is_empty() {
+                    captured.push(TemplateSpan::Text(self.interner().intern_string(slice)));
+                }
+            }
+        }
+
+        if captured.is_empty() {
+            return self.interner().literal_string("");
+        }
+        // The template_literal builder collapses single-Text spans to a
+        // string literal; it does NOT collapse single `${T}` for non-string
+        // intrinsics, so the wrap-as-string-domain invariant is preserved.
+        self.interner().template_literal(captured)
+    }
+
+    fn capture_one_source_type(
+        &self,
+        s_idx: &mut usize,
+        s_offset: &mut usize,
+        source_spans: &[TemplateSpan],
+        source_texts: &[Option<std::sync::Arc<str>>],
+    ) -> TypeId {
+        while *s_idx < source_spans.len() {
+            match source_spans[*s_idx] {
+                TemplateSpan::Text(_) => {
+                    let src = source_texts[*s_idx].as_ref().expect("text span").as_ref();
+                    if *s_offset < src.len() {
+                        return self.interner().literal_string("");
+                    }
+                    *s_idx += 1;
+                    *s_offset = 0;
+                }
+                TemplateSpan::Type(t) => {
+                    *s_idx += 1;
+                    *s_offset = 0;
+                    return crate::type_queries::extended::string_like_type_for_type(
+                        self.interner(),
+                        t,
+                    );
+                }
+            }
+        }
+        self.interner().literal_string("")
+    }
+}
+
+fn consume_source_text(
+    text: &str,
+    s_idx: &mut usize,
+    s_offset: &mut usize,
+    source_spans: &[TemplateSpan],
+    source_texts: &[Option<std::sync::Arc<str>>],
+) -> bool {
+    if text.is_empty() {
+        return true;
+    }
+    let Some(TemplateSpan::Text(_)) = source_spans.get(*s_idx) else {
+        return false;
+    };
+    let src = source_texts[*s_idx].as_ref().expect("text span").as_ref();
+    if !src[*s_offset..].starts_with(text) {
+        return false;
+    }
+    *s_offset += text.len();
+    true
+}
+
+fn find_anchor_in_source(
+    anchor: &str,
+    start_idx: usize,
+    start_offset: usize,
+    source_spans: &[TemplateSpan],
+    source_texts: &[Option<std::sync::Arc<str>>],
+) -> Option<(usize, usize)> {
+    if anchor.is_empty() {
+        return Some((start_idx, start_offset));
+    }
+    let mut i = start_idx;
+    let mut offset = start_offset;
+    while i < source_spans.len() {
+        if let TemplateSpan::Text(_) = source_spans[i] {
+            let src = source_texts[i].as_ref().expect("text span").as_ref();
+            if let Some(pos) = src[offset..].find(anchor) {
+                return Some((i, offset + pos));
+            }
+        }
+        // Anchors are literal text — Type spans contain no characters, and
+        // unmatched text spans must be walked past to keep searching.
+        i += 1;
+        offset = 0;
+    }
+    None
+}
+
+fn source_fully_consumed(
+    s_idx: usize,
+    s_offset: usize,
+    source_spans: &[TemplateSpan],
+    source_texts: &[Option<std::sync::Arc<str>>],
+) -> bool {
+    if s_idx >= source_spans.len() {
+        return true;
+    }
+    let mut i = s_idx;
+    let mut offset = s_offset;
+    while i < source_spans.len() {
+        match source_spans[i] {
+            TemplateSpan::Text(_) => {
+                let src = source_texts[i].as_ref().expect("text span").as_ref();
+                if offset != src.len() {
+                    return false;
+                }
+            }
+            TemplateSpan::Type(_) => return false,
+        }
+        i += 1;
+        offset = 0;
+    }
+    true
 }

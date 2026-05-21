@@ -43551,3 +43551,229 @@ fn test_distributive_conditional_renamed_param_evaluates_correctly() {
         interner.lookup(evaluated)
     );
 }
+
+// =============================================================================
+// Issue #9740: conditional-type evaluation must keep template-literal infer
+// captures in the string domain. Matching `${number}` against `${infer A}`
+// inside a multi-span pattern must bind `A = `${number}``, not `A = number`.
+//
+// The structural rule covers all cases: when a `Type(t)` source span is
+// captured by an infer slot, `t` is promoted via `getStringLikeTypeForType`
+// before binding. The unequal-span case additionally requires walking the
+// source via cursor-based matching that can split text spans.
+// =============================================================================
+
+#[test]
+fn conditional_infer_template_literal_captures_number_segment_as_string_subtype() {
+    let interner = TypeInterner::new();
+    let interner = &interner;
+
+    let s_name = interner.intern_string("S");
+    let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: s_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let a_name = interner.intern_string("A");
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let b_name = interner.intern_string("B");
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    // Pattern: `${infer A}-${infer B}`
+    let dash = interner.intern_string("-");
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_a),
+        TemplateSpan::Text(dash),
+        TemplateSpan::Type(infer_b),
+    ]);
+
+    // Conditional: S extends `${infer A}-${infer B}` ? A : never.
+    let cond = ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    // Source: `${number}-${string}` (equal span count to pattern).
+    let source = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(dash),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(s_name, source);
+    let instantiated = instantiate_type(interner, cond_type, &subst);
+    let result = evaluate_type(interner, instantiated);
+
+    // Expected: A = `${number}` (a TemplateLiteral wrapping number).
+    let expected = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    assert_eq!(
+        result,
+        expected,
+        "A must be `${{number}}` (string subtype), got {:?}",
+        interner.lookup(result)
+    );
+    assert_ne!(
+        result,
+        TypeId::NUMBER,
+        "A must not be bound to the bare `number` primitive"
+    );
+}
+
+#[test]
+fn conditional_infer_template_literal_unequal_spans_splits_source_text() {
+    // Reported case from #9740: source `${number}-x` (2 normalized spans) vs
+    // pattern `${infer A}-${infer B}` (3 normalized spans). The general
+    // matcher must split source's `Text("-x")` to align with the pattern.
+    let interner = TypeInterner::new();
+    let interner = &interner;
+
+    let s_name = interner.intern_string("S");
+    let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: s_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let a_name = interner.intern_string("A");
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let b_name = interner.intern_string("B");
+    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: b_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let dash = interner.intern_string("-");
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_a),
+        TemplateSpan::Text(dash),
+        TemplateSpan::Type(infer_b),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    // Source spans: [Type(number), Text("-x")] — two spans.
+    let dash_x = interner.intern_string("-x");
+    let source = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::NUMBER),
+        TemplateSpan::Text(dash_x),
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(s_name, source);
+    let instantiated = instantiate_type(interner, cond_type, &subst);
+    let result = evaluate_type(interner, instantiated);
+
+    // Expected A = `${number}`.
+    let expected = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    assert_eq!(
+        result,
+        expected,
+        "A must be `${{number}}` even when source spans don't structurally align, got {:?}",
+        interner.lookup(result)
+    );
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "Pattern matching must not fall through to the false branch"
+    );
+}
+
+/// Renamed iteration vars to prove the rule is structural and not keyed on
+/// any specific name.
+#[test]
+fn conditional_infer_template_literal_renamed_vars_capture_string_subtype() {
+    let interner = TypeInterner::new();
+    let interner = &interner;
+
+    let s_name = interner.intern_string("Input");
+    let s_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: s_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let head_name = interner.intern_string("Head");
+    let infer_head = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: head_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let tail_name = interner.intern_string("Tail");
+    let infer_tail = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: tail_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let dash = interner.intern_string("/");
+    let pattern = interner.template_literal(vec![
+        TemplateSpan::Type(infer_head),
+        TemplateSpan::Text(dash),
+        TemplateSpan::Type(infer_tail),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: s_param,
+        extends_type: pattern,
+        true_type: infer_head,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_type = interner.conditional(cond);
+
+    let source = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::BIGINT),
+        TemplateSpan::Text(dash),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mut subst = TypeSubstitution::new();
+    subst.insert(s_name, source);
+    let instantiated = instantiate_type(interner, cond_type, &subst);
+    let result = evaluate_type(interner, instantiated);
+
+    assert_ne!(
+        result,
+        TypeId::BIGINT,
+        "Head must not be bound to the bare `bigint` primitive regardless of variable names"
+    );
+    assert_ne!(
+        result,
+        TypeId::NEVER,
+        "Pattern matching must succeed regardless of variable names"
+    );
+}

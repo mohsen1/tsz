@@ -16546,3 +16546,69 @@ fn test_infer_two_type_params_from_template_literal() {
         interner.lookup(resolved_u)
     );
 }
+
+// =============================================================================
+// Issue #9740: template-literal inference must keep captured segments in the
+// string domain. A `${number}` source segment matched by a `${infer T}` slot
+// must yield `T = `${number}`` (a string subtype), not `T = number`.
+//
+// These tests exercise the wrapping helper directly because the
+// `InferenceContext`-level path threads through bounds validation that is
+// orthogonal to the bug being fixed; end-to-end CLI tests cover the
+// resolution path.
+// =============================================================================
+
+#[test]
+fn string_like_type_for_type_wraps_non_string_intrinsics() {
+    use crate::type_queries::extended::string_like_type_for_type;
+    let interner = TypeInterner::new();
+    let db: &dyn crate::construction::TypeDatabase = &interner;
+
+    // Number / bigint / boolean / null / undefined / object are wrapped.
+    let wrapped_number = string_like_type_for_type(db, TypeId::NUMBER);
+    assert_ne!(wrapped_number, TypeId::NUMBER);
+    assert!(matches!(
+        interner.lookup(wrapped_number),
+        Some(TypeData::TemplateLiteral(_))
+    ));
+
+    let wrapped_bigint = string_like_type_for_type(db, TypeId::BIGINT);
+    assert_ne!(wrapped_bigint, TypeId::BIGINT);
+    assert!(matches!(
+        interner.lookup(wrapped_bigint),
+        Some(TypeData::TemplateLiteral(_))
+    ));
+}
+
+#[test]
+fn string_like_type_for_type_preserves_string_domain() {
+    use crate::type_queries::extended::{is_string_like_type, string_like_type_for_type};
+    let interner = TypeInterner::new();
+    let db: &dyn crate::construction::TypeDatabase = &interner;
+
+    // string, any, and string literals pass through unchanged.
+    assert_eq!(
+        string_like_type_for_type(db, TypeId::STRING),
+        TypeId::STRING
+    );
+    assert_eq!(string_like_type_for_type(db, TypeId::ANY), TypeId::ANY);
+    let foo = interner.literal_string("foo");
+    assert_eq!(string_like_type_for_type(db, foo), foo);
+
+    // Template literals pass through unchanged.
+    let dollar_number = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    assert_eq!(string_like_type_for_type(db, dollar_number), dollar_number);
+
+    // is_string_like_type predicates match.
+    assert!(is_string_like_type(db, TypeId::STRING));
+    assert!(is_string_like_type(db, TypeId::ANY));
+    assert!(is_string_like_type(db, foo));
+    assert!(is_string_like_type(db, dollar_number));
+    assert!(!is_string_like_type(db, TypeId::NUMBER));
+    assert!(!is_string_like_type(db, TypeId::BIGINT));
+    assert!(!is_string_like_type(db, TypeId::BOOLEAN));
+}
+
+// End-to-end coverage of the wrap-then-resolve path is provided by the
+// conditional-evaluation tests in `evaluate_tests.rs`, which exercise the
+// full path through `evaluate_type` (the same path the CLI uses).

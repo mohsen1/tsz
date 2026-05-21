@@ -130,6 +130,47 @@ pub fn get_number_literal_value(db: &dyn TypeDatabase, type_id: TypeId) -> Optio
 }
 
 // =============================================================================
+// String-Domain Wrapping
+// =============================================================================
+
+/// Returns true if `type_id` already lives in the string domain, mirroring
+/// tsc's `isStringLikeType` (`TypeFlags.String` | `StringLiteral` |
+/// `TemplateLiteral` | `StringMapping`). `any` is included so callers using
+/// this for wrapping preserve `any` as-is.
+pub fn is_string_like_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::STRING || type_id == TypeId::ANY {
+        return true;
+    }
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::Literal(LiteralValue::String(_))
+                | TypeData::TemplateLiteral(_)
+                | TypeData::StringIntrinsic { .. }
+        )
+    )
+}
+
+/// Returns a string-domain representation of `type_id`, mirroring tsc's
+/// `getStringLikeTypeForType`: types already in the string domain (string,
+/// string literal, template literal, string intrinsic, `any`) are returned
+/// unchanged; other types are wrapped as the single-placeholder template
+/// `` `${T}` `` so the value remains assignable to `string`.
+///
+/// Used when binding template-literal infer slots so a captured `${number}`
+/// segment yields the string subtype `` `${number}` ``, not the bare `number`
+/// type.
+pub fn string_like_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if is_string_like_type(db, type_id) {
+        return type_id;
+    }
+    db.template_literal(vec![crate::TemplateSpan::Type(type_id)])
+}
+
+// =============================================================================
 // Index Type Classification
 // =============================================================================
 
