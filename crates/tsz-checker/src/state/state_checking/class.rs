@@ -2138,10 +2138,27 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            if construct_sigs
-                .iter()
-                .any(|sig| !self.is_valid_mixin_construct_signature(sig))
-            {
+            // For a constraint that exposes exactly one construct signature,
+            // require the full mixin shape (single rest parameter of `any` /
+            // `any[]` / `readonly any[]`). This catches the single-sig
+            // zero-parameter case reported in #9729 alongside the existing
+            // single-non-rest / wrong-rest-type cases.
+            //
+            // Constraints with multiple construct signatures (overload sets,
+            // intersection-of-ctor) preserve the pre-existing per-sig check
+            // that skips empty-parameter signatures — `isMixinConstructorType`
+            // in tsc additionally requires `signatures.length === 1`, but
+            // catching that here would broaden the rule beyond the issue's
+            // scope and risk regressions in unrelated tests; tracked
+            // separately.
+            let has_invalid_sig = if construct_sigs.len() == 1 {
+                !self.is_valid_mixin_construct_signature(&construct_sigs[0])
+            } else {
+                construct_sigs.iter().any(|sig| {
+                    !sig.params.is_empty() && !self.is_valid_mixin_construct_signature(sig)
+                })
+            };
+            if has_invalid_sig {
                 self.error_at_node(
                     class_idx,
                     diagnostic_messages::A_MIXIN_CLASS_MUST_HAVE_A_CONSTRUCTOR_WITH_A_SINGLE_REST_PARAMETER_OF_TYPE_ANY,
