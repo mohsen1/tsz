@@ -484,6 +484,9 @@ mod for_in_narrowing_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
+mod generic_callback_sibling_arg_inference_tests;
+#[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
 #[cfg(test)]
