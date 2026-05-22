@@ -318,6 +318,10 @@ name = "destructuring_default_flow_assignment_tests"
 path = "tests/destructuring_default_flow_assignment_tests.rs"
 
 [[test]]
+name = "merged_namespace_typeof_display_tests"
+path = "tests/merged_namespace_typeof_display_tests.rs"
+
+[[test]]
 name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 
