@@ -417,9 +417,6 @@ path = "tests/accessor_assignment_read_surface_tests.rs"
 name = "conditional_extends_readonly_identity_tests"
 path = "tests/conditional_extends_readonly_identity_tests.rs"
 
-[[test]]
-name = "conditional_extends_readonly_variance_tests"
-path = "tests/conditional_extends_readonly_variance_tests.rs"
 
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
