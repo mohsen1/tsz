@@ -1,0 +1,70 @@
+name: Refresh Green PRs
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Drain at most one stale green PR per run, away from the top of the hour.
+    - cron: '7,27,47 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report the next PR without updating branches or auto-merge.
+        type: boolean
+        default: true
+      max_prs:
+        description: Maximum open PRs to inspect.
+        type: number
+        default: 200
+      verbose:
+        description: Include skip reasons in the step summary.
+        type: boolean
+        default: false
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: read
+
+concurrency:
+  group: refresh-green-prs-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh-one-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Refresh one stale green PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          MAX_PRS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_prs || 200 }}
+          VERBOSE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose || false }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dry_run="${DRY_RUN_INPUT}"
+          args=(
+            --repository "${REPOSITORY}"
+            --base main
+            --max-prs "${MAX_PRS_INPUT}"
+            --max-refreshes 1
+          )
+          if [[ "${dry_run}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          if [[ "${VERBOSE_INPUT}" == "true" ]]; then
+            args+=(--verbose)
+          fi
+
+          node scripts/ci/refresh-green-prs.mjs "${args[@]}" | tee -a "${GITHUB_STEP_SUMMARY}"
