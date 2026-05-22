@@ -2790,3 +2790,126 @@ function process(): string {
         "Array<any>.reduce with contextual string return should not emit TS2322; got: {diags:#?}"
     );
 }
+
+// ============================================================================
+// Overloaded callee: callback parameters contextually typed from the resolved
+// signature (issue #9663). Selecting an overload via a discriminating argument
+// must contextually type the callback parameter from that signature, so body
+// errors (TS2339 / TS2322) surface — matching tsc — instead of being hidden by
+// the lossy union contextual type used during overload selection.
+// ============================================================================
+
+#[test]
+fn overloaded_callback_first_overload_bad_property_ts2339() {
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.code);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, msg)| *code == 2339
+            && msg.contains("code")
+            && msg.contains("{ x: number; }")),
+        "Selecting the click overload should type `e` as {{ x: number }} and emit TS2339 on `e.code`; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_second_overload_bad_property_ts2339() {
+    // Not order-specific: selecting the second overload must also contextually
+    // type the callback from that signature.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("key", e => e.x);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, msg)| *code == 2339
+            && msg.contains('x')
+            && msg.contains("{ code: string; }")),
+        "Selecting the key overload should type `e` as {{ code: string }} and emit TS2339 on `e.x`; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_body_assignment_mismatch_ts2322() {
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", (e) => { const z: string = e.x; });
+"#;
+    assert!(
+        has_error(source, 2322),
+        "Assignment inside an overloaded callback body must be checked against the resolved signature (TS2322)"
+    );
+}
+
+#[test]
+fn overloaded_callback_rule_is_structural_not_name_bound() {
+    // Different event literals and property names prove the fix is structural.
+    let source = r#"
+declare function reg(kind: "a", cb: (p: { alpha: number }) => void): void;
+declare function reg(kind: "b", cb: (p: { beta: string }) => void): void;
+reg("a", p => p.beta);
+reg("b", p => p.alpha);
+"#;
+    let diags = get_diagnostics(source);
+    let alpha_target = diags.iter().any(|(code, msg)| {
+        *code == 2339 && msg.contains("beta") && msg.contains("{ alpha: number; }")
+    });
+    let beta_target = diags.iter().any(|(code, msg)| {
+        *code == 2339 && msg.contains("alpha") && msg.contains("{ beta: string; }")
+    });
+    assert!(
+        alpha_target && beta_target,
+        "Both overloaded callbacks should report property errors against their own resolved parameter type; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_valid_property_no_error() {
+    // Negative case: accessing the property that exists on the resolved
+    // signature's parameter must not error.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.x);
+on("key", e => e.code);
+"#;
+    assert!(
+        no_errors(source),
+        "Accessing the property valid for the selected overload must not error"
+    );
+}
+
+#[test]
+fn overloaded_callback_continuation_access_no_false_positive() {
+    // A deeper-but-valid continuation access through the resolved parameter
+    // type must remain error-free.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: { v(): number } }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.x.v());
+"#;
+    assert!(
+        no_errors(source),
+        "Valid continuation access on the resolved parameter type must not error"
+    );
+}
+
+#[test]
+fn non_callback_overload_selection_still_works() {
+    // Guard: overload selection without callbacks is unaffected.
+    let source = r#"
+declare function f(x: string): string;
+declare function f(x: number): number;
+const a: string = f("hi");
+const b: number = f(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Plain overload selection must remain unaffected by the callback fix"
+    );
+}

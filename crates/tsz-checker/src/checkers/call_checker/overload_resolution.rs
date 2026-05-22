@@ -339,12 +339,20 @@ impl<'a> CheckerState<'a> {
                     // leaving inline callback bodies typed under a lossy contextual union.
                     // Defer those candidates to the signature-specific pass, which can
                     // re-evaluate callbacks with per-overload parameter types.
+                    //
+                    // A union of function-typed parameters yields an `any` callback
+                    // parameter, so body errors specific to the selected signature
+                    // (e.g. `o?.a.b` continuation typing, or a property that only exists
+                    // under a different overload) never surface in the union pass.
+                    // Speculatively re-type the callbacks against the selected
+                    // signature so those cases are deferred too.
                     if has_multiple_arity_compatible_signatures
                         && (union_arg_collection_has_callback_body_errors
                             || self.overload_candidate_has_callback_body_errors(
                                 args,
                                 &post_union_arg_diag_snap,
-                            ))
+                            )
+                            || self.selected_overload_callback_body_has_errors(args, func_type))
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
@@ -900,6 +908,13 @@ impl<'a> CheckerState<'a> {
         let mut mismatch_recovery_return: Option<TypeId> = None;
         let mut callback_body_failure_return: Option<TypeId> = None;
         let mut callback_body_overload_diagnostics = Vec::new();
+        // The most recent overload that matched at the signature level (arguments
+        // assignable) but produced errors *inside* a callback body. tsc selects the
+        // overload from the discriminating arguments and then reports the callback
+        // body errors against the resolved signature; it does not treat a body error
+        // as an overload mismatch. When no overload resolves cleanly we commit to
+        // this candidate and surface its diagnostics instead of silently recovering.
+        let mut callback_body_only_success: Option<BestTypeMismatch> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -1514,6 +1529,39 @@ impl<'a> CheckerState<'a> {
                     {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
+                        // A non-generic overload that matched at the signature level has
+                        // concrete parameter types, so its callback body diagnostics are
+                        // real. Capture the candidate (keeping the last such overload,
+                        // mirroring tsc's choice of the final candidate for error
+                        // reporting) so we can commit to it if no other overload resolves
+                        // cleanly. Generic overloads are left to the instantiation
+                        // machinery, whose transient callback body errors must not leak.
+                        if sig.type_params.is_empty() {
+                            let candidate_end = self.ctx.snapshot_diagnostics();
+                            let preserved_first_pass = self
+                                .collect_non_callback_diagnostics_between(
+                                    args,
+                                    &overload_snap.diag,
+                                    &candidate_snap,
+                                );
+                            let candidate_diags: Vec<_> = self
+                                .ctx
+                                .diagnostics_between(&candidate_snap, &candidate_end)
+                                .to_vec();
+                            let mut merged =
+                                self.preserved_speculative_call_diagnostics(&overload_snap.diag);
+                            self.extend_unique_diagnostics(&mut merged, preserved_first_pass);
+                            self.extend_unique_diagnostics(&mut merged, candidate_diags);
+                            callback_body_only_success = Some((
+                                OverloadResolution {
+                                    arg_types: sig_arg_types.clone(),
+                                    result: CallResult::Success(return_type),
+                                    selected_type_predicate: selected_type_predicate.clone(),
+                                },
+                                self.ctx.node_types.clone(),
+                                merged,
+                            ));
+                        }
                         let nested_no_overload_diags =
                             self.callback_body_no_overload_diagnostics_since(args, &candidate_snap);
                         self.extend_unique_diagnostics(
@@ -1818,6 +1866,23 @@ impl<'a> CheckerState<'a> {
                 result: CallResult::Success(fallback_return_type),
                 selected_type_predicate: None,
             });
+        }
+
+        // No overload resolved cleanly, but at least one matched at the signature
+        // level and failed only inside a callback body. tsc reports those body
+        // diagnostics against the selected overload rather than discarding them, so
+        // commit to that candidate and surface its diagnostics. Without this the call
+        // would silently recover (via `callback_body_failure_return`), hiding real
+        // errors such as `o?.a.b` continuation typing or property accesses that are
+        // only valid under a different overload's parameter type.
+        if let Some((resolution, sig_node_types, merged_diags)) = callback_body_only_success {
+            self.ctx
+                .rollback_and_replace_diagnostics(&overload_snap.diag, merged_diags);
+            self.ctx
+                .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+            self.ctx.node_types = std::mem::take(&mut original_node_types);
+            self.ctx.node_types.merge_owned(sig_node_types);
+            return Some(resolution);
         }
 
         // No overload matched: drop speculative diagnostics from overload argument
