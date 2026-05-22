@@ -394,6 +394,10 @@ name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 
 [[test]]
+name = "typeof_const_member_conditional_tests"
+path = "tests/typeof_const_member_conditional_tests.rs"
+
+[[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
