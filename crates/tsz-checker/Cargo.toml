@@ -46,6 +46,10 @@ name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
 [[test]]
+name = "abstract_constructor_elaboration_tests"
+path = "tests/abstract_constructor_elaboration_tests.rs"
+
+[[test]]
 name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 
