@@ -364,8 +364,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => extends_type,
             };
+            // Only strip a `ReadonlyType` wrapper from the source when the target is
+            // also a readonly-array shape (`readonly T[]` / `ReadonlyArray<T>`).
+            // Against a mutable array target the wrapper carries the variance signal
+            // that direct assignment enforces via TS4104; keeping it makes the array
+            // fast path's `extract_array_element` reject the source so evaluation
+            // falls through to the strict subtype check (which returns false), instead
+            // of silently treating the readonly source as mutable (issue #9743).
+            let target_accepts_readonly_source = self
+                .application_base_name_is_readonly_array(extends_type)
+                || self.application_base_name_is_readonly_array(cond.extends_type);
             let check_unwrapped = match self.interner().lookup(check_type) {
-                Some(TypeData::ReadonlyType(inner)) => inner,
+                Some(TypeData::ReadonlyType(inner)) if target_accepts_readonly_source => inner,
                 _ => check_type,
             };
 
