@@ -6,7 +6,7 @@
 //! - Spread operators
 //! - Contextual typing
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::contextual::ContextualTypeContext;
 use crate::types::{PropertyInfo, TypeData, TypeId, Visibility};
 use rustc_hash::FxHashMap;

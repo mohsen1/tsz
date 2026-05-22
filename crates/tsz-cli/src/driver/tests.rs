@@ -1895,6 +1895,69 @@ fn test_types_entry_with_explicit_type_roots_still_emits_ts2688() {
     );
 }
 
+#[test]
+fn no_check_suppresses_unresolved_triple_slash_type_reference_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        base.join("index.ts"),
+        "/// <reference types=\"missing\" />\nconst value = 1;\n",
+    )
+    .expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        !result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should suppress unresolved triple-slash type reference TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn no_check_keeps_compiler_options_types_errors() {
+    let dir = tempfile::TempDir::new().expect("temp dir");
+    let base = dir.path();
+    fs::write(
+        base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "noCheck": true,
+            "types": ["missing"]
+          },
+          "files": ["index.ts"]
+        }"#,
+    )
+    .expect("write tsconfig");
+    fs::write(base.join("index.ts"), "const value = 1;\n").expect("write index.ts");
+
+    let args = CliArgs::try_parse_from(["tsz", "--project", "tsconfig.json"]).expect("parse args");
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::CANNOT_FIND_TYPE_DEFINITION_FILE_FOR),
+        "noCheck should still report unresolved compilerOptions.types TS2688, got: {:?}",
+        result.diagnostics
+    );
+}
+
 /// When a JavaScript source file contains TypeScript-only syntax (e.g.,
 /// `import x = require(...)`), tsc emits TS8002 from
 /// `getJSSyntacticDiagnosticsForFile`. Because that diagnostic flows through
@@ -2228,6 +2291,82 @@ export default validate;
 }
 
 #[test]
+fn module_none_outfile_dynamic_import_downlevels_without_bundling_js_module() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "module": "none",
+    "allowJs": true,
+    "outFile": "a.js"
+  },
+  "files": ["a.ts", "b.js"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), r#"const foo = import("./b");"#).expect("write a");
+    fs::write(dir.path().join("b.js"), "export default 1;\n").expect("write b");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    let result = compile(&args, dir.path()).expect("compile succeeds");
+
+    let bundle_path = dir.path().join("a.js");
+    assert!(
+        result.emitted_files.iter().any(|path| path == &bundle_path),
+        "expected bundle to be written, emitted: {:?}",
+        result.emitted_files
+    );
+    let bundle = fs::read_to_string(bundle_path).expect("read bundle");
+    assert!(
+        bundle.contains(r#"const foo = Promise.resolve().then(() => __importStar(require("b")));"#),
+        "module none outFile dynamic import should downlevel through require().\nOutput:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
+        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
+    );
+}
+
+#[test]
+fn module_none_outfile_native_dynamic_import_still_skips_js_module_body() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(
+        dir.path().join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "none",
+    "allowJs": true,
+    "outFile": "a.js"
+  },
+  "files": ["a.ts", "b.js"]
+}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(dir.path().join("a.ts"), r#"const foo = import("./b");"#).expect("write a");
+    fs::write(dir.path().join("b.js"), "export default 1;\n").expect("write b");
+
+    let project = dir.path().to_string_lossy().to_string();
+    let args = CliArgs::try_parse_from(["tsz", "--project", project.as_str(), "--pretty", "false"])
+        .expect("project args");
+    compile(&args, dir.path()).expect("compile succeeds");
+
+    let bundle = fs::read_to_string(dir.path().join("a.js")).expect("read bundle");
+    assert!(
+        bundle.contains(r#"const foo = import("./b");"#),
+        "native dynamic import should be preserved for ES2020.\nOutput:\n{bundle}"
+    );
+    assert!(
+        !bundle.contains("exports.default") && !bundle.contains("Object.defineProperty(exports"),
+        "dynamic JS module dependency should not be concatenated into the script bundle.\nOutput:\n{bundle}"
+    );
+}
+
+#[test]
 fn jsdoc_bare_module_imports_inline_commonjs_callable_static_surface_in_declaration_emit() {
     let dir = tempfile::tempdir().expect("temp dir");
     fs::write(
@@ -2516,6 +2655,82 @@ export type * from "./does-not-exist-g";
     assert_eq!(
         ts2307_count, 3,
         "Expected three TS2307 diagnostics for wildcard/namespace/type-only star re-exports from missing modules, got: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn test_cli_sound_report_only_sets_sound_mode_and_report_only() {
+    let args = CliArgs::try_parse_from(["tsz", "--soundReportOnly"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(
+        options.checker.sound_mode,
+        "--soundReportOnly must enable sound_mode (implied)"
+    );
+    assert!(
+        options.checker.sound_report_only,
+        "--soundReportOnly must enable sound_report_only"
+    );
+}
+
+#[test]
+fn test_cli_sound_report_only_kebab_alias_works() {
+    let args = CliArgs::try_parse_from(["tsz", "--sound-report-only"]).expect("parse kebab alias");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode);
+    assert!(options.checker.sound_report_only);
+}
+
+#[test]
+fn test_cli_sound_report_only_false_override_clears_only_report_only() {
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--sound",
+        "--__explicitly-disabled-bool-flag=soundReportOnly",
+    ])
+    .expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode, "sound_mode must stay true");
+    assert!(
+        !options.checker.sound_report_only,
+        "sound_report_only must be cleared"
+    );
+}
+
+#[test]
+fn test_sound_report_only_defaults_false() {
+    let options = ResolvedCompilerOptions::default();
+    assert!(!options.checker.sound_report_only);
+    assert!(!options.checker.sound_mode);
+}
+
+#[test]
+fn test_cli_sound_flag_does_not_set_report_only() {
+    let args = CliArgs::try_parse_from(["tsz", "--sound"]).expect("parse args");
+    let mut options = ResolvedCompilerOptions::default();
+    super::apply_cli_overrides(&mut options, &args).expect("apply overrides");
+    assert!(options.checker.sound_mode, "sound_mode must be true");
+    assert!(
+        !options.checker.sound_report_only,
+        "--sound alone must not set sound_report_only"
+    );
+}
+
+#[test]
+fn test_compile_sound_report_only_collects_diagnostics_from_sound_mode() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    fs::write(dir.path().join("a.ts"), "const x: string = 42;\n").expect("write source");
+
+    let args_sound_report_only =
+        CliArgs::try_parse_from(["tsz", "--noEmit", "--soundReportOnly", "a.ts"])
+            .expect("parse args");
+    let result = compile(&args_sound_report_only, dir.path()).expect("compile");
+    assert!(
+        result.diagnostics.iter().any(|d| d.code == 2322),
+        "TS2322 should still be reported in sound_report_only mode, got: {:?}",
         result.diagnostics
     );
 }

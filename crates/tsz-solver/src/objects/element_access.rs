@@ -1,5 +1,6 @@
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::{evaluate_index_access_with_options, evaluate_type};
-use crate::{LiteralValue, TypeData, TypeDatabase, TypeId};
+use crate::{LiteralValue, TypeData, TypeId};
 
 #[derive(Debug, Clone)]
 pub enum ElementAccessResult {
@@ -252,6 +253,10 @@ impl<'a> ElementAccessEvaluator<'a> {
                     return true;
                 }
                 false
+            }
+            Some(TypeData::ReadonlyType(inner)) => {
+                // Readonly-wrapping does not add or remove an index signature.
+                self.should_report_no_index_signature(inner, index_type)
             }
             _ => false,
         }

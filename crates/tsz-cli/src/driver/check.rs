@@ -500,48 +500,48 @@ fn has_large_wildcard_barrel(program: &MergedProgram, work_items: &[usize]) -> b
     })
 }
 
-#[allow(clippy::too_many_arguments)]
-#[cfg(test)]
-pub(super) fn collect_diagnostics(
-    program: &MergedProgram,
-    options: &ResolvedCompilerOptions,
-    base_dir: &Path,
-    cache: Option<&mut CompilationCache>,
-    checker_libs: &CheckerLibSet,
-    typescript_dom_replacement_globals: (bool, bool, bool),
-    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
-    has_deprecation_diagnostics: bool,
-    collect_compile_stats: bool,
-) -> CollectDiagnosticsResult {
-    collect_diagnostics_with_source_resolutions(
-        program,
-        options,
-        base_dir,
-        cache,
-        checker_libs,
-        typescript_dom_replacement_globals,
-        type_cache_output,
-        has_deprecation_diagnostics,
-        collect_compile_stats,
-        None,
-    )
+/// Immutable, shared inputs to the diagnostics-collection pipeline.
+///
+/// Extracted from `collect_diagnostics_with_source_resolutions` to reduce the
+/// parameter count below the `clippy::too_many_arguments` threshold while
+/// keeping mutable and call-unique params (`cache`, `type_cache_output`,
+/// `source_module_resolutions`) as separate arguments.
+pub(super) struct CollectDiagnosticsInput<'a> {
+    pub(super) program: &'a MergedProgram,
+    pub(super) options: &'a ResolvedCompilerOptions,
+    pub(super) base_dir: &'a Path,
+    pub(super) checker_libs: &'a CheckerLibSet,
+    pub(super) typescript_dom_replacement_globals: (bool, bool, bool),
+    pub(super) has_deprecation_diagnostics: bool,
+    pub(super) collect_compile_stats: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn collect_diagnostics_with_source_resolutions(
-    program: &MergedProgram,
-    options: &ResolvedCompilerOptions,
-    base_dir: &Path,
+#[cfg(test)]
+pub(super) fn collect_diagnostics(
+    input: &CollectDiagnosticsInput<'_>,
     cache: Option<&mut CompilationCache>,
-    checker_libs: &CheckerLibSet,
-    typescript_dom_replacement_globals: (bool, bool, bool),
     type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
-    has_deprecation_diagnostics: bool,
-    collect_compile_stats: bool,
+) -> CollectDiagnosticsResult {
+    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None)
+}
+
+pub(super) fn collect_diagnostics_with_source_resolutions(
+    input: &CollectDiagnosticsInput<'_>,
+    cache: Option<&mut CompilationCache>,
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
     source_module_resolutions: Option<
         &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
     >,
 ) -> CollectDiagnosticsResult {
+    let &CollectDiagnosticsInput {
+        program,
+        options,
+        base_dir,
+        checker_libs,
+        typescript_dom_replacement_globals,
+        has_deprecation_diagnostics,
+        collect_compile_stats,
+    } = input;
     let _collect_span =
         tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
     // Production CLI semantic diagnostics are scheduled here. Lower-level
@@ -1851,14 +1851,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             let use_file_session_reuse =
                 use_sequential_checking && !extract_type_cache && reuse_requested;
             if use_file_session_reuse {
-                check_files_sequentially_with_reuse(
-                    &work_items,
+                let reuse_ctx = CheckFilesReuseCtx {
                     program,
-                    &compiler_options,
-                    &program_context,
-                    &resolved_modules_per_file,
-                    Arc::clone(&shared_lib_cache),
-                    shared_query_cache.as_ref(),
+                    compiler_options: &compiler_options,
+                    program_context: &program_context,
+                    resolved_modules_per_file: &resolved_modules_per_file,
+                    shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_query_cache: shared_query_cache.as_ref(),
+                };
+                let reuse_flags = CheckFileFlags {
                     no_check,
                     check_js,
                     explicit_check_js_false,
@@ -1866,6 +1867,11 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     program_has_real_syntax_errors,
                     program_has_unsupported_js_root,
                     extract_type_cache,
+                };
+                check_files_sequentially_with_reuse(
+                    &work_items,
+                    &reuse_ctx,
+                    &reuse_flags,
                     build_checker_binder,
                 )
             } else if !use_sequential_checking && !extract_type_cache && parallel_reuse_requested {
@@ -1874,14 +1880,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                 // before PR #7521; see comment above on
                 // `file_session_reuse_requested`).
                 tsz::parallel::ensure_rayon_global_pool();
-                check_files_in_parallel_chunks_with_reuse(
-                    &work_items,
+                let reuse_ctx = CheckFilesReuseCtx {
                     program,
-                    &compiler_options,
-                    &program_context,
-                    &resolved_modules_per_file,
-                    Arc::clone(&shared_lib_cache),
-                    shared_query_cache.as_ref(),
+                    compiler_options: &compiler_options,
+                    program_context: &program_context,
+                    resolved_modules_per_file: &resolved_modules_per_file,
+                    shared_lib_cache: Arc::clone(&shared_lib_cache),
+                    shared_query_cache: shared_query_cache.as_ref(),
+                };
+                let reuse_flags = CheckFileFlags {
                     no_check,
                     check_js,
                     explicit_check_js_false,
@@ -1889,6 +1896,11 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                     program_has_real_syntax_errors,
                     program_has_unsupported_js_root,
                     extract_type_cache,
+                };
+                check_files_in_parallel_chunks_with_reuse(
+                    &work_items,
+                    &reuse_ctx,
+                    &reuse_flags,
                     FILE_SESSION_REUSE_PARALLEL_CHUNK_SIZE,
                     &build_checker_binder,
                 )
@@ -2511,6 +2523,24 @@ pub(super) type CheckFileResult = (
     tsz_solver::StoreStatistics,
 );
 
+/// Boolean flags that govern per-file semantic checking behavior.
+///
+/// Shared by `run_check_on_existing_checker`,
+/// `check_files_sequentially_with_reuse`, and
+/// `check_files_in_parallel_chunks_with_reuse`.
+struct CheckFileFlags {
+    no_check: bool,
+    check_js: bool,
+    /// `true` when `checkJs: false` was explicitly specified in compiler options.
+    explicit_check_js_false: bool,
+    /// Skip type checking for declaration files (`.d.ts`).
+    skip_lib_check: bool,
+    program_has_real_syntax_errors: bool,
+    program_has_unsupported_js_root: bool,
+    /// When `false`, per-file `TypeCache` extraction is skipped entirely.
+    extract_type_cache: bool,
+}
+
 /// Check a single file for the parallel checking path.
 ///
 /// This is extracted from the work queue loop so it can be called from rayon's `par_iter`.
@@ -2542,18 +2572,21 @@ pub(super) type CheckFileResult = (
 ///   In practice this means callers reusing a `CheckerState` across
 ///   files must have invoked `switch_to_file` (which drains
 ///   diagnostics via `reset_for_next_file`) before this function.
-#[allow(clippy::too_many_arguments)]
 fn run_check_on_existing_checker<'a>(
     checker: &mut CheckerState<'a>,
     file: &tsz::parallel::BoundFile,
     compiler_options: &tsz_common::CheckerOptions,
     program_context: &tsz::checker::context::ProgramContext,
-    no_check: bool,
-    check_js: bool,
-    explicit_check_js_false: bool,
-    program_has_real_syntax_errors: bool,
-    program_has_unsupported_js_root: bool,
+    flags: &CheckFileFlags,
 ) -> Vec<Diagnostic> {
+    let &CheckFileFlags {
+        no_check,
+        check_js,
+        explicit_check_js_false,
+        program_has_real_syntax_errors,
+        program_has_unsupported_js_root,
+        ..
+    } = flags;
     let filtered_parse_diagnostics =
         filtered_parse_diagnostics(&file.parse_diagnostics, program_has_real_syntax_errors);
     let is_js = is_js_file(Path::new(&file.file_name));
@@ -2744,11 +2777,15 @@ pub(super) fn check_file_for_parallel<'a>(
         file,
         compiler_options,
         program_context,
-        no_check,
-        check_js,
-        explicit_check_js_false,
-        program_has_real_syntax_errors,
-        program_has_unsupported_js_root,
+        &CheckFileFlags {
+            no_check,
+            check_js,
+            explicit_check_js_false,
+            skip_lib_check,
+            program_has_real_syntax_errors,
+            program_has_unsupported_js_root,
+            extract_type_cache,
+        },
     );
 
     let checker_counters = checker.ctx.request_cache_counters;
@@ -2822,28 +2859,46 @@ pub(super) fn check_file_for_parallel<'a>(
 /// future change introduces a divergence, the responsible change is
 /// the one to fix, not the flag — the flag exists to *measure* the
 /// allocation savings, not to gate behavior changes.
+/// Shared infrastructure for the sequential and parallel session-reuse check paths.
+///
+/// Groups the program/options/context reference params so that
+/// `check_files_sequentially_with_reuse` and
+/// `check_files_in_parallel_chunks_with_reuse` stay under the
+/// `clippy::too_many_arguments` threshold.
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_arguments)]
+struct CheckFilesReuseCtx<'a> {
+    program: &'a MergedProgram,
+    compiler_options: &'a tsz_common::CheckerOptions,
+    program_context: &'a tsz::checker::context::ProgramContext,
+    resolved_modules_per_file: &'a Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
+    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
+    shared_query_cache: Option<&'a tsz_solver::construction::SharedQueryCache>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 fn check_files_sequentially_with_reuse<F>(
     work_items: &[usize],
-    program: &MergedProgram,
-    compiler_options: &tsz_common::CheckerOptions,
-    program_context: &tsz::checker::context::ProgramContext,
-    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
-    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
-    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
-    no_check: bool,
-    check_js: bool,
-    explicit_check_js_false: bool,
-    skip_lib_check: bool,
-    program_has_real_syntax_errors: bool,
-    program_has_unsupported_js_root: bool,
-    extract_type_cache: bool,
+    ctx: &CheckFilesReuseCtx<'_>,
+    flags: &CheckFileFlags,
     build_checker_binder: F,
 ) -> Vec<CheckFileResult>
 where
     F: Fn(usize) -> tsz_binder::BinderState,
 {
+    let CheckFilesReuseCtx {
+        program,
+        compiler_options,
+        program_context,
+        resolved_modules_per_file,
+        shared_lib_cache,
+        shared_query_cache,
+    } = ctx;
+    let &CheckFileFlags {
+        skip_lib_check,
+        program_has_real_syntax_errors,
+        extract_type_cache,
+        ..
+    } = flags;
     // Pre-build every binder via the caller-provided closure. Each
     // file's `CheckerContext::binder` is a `&'a BinderState`, so the
     // binders must outlive the `CheckerState` we construct below;
@@ -2903,7 +2958,7 @@ where
                 compiler_options,
             );
             state.ctx.report_unresolved_imports = true;
-            state.ctx.shared_lib_type_cache = Some(Arc::clone(&shared_lib_cache));
+            state.ctx.shared_lib_type_cache = Some(Arc::clone(shared_lib_cache));
             // `apply_to` is the expensive setup we're amortising:
             // shared `DefinitionStore`, shared global indices,
             // resolved-module maps, file-is-ESM map, etc. Running it
@@ -2932,17 +2987,8 @@ where
             program_has_real_syntax_errors,
         );
 
-        let file_diagnostics = run_check_on_existing_checker(
-            state,
-            file,
-            compiler_options,
-            program_context,
-            no_check,
-            check_js,
-            explicit_check_js_false,
-            program_has_real_syntax_errors,
-            program_has_unsupported_js_root,
-        );
+        let file_diagnostics =
+            run_check_on_existing_checker(state, file, compiler_options, program_context, flags);
 
         let checker_counters = state.ctx.request_cache_counters;
         // `QueryCache::statistics()` is cumulative over the whole loop
@@ -2978,22 +3024,10 @@ where
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_arguments)]
 fn check_files_in_parallel_chunks_with_reuse<F>(
     work_items: &[usize],
-    program: &MergedProgram,
-    compiler_options: &tsz_common::CheckerOptions,
-    program_context: &tsz::checker::context::ProgramContext,
-    resolved_modules_per_file: &Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
-    shared_lib_cache: Arc<dashmap::DashMap<String, Option<tsz_solver::TypeId>>>,
-    shared_query_cache: Option<&tsz_solver::construction::SharedQueryCache>,
-    no_check: bool,
-    check_js: bool,
-    explicit_check_js_false: bool,
-    skip_lib_check: bool,
-    program_has_real_syntax_errors: bool,
-    program_has_unsupported_js_root: bool,
-    extract_type_cache: bool,
+    ctx: &CheckFilesReuseCtx<'_>,
+    flags: &CheckFileFlags,
     chunk_size: usize,
     build_checker_binder: &F,
 ) -> Vec<CheckFileResult>
@@ -3003,28 +3037,20 @@ where
     use rayon::iter::ParallelIterator;
     use rayon::slice::ParallelSlice;
 
-    debug_assert!(!extract_type_cache);
+    debug_assert!(!flags.extract_type_cache);
     let chunk_size = chunk_size.max(1);
     work_items
         .par_chunks(chunk_size)
         .map(|chunk| {
-            check_files_sequentially_with_reuse(
-                chunk,
-                program,
-                compiler_options,
-                program_context,
-                resolved_modules_per_file,
-                Arc::clone(&shared_lib_cache),
-                shared_query_cache,
-                no_check,
-                check_js,
-                explicit_check_js_false,
-                skip_lib_check,
-                program_has_real_syntax_errors,
-                program_has_unsupported_js_root,
-                extract_type_cache,
-                build_checker_binder,
-            )
+            let chunk_ctx = CheckFilesReuseCtx {
+                program: ctx.program,
+                compiler_options: ctx.compiler_options,
+                program_context: ctx.program_context,
+                resolved_modules_per_file: ctx.resolved_modules_per_file,
+                shared_lib_cache: Arc::clone(&ctx.shared_lib_cache),
+                shared_query_cache: ctx.shared_query_cache,
+            };
+            check_files_sequentially_with_reuse(chunk, &chunk_ctx, flags, build_checker_binder)
         })
         .collect::<Vec<_>>()
         .into_iter()
@@ -4173,15 +4199,17 @@ mod tests {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         collect_diagnostics(
-            &program,
-            &ResolvedCompilerOptions::default(),
-            std::path::Path::new("/"),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &ResolvedCompilerOptions::default(),
+                base_dir: std::path::Path::new("/"),
+                checker_libs: &CheckerLibSet::default(),
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &CheckerLibSet::default(),
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics
     }
@@ -4201,15 +4229,17 @@ mod tests {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         collect_diagnostics(
-            &program,
-            options,
-            base_dir,
+            &CollectDiagnosticsInput {
+                program: &program,
+                options,
+                base_dir,
+                checker_libs: &CheckerLibSet::default(),
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &CheckerLibSet::default(),
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics
     }
@@ -4474,15 +4504,17 @@ interface Window {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         collect_diagnostics(
-            &program,
-            &ResolvedCompilerOptions::default(),
-            std::path::Path::new("/"),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &ResolvedCompilerOptions::default(),
+                base_dir: std::path::Path::new("/"),
+                checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics
     }
@@ -4515,15 +4547,17 @@ interface Window {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         collect_diagnostics(
-            &program,
-            options,
-            std::path::Path::new("/"),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options,
+                base_dir: std::path::Path::new("/"),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics
     }
@@ -5019,15 +5053,17 @@ declare namespace Intl {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics
     }
@@ -5312,15 +5348,17 @@ const elem = <div className={class1, class2}/>;
 
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
         let ts18048_count = diagnostics
@@ -5433,15 +5471,17 @@ const q: PromiseLike<number> = p;
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -5515,15 +5555,17 @@ async function f() {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -5600,15 +5642,17 @@ type Recurse2 = {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -5800,7 +5844,7 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         let _source_type = checker.get_type_of_node(decl.initializer);
         let target_type = checker.get_type_from_type_node(decl.type_annotation);
         let _read_constraint_type =
-            |object_type| match tsz_solver::QueryDatabase::resolve_property_access(
+            |object_type| match tsz_solver::construction::QueryDatabase::resolve_property_access(
                 &query_cache,
                 object_type,
                 "constraint",
@@ -5811,21 +5855,25 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
                 _ => None,
             };
         let _evaluated_target_type = {
-            let mut evaluator =
-                tsz_solver::TypeEvaluator::with_resolver(&program.type_interner, &checker.ctx);
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(
+                &program.type_interner,
+                &checker.ctx,
+            );
             evaluator.evaluate(target_type)
         };
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let direct_diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &direct_checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &direct_checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
         let direct_ts2322_count = direct_diagnostics
@@ -5838,15 +5886,17 @@ interface Constraint<A extends Runtype<any>> extends Runtype<A['witness']> {
         );
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -5943,15 +5993,17 @@ export const x = foo();
         ));
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -6047,15 +6099,17 @@ export type RowToColumns<TColumns> = {
         ));
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -6681,15 +6735,17 @@ let x2: string = f;
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &CheckerLibSet::default(),
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &CheckerLibSet::default(),
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -6801,15 +6857,17 @@ const onSomeEvent = <T extends keyof TypesMap>(p: P<T>) => typeHandlers[p.t]?.(p
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -6901,15 +6959,17 @@ const nestedTuple = type([["ark", "|>", (x) => x.length]])
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -6991,15 +7051,17 @@ m(item => item.id < 5);
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -7075,15 +7137,17 @@ interface Buzz { id: number; buzz: string }
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -7166,15 +7230,17 @@ const obj: {field: Rule} = {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -7289,15 +7355,17 @@ function foo() {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 
@@ -7522,15 +7590,17 @@ interface Node {
         let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
 
         let diagnostics = collect_diagnostics(
-            &program,
-            &resolved,
-            dir.path(),
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
             None,
-            &checker_libs,
-            (false, false, false),
             &type_cache_output,
-            false,
-            false,
         )
         .diagnostics;
 

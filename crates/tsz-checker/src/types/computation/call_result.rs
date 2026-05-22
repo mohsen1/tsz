@@ -68,44 +68,6 @@ impl<'a> CheckerState<'a> {
         Some(self.ctx.types.factory().union(return_types))
     }
 
-    fn normalized_builtin_object_entries_return_type(
-        &self,
-        callee_expr: NodeIndex,
-        arg_types: &[TypeId],
-        return_type: TypeId,
-    ) -> TypeId {
-        if arg_types.len() != 1 || arg_types[0] != TypeId::ANY {
-            return return_type;
-        }
-        let Some(callee_node) = self.ctx.arena.get(callee_expr) else {
-            return return_type;
-        };
-        let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
-            return return_type;
-        };
-        if self.ctx.arena.get_identifier_text(access.name_or_argument) != Some("entries")
-            || self.ctx.arena.get_identifier_text(access.expression) != Some("Object")
-        {
-            return return_type;
-        }
-
-        let tuple = self.ctx.types.factory().tuple(vec![
-            tsz_solver::TupleElement {
-                type_id: TypeId::STRING,
-                optional: false,
-                rest: false,
-                name: None,
-            },
-            tsz_solver::TupleElement {
-                type_id: TypeId::ANY,
-                optional: false,
-                rest: false,
-                name: None,
-            },
-        ]);
-        self.ctx.types.factory().array(tuple)
-    }
-
     fn finalize_call_return_like_success(
         &mut self,
         callee_expr: NodeIndex,
@@ -631,13 +593,22 @@ impl<'a> CheckerState<'a> {
             .generic_excess_skip
             .as_ref()
             .is_some_and(|skip| mismatch_index < skip.len() && skip[mismatch_index]);
-        if let Some(expected) = self.generic_application_literal_expected_for_mismatch(
-            callee_has_declared_generic_signature || parameter_was_generic_target,
-            arg_types,
-            args,
-            expected,
-        ) {
-            return expected;
+        let allow_generic_literal_display =
+            callee_has_declared_generic_signature || parameter_was_generic_target;
+        if allow_generic_literal_display {
+            let initializer_literal_types: Vec<_> = args
+                .iter()
+                .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx))
+                .collect();
+            if let Some(expected) = expr_ops::generic_application_literal_expected_for_mismatch(
+                self.ctx.types,
+                true,
+                expected,
+                arg_types,
+                &initializer_literal_types,
+            ) {
+                return expected;
+            }
         }
         let actual_display_type = common::widen_argument_type_for_display(self.ctx.types, actual);
         if !common::is_primitive_type(self.ctx.types, actual_display_type) {
@@ -666,57 +637,6 @@ impl<'a> CheckerState<'a> {
                     })
             })
             .unwrap_or(expected)
-    }
-
-    fn generic_application_literal_expected_for_mismatch(
-        &self,
-        allow_generic_literal_display: bool,
-        arg_types: &[TypeId],
-        args: &[NodeIndex],
-        expected: TypeId,
-    ) -> Option<TypeId> {
-        if !allow_generic_literal_display {
-            return None;
-        }
-        let display_expected = self
-            .ctx
-            .types
-            .get_display_alias(expected)
-            .unwrap_or(expected);
-        let (base, type_args) = common::application_info(self.ctx.types, display_expected)?;
-        if type_args.len() != 1 {
-            return None;
-        }
-        let expected_arg = type_args[0];
-        let expected_arg_base = common::widen_literal_type(self.ctx.types, expected_arg);
-        if !common::is_primitive_type(self.ctx.types, expected_arg_base) {
-            return None;
-        }
-
-        let mut candidates = Vec::new();
-        let mut seen = FxHashSet::default();
-        for candidate in arg_types.iter().copied().chain(
-            args.iter()
-                .filter_map(|&arg_idx| self.literal_type_from_initializer(arg_idx)),
-        ) {
-            if common::literal_value(self.ctx.types, candidate).is_some()
-                && common::widen_literal_type(self.ctx.types, candidate) == expected_arg_base
-                && seen.insert(candidate)
-            {
-                candidates.push(candidate);
-            }
-        }
-        if candidates.len() < 2 {
-            return None;
-        }
-
-        let literal_arg = self.ctx.types.factory().union(candidates);
-        Some(
-            self.ctx
-                .types
-                .factory()
-                .application(base, vec![literal_arg]),
-        )
     }
 
     fn is_generic_callable_against_nongeneric_target(
@@ -827,12 +747,6 @@ impl<'a> CheckerState<'a> {
                     return TypeId::VOID;
                 }
                 self.report_polymorphic_this_indexed_conditional_arg(callee_type, args, arg_types);
-                let return_type = self.normalized_builtin_object_entries_return_type(
-                    callee_expr,
-                    arg_types,
-                    return_type,
-                );
-
                 self.finalize_call_return_like_success(
                     callee_expr,
                     callee_type,

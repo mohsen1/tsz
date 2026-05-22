@@ -317,6 +317,9 @@ pub struct Printer<'a> {
     /// Function depth whose ES5 lexical block should reset initializerless bindings.
     pub(crate) lexical_block_missing_initializer_function_depth: Option<u32>,
 
+    /// Whether the current ES5 lexical reset context is a loop body.
+    pub(crate) lexical_block_missing_initializer_is_loop_body: bool,
+
     /// Current declaration list is being printed in a `for` header.
     pub(crate) in_for_initializer: bool,
 
@@ -559,6 +562,10 @@ pub struct Printer<'a> {
     /// newline. The next `write()` call should insert a space before non-whitespace text.
     /// This avoids double-spacing with expression emitters that handle their own comment spacing.
     pub(crate) pending_block_comment_space: bool,
+
+    /// Source range end where concise-arrow trailing comments should be deferred
+    /// to an owning semicolon when the source semicolon follows the arrow body.
+    pub(crate) arrow_concise_body_trailing_comment_defer_range: Option<(u32, u32)>,
 
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(crate) suppress_ns_qualification: bool,
@@ -1098,6 +1105,7 @@ impl<'a> Printer<'a> {
             emit_plan,
             emit_missing_initializer_as_void_0: false,
             lexical_block_missing_initializer_function_depth: None,
+            lexical_block_missing_initializer_is_loop_body: false,
             in_for_initializer: false,
             source_text: None,
             jsx_pragmas: crate::jsx_pragmas::JsxPragmaFacts::default(),
@@ -1163,6 +1171,7 @@ impl<'a> Printer<'a> {
             deferred_local_export_bindings_all: None,
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
+            arrow_concise_body_trailing_comment_defer_range: None,
             pending_class_field_inits: Vec::new(),
             pending_auto_accessor_inits: Vec::new(),
             next_auto_accessor_name_index: 0,
@@ -1341,6 +1350,31 @@ impl<'a> Printer<'a> {
         self.emit_plan = plan;
     }
 
+    /// Seed a nested printer with outer function-scope names that nested
+    /// block-scoped declarations must not capture when lowered to ES5 `var`.
+    pub(crate) fn seed_function_scope_shadowed_names(&mut self, names: &[String]) {
+        if names.is_empty() {
+            return;
+        }
+
+        self.ctx.block_scope_state.enter_function_scope();
+        for name in names {
+            self.ctx
+                .block_scope_state
+                .register_function_scope_shadowed_name(name);
+        }
+    }
+
+    pub(crate) fn seed_block_scope_reserved_names(&mut self, names: &[String]) {
+        self.ctx
+            .block_scope_state
+            .reserve_names(names.iter().cloned());
+    }
+
+    pub(crate) fn block_scope_reserved_names(&self) -> Vec<String> {
+        self.ctx.block_scope_state.visible_reserved_names()
+    }
+
     #[must_use]
     pub const fn emit_plan(&self) -> &EmitPlan {
         &self.emit_plan
@@ -1371,6 +1405,11 @@ impl<'a> Printer<'a> {
     /// transforms automatically.
     pub const fn set_auto_detect_module(&mut self, enabled: bool) {
         self.ctx.auto_detect_module = enabled;
+    }
+
+    /// Mark this printer as emitting a `--module none --outFile` bundle.
+    pub const fn set_module_none_out_file(&mut self, enabled: bool) {
+        self.ctx.module_none_out_file = enabled;
     }
 
     /// Set the source text (for detecting single-line constructs).
@@ -1628,6 +1667,26 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+    }
+
+    /// Enter the CommonJS-export-body mask while emitting `f`: clear
+    /// `options.module` to `None` (so inner statements do not re-apply
+    /// module-level transforms) and save the outer module on
+    /// `cjs_export_body_outer_module` (so dynamic-import lowering, helper
+    /// detection, and sub-emitters still see the outer kind through the
+    /// `outer_module_kind()` / `is_effectively_commonjs()` predicates).
+    pub(in crate::emitter) fn with_cjs_export_body_mask<R>(
+        &mut self,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let prev_module = self.ctx.options.module;
+        let prev_outer = self.ctx.cjs_export_body_outer_module;
+        self.ctx.options.module = ModuleKind::None;
+        self.ctx.cjs_export_body_outer_module = Some(prev_module);
+        let result = f(self);
+        self.ctx.options.module = prev_module;
+        self.ctx.cjs_export_body_outer_module = prev_outer;
+        result
     }
 
     pub(in crate::emitter) fn with_scoped_static_initializer_context_cleared<R>(

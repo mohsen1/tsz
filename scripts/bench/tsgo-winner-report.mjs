@@ -2,6 +2,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
 function readJson(file) {
@@ -66,6 +67,8 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "best-common-type fallback candidate subtype reduction",
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^BCT candidates=200$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-bct-candidates-200>.ts",
       issue: 8857,
       url: "https://github.com/mohsen1/tsz/issues/8857",
     },
@@ -77,6 +80,8 @@ const LOSS_CLOSURE_BY_ROW = new Map([
       operation: "class declaration/member-table construction and checker/binder symbol lookup pressure",
       command:
         "scripts/safe-run.sh ./scripts/bench/perf-hotspots.sh --filter '^200 classes$' --json-file <artifact>.json",
+      attribution_command:
+        "TSZ_PERF_COUNTERS=1 .target/release/tsz --extendedDiagnostics --perf-counters-json <artifact>.perf.json --noEmit <generated-200-classes>.ts",
       issue: 8858,
       url: "https://github.com/mohsen1/tsz/issues/8858",
     },
@@ -85,6 +90,80 @@ const LOSS_CLOSURE_BY_ROW = new Map([
 
 function lossClosureForRow(row) {
   return LOSS_CLOSURE_BY_ROW.get(row.name) ?? null;
+}
+
+function measurementProfileStatus(input) {
+  const profile = input?.measurement_profile;
+  if (!profile || typeof profile !== "object") {
+    return {
+      present: false,
+      mode: null,
+      warning: "measurement_profile missing",
+    };
+  }
+
+  const mode = typeof profile.mode === "string" && profile.mode ? profile.mode : null;
+  return {
+    present: true,
+    mode,
+    warning: mode ? null : "measurement_profile.mode missing",
+  };
+}
+
+function pickAttributionArtifact(row) {
+  return (
+    row?.attribution_artifact ??
+    row?.performance_attribution ??
+    row?.attribution ??
+    row?.compatibility?.attribution_artifact ??
+    row?.compatibility?.performance_attribution ??
+    row?.compatibility?.attribution ??
+    null
+  );
+}
+
+function attributionStatusForRow(row) {
+  const artifact = pickAttributionArtifact(row);
+  if (!artifact) {
+    return {
+      present: false,
+      path: null,
+      url: null,
+      generated_at: null,
+      mode: null,
+      dominant_subsystem: null,
+      warning: "attribution artifact missing",
+    };
+  }
+
+  if (typeof artifact === "string") {
+    return {
+      present: true,
+      path: artifact,
+      url: null,
+      generated_at: null,
+      mode: null,
+      dominant_subsystem: null,
+      warning: "attribution dominant_subsystem missing",
+    };
+  }
+
+  const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
+  const urlValue = artifact.url ?? null;
+  const dominantSubsystem = artifact.dominant_subsystem ?? artifact.dominantSubsystem ?? null;
+  return {
+    present: true,
+    path: pathValue,
+    url: urlValue,
+    generated_at: artifact.generated_at ?? artifact.generatedAt ?? null,
+    mode: artifact.mode ?? null,
+    dominant_subsystem: dominantSubsystem,
+    warning: dominantSubsystem ? null : "attribution dominant_subsystem missing",
+  };
+}
+
+function hasCompleteAttribution(status) {
+  return Boolean(status?.present && status?.dominant_subsystem);
 }
 
 // Null factors sort last (treated as the lowest possible value) so that rows
@@ -105,12 +184,32 @@ function compareFamiliesByWorstFactorDesc(a, b) {
   return a.family.localeCompare(b.family);
 }
 
+function duplicateProjectRows(rows) {
+  const counts = new Map();
+  for (const row of rows) {
+    const name = typeof row?.name === "string" ? row.name : null;
+    if (!name || !Object.hasOwn(PROJECT_ROWS_BY_NAME, name)) continue;
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+
+  return [...counts]
+    .filter(([, count]) => count > 1)
+    .map(([name, count]) => ({
+      name,
+      label: PROJECT_ROWS_BY_NAME[name]?.label ?? name,
+      count,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function createTsgoWinnerReport(input, inputPath) {
   const rows = Array.isArray(input.results) ? input.results : [];
+  const duplicateRows = duplicateProjectRows(rows);
+  const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
 
   const winners = rows
-    .filter((row) => row?.winner === "tsgo" && isGreen(row))
+    .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
     .map((row) => ({
       name: row.name,
       factor: asNumber(row.factor),
@@ -124,12 +223,17 @@ export function createTsgoWinnerReport(input, inputPath) {
       exit_class: row.compatibility?.exit_class ?? null,
       semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
       loss_closure: lossClosureForRow(row),
+      attribution_status: attributionStatusForRow(row),
     }))
     .sort(compareWinnersByFactorDesc);
 
   const projects = winners.filter((row) => row.semantic_owner_family);
   const missingLossClosureRows = winners
     .filter((row) => !row.loss_closure)
+    .map((row) => row.name)
+    .sort();
+  const missingAttributionRows = winners
+    .filter((row) => !hasCompleteAttribution(row.attribution_status))
     .map((row) => row.name)
     .sort();
   const byOwnerFamily = new Map();
@@ -157,12 +261,17 @@ export function createTsgoWinnerReport(input, inputPath) {
     },
     totals: {
       rows: rows.length,
+      duplicate_project_rows: duplicateRows.length,
       green_tsgo_winners: winners.length,
       project_green_tsgo_winners: projects.length,
       green_tsgo_winners_with_closure: winners.length - missingLossClosureRows.length,
       missing_loss_closure_rows: missingLossClosureRows,
+      green_tsgo_winners_with_attribution: winners.length - missingAttributionRows.length,
+      missing_attribution_rows: missingAttributionRows,
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
+    measurement_profile: measurementProfileStatus(input),
+    duplicate_rows: duplicateRows,
     worst: winners[0] ?? null,
     by_owner_family: [...byOwnerFamily.values()].sort(compareFamiliesByWorstFactorDesc),
     rows: winners,
@@ -192,4 +301,13 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );
+
+  if (report.totals.duplicate_project_rows > 0) {
+    console.error(
+      `duplicate project rows: ${report.duplicate_rows
+        .map((row) => `${row.name} (${row.count})`)
+        .join(", ")}`,
+    );
+    process.exit(1);
+  }
 }

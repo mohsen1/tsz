@@ -9,13 +9,22 @@ use super::call_evaluator::{
     AssignabilityChecker, CallEvaluator, CallResult, CallWithCheckerResult, CombinedUnionSignature,
     UnionCallSignatureCompatibility,
 };
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::operations::GenericCallResult;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IntrinsicKind, ParamInfo, TupleElement, TypeData,
     TypeId, TypeListId, TypeParamInfo,
 };
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::FxHashSet;
+
+/// Returns the declared `this` type only when it constrains the receiver. Per
+/// tsc's `checkApplicableSignature` gate (`thisType !== voidType`, source of
+/// TS2684), a callable declared `this: void` opts out of the receiver check
+/// and accepts any receiver — even one not structurally assignable to `void`.
+pub(crate) fn receiver_constraining_this_type(this_type: Option<TypeId>) -> Option<TypeId> {
+    this_type.filter(|&t| t != TypeId::VOID)
+}
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     fn generic_function_shape_for_inference(
@@ -937,21 +946,28 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // doesn't satisfy ALL members' `this` requirements.
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
         // argument errors (TS2345) before `this` context errors (TS2684).
-        let mut deferred_this_error =
-            if let Some(combined_this) = self.compute_union_this_type(&members) {
-                let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
-                if !self.checker.is_assignable_to(actual_this, combined_this) {
-                    Some(CallResult::ThisTypeMismatch {
-                        expected_this: combined_this,
-                        actual_this,
-                        emit_not_callable: false,
-                    })
-                } else {
-                    None
-                }
+        // Gate via `receiver_constraining_this_type`: if the intersected
+        // combined `this` reduces to exactly `void`, the receiver check is
+        // skipped (matches tsc's `thisType !== voidType`). Filtering members
+        // *before* intersection would over-relax mixed unions like `void | A`,
+        // since tsc still runs the check on `void & A` (which is not `void`).
+        let mut deferred_this_error = if let Some(combined_this) = self
+            .compute_union_this_type(&members)
+            .and_then(|t| receiver_constraining_this_type(Some(t)))
+        {
+            let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
+            if !self.checker.is_assignable_to(actual_this, combined_this) {
+                Some(CallResult::ThisTypeMismatch {
+                    expected_this: combined_this,
+                    actual_this,
+                    emit_not_callable: false,
+                })
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         // Phase 0.5: Check multi-overload union members for compatible signatures.
         // When multiple union members have multiple overloads, first try to find
@@ -980,7 +996,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 let unified_this = unified_sigs
                     .iter()
                     .filter_map(|s| s.this_type)
-                    .reduce(|a, b| self.interner.intersection2(a, b));
+                    .reduce(|a, b| self.interner.intersection2(a, b))
+                    .and_then(|t| receiver_constraining_this_type(Some(t)));
 
                 if let Some(combined_this) = unified_this {
                     let actual_this = self.actual_this_type.unwrap_or(TypeId::VOID);
@@ -1474,6 +1491,12 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    fn cache_generic_result(&mut self, mut r: GenericCallResult) -> CallResult {
+        self.last_instantiated_predicate = r.take_instantiated_predicate();
+        self.last_instantiated_params = r.take_instantiated_params();
+        r.into_call_result()
+    }
+
     /// Resolve a call to a simple function type.
     pub(crate) fn resolve_function_call(
         &mut self,
@@ -1486,37 +1509,41 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 return result;
             }
             if let Some(func) = self.generic_function_shape_for_inference(func, arg_types) {
-                return self.resolve_generic_call(&func, arg_types);
+                let r = self.resolve_generic_call(&func, arg_types);
+                return self.cache_generic_result(r);
             }
-            return self.resolve_generic_call(func, arg_types);
+            let r = self.resolve_generic_call(func, arg_types);
+            return self.cache_generic_result(r);
         }
 
         // Check `this` context if specified by the function shape.
         // IMPORTANT: Defer `this` errors to after argument checking — TSC reports
-        // argument errors (TS2345) before `this` context errors (TS2684).
-        let deferred_this_error = if let Some(expected_this) = func.this_type {
-            if let Some(actual_this) = self.actual_this_type {
-                if !self.checker.is_assignable_to(actual_this, expected_this) {
+        // argument errors (TS2345) before `this` context errors (TS2684). A
+        // declared `this: void` opts out (see `receiver_constraining_this_type`).
+        let deferred_this_error =
+            if let Some(expected_this) = receiver_constraining_this_type(func.this_type) {
+                if let Some(actual_this) = self.actual_this_type {
+                    if !self.checker.is_assignable_to(actual_this, expected_this) {
+                        Some(CallResult::ThisTypeMismatch {
+                            expected_this,
+                            actual_this,
+                            emit_not_callable: false,
+                        })
+                    } else {
+                        None
+                    }
+                } else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
                     Some(CallResult::ThisTypeMismatch {
                         expected_this,
-                        actual_this,
+                        actual_this: TypeId::VOID,
                         emit_not_callable: false,
                     })
                 } else {
                     None
                 }
-            } else if !self.checker.is_assignable_to(TypeId::VOID, expected_this) {
-                Some(CallResult::ThisTypeMismatch {
-                    expected_this,
-                    actual_this: TypeId::VOID,
-                    emit_not_callable: false,
-                })
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         // Check argument count
         let (min_args, max_args) = self.arg_count_bounds(&func.params);
@@ -1860,6 +1887,14 @@ pub fn infer_generic_function<C: AssignabilityChecker>(
     evaluator.infer_generic_function(func, arg_types)
 }
 
+/// Named options for `resolve_call_with_checker_and_arg_sources`.
+pub struct ResolveCallOptions<'a> {
+    pub force_bivariant_callbacks: bool,
+    pub contextual_type: Option<TypeId>,
+    pub actual_this_type: Option<TypeId>,
+    pub arg_source_is_type_annotation: &'a [bool],
+}
+
 pub fn resolve_call_with_checker<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
@@ -1874,29 +1909,27 @@ pub fn resolve_call_with_checker<C: AssignabilityChecker>(
         checker,
         func_type,
         arg_types,
-        force_bivariant_callbacks,
-        contextual_type,
-        actual_this_type,
-        &[],
+        &ResolveCallOptions {
+            force_bivariant_callbacks,
+            contextual_type,
+            actual_this_type,
+            arg_source_is_type_annotation: &[],
+        },
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn resolve_call_with_checker_and_arg_sources<C: AssignabilityChecker>(
     interner: &dyn QueryDatabase,
     checker: &mut C,
     func_type: TypeId,
     arg_types: &[TypeId],
-    force_bivariant_callbacks: bool,
-    contextual_type: Option<TypeId>,
-    actual_this_type: Option<TypeId>,
-    arg_source_is_type_annotation: &[bool],
+    opts: &ResolveCallOptions<'_>,
 ) -> CallWithCheckerResult {
     let mut evaluator = CallEvaluator::new(interner, checker);
-    evaluator.set_force_bivariant_callbacks(force_bivariant_callbacks);
-    evaluator.set_contextual_type(contextual_type);
-    evaluator.set_actual_this_type(actual_this_type);
-    evaluator.set_arg_source_is_type_annotation(arg_source_is_type_annotation);
+    evaluator.set_force_bivariant_callbacks(opts.force_bivariant_callbacks);
+    evaluator.set_contextual_type(opts.contextual_type);
+    evaluator.set_actual_this_type(opts.actual_this_type);
+    evaluator.set_arg_source_is_type_annotation(opts.arg_source_is_type_annotation);
     let result = evaluator.resolve_call(func_type, arg_types);
     let predicate = evaluator.last_instantiated_predicate.take();
     let instantiated_params = evaluator.last_instantiated_params.take();
@@ -1926,10 +1959,10 @@ pub fn compute_contextual_types_with_compat_checker<'a, R, F>(
     configure_checker: F,
 ) -> TypeSubstitution
 where
-    R: crate::TypeResolver,
-    F: FnOnce(&mut crate::CompatChecker<'a, R>),
+    R: crate::relations::subtype::TypeResolver,
+    F: FnOnce(&mut crate::relations::compat::CompatChecker<'a, R>),
 {
-    let mut checker = crate::CompatChecker::with_resolver(interner, resolver);
+    let mut checker = crate::relations::compat::CompatChecker::with_resolver(interner, resolver);
     configure_checker(&mut checker);
 
     let mut evaluator = CallEvaluator::new(interner, &mut checker);
@@ -1941,14 +1974,16 @@ pub fn get_contextual_signature_with_compat_checker(
     db: &dyn TypeDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature(db, type_id)
 }
 
 pub fn get_contextual_signature_cached_with_compat_checker(
     db: &dyn QueryDatabase,
     type_id: TypeId,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_cached(db, type_id)
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_cached(
+        db, type_id,
+    )
 }
 
 pub fn get_contextual_signature_for_arity_with_compat_checker(
@@ -1956,7 +1991,7 @@ pub fn get_contextual_signature_for_arity_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity(
         db,
         type_id,
         Some(arg_count),
@@ -1968,7 +2003,7 @@ pub fn get_contextual_signature_for_arity_cached_with_compat_checker(
     type_id: TypeId,
     arg_count: usize,
 ) -> Option<FunctionShape> {
-    CallEvaluator::<crate::CompatChecker>::get_contextual_signature_for_arity_cached(
+    CallEvaluator::<crate::relations::compat::CompatChecker>::get_contextual_signature_for_arity_cached(
         db,
         type_id,
         Some(arg_count),

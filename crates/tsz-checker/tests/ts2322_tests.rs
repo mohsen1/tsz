@@ -15,7 +15,7 @@ use tsz_checker::test_utils::{
 };
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     load_lib_files(&[
@@ -7121,6 +7121,40 @@ fn test_reverse_mapped_contextual_target_display_uses_inferred_application_args(
             .message_text
             .contains("Selector<S, T[\"editable\"]>"),
         "target display should not expose unresolved reverse-mapped type parameters; got: {mismatch:#?}"
+    );
+}
+
+#[test]
+fn test_reverse_mapped_contextual_target_display_is_structural_for_renamed_params() {
+    let source = r#"
+        type PickResult<Store, Result> = (store: Store) => Result;
+
+        declare function buildSelectors<Store, Shape>(
+            selectors: {[Key in keyof Shape]: PickResult<Store, Shape[Key]>},
+        ): PickResult<Store, Shape>;
+
+        const getTitle = () => "title";
+
+        const selectors = buildSelectors({
+            title: (store: any, extra: any) => getTitle(),
+        });
+    "#;
+
+    let diags = diagnostics_for_source(source);
+    let mismatch = diagnostics_with_code(&diags, diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| panic!("expected TS2322, got: {diags:#?}"));
+
+    assert!(
+        mismatch
+            .message_text
+            .contains("PickResult<unknown, string>"),
+        "expected contextual target display to use inferred application args; got: {mismatch:#?}"
+    );
+    assert!(
+        !mismatch.message_text.contains("Shape[\"title\"]"),
+        "target display should not expose unresolved reverse-mapped indexed access; got: {mismatch:#?}"
     );
 }
 

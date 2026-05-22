@@ -65,6 +65,20 @@ impl<'a> CheckerContext<'a> {
             })
     }
 
+    fn actual_lib_global_type_symbol_id(&self, name: &str) -> Option<SymbolId> {
+        if name.contains('.') {
+            return None;
+        }
+
+        for lib_ctx in self.lib_contexts.iter().take(self.actual_lib_file_count) {
+            if let Some(sym_id) = lib_ctx.binder.file_locals.get(name) {
+                return Some(sym_id);
+            }
+        }
+
+        self.actual_lib_symbol_id_for_bare_name(name)
+    }
+
     pub fn file_local_type_shadow_for_lib_name(&self, name: &str) -> bool {
         use tsz_binder::symbol_flags;
 
@@ -236,7 +250,6 @@ impl<'a> CheckerContext<'a> {
                 }
             };
 
-        // Check lib contexts
         for lib_ctx in self.lib_contexts.iter() {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get("Promise")
                 && check_symbol_has_value(sym_id, &lib_ctx.binder)
@@ -245,14 +258,12 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Check current scope
         if let Some(sym_id) = self.binder.current_scope.get("Promise")
             && check_symbol_has_value(sym_id, self.binder)
         {
             return true;
         }
 
-        // Check file locals
         if let Some(sym_id) = self.binder.file_locals.get("Promise")
             && check_symbol_has_value(sym_id, self.binder)
         {
@@ -274,23 +285,17 @@ impl<'a> CheckerContext<'a> {
     /// Check if Symbol is available in lib files or global scope.
     /// Returns true if Symbol is declared in lib contexts, globals, or type declarations.
     pub fn has_symbol_in_lib(&self) -> bool {
-        // Check lib contexts first
         for lib_ctx in self.lib_contexts.iter() {
             if lib_ctx.binder.file_locals.has("Symbol") {
                 return true;
             }
         }
-
-        // Check if Symbol is available in current scope/global context
         if self.binder.current_scope.has("Symbol") {
             return true;
         }
-
-        // Check current file locals as fallback
         if self.binder.file_locals.has("Symbol") {
             return true;
         }
-
         false
     }
 
@@ -305,16 +310,12 @@ impl<'a> CheckerContext<'a> {
             }
         }
 
-        // Check if symbol is available in current scope/global context
         if self.binder.current_scope.has(name) {
             return true;
         }
-
-        // Check current file locals as fallback
         if self.binder.file_locals.has(name) {
             return true;
         }
-
         false
     }
 
@@ -343,6 +344,66 @@ impl<'a> CheckerContext<'a> {
             .iter()
             .take(self.actual_lib_file_count)
             .any(|lib_ctx| Arc::ptr_eq(&lib_ctx.arena, symbol_arena))
+    }
+
+    /// `SymbolId` of the standard-library `Promise` declaration, if loaded.
+    ///
+    /// Looks only at actual lib contexts. Cloned lib symbols are handled by
+    /// `sym_id_is_current_cloned_lib_promise`, which requires the symbol id to
+    /// be resolved through this file's binder before matching the well-known
+    /// global name.
+    pub fn lib_promise_sym_id(&self) -> Option<SymbolId> {
+        self.actual_lib_global_type_symbol_id("Promise")
+    }
+
+    /// `Lazy(DefId)` for the standard-library `Promise` declaration, if loaded.
+    ///
+    /// Use this when constructing `Promise<T>` types. It canonicalizes the
+    /// per-lib symbol id through the well-known global name before creating the
+    /// lazy reference, avoiding numeric `SymbolId` collisions across lib arenas.
+    pub fn lib_promise_type_ref(&self) -> Option<tsz_solver::TypeId> {
+        let sym_id = self.actual_lib_global_type_symbol_id("Promise")?;
+        let def_id = self.get_canonical_lib_def_id("Promise", sym_id);
+        Some(self.types.lazy(def_id))
+    }
+
+    /// True when `sym_id` is the standard-library `Promise` symbol.
+    pub fn sym_id_is_lib_promise(&self, sym_id: SymbolId) -> bool {
+        self.lib_promise_sym_id() == Some(sym_id)
+    }
+
+    /// True when `sym_id` is the current binder's cloned standard-library
+    /// `Promise` symbol.
+    pub fn sym_id_is_current_cloned_lib_promise(&self, sym_id: SymbolId) -> bool {
+        self.binder.lib_symbol_ids.contains(&sym_id)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == "Promise")
+    }
+
+    fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
+    }
+
+    fn sym_id_is_current_cloned_lib_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.binder.lib_symbol_ids.contains(&sym_id)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == "PromiseLike")
+    }
+
+    /// True when `sym_id` is the standard-library `Promise` or `PromiseLike` symbol.
+    pub fn sym_id_is_lib_promise_or_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.sym_id_is_lib_promise(sym_id) || self.sym_id_is_lib_promise_like(sym_id)
+    }
+
+    /// True when `sym_id` is a current-binder clone of the standard-library
+    /// `Promise` or `PromiseLike` symbol.
+    pub fn sym_id_is_current_cloned_lib_promise_or_promise_like(&self, sym_id: SymbolId) -> bool {
+        self.sym_id_is_current_cloned_lib_promise(sym_id)
+            || self.sym_id_is_current_cloned_lib_promise_like(sym_id)
     }
 
     /// Structural predicate for suppressing the simple-object

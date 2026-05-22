@@ -759,6 +759,20 @@ fn test_regex_hyphen_after_range_is_literal() {
 }
 
 #[test]
+fn test_regex_hex_escape_range_start_does_not_report_ts1517() {
+    let source = r"const pattern = /[\x2D-9A-Z\\_a-z\xF8-\u02C1]/u;";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::RANGE_OUT_OF_ORDER_IN_CHARACTER_CLASS),
+        "Hex escapes should be decoded as one range atom before range-order checks: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn test_unicode_regex_trailing_hyphen_class_does_not_report_ts1508() {
     let source = r#"
 const unicode = /[a-]/u;
@@ -3879,6 +3893,94 @@ interface Foo {
     );
 }
 
+#[test]
+fn test_computed_property_signature_after_array_type_line_break_does_not_emit_ts1131() {
+    let source = r"
+const IGNORE_LIST = 'ignoreList';
+
+interface SourceMap {
+  sources: string[]
+  [IGNORE_LIST]: number[]
+}
+";
+    let (parser, _root) = parse_source(source);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
+        "A line-broken computed property signature should not be parsed as indexed access: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn test_class_computed_property_after_type_annotation_line_break_uses_asi() {
+    let source = r"
+class C {
+    [e]: number
+    [e2]: number
+}
+";
+    let (parser, root) = parse_source(source);
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        2,
+        "line-broken class computed members should not become one indexed-access type"
+    );
+}
+
+#[test]
+fn test_class_computed_method_after_return_type_line_break_uses_asi() {
+    let source = r#"
+class C {
+    ["foo"](): void
+    ["bar"](): void;
+    ["foo"]() {}
+}
+"#;
+    let (parser, root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED)
+            && !codes.contains(&diagnostic_codes::OR_EXPECTED),
+        "line-broken computed method signatures should remain separate members, got {codes:?}",
+    );
+
+    let source_file = parser.get_arena().get_source_file_at(root).unwrap();
+    let class_idx = source_file.statements.nodes[0];
+    let class_node = parser.get_arena().get(class_idx).unwrap();
+    let class_data = parser.get_arena().get_class(class_node).unwrap();
+    assert_eq!(
+        class_data.members.nodes.len(),
+        3,
+        "computed method signatures should not become indexed-access return types"
+    );
+}
+
+#[test]
+fn test_empty_index_signature_after_type_member_annotation_line_break_uses_asi() {
+    let source = r"
+var v: {
+   a: B
+   [];
+};
+";
+    let (parser, _root) = parse_source(source);
+
+    let codes: Vec<_> = parser.get_diagnostics().iter().map(|d| d.code).collect();
+    assert!(
+        codes.contains(&diagnostic_codes::AN_INDEX_SIGNATURE_MUST_HAVE_EXACTLY_ONE_PARAMETER),
+        "empty bracket member should recover as an index signature, got {codes:?}",
+    );
+}
+
 // =============================================================================
 // Import Defer Tests
 // =============================================================================
@@ -5327,5 +5429,119 @@ fn test_regex_hex_escape_keeps_real_hex_digit_validation() {
             .iter()
             .any(|d| d.code == diagnostic_codes::HEXADECIMAL_DIGIT_EXPECTED),
         "regex `\\u\\i...` must still emit TS1125 for non-hex non-separator chars, got {diagnostics:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Invalid let-array recovery (state_statements_recovery module)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn invalid_let_array_reserved_word_emits_destructuring_diagnostic() {
+    // `let [while]` — `while` is a reserved word; not a valid binding element.
+    let source = "let [while];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [while]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_for_keyword_emits_destructuring_diagnostic() {
+    // `let [for]` — different reserved word; same structural rule.
+    let source = "let [for];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [for]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_numeric_literal_emits_destructuring_diagnostic() {
+    // `let [42]` — numeric literal; not a binding name.
+    let source = "let [42];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [42]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_string_literal_emits_destructuring_diagnostic() {
+    // `let ["key"]` — string literal; not a binding name.
+    let source = r#"let ["key"];"#;
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "expected array-element-destructuring diagnostic for `let [\"key\"]`, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_identifier_does_not_trigger_recovery() {
+    // `let [x] = []` — valid destructuring; no recovery diagnostic.
+    let source = "let [x] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [x] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_empty_brackets_does_not_trigger_recovery() {
+    // `let [] = []` — valid empty destructuring.
+    let source = "let [] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn valid_let_array_rest_element_does_not_trigger_recovery() {
+    // `let [...rest] = []` — valid rest-element pattern.
+    let source = "let [...rest] = [];\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags
+            .iter()
+            .any(|d| d.code == diagnostic_codes::ARRAY_ELEMENT_DESTRUCTURING_PATTERN_EXPECTED),
+        "valid `let [...rest] = []` must not emit array-element-destructuring diagnostic, got {diags:?}",
+    );
+}
+
+#[test]
+fn invalid_let_array_recovery_does_not_crash_on_assignment() {
+    // `let [+] = 1` — bad first element followed by `=`; parser must not panic.
+    let source = "let [+] = 1;\n";
+    let (parser, _root) = parse_source(source);
+    let diags = parser.get_diagnostics();
+    assert!(
+        !diags.is_empty(),
+        "expected at least one diagnostic for `let [+] = 1`, got none",
     );
 }

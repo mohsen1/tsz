@@ -8,6 +8,22 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
+pub(crate) struct SpreadCheckOpts<'a> {
+    pub(crate) spread_type: TypeId,
+    pub(crate) spread_source_type: TypeId,
+    pub(crate) props_type: TypeId,
+    pub(crate) tag_name_idx: NodeIndex,
+    pub(crate) overridden_names: &'a rustc_hash::FxHashSet<&'a str>,
+    pub(crate) overridden_for_missing: &'a rustc_hash::FxHashSet<&'a str>,
+    pub(crate) earlier_explicit_attrs: &'a rustc_hash::FxHashMap<String, NodeIndex>,
+    pub(crate) has_later_spreads: bool,
+    pub(crate) suppress_missing_props: bool,
+    pub(crate) suppress_unanchored_type_mismatch: bool,
+    pub(crate) display_target: &'a str,
+    pub(crate) preferred_target_display: Option<&'a str>,
+    pub(crate) merged_attrs_display: Option<&'a str>,
+}
+
 /// Local mirror of `tsz_solver::diagnostics::format::needs_property_name_quotes`.
 /// The solver helper is private to its module, so duplicate the small predicate
 /// here for the JSX spread structural display below. Keeps the rule in lockstep
@@ -56,23 +72,22 @@ impl<'a> CheckerState<'a> {
     /// "specified more than once" is emitted), with the per-property message
     /// ("Type 'X' is not assignable to type 'Y'") rather than the whole-type
     /// message at the JSX tag name.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn check_spread_property_types(
-        &mut self,
-        spread_type: TypeId,
-        spread_source_type: TypeId,
-        props_type: TypeId,
-        tag_name_idx: NodeIndex,
-        overridden_names: &rustc_hash::FxHashSet<&str>,
-        overridden_for_missing: &rustc_hash::FxHashSet<&str>,
-        earlier_explicit_attrs: &rustc_hash::FxHashMap<String, NodeIndex>,
-        has_later_spreads: bool,
-        suppress_missing_props: bool,
-        suppress_unanchored_type_mismatch: bool,
-        display_target: &str,
-        preferred_target_display: Option<&str>,
-        merged_attrs_display: Option<&str>,
-    ) -> bool {
+    pub(crate) fn check_spread_property_types(&mut self, opts: SpreadCheckOpts<'_>) -> bool {
+        let SpreadCheckOpts {
+            spread_type,
+            spread_source_type,
+            props_type,
+            tag_name_idx,
+            overridden_names,
+            overridden_for_missing,
+            earlier_explicit_attrs,
+            has_later_spreads,
+            suppress_missing_props,
+            suppress_unanchored_type_mismatch,
+            display_target,
+            preferred_target_display,
+            merged_attrs_display,
+        } = opts;
         use crate::query_boundaries::common::PropertyAccessResult;
 
         // Safety guard: skip when types already contain checker error states.
@@ -93,7 +108,9 @@ impl<'a> CheckerState<'a> {
         // For generic spreads, the relation can be too optimistic; keep them on the
         // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
         // the apparent/object shape first.
-        if !spread_has_type_params && self.is_assignable_to(spread_type, props_type) {
+        if !spread_has_type_params
+            && self.diagnostic_relation_boolean_guard(spread_type, props_type)
+        {
             return false;
         }
 
@@ -178,7 +195,7 @@ impl<'a> CheckerState<'a> {
                 // so the spread's type issues are masked.
                 return false;
             }
-            if self.is_assignable_to(spread_type, props_type) {
+            if self.diagnostic_relation_boolean_guard(spread_type, props_type) {
                 return false;
             }
             let spread_name = self.format_type(spread_source_type);
@@ -348,7 +365,7 @@ impl<'a> CheckerState<'a> {
                 prop.type_id
             };
 
-            if !self.is_assignable_to(source_type, expected_type) {
+            if !self.diagnostic_relation_boolean_guard(source_type, expected_type) {
                 // This property has a type mismatch.
                 // Check if it will be overwritten by a later explicit attribute.
                 if overridden_names.contains(prop_name.as_str()) {
@@ -389,7 +406,7 @@ impl<'a> CheckerState<'a> {
         let mut has_type_mismatch = has_unfixable_mismatch;
         if !has_type_mismatch
             && spread_has_type_params
-            && !self.is_assignable_to(resolved_spread, props_type)
+            && !self.diagnostic_relation_boolean_guard(resolved_spread, props_type)
         {
             has_type_mismatch = true;
         }
@@ -398,7 +415,7 @@ impl<'a> CheckerState<'a> {
         // resolved spread type is assignable to the props type.
         if has_type_mismatch
             && spread_has_type_params
-            && self.is_assignable_to(resolved_spread, props_type)
+            && self.diagnostic_relation_boolean_guard(resolved_spread, props_type)
         {
             has_type_mismatch = false;
         }

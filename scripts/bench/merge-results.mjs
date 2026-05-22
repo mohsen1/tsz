@@ -13,18 +13,32 @@ const PROJECT_COMPATIBILITY_ROW_SET = new Set([
   ...REQUIRED_PROJECT_ROWS,
   ...COMPILE_CANARY_PROJECT_ROWS,
 ]);
+const BENCHMARK_RUNNER = "scripts/bench/bench-vs-tsgo.sh";
 
 function hasProjectCompatibilityRows(rows) {
   return rows.some((row) => PROJECT_COMPATIBILITY_ROW_SET.has(row?.name));
+}
+
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== "";
+}
+
+function isNonEmptyStringArray(value) {
+  return Array.isArray(value) && value.some(isNonEmptyString);
 }
 
 function parseArgs(argv) {
   const [, , outFile, ...rest] = argv;
   const inputFiles = [];
   const compatibilityJsonlFiles = [];
+  let requireRunnerSignature = false;
 
   for (let index = 0; index < rest.length; index += 1) {
     const arg = rest[index];
+    if (arg === "--require-runner-signature") {
+      requireRunnerSignature = true;
+      continue;
+    }
     if (arg === "--compat-jsonl") {
       const file = rest[index + 1];
       if (!file) {
@@ -38,7 +52,7 @@ function parseArgs(argv) {
     inputFiles.push(arg);
   }
 
-  return { outFile, inputFiles, compatibilityJsonlFiles };
+  return { outFile, inputFiles, compatibilityJsonlFiles, requireRunnerSignature };
 }
 
 function readJsonl(file) {
@@ -123,6 +137,128 @@ function validateRunnerEnvironmentConsistency(environments) {
     }
   }
   return warnings;
+}
+
+function isMissingSignatureValue(value) {
+  return value === undefined || value === null || value === "";
+}
+
+function nestedValue(object, pathParts) {
+  let current = object;
+  for (const part of pathParts) {
+    if (!current || typeof current !== "object") return undefined;
+    current = current[part];
+  }
+  return current;
+}
+
+function collectMissingFields(object, prefix, fields) {
+  const missing = [];
+  for (const field of fields) {
+    const value = nestedValue(object, field.split("."));
+    if (isMissingSignatureValue(value)) {
+      missing.push(`${prefix}.${field}`);
+    }
+  }
+  return missing;
+}
+
+function collectFixtureSourceFailures(rowName, fixtureSources) {
+  const failures = [];
+  if (!Array.isArray(fixtureSources) || fixtureSources.length === 0) {
+    return [`${rowName}: compatibility.fixture_sources must name at least one source`];
+  }
+
+  fixtureSources.forEach((source, index) => {
+    if (!source || typeof source !== "object" || Array.isArray(source)) {
+      failures.push(`${rowName}: compatibility.fixture_sources[${index}] must be an object`);
+      return;
+    }
+    for (const field of ["name", "repository", "ref"]) {
+      if (!isNonEmptyString(source[field])) {
+        failures.push(`${rowName}: compatibility.fixture_sources[${index}].${field} must be a non-empty string`);
+      }
+    }
+  });
+
+  return failures;
+}
+
+function collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings) {
+  const failures = [];
+  const seenShardLabels = new Map();
+
+  for (const { file, payload } of payloads) {
+    const basename = path.basename(file);
+    const environment = payload.runner_environment;
+    if (!environment || typeof environment !== "object") {
+      failures.push(`${basename}: missing runner_environment`);
+    } else {
+      const missingEnvironmentFields = collectMissingFields(environment, "runner_environment", [
+        "platform",
+        "arch",
+        "release",
+        "cpu_count",
+        "cpu_model",
+        "total_memory_bytes",
+      ]);
+      if (environment.github_actions && typeof environment.github_actions === "object") {
+        missingEnvironmentFields.push(...collectMissingFields(environment.github_actions, "runner_environment.github_actions", [
+          "run_id",
+          "run_attempt",
+          "runner_os",
+          "runner_arch",
+          "workflow",
+          "job",
+          "sha",
+        ]));
+      }
+      if (environment.cloud_build && typeof environment.cloud_build === "object") {
+        missingEnvironmentFields.push(...collectMissingFields(environment.cloud_build, "runner_environment.cloud_build", [
+          "machine_type",
+        ]));
+      }
+      for (const field of missingEnvironmentFields) {
+        failures.push(`${basename}: missing ${field}`);
+      }
+    }
+
+    const missingPayloadFields = collectMissingFields(payload, "", [
+      "source_commit",
+      "workflow_run_id",
+      "filter",
+      "shard.label",
+      "shard.filter",
+    ]).map((field) => field.slice(1));
+    for (const field of missingPayloadFields) {
+      failures.push(`${basename}: missing ${field}`);
+    }
+
+    const benchmarkRunner = String(payload.benchmark_runner ?? "").trim();
+    if (!benchmarkRunner) {
+      failures.push(`${basename}: missing benchmark_runner`);
+    } else if (benchmarkRunner !== BENCHMARK_RUNNER) {
+      failures.push(
+        `${basename}: benchmark_runner ${JSON.stringify(benchmarkRunner)} does not match ${JSON.stringify(BENCHMARK_RUNNER)}`,
+      );
+    }
+
+    const shardLabel = payload.shard?.label;
+    if (!isMissingSignatureValue(shardLabel)) {
+      const previous = seenShardLabels.get(shardLabel);
+      if (previous) {
+        failures.push(`${basename}: duplicate shard.label ${JSON.stringify(shardLabel)} also used by ${previous}`);
+      } else {
+        seenShardLabels.set(shardLabel, basename);
+      }
+    }
+  }
+
+  for (const warning of runnerEnvironmentWarnings) {
+    failures.push(`${warning.file}: runner_environment mismatch (${warning.mismatched_fields.join(", ")})`);
+  }
+
+  return failures;
 }
 
 function measurementProfileSignature(profile) {
@@ -234,6 +370,21 @@ function collectProjectCompatibilityFailures(rows) {
         failures.push(`${row.name}: missing compatibility.${field}`);
       }
     }
+    failures.push(...collectFixtureSourceFailures(row.name, row.compatibility.fixture_sources));
+    const state = String(row.compatibility.state || "").toLowerCase();
+    if (state === "red" || state === "yellow") {
+      if (!isNonEmptyString(row.compatibility.first_failure_class)) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must name the first blocker`);
+      }
+      if (!isNonEmptyStringArray(row.compatibility.known_blockers)) {
+        failures.push(`${row.name}: red/yellow compatibility.known_blockers must name at least one blocker`);
+      } else if (
+        isNonEmptyString(row.compatibility.first_failure_class) &&
+        row.compatibility.first_failure_class.trim() !== row.compatibility.known_blockers.find(isNonEmptyString).trim()
+      ) {
+        failures.push(`${row.name}: red/yellow compatibility.first_failure_class must match the first known blocker`);
+      }
+    }
   }
 
   return failures;
@@ -297,10 +448,10 @@ function tallyWins(results) {
 }
 
 function main() {
-  const { outFile, inputFiles, compatibilityJsonlFiles } = parseArgs(process.argv);
+  const { outFile, inputFiles, compatibilityJsonlFiles, requireRunnerSignature } = parseArgs(process.argv);
 
   if (!outFile || inputFiles.length === 0) {
-    console.error("Usage: scripts/bench/merge-results.mjs <out-file> [--compat-jsonl <file>] <input-json...>");
+    console.error("Usage: scripts/bench/merge-results.mjs <out-file> [--require-runner-signature] [--compat-jsonl <file>] <input-json...>");
     process.exit(2);
   }
 
@@ -352,14 +503,25 @@ function main() {
     .filter(({ profile }) => profile && typeof profile === "object");
   const measurementProfile = measurementProfiles[0]?.profile ?? null;
   const measurementProfileWarnings = validateMeasurementProfileConsistency(measurementProfiles);
+  const runnerSignatureFailures = requireRunnerSignature
+    ? collectRunnerSignatureFailures(payloads, runnerEnvironmentWarnings)
+    : [];
+  if (runnerSignatureFailures.length > 0) {
+    console.error("Benchmark runner signature validation failed:");
+    for (const failure of runnerSignatureFailures) {
+      console.error(`  - ${failure}`);
+    }
+    process.exit(1);
+  }
 
   const merged = {
     ...mergedArtifactMetadata(payloads, new Date().toISOString()),
-    benchmark_runner: "scripts/bench/bench-vs-tsgo.sh",
+    benchmark_runner: BENCHMARK_RUNNER,
     merged_from: payloads.map(({ file }) => path.basename(file)).sort(),
     validation: {
       hyperfine_exit_codes_required: hyperfineExitCodesRequired,
       project_compatibility_required_fields: hasProjectCompatibilityRows(results),
+      runner_signature_required: requireRunnerSignature,
       runner_environment_warnings: runnerEnvironmentWarnings,
       measurement_profile_warnings: measurementProfileWarnings,
     },

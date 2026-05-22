@@ -248,6 +248,11 @@ impl RelationFailure {
             SubtypeFailureReason::ArrayElementMismatch {
                 source_element,
                 target_element,
+            }
+            | SubtypeFailureReason::TupleElementTypeMismatch {
+                source_element,
+                target_element,
+                ..
             } => Self::TypeMismatch {
                 source_type: source_element,
                 target_type: target_element,
@@ -273,22 +278,13 @@ impl RelationFailure {
             },
             SubtypeFailureReason::OptionalPropertyRequired { property_name }
             | SubtypeFailureReason::ReadonlyPropertyMismatch { property_name }
-            | SubtypeFailureReason::PropertyNominalMismatch { property_name } => {
+            | SubtypeFailureReason::PropertyNominalMismatch { property_name }
+            | SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
                 Self::PropertyModifierMismatch { property_name }
             }
-            SubtypeFailureReason::PropertyVisibilityMismatch { property_name, .. } => {
-                Self::PropertyModifierMismatch { property_name }
-            }
-            SubtypeFailureReason::TupleElementTypeMismatch {
-                source_element,
-                target_element,
-                ..
-            } => Self::TypeMismatch {
-                source_type: source_element,
-                target_type: target_element,
-            },
             SubtypeFailureReason::MissingIndexSignature { .. }
-            | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
+            | SubtypeFailureReason::RecursionLimitExceeded
+            | SubtypeFailureReason::AbstractConstructorAssignment => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
             },

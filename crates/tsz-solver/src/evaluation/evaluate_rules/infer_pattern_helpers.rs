@@ -9,6 +9,7 @@
 //! - Union type patterns
 //! - Template literal patterns
 
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
@@ -16,7 +17,6 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::array_element_type;
-use crate::{TypeSubstitution, instantiate_type};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
@@ -293,6 +293,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         let mut local_visited = FxHashSet::default();
+        // Function/callable parameters are contravariant: co-located same-name
+        // infer slots intersect their candidates instead of failing the
+        // second match through `bind_infer`'s mutual subtype check. Route
+        // both the fixed-param loop and any non-infer trailing-rest fan-out
+        // through the shared co-located merge helper so the rest case keeps
+        // its own contravariant semantics.
+        let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_param_count);
         for (source_param, pattern_param) in source_params
             .iter()
             .take(fixed_param_count)
@@ -303,20 +310,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             } else {
                 source_param.type_id
             };
-            if !self.match_infer_pattern(
-                source_param_type,
-                pattern_param.type_id,
-                bindings,
-                &mut local_visited,
-                checker,
-            ) {
-                return false;
-            }
+            fixed_pairs.push((source_param_type, pattern_param.type_id));
         }
 
         if let Some(rest_param) = trailing_rest_param {
             let remaining_params = &source_params[fixed_param_count..];
             if self.type_contains_infer(rest_param.type_id) {
+                if !self.match_co_located_intersect_pairs(
+                    &fixed_pairs,
+                    bindings,
+                    &mut local_visited,
+                    checker,
+                ) {
+                    return false;
+                }
                 if !self.match_rest_infer_tuple(
                     remaining_params,
                     rest_param.type_id,
@@ -331,7 +338,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // array-to-array since those slots align at the rest level.
                 let rest_elem_type = array_element_type(self.interner(), rest_param.type_id)
                     .unwrap_or(rest_param.type_id);
-                let mut local_visited = FxHashSet::default();
                 for source_param in remaining_params {
                     let source_param_type = if source_param.optional {
                         crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
@@ -343,20 +349,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     } else {
                         rest_elem_type
                     };
-                    if !self.match_infer_pattern(
-                        source_param_type,
-                        pattern_type,
-                        bindings,
-                        &mut local_visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
+                    fixed_pairs.push((source_param_type, pattern_type));
                 }
+                return self.match_co_located_intersect_pairs(
+                    &fixed_pairs,
+                    bindings,
+                    &mut local_visited,
+                    checker,
+                );
             }
+            return true;
         }
 
-        true
+        self.match_co_located_intersect_pairs(&fixed_pairs, bindings, &mut local_visited, checker)
     }
 
     pub(crate) fn match_infer_function_pattern(

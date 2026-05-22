@@ -78,7 +78,6 @@ impl<'a> CheckerState<'a> {
         }
 
         let analysis = self.analyze_assignability_failure(source_type, target_type);
-        #[allow(clippy::match_same_arms)] // explicit TupleElementMismatch arm carries rationale
         match analysis.failure_reason {
             Some(SubtypeFailureReason::TupleElementTypeMismatch {
                 index,
@@ -151,7 +150,7 @@ impl<'a> CheckerState<'a> {
                     if elem_type.is_any_unknown_or_error() {
                         continue;
                     }
-                    if !self.is_assignable_to(elem_type, target_element) {
+                    if !self.diagnostic_relation_boolean_guard(elem_type, target_element) {
                         if self.array_elaboration_widening_required_for_display(
                             elem_type,
                             target_element,

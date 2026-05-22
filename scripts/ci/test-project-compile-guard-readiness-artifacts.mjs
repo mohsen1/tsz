@@ -345,6 +345,7 @@ withTempDir((dir) => {
 
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
+  assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
   assert.equal(rows[0].state, "gray");
   assert.equal(rows[0].exit_class, "fixture invalid");
@@ -409,6 +410,7 @@ withTempDir((dir) => {
 
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
+  assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
   assert.equal(rows[0].state, "green");
   assert.equal(rows[0].exit_class, "exit success");
@@ -469,6 +471,7 @@ withTempDir((dir) => {
 
   const rows = readJsonl(path.join(fixtureRoot, "project-compatibility.jsonl"));
   assert.equal(rows.length, 1);
+  assertRequiredCompatibilityFields(rows[0]);
   assert.equal(rows[0].name, "type-challenges-solutions-project");
   assert.equal(rows[0].state, "gray");
   assert.equal(rows[0].exit_class, "fixture invalid");

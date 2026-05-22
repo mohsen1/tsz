@@ -24,6 +24,75 @@ fn emit_system_es2015(source: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn lower_emit_module(source: &str, module: ModuleKind, target: ScriptTarget) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module,
+        target,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+    let mut printer = Printer::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+#[test]
+fn system_dotted_namespace_export_folds_outer_namespace_only() {
+    let output = emit_system_es2015(
+        r#""use strict";
+export namespace A.B.C {
+    export function foo() {}
+}
+
+export function bar() {
+    return A.B.C.foo();
+}
+"#,
+    );
+    let expected = r#"System.register([], function (exports_1, context_1) {
+    "use strict";
+    var A;
+    var __moduleName = context_1 && context_1.id;
+    function bar() {
+        return A.B.C.foo();
+    }
+    exports_1("bar", bar);
+    return {
+        setters: [],
+        execute: function () {
+            (function (A) {
+                var B;
+                (function (B) {
+                    var C;
+                    (function (C) {
+                        function foo() { }
+                        C.foo = foo;
+                    })(C = B.C || (B.C = {}));
+                })(B = A.B || (A.B = {}));
+            })(A || (exports_1("A", A = {})));
+        }
+    };
+});
+"#;
+
+    assert_eq!(output, expected);
+    assert!(
+        output.contains("var A;\n    var __moduleName = context_1 && context_1.id;"),
+        "System output should hoist the outer dotted namespace binding before functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"bar\", bar);"),
+        "System output should export the top-level function outside execute.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("})(A || (exports_1(\"A\", A = {})));"),
+        "Dotted exported namespace should fold only the outer namespace into the System export call.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn system_es5_default_class_export_uses_hoisted_assignment_iife() {
     let source = "export default class A { method() { return 42; } }\n";
@@ -276,6 +345,74 @@ import(path);
     assert!(
         output.contains("context_1.import(path);"),
         "System dynamic import should use the wrapper context import hook.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_amd_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::AMD, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("define([\"require\", \"exports\"], function (require, exports) {"),
+        "Exported async function should stay inside the AMD wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = path, new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "Dynamic import inside the CJS-export-masked async body should use AMD async require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Promise.resolve().then(() => __importStar(require(path)))"),
+        "AMD wrapper kind must not be erased to the CommonJS dynamic-import form.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_system_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::System, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("System.register([], function (exports_1, context_1) {"),
+        "Exported async function should stay inside the System wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("context_1.import(path)"),
+        "Dynamic import inside the CJS-export-masked async body should use the System context import hook.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("require(path)"),
+        "System wrapper kind must not be erased to a require-based dynamic import.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn exported_async_function_dynamic_import_keeps_umd_wrapper_kind() {
+    let source = r#"export async function load(path: string) {
+    return import(path);
+}
+"#;
+    let output = lower_emit_module(source, ModuleKind::UMD, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "var __syncRequire = typeof module === \"object\" && typeof module.exports === \"object\";"
+        ),
+        "UMD wrapper should keep the dynamic import runtime branch discriminator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "return _a = path, __syncRequire ? Promise.resolve().then(() => __importStar(require(_a))) : new Promise((resolve_1, reject_1) => { require([_a], resolve_1, reject_1); }).then(__importStar);"
+        ),
+        "Dynamic import inside the CJS-export-masked async body should use the UMD loader branch.\nOutput:\n{output}"
     );
 }
 
@@ -2024,5 +2161,93 @@ x,y,a1,b1,d1;
     assert!(
         output.contains("x, y, foo_1.a1, foo_1.b1, foo_1.c1;"),
         "Named import references should still substitute through the module temp.\nOutput:\n{output}"
+    );
+}
+
+/// When a source file contains `/// <amd-module name='X'/>`, the
+/// `System.register` call must include `"X"` as the first argument, matching tsc behavior for
+/// `--module system` with the `amd-module` pragma.
+#[test]
+fn system_amd_module_name_directive_names_the_register_call() {
+    let source = "/// <amd-module name='NamedModule'/>\nexport function foo() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"NamedModule\","),
+        "amd-module directive must name the System.register call.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function foo() { }"),
+        "Exported function should appear inside the System wrapper.\nOutput:\n{output}"
+    );
+}
+
+/// The `bundled_module_name` printer option also names the `System.register`
+/// call (used for out-file bundled output). The `amd-module` directive takes
+/// precedence when both are present.
+#[test]
+fn system_bundled_module_name_option_names_the_register_call() {
+    let source = "export function bar() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            bundled_module_name: Some("BundledModule".to_string()),
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"BundledModule\","),
+        "bundled_module_name option must name the System.register call.\nOutput:\n{output}"
+    );
+}
+
+/// When both `/// <amd-module name='X'/>` and `bundled_module_name` are present,
+/// the directive takes precedence (matching tsc behavior for amd-module overriding
+/// the bundled name).
+#[test]
+fn system_amd_module_directive_overrides_bundled_module_name() {
+    let source = "/// <amd-module name='DirectiveName'/>\nexport function baz() {}\n";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::with_options(
+        &parser.arena,
+        PrinterOptions {
+            module: ModuleKind::System,
+            target: ScriptTarget::ES2015,
+            bundled_module_name: Some("BundledName".to_string()),
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.starts_with("System.register(\"DirectiveName\","),
+        "amd-module directive should take precedence over bundled_module_name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"BundledName\""),
+        "bundled_module_name should be suppressed when amd-module directive is present.\nOutput:\n{output}"
     );
 }

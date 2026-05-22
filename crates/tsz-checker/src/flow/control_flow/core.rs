@@ -14,7 +14,8 @@ use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::computation::TypeEnvironment;
-use tsz_solver::{GuardSense, ParamInfo, TupleElement, TypeId, TypePredicate};
+use tsz_solver::narrowing::{GuardSense, NarrowingCache, NarrowingContext};
+use tsz_solver::{ParamInfo, TupleElement, TypeId, TypePredicate};
 
 type FlowCache = FxHashMap<(FlowNodeId, SymbolId, TypeId), TypeId>;
 type ReferenceMatchCache = RefCell<FxHashMap<(u32, u32), bool>>;
@@ -433,7 +434,7 @@ pub struct FlowAnalyzer<'a> {
     /// Optional shared numeric atom cache.
     pub(crate) shared_numeric_atom_cache: Option<&'a RefCell<FxHashMap<u64, Atom>>>,
     /// Optional shared narrowing cache.
-    pub(crate) narrowing_cache: Option<&'a tsz_solver::NarrowingCache>,
+    pub(crate) narrowing_cache: Option<&'a NarrowingCache>,
     /// Instantiated type predicates from generic call resolutions.
     /// Keyed by call expression node index.
     pub(crate) call_type_predicates: Option<&'a CallPredicateMap>,
@@ -717,7 +718,7 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Set a shared narrowing cache.
-    pub const fn with_narrowing_cache(mut self, cache: &'a tsz_solver::NarrowingCache) -> Self {
+    pub const fn with_narrowing_cache(mut self, cache: &'a NarrowingCache) -> Self {
         self.narrowing_cache = Some(cache);
         self
     }
@@ -799,11 +800,11 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Create a `NarrowingContext`, sharing the pre-allocated cache when available.
     /// This avoids 7 `FxHashMap` allocations per narrowing operation on the hot path.
-    pub(super) fn make_narrowing_context(&self) -> tsz_solver::NarrowingContext<'_> {
+    pub(super) fn make_narrowing_context(&self) -> NarrowingContext<'_> {
         if let Some(cache) = self.narrowing_cache {
-            tsz_solver::NarrowingContext::with_cache(self.interner, cache)
+            NarrowingContext::with_cache(self.interner, cache)
         } else {
-            tsz_solver::NarrowingContext::new(self.interner)
+            NarrowingContext::new(self.interner)
         }
     }
 
@@ -2170,7 +2171,11 @@ impl<'a> FlowAnalyzer<'a> {
                 });
 
                 if let Some(outer_flow) = outer_flow_id {
-                    if self.is_captured_variable(reference)
+                    if self.reference_uses_outer_class_property_initializer_capture(reference) {
+                        // Class property initializers run outside the surrounding
+                        // function's flow point, so outer bindings do not inherit its narrowing.
+                        initial_type
+                    } else if self.is_captured_variable(reference)
                         && !self.is_effectively_const_for_narrowing(reference)
                     {
                         // Captured mutable variable that IS reassigned -

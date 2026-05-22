@@ -8,6 +8,17 @@ mod type_alias_merged_value;
 mod type_alias_variable_alias;
 
 use crate::query_boundaries::common::{contains_infer_types, contains_type_parameters};
+
+struct SymbolAliasCtx<'a> {
+    sym_id: SymbolId,
+    flags: u32,
+    value_decl: NodeIndex,
+    declarations: &'a [NodeIndex],
+    import_module: &'a Option<String>,
+    import_name: &'a Option<String>,
+    escaped_name: &'a str,
+    factory: &'a tsz_solver::construction::TypeFactory<'a>,
+}
 use crate::query_boundaries::state::type_environment;
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
@@ -1401,16 +1412,16 @@ impl<'a> CheckerState<'a> {
             };
 
             if has_mixed_non_callable_declaration {
-                return self.compute_type_of_symbol_type_alias_variable_alias(
+                return self.compute_type_of_symbol_type_alias_variable_alias(SymbolAliasCtx {
                     sym_id,
                     flags,
                     value_decl,
-                    &declarations,
-                    &import_module,
-                    &import_name,
-                    &escaped_name,
-                    &factory,
-                );
+                    declarations: &declarations,
+                    import_module: &import_module,
+                    import_name: &import_name,
+                    escaped_name: &escaped_name,
+                    factory: &factory,
+                });
             }
 
             use tsz_solver::CallableShape;
@@ -1764,11 +1775,13 @@ impl<'a> CheckerState<'a> {
                 };
                 let value_resolver =
                     |node_idx: NodeIndex| self.resolve_value_symbol_for_lowering(node_idx);
+                let arena_ptr =
+                    self.ctx.arena as *const tsz_parser::parser::node::NodeArena as usize;
                 let computed_name_resolver = |expr_idx: NodeIndex| -> Option<tsz_common::Atom> {
-                    computed_names.get(&expr_idx).copied()
+                    computed_names.get(&(expr_idx, arena_ptr)).copied()
                 };
                 let computed_symbol_name_resolver =
-                    |expr_idx: NodeIndex| computed_symbol_names.contains(&expr_idx);
+                    |expr_idx: NodeIndex| computed_symbol_names.contains(&(expr_idx, arena_ptr));
                 let lazy_type_params_resolver = |def_id: tsz_solver::def::DefId| {
                     prewarmed_type_params
                         .get(&def_id)
@@ -1890,16 +1903,16 @@ impl<'a> CheckerState<'a> {
 
         // Remaining symbol kinds (type alias, class property, variable, alias)
         // are handled in a separate submodule to keep file sizes manageable.
-        self.compute_type_of_symbol_type_alias_variable_alias(
+        self.compute_type_of_symbol_type_alias_variable_alias(SymbolAliasCtx {
             sym_id,
             flags,
             value_decl,
-            &declarations,
-            &import_module,
-            &import_name,
-            &escaped_name,
-            &factory,
-        )
+            declarations: &declarations,
+            import_module: &import_module,
+            import_name: &import_name,
+            escaped_name: &escaped_name,
+            factory: &factory,
+        })
     }
 }
 

@@ -32,6 +32,35 @@ impl<'a> CheckerState<'a> {
             return Some(sym_id);
         }
 
+        // Effective module exports — works for both file-backed modules and
+        // ambient `declare module "mod"` declarations. The file-based
+        // fallbacks below require a resolved target file, so an ambient
+        // module declared in the current file (or any other binder) would
+        // otherwise be unreachable from the import-type qualifier path even
+        // though `typeof import("mod")` resolves it correctly.
+        if let Some(exports) = self
+            .resolve_effective_module_exports_with_mode(module_specifier, resolution_mode_override)
+            && let Some(sym_id) = exports.get(member_name)
+            && self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .is_some()
+        {
+            if self.ctx.resolve_symbol_file_index(sym_id).is_none()
+                && let Some(owner_idx) = self
+                    .ctx
+                    .resolve_import_target_from_file_with_mode(
+                        from_file,
+                        module_specifier,
+                        resolution_mode_override,
+                    )
+                    .or_else(|| self.ctx.resolve_import_target(module_specifier))
+            {
+                self.ctx.register_symbol_file_target(sym_id, owner_idx);
+            }
+            return Some(sym_id);
+        }
+
         let target_file_idx = self
             .ctx
             .resolve_import_target_from_file_with_mode(
@@ -50,21 +79,6 @@ impl<'a> CheckerState<'a> {
                 .register_symbol_file_target(sym_id, target_file_idx);
             Some(sym_id)
         };
-
-        if let Some(exports) = self
-            .resolve_effective_module_exports_with_mode(module_specifier, resolution_mode_override)
-            && let Some(sym_id) = exports.get(member_name)
-            && self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| target_binder.get_symbol(sym_id))
-                .is_some()
-        {
-            if self.ctx.resolve_symbol_file_index(sym_id).is_none() {
-                self.ctx
-                    .register_symbol_file_target(sym_id, target_file_idx);
-            }
-            return Some(sym_id);
-        }
 
         if let Some((sym_id, _)) =
             target_binder.resolve_import_with_reexports_type_only(&target_file_name, member_name)
@@ -561,7 +575,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn format_generic_display_name_with_interner(
         name: &str,
         type_params: &[tsz_solver::TypeParamInfo],
-        types: &dyn tsz_solver::QueryDatabase,
+        types: &dyn tsz_solver::construction::QueryDatabase,
     ) -> String {
         if type_params.is_empty() {
             return name.to_string();
@@ -924,16 +938,22 @@ impl<'a> CheckerState<'a> {
             {
                 return TypeId::ERROR;
             }
-            // Check if the module can actually be resolved from the current file
-            // If not, don't emit TS2694 (TS2307 will be emitted elsewhere)
-            if self
+            // Check if the module can actually be resolved from the current file.
+            // If not, suppress TS2694 because TS2307 will fire elsewhere — UNLESS
+            // the module is a non-augmentation ambient declaration (`declare
+            // module "wm" { ... }`), which is "resolved" by virtue of the
+            // declaration itself and never expects a backing file.
+            if !self
                 .ctx
-                .resolve_import_target_from_file_with_mode(
-                    self.ctx.current_file_idx,
-                    &module_name,
-                    resolution_mode_override,
-                )
-                .is_none()
+                .declared_modules_contains(self.ctx.binder, &module_name)
+                && self
+                    .ctx
+                    .resolve_import_target_from_file_with_mode(
+                        self.ctx.current_file_idx,
+                        &module_name,
+                        resolution_mode_override,
+                    )
+                    .is_none()
                 && self.ctx.resolve_import_target(&module_name).is_none()
             {
                 return TypeId::ERROR;

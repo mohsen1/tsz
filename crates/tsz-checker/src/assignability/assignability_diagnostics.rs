@@ -964,7 +964,9 @@ impl<'a> CheckerState<'a> {
                 let structural_target =
                     crate::query_boundaries::common::enum_member_type(self.ctx.types, target)
                         .unwrap_or(target);
-                return Some(self.is_assignable_to(source_literal, structural_target));
+                return Some(
+                    self.diagnostic_relation_boolean_guard(source_literal, structural_target),
+                );
             }
             return None;
         }
@@ -1217,7 +1219,7 @@ impl<'a> CheckerState<'a> {
             && crate::query_boundaries::common::is_callable_type(self.ctx.types, source)
             && crate::query_boundaries::common::is_callable_type(self.ctx.types, target)
             && !self.callable_has_own_generic_signatures(source)
-            && self.ctx.types.is_assignable_to(target, source)
+            && self.diagnostic_relation_boolean_guard(target, source)
             && self.callable_params_contain_type_param_intersection(source)
         {
             return true;
@@ -1465,8 +1467,8 @@ impl<'a> CheckerState<'a> {
         evaluated != target
             && evaluated != TypeId::UNKNOWN
             && evaluated != TypeId::ERROR
-            && (self.is_assignable_to_with_env(source, evaluated)
-                || self.is_assignable_to_with_env(source, contextual)
+            && (self.diagnostic_relation_boolean_guard_with_env(source, evaluated)
+                || self.diagnostic_relation_boolean_guard_with_env(source, contextual)
                 || self.self_referential_mapped_intersection_accepts_object_literal(
                     source, evaluated, arg_idx,
                 ))
@@ -1499,7 +1501,7 @@ impl<'a> CheckerState<'a> {
             let Some(shape) =
                 crate::query_boundaries::common::object_shape_for_type(self.ctx.types, member)
             else {
-                if !self.is_assignable_to_with_env(source, member) {
+                if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
                     return false;
                 }
                 continue;
@@ -1507,9 +1509,9 @@ impl<'a> CheckerState<'a> {
 
             allowed_keys.extend(shape.properties.iter().map(|prop| prop.name));
             if shape.string_index.is_some() || shape.number_index.is_some() {
-                return self.is_assignable_to_with_env(source, member);
+                return self.diagnostic_relation_boolean_guard_with_env(source, member);
             }
-            if !self.is_assignable_to_with_env(source, member) {
+            if !self.diagnostic_relation_boolean_guard_with_env(source, member) {
                 return false;
             }
         }
@@ -1630,7 +1632,7 @@ impl<'a> CheckerState<'a> {
         {
             return true;
         }
-        if self.is_assignable_to_bivariant(source, target) {
+        if self.diagnostic_relation_boolean_guard_bivariant(source, target) {
             return false;
         }
 
@@ -1863,9 +1865,13 @@ impl<'a> CheckerState<'a> {
                     }
                     (None, None) => {
                         // Neither is a function type — check normal comparability
-                        let prop_comparable = self
-                            .is_assignable_to(source_prop.type_id, target_prop.type_id)
-                            || self.is_assignable_to(target_prop.type_id, source_prop.type_id);
+                        let prop_comparable = self.diagnostic_relation_boolean_guard(
+                            source_prop.type_id,
+                            target_prop.type_id,
+                        ) || self.diagnostic_relation_boolean_guard(
+                            target_prop.type_id,
+                            source_prop.type_id,
+                        );
                         if !prop_comparable {
                             return false;
                         }
@@ -1932,8 +1938,8 @@ impl<'a> CheckerState<'a> {
         // Skip this for pure call/construct signature objects because TS overlap
         // checks are stricter than general object assignability there.
         if !skip_signature_only_fast_path
-            && (self.is_assignable_to(source_apparent, target_apparent)
-                || self.is_assignable_to(target_apparent, source_apparent))
+            && (self.diagnostic_relation_boolean_guard(source_apparent, target_apparent)
+                || self.diagnostic_relation_boolean_guard(target_apparent, source_apparent))
         {
             return true;
         }
@@ -1946,8 +1952,8 @@ impl<'a> CheckerState<'a> {
         // Decompose source union: check if any member is assignable in either direction
         if let Some(members) = query::union_members(self.ctx.types, source_apparent) {
             for member in &members {
-                if self.is_assignable_to(*member, target_apparent)
-                    || self.is_assignable_to(target_apparent, *member)
+                if self.diagnostic_relation_boolean_guard(*member, target_apparent)
+                    || self.diagnostic_relation_boolean_guard(target_apparent, *member)
                 {
                     return true;
                 }
@@ -1957,8 +1963,8 @@ impl<'a> CheckerState<'a> {
         // Decompose target union: check if any member is assignable in either direction
         if let Some(members) = query::union_members(self.ctx.types, target_apparent) {
             for member in &members {
-                if self.is_assignable_to(source_apparent, *member)
-                    || self.is_assignable_to(*member, source_apparent)
+                if self.diagnostic_relation_boolean_guard(source_apparent, *member)
+                    || self.diagnostic_relation_boolean_guard(*member, source_apparent)
                 {
                     return true;
                 }
@@ -1970,8 +1976,8 @@ impl<'a> CheckerState<'a> {
         // treats intersections as comparable if the source overlaps with ANY member.
         if let Some(members) = query::intersection_members(self.ctx.types, source_apparent) {
             for member in &members {
-                if self.is_assignable_to(*member, target_apparent)
-                    || self.is_assignable_to(target_apparent, *member)
+                if self.diagnostic_relation_boolean_guard(*member, target_apparent)
+                    || self.diagnostic_relation_boolean_guard(target_apparent, *member)
                 {
                     return true;
                 }
@@ -1979,8 +1985,8 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(members) = query::intersection_members(self.ctx.types, target_apparent) {
             for member in &members {
-                if self.is_assignable_to(source_apparent, *member)
-                    || self.is_assignable_to(*member, source_apparent)
+                if self.diagnostic_relation_boolean_guard(source_apparent, *member)
+                    || self.diagnostic_relation_boolean_guard(*member, source_apparent)
                 {
                     return true;
                 }
@@ -2110,8 +2116,11 @@ impl<'a> CheckerState<'a> {
                 found_common = true;
                 // Property types must be comparable (assignable in at least one direction)
                 let prop_comparable = self
-                    .is_assignable_to(source_prop.type_id, target_prop.type_id)
-                    || self.is_assignable_to(target_prop.type_id, source_prop.type_id);
+                    .diagnostic_relation_boolean_guard(source_prop.type_id, target_prop.type_id)
+                    || self.diagnostic_relation_boolean_guard(
+                        target_prop.type_id,
+                        source_prop.type_id,
+                    );
                 if !prop_comparable {
                     return false;
                 }
@@ -2146,6 +2155,19 @@ impl<'a> CheckerState<'a> {
                 failure_reason: Some(reason),
             };
         }
+
+        // The abstract→non-abstract constructor rejection lives in a checker
+        // override (it needs symbol abstractness) and is detected on the raw
+        // declared types, so the structural failure walk over the evaluated
+        // inputs produces no reason. Surface the structured reason directly so
+        // the TS2517 elaboration is rendered after the top-level TS2322/TS2345.
+        if let Some(reason) = self.abstract_constructor_assignment_failure_reason(source, target) {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
+
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
@@ -2362,7 +2384,7 @@ impl<'a> CheckerState<'a> {
             && return_type != TypeId::VOID
             && return_type != TypeId::UNDEFINED
             && return_type != TypeId::NEVER
-            && self.is_assignable_to(return_type, target)
+            && self.diagnostic_relation_boolean_guard(return_type, target)
         {
             return true;
         }
@@ -2378,7 +2400,7 @@ impl<'a> CheckerState<'a> {
             if construct_return != TypeId::VOID
                 && construct_return != TypeId::UNDEFINED
                 && construct_return != TypeId::NEVER
-                && self.is_assignable_to(construct_return, target)
+                && self.diagnostic_relation_boolean_guard(construct_return, target)
             {
                 return true;
             }
@@ -2416,6 +2438,21 @@ impl<'a> CheckerState<'a> {
             });
         }
         None
+    }
+
+    /// Produce the structured reason for an abstract-constructor-to-concrete
+    /// assignment failure when the checker's abstract-constructor override
+    /// rejects the relation. The override is the single source of truth for
+    /// the abstractness decision (it resolves symbol flags and unwraps
+    /// application/type-query chains), so this stays in sync with the relation
+    /// itself rather than re-deriving the shape from the printer.
+    pub(crate) fn abstract_constructor_assignment_failure_reason(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<tsz_solver::SubtypeFailureReason> {
+        (self.abstract_constructor_assignability_override(source, target, None) == Some(false))
+            .then_some(tsz_solver::SubtypeFailureReason::AbstractConstructorAssignment)
     }
 
     pub(crate) fn checker_only_assignability_may_apply(
@@ -2459,7 +2496,7 @@ impl<'a> CheckerState<'a> {
         }
         let value_type = value_prop.type_id;
 
-        !self.is_assignable_to(TypeId::UNDEFINED, value_type)
+        !self.diagnostic_relation_boolean_guard(TypeId::UNDEFINED, value_type)
     }
 
     fn iterator_result_application_args(&self, type_id: TypeId) -> Option<Vec<TypeId>> {

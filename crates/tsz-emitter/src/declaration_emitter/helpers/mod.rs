@@ -178,7 +178,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     fn resolve_ref(
         &self,
         _symbol: tsz_solver::types::SymbolRef,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::types::TypeId> {
         None
     }
@@ -186,7 +186,7 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
-        interner: &dyn tsz_solver::TypeDatabase,
+        interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::types::TypeId> {
         let &type_id = self.cache.def_types.get(&def_id.0)?;
         use tsz_solver::types::TypeData;
@@ -226,6 +226,8 @@ mod late_bound_function_analysis;
 mod literal_initializers;
 mod local_asserted_type_alias;
 mod portability_check;
+#[cfg(test)]
+pub(in crate::declaration_emitter) use portability_check::PortabilityVisitState;
 mod portability_export_paths;
 mod portability_resolve;
 mod returned_function_initializer;

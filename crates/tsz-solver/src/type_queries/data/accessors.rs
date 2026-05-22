@@ -6,7 +6,7 @@
 use super::content_predicates::{
     get_array_element_type, get_intersection_members, get_tuple_elements, get_union_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::{DefKind, DefinitionStore};
 use crate::types::{
     LiteralValue, ObjectShape, PropertyInfo, TupleElement, TypeData, TypeId, Visibility,
@@ -621,6 +621,12 @@ pub fn keyof_object_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Option
     }
     // Include `symbol` in keyof when the object has computed symbol properties.
     if has_symbol_key {
+        key_types.push(TypeId::SYMBOL);
+    }
+    if let Some(index) = shape.string_index.as_ref()
+        && index.key_type == TypeId::SYMBOL
+        && !key_types.contains(&TypeId::SYMBOL)
+    {
         key_types.push(TypeId::SYMBOL);
     }
     if key_types.is_empty() {

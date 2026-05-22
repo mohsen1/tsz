@@ -107,6 +107,7 @@ impl<'a> DeclarationEmitter<'a> {
             return String::new();
         };
 
+        self.source_file_text = Some(source_file.text.clone());
         if !self.source_file_is_js(source_file) {
             self.retain_synthetic_class_extends_alias_dependencies_in_statements(
                 &source_file.statements,
@@ -124,13 +125,15 @@ impl<'a> DeclarationEmitter<'a> {
                 &source_file.statements,
             );
             self.retain_imported_static_call_dependencies_in_statements(&source_file.statements);
+            self.retain_public_named_import_type_dependencies_in_statements(
+                &source_file.statements,
+            );
         }
 
         // Prepare aliases and build the import plan before emitting anything
         self.prepare_import_aliases(root_idx);
         self.prepare_import_plan();
 
-        self.source_file_text = Some(source_file.text.clone());
         self.source_is_declaration_file = source_file.is_declaration_file;
         self.source_is_js_file = self.source_file_is_js(source_file);
         self.current_source_file_idx = Some(root_idx);
@@ -313,6 +316,7 @@ impl<'a> DeclarationEmitter<'a> {
             // Auto-generated imports count as external module indicators
             self.emitted_module_indicator = true;
         }
+        self.emit_commonjs_named_export_top_level_jsdoc_type_aliases(source_file);
 
         for &stmt_idx in &source_file.statements.nodes {
             if let Some((name_idx, initializer)) =
@@ -762,8 +766,15 @@ impl<'a> DeclarationEmitter<'a> {
             .current_statement_jsdoc_chain
             .iter()
             .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
-        let suppress_jsdoc_type_alias_comments =
-            has_jsdoc_type_alias && self.statement_emits_js_object_literal_namespace(stmt_idx);
+        // True when emit_leading_jsdoc_type_aliases_for_pos was called above, so the raw
+        // @typedef comment blocks should be suppressed from the JSDoc chain.
+        let emitted_leading_typedef_aliases = self.source_is_js_file
+            && has_effective_export
+            && !is_variable_like_export
+            && js_export_equals_declaration_name.is_none();
+        let suppress_jsdoc_type_alias_comments = has_jsdoc_type_alias
+            && (self.statement_emits_js_object_literal_namespace(stmt_idx)
+                || emitted_leading_typedef_aliases);
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
@@ -773,7 +784,15 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
         let should_join_single_line_jsdoc_type_comment = self.source_is_js_file
             && kind == syntax_kind_ext::VARIABLE_STATEMENT
-            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos);
+            && !self.inside_declare_namespace
+            && self.emitted_leading_single_line_jsdoc_type_comment_for_pos(stmt_node.pos)
+            && self
+                .jsdoc_type_text_for_node(stmt_idx)
+                .is_none_or(|type_text| {
+                    !self
+                        .jsdoc_type_text_for_declaration_emit(&type_text)
+                        .contains('\n')
+                });
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted once per structured signature
             // by `emit_function_declaration`.
@@ -961,6 +980,22 @@ impl<'a> DeclarationEmitter<'a> {
         self.current_statement_jsdoc_chain =
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
+
+        let has_leading_jsdoc_typedef = self.source_is_js_file
+            && self.js_export_equals_names.is_empty()
+            && jsdoc_chain
+                .iter()
+                .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+        if has_leading_jsdoc_typedef {
+            let is_exported = self.statement_has_effective_export(stmt_idx);
+            // Reuse the already-computed jsdoc_chain instead of re-walking comments.
+            for jsdoc in &jsdoc_chain {
+                if let Some(decl) = Self::parse_jsdoc_type_alias_decl(jsdoc) {
+                    self.emit_rendered_jsdoc_type_alias(decl, is_exported);
+                }
+            }
+        }
+
         let has_jsdoc_type_function_signature = self
             .statement_jsdoc_type_function_signature_node(stmt_idx)
             .is_some();
@@ -968,28 +1003,39 @@ impl<'a> DeclarationEmitter<'a> {
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
             .is_some_and(|func_idx| !self.jsdoc_overload_signatures_for_node(func_idx).is_empty());
+
+        let effective_chain: Vec<String> = if has_leading_jsdoc_typedef {
+            jsdoc_chain
+                .iter()
+                .filter(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc))
+                .cloned()
+                .collect()
+        } else {
+            jsdoc_chain
+        };
+
         if has_jsdoc_overload_signatures {
             // JSDoc overload comments are emitted with each overload signature.
         } else if has_jsdoc_type_function_signature {
-            let filtered = Self::jsdoc_chain_without_type_or_alias_tags(&jsdoc_chain);
+            let filtered = Self::jsdoc_chain_without_type_or_alias_tags(&effective_chain);
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
                 &filtered,
             ) {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
-        } else if jsdoc_chain.len() == 1
-            && Self::jsdoc_has_function_signature_tags(jsdoc_chain[0].as_str())
+        } else if effective_chain.len() == 1
+            && Self::jsdoc_has_function_signature_tags(effective_chain[0].as_str())
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
-                &jsdoc_chain,
+                &effective_chain,
             ) {
-                self.emit_multiline_jsdoc_comment(&jsdoc_chain[0]);
+                self.emit_multiline_jsdoc_comment(&effective_chain[0]);
             }
         } else {
-            self.emit_jsdoc_comment_chain(&jsdoc_chain);
+            self.emit_jsdoc_comment_chain(&effective_chain);
         }
         let saved_comment_idx = self.comment_emit_idx;
         self.comment_emit_idx = self
@@ -1203,6 +1249,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.emit_type(func.type_annotation);
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
+            self.write(": ");
+            self.write(&return_type_text);
+        } else if func.asterisk_token
+            && func_body.is_some()
+            && let Some(return_type_text) =
+                self.generator_yield_return_type_text(func.is_async, func_body)
+        {
             self.write(": ");
             self.write(&return_type_text);
         } else if let (Some(return_type_text), true) =
@@ -1438,7 +1491,8 @@ impl<'a> DeclarationEmitter<'a> {
                                 func_name,
                             );
                         } else {
-                            let printed_type_text = self.print_type_id(effective_return_type_id);
+                            let printed_type_text = self
+                                .inferred_function_return_type_text(func, effective_return_type_id);
                             let printed_type_text = self
                                 .rewrite_returned_auto_accessor_parameter_unknowns(
                                     func,
@@ -1568,6 +1622,9 @@ impl<'a> DeclarationEmitter<'a> {
         if !is_exported
             && !self.should_emit_public_api_member(&class.modifiers)
             && !self.is_js_export_equals_name(class.name)
+            && !self
+                .js_deferred_local_export_alias_function_statements
+                .contains(&class_idx)
             && !self.is_confirmed_public_api_dependency(class.name)
         {
             return;
@@ -1610,44 +1667,27 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         // Type parameters
-        let jsdoc_template_anchor = class
-            .modifiers
-            .as_ref()
-            .and_then(|mods| mods.nodes.first().copied())
-            .and_then(|mod_idx| self.arena.get(mod_idx))
-            .map(|mod_node| mod_node.pos)
-            .unwrap_or(class_node.pos);
-        let mut jsdoc_template_params = self
-            .current_statement_jsdoc_chain
-            .iter()
-            .flat_map(|jsdoc| Self::parse_jsdoc_template_params(jsdoc))
-            .collect::<Vec<_>>();
-        if jsdoc_template_params.is_empty() {
-            jsdoc_template_params = self.jsdoc_template_params_for_pos(jsdoc_template_anchor);
-        }
-        if jsdoc_template_params.is_empty() {
-            jsdoc_template_params = self
-                .nearest_jsdoc_comment_for_pos_relaxed(jsdoc_template_anchor)
-                .map(|jsdoc| Self::parse_jsdoc_template_params(&jsdoc))
-                .unwrap_or_default();
-        }
-        if jsdoc_template_params.is_empty() {
-            jsdoc_template_params = self.jsdoc_template_params_for_node(class_idx);
-        }
-        if jsdoc_template_params.is_empty() {
-            jsdoc_template_params = self.jsdoc_template_params_for_node(class.name);
-        }
-        if self.source_is_js_file && !jsdoc_template_params.is_empty() {
-            self.emit_jsdoc_template_parameters(&jsdoc_template_params);
-        } else if let Some(ref type_params) = class.type_parameters {
-            if !type_params.nodes.is_empty() {
-                self.emit_type_parameters(type_params);
+        if let Some(ref type_params) = class.type_parameters
+            && !type_params.nodes.is_empty()
+        {
+            self.emit_type_parameters(type_params);
+        } else {
+            let jsdoc_template_params =
+                self.jsdoc_template_params_for_class_declaration(class_idx, class);
+            if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
             }
         }
 
         // Heritage clauses (extends, implements)
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
+            let jsdoc_extends_type =
+                self.jsdoc_extends_type_for_class_declaration(class_idx, class);
+            self.emit_class_heritage_clauses(
+                heritage,
+                extends_alias.as_deref(),
+                jsdoc_extends_type.as_deref(),
+            );
         }
 
         self.write(" {");
@@ -1660,7 +1700,12 @@ impl<'a> DeclarationEmitter<'a> {
             hc.nodes.iter().any(|&clause_idx| {
                 self.arena
                     .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        h.token == SyntaxKind::ExtendsKeyword as u16
+                            && h.types.nodes.iter().any(|&type_idx| {
+                                !(self.source_is_js_file && self.heritage_type_is_null(type_idx))
+                            })
+                    })
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
@@ -1687,6 +1732,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_js_array_subclass_constructor_overloads_if_needed(
             &class.members,
             class.heritage_clauses.as_ref(),
@@ -1922,9 +1968,25 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if is_readonly
+                && !is_abstract
+                && !prop.question_token
+                && prop.initializer.is_some()
+                && self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::StaticKeyword)
+                && self.is_symbol_call(prop.initializer)
+            {
+                self.write(": unique symbol");
             } else if prop.initializer.is_some()
                 && let Some(type_text) =
                     self.class_property_function_initializer_type_text(prop_idx, prop.initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if prop.initializer.is_some()
+                && let Some(type_text) =
+                    self.anonymous_module_exports_class_new_expression_type_text(prop.initializer)
             {
                 self.write(": ");
                 self.write(&type_text);
@@ -1963,10 +2025,16 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(" | undefined");
                     }
                 } else {
-                    // For non-readonly properties without an explicit type annotation,
-                    // widen literal types to their base types (e.g., `12` → `number`,
-                    // `false` → `boolean`) matching tsc's DTS behaviour.
-                    let effective_type = if !is_readonly {
+                    // Inferred class-property declaration surfaces widen
+                    // unique-symbol values from references to `symbol`; a direct
+                    // static readonly `Symbol()` initializer is handled above.
+                    let effective_type = if prop.initializer.is_some() {
+                        self.type_interner
+                            .map(|interner| {
+                                tsz_solver::operations::widening::widen_type(interner, type_id)
+                            })
+                            .unwrap_or(type_id)
+                    } else if !is_readonly {
                         self.type_interner
                             .map(|interner| {
                                 tsz_solver::operations::widening::widen_literal_type(

@@ -1,7 +1,8 @@
 use super::*;
-use crate::TypeInterner;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
-use crate::{SubtypeChecker, TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::SubtypeChecker;
 
 #[test]
 fn evaluator_cache_statistics_report_entries_and_size() {
@@ -3509,6 +3510,11 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     }));
 
     // T extends `${infer R}` ? R : never, with T = `${string}`.
+    // `${string}` spans the full string domain and collapses to `string`, and
+    // tsc treats `string extends `${infer R}`` as the false branch (a bare
+    // primitive does not match a template pattern) → never. This mirrors
+    // `test_conditional_infer_template_literal_from_string_input`, since
+    // `${string}` and `string` are the same type.
     let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
     let cond = ConditionalType {
         check_type: t_param,
@@ -3521,12 +3527,13 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let template_string = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    assert_eq!(template_string, TypeId::STRING);
     subst.insert(t_name, template_string);
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -3805,8 +3812,11 @@ fn test_conditional_string_literal_still_matches_template_infer_pattern() {
     assert_eq!(result, interner.literal_string("hello"));
 }
 
-/// Template literal source (string-filled) against a template infer pattern — should yield string.
-/// Template literal source types continue to match template patterns correctly.
+/// A genuine (non-collapsing) template literal source matches a structurally
+/// aligned template infer pattern, capturing the `${string}` segment.
+/// `` `x${string}` extends `x${infer R}` ? R : never `` yields `string` in tsc.
+/// (A bare `` `${string}` `` collapses to `string`, which does NOT match a
+/// template infer pattern — covered by the `from_string_input` tests.)
 #[test]
 fn test_conditional_template_literal_source_still_matches_template_infer_pattern() {
     let interner = TypeInterner::new();
@@ -3819,8 +3829,15 @@ fn test_conditional_template_literal_source_still_matches_template_infer_pattern
         is_const: false,
     }));
 
-    let source_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
-    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let prefix = interner.intern_string("x");
+    let source_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(infer_r),
+    ]);
     let cond = ConditionalType {
         check_type: source_template,
         extends_type: extends_template,
@@ -9666,6 +9683,57 @@ fn test_correlated_union_index_access_cross_product() {
 }
 
 #[test]
+fn test_mapped_index_union_of_generic_key_intersections_preserves_key() {
+    let interner = TypeInterner::new();
+
+    let mapped_key_name = interner.intern_string("P");
+    let generic_key_name = interner.intern_string("K");
+    let one = interner.literal_string("one");
+    let two = interner.literal_string("two");
+    let key_space = interner.union(vec![one, two]);
+
+    let mapped_key = interner.type_param(TypeParamInfo {
+        name: mapped_key_name,
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    });
+    let generic_key = interner.type_param(TypeParamInfo {
+        name: generic_key_name,
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: mapped_key_name,
+            constraint: Some(key_space),
+            default: None,
+            is_const: false,
+        },
+        constraint: key_space,
+        template: mapped_key,
+        name_type: None,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let index_type = interner.union(vec![
+        interner.intersection2(generic_key, one),
+        interner.intersection2(generic_key, two),
+    ]);
+
+    let result = evaluate_index_access(&interner, mapped, index_type);
+    assert_eq!(
+        result,
+        generic_key,
+        "a union covering every constrained `K & key` member should index mapped templates as K, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
 fn test_index_access_union_object_union_key_no_unchecked() {
     let interner = TypeInterner::new();
 
@@ -9917,8 +9985,8 @@ fn test_index_access_object_with_number_index_signature_no_unchecked() {
 
 #[test]
 fn test_index_access_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -10864,8 +10932,8 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
 
 #[test]
 fn test_keyof_resolves_ref() {
-    use crate::TypeEnvironment;
     use crate::def::DefId;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -11372,7 +11440,7 @@ fn test_keyof_object_keyword() {
 
 #[test]
 fn test_object_trifecta_keyof_object_interface() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let mut env = TypeEnvironment::new();
@@ -28649,7 +28717,8 @@ fn test_multiple_infers_different_constraints() {
 
 #[test]
 fn test_typeof_variable_reference_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: number
     let interner = TypeInterner::new();
@@ -28667,7 +28736,8 @@ fn test_typeof_variable_reference_basic() {
 
 #[test]
 fn test_typeof_variable_reference_object_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -28690,7 +28760,8 @@ fn test_typeof_variable_reference_object_type() {
 
 #[test]
 fn test_typeof_variable_reference_array_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof arr where arr: string[]
     let interner = TypeInterner::new();
@@ -28710,7 +28781,8 @@ fn test_typeof_variable_reference_array_type() {
 
 #[test]
 fn test_typeof_imported_value_basic() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedValue where importedValue: boolean
     let interner = TypeInterner::new();
@@ -28729,7 +28801,8 @@ fn test_typeof_imported_value_basic() {
 
 #[test]
 fn test_typeof_imported_value_complex() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof importedConfig where importedConfig: { port: number, host: string }
     let interner = TypeInterner::new();
@@ -28752,7 +28825,8 @@ fn test_typeof_imported_value_complex() {
 
 #[test]
 fn test_typeof_function_type() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (x: number) => string
     let interner = TypeInterner::new();
@@ -28785,7 +28859,8 @@ fn test_typeof_function_type() {
 
 #[test]
 fn test_typeof_function_multiple_params() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof fn where fn: (a: string, b: number) => boolean
     let interner = TypeInterner::new();
@@ -28826,7 +28901,8 @@ fn test_typeof_function_multiple_params() {
 
 #[test]
 fn test_typeof_const_string_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: "hello" (const assertion)
     let interner = TypeInterner::new();
@@ -28846,7 +28922,8 @@ fn test_typeof_const_string_literal() {
 
 #[test]
 fn test_typeof_const_number_literal() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x: 42 (const assertion)
     let interner = TypeInterner::new();
@@ -28866,7 +28943,8 @@ fn test_typeof_const_number_literal() {
 
 #[test]
 fn test_typeof_const_tuple_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = [1, 2, 3] as const -> readonly [1, 2, 3]
     let interner = TypeInterner::new();
@@ -28910,7 +28988,8 @@ fn test_typeof_const_tuple_readonly() {
 
 #[test]
 fn test_typeof_const_object_readonly() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x where x = { a: 1, b: "hello" } as const
     // -> { readonly a: 1, readonly b: "hello" }
@@ -28937,7 +29016,8 @@ fn test_typeof_const_object_readonly() {
 
 #[test]
 fn test_typeof_unresolved_passes_through() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // When resolver doesn't know the symbol, TypeQuery passes through unchanged
     let interner = TypeInterner::new();
@@ -28955,7 +29035,8 @@ fn test_typeof_unresolved_passes_through() {
 
 #[test]
 fn test_typeof_in_union() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // typeof x | typeof y
     let interner = TypeInterner::new();
@@ -28991,7 +29072,8 @@ fn test_typeof_in_union() {
 
 #[test]
 fn test_typeof_in_keyof() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // keyof typeof x where x: { a: string, b: number }
     let interner = TypeInterner::new();
@@ -29020,7 +29102,8 @@ fn test_typeof_in_keyof() {
 
 #[test]
 fn test_typeof_indexed_access() {
-    use crate::{SymbolRef, TypeEnvironment};
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
 
     // (typeof x)["a"] where x: { a: number, b: string }
     let interner = TypeInterner::new();
@@ -29971,7 +30054,7 @@ fn test_mapped_type_template_literal_keys() {
 
 #[test]
 fn test_satisfies_basic_literal_string() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies string
     // The literal type "hello" should satisfy the string constraint
@@ -29987,7 +30070,7 @@ fn test_satisfies_basic_literal_string() {
 
 #[test]
 fn test_satisfies_basic_literal_number() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number
     let interner = TypeInterner::new();
@@ -30002,7 +30085,7 @@ fn test_satisfies_basic_literal_number() {
 
 #[test]
 fn test_satisfies_basic_object_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1, b: "hello" } satisfies { a: number, b: string }
     let interner = TypeInterner::new();
@@ -30031,7 +30114,7 @@ fn test_satisfies_basic_object_type() {
 
 #[test]
 fn test_satisfies_constraint_failure() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "hello" satisfies number - should fail
     let interner = TypeInterner::new();
@@ -30044,7 +30127,8 @@ fn test_satisfies_constraint_failure() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_string() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, literal types are preserved:
     // const x = "hello" satisfies string -> type is "hello"
@@ -30066,7 +30150,8 @@ fn test_satisfies_literal_widening_preserved_string() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_number() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = 42 satisfies number -> type remains 42 (literal)
     let interner = TypeInterner::new();
@@ -30083,7 +30168,8 @@ fn test_satisfies_literal_widening_preserved_number() {
 
 #[test]
 fn test_satisfies_literal_widening_preserved_boolean() {
-    use crate::{LiteralValue, SubtypeChecker};
+    use crate::LiteralValue;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = true satisfies boolean -> type remains true (literal)
     let interner = TypeInterner::new();
@@ -30100,7 +30186,7 @@ fn test_satisfies_literal_widening_preserved_boolean() {
 
 #[test]
 fn test_satisfies_excess_property_check_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // In TypeScript, satisfies performs excess property checking:
     // const x = { a: 1, b: 2, c: 3 } satisfies { a: number, b: number }
@@ -30129,7 +30215,7 @@ fn test_satisfies_excess_property_check_fails() {
 
 #[test]
 fn test_satisfies_missing_property_fails() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b: number }
     // This fails because 'b' is required but missing
@@ -30152,7 +30238,7 @@ fn test_satisfies_missing_property_fails() {
 
 #[test]
 fn test_satisfies_optional_property_satisfied() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } satisfies { a: number, b?: number }
     // This succeeds because 'b' is optional
@@ -30189,7 +30275,7 @@ fn test_satisfies_optional_property_satisfied() {
 
 #[test]
 fn test_satisfies_vs_annotation_literal_preservation() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // Demonstrating satisfies vs type annotation difference:
     //
@@ -30223,7 +30309,7 @@ fn test_satisfies_vs_annotation_literal_preservation() {
 
 #[test]
 fn test_satisfies_vs_annotation_object_properties() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // With satisfies, object property types are preserved:
     //   const x = { status: "success" } satisfies { status: string }
@@ -30258,7 +30344,7 @@ fn test_satisfies_vs_annotation_object_properties() {
 
 #[test]
 fn test_satisfies_union_constraint() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" satisfies "a" | "b" | "c"
     let interner = TypeInterner::new();
@@ -30278,7 +30364,7 @@ fn test_satisfies_union_constraint() {
 
 #[test]
 fn test_satisfies_array_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2, 3] satisfies number[]
     let interner = TypeInterner::new();
@@ -30318,7 +30404,7 @@ fn test_satisfies_array_type() {
 
 #[test]
 fn test_satisfies_record_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { foo: 1, bar: 2 } satisfies Record<string, number>
     let interner = TypeInterner::new();
@@ -30349,7 +30435,7 @@ fn test_satisfies_record_type() {
 
 #[test]
 fn test_satisfies_with_generic_function() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const fn = <T>(x: T) => x satisfies <T>(x: T) => T
     let interner = TypeInterner::new();
@@ -30401,7 +30487,7 @@ fn test_satisfies_with_generic_function() {
 
 #[test]
 fn test_satisfies_preserves_narrower_type() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
     use crate::types::LiteralValue;
 
     // const x = "hello" satisfies string
@@ -30423,7 +30509,7 @@ fn test_satisfies_preserves_narrower_type() {
 
 #[test]
 fn test_satisfies_with_union_literals() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = "a" | "b" satisfies string
     let interner = TypeInterner::new();
@@ -30439,7 +30525,7 @@ fn test_satisfies_with_union_literals() {
 
 #[test]
 fn test_satisfies_with_intersection() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } & { b: 2 } satisfies { a: number, b: number }
     let interner = TypeInterner::new();
@@ -31349,7 +31435,7 @@ fn test_const_object_literal_nested() {
 
 #[test]
 fn test_const_object_literal_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = { a: 1 } as const  ->  { readonly a: 1 }
     // let y = { a: 1 }             ->  { a: number }
@@ -31559,7 +31645,7 @@ fn test_const_array_nested() {
 
 #[test]
 fn test_const_array_vs_mutable() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const x = [1, 2] as const  ->  readonly [1, 2]
     // A non-readonly tuple [1, 2] is subtype of number[]
@@ -31747,7 +31833,7 @@ fn test_template_literal_type_structure() {
 
 #[test]
 fn test_template_literal_union_expansion() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // `${"a" | "b"}` expands to "a" | "b"
     let interner = TypeInterner::new();
@@ -31766,7 +31852,7 @@ fn test_template_literal_union_expansion() {
 
 #[test]
 fn test_const_enum_like_object() {
-    use crate::SubtypeChecker;
+    use crate::relations::subtype::SubtypeChecker;
 
     // const Direction = { Up: 0, Down: 1, Left: 2, Right: 3 } as const
     // -> { readonly Up: 0, readonly Down: 1, readonly Left: 2, readonly Right: 3 }
@@ -42136,13 +42222,9 @@ fn test_template_literal_only_type_interpolation() {
 
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
 
-    // Verify it was created
-    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 1);
-    } else {
-        panic!("Expected template literal");
-    }
+    // A lone `${string}` spans the full string domain, so it collapses to
+    // `string` at construction (tsc's getTemplateLiteralType).
+    assert_eq!(template, TypeId::STRING);
 
     // keyof returns apparent keys of string (same as keyof string)
     let result = evaluate_keyof(&interner, template);
@@ -43234,6 +43316,158 @@ fn intermediate_application_alias_preserves_newly_introduced_intermediate() {
     );
 }
 
+/// When `store_intermediate_application_display_alias` is called with a
+/// freshly-allocated Mapped type as `evaluated`, the display alias must be
+/// stored even when the Application's args contain generic type parameters.
+///
+/// Structural rule: a generic type alias whose body evaluates to a fresh
+/// `MappedType` (constraint baked into interned key → each instantiation
+/// produces a distinct node) gets its `Application → MappedType` alias stored
+/// so that `IndexAccess(MappedType, idx)` formats as `Alias<K>[idx]`.
+#[test]
+fn intermediate_application_alias_stores_for_fresh_generic_mapped_type() {
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // Application is allocated first (as it would be when `Alias<K>` appears in source).
+    let app = interner.application(interner.lazy(DefId(9901)), vec![k]);
+
+    // MappedType is allocated second — simulating `instantiate_generic` producing a fresh node.
+    let p = interner.type_param(TypeParamInfo::simple(interner.intern_string("P")));
+    let prefix = interner.intern_string("get");
+    let name_type = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(p),
+    ]);
+    let prop = interner.intern_string("a");
+    let template = interner.object(vec![PropertyInfo::new(prop, p)]);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo::simple(interner.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Call the function under test directly — no pre-seeding via store_display_alias.
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(mapped, app, mapped, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(mapped),
+        Some(app),
+        "Generic alias evaluating to a fresh Mapped type must have its display alias stored"
+    );
+}
+
+/// Non-Mapped structural types (Object, Intersection) must NEVER receive a
+/// display alias when the Application's args contain generic type parameters.
+/// Only freshly-allocated Mapped types are safe because their constraint is
+/// baked into the interned key (guaranteeing per-instantiation uniqueness).
+/// Both shapes are tested so a future change that widens alias storage to
+/// generic Objects or Intersections trips the boundary assertion.
+#[test]
+fn intermediate_application_alias_skips_generic_args_for_non_mapped_structural_type() {
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // --- Object shape ---
+    let app_obj = interner.application(interner.lazy(DefId(9902)), vec![k]);
+    let obj = interner.object(vec![PropertyInfo::new(interner.intern_string("x"), k)]);
+
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(obj, app_obj, obj, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(obj),
+        None,
+        "Object with generic args must not receive a display alias"
+    );
+
+    // --- Intersection shape ---
+    let app_int = interner.application(interner.lazy(DefId(9909)), vec![k]);
+    let intersect = interner.intersection(vec![TypeId::STRING, k]);
+
+    evaluator.store_intermediate_application_display_alias(intersect, app_int, intersect, &[k]);
+
+    assert_eq!(
+        interner.get_display_alias(intersect),
+        None,
+        "Intersection with generic args must not receive a display alias"
+    );
+}
+
+/// Prove the formatter uses the evaluator-stored alias (no manual pre-seeding).
+/// `store_intermediate_application_display_alias` stores `mapped → app`, and
+/// then `format(IndexAccess(mapped, idx))` must use the Application form.
+#[test]
+fn evaluator_stored_mapped_alias_appears_in_index_access_format() {
+    use crate::diagnostics::format::TypeFormatter;
+
+    let interner = TypeInterner::new();
+
+    let k = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // Allocation order: Application first, then fresh Mapped.
+    let app = interner.application(interner.lazy(DefId(9903)), vec![k]);
+
+    let p = interner.type_param(TypeParamInfo::simple(interner.intern_string("P")));
+    let prefix = interner.intern_string("get");
+    let name_type = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(p),
+    ]);
+    let prop = interner.intern_string("a");
+    let template = interner.object(vec![PropertyInfo::new(prop, p)]);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo::simple(interner.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    // Store via the evaluator path — not via store_display_alias_preferring_application.
+    let evaluator = TypeEvaluator::new(&interner);
+    evaluator.store_intermediate_application_display_alias(mapped, app, mapped, &[k]);
+
+    // Build the IndexAccess and format it.
+    let idx = interner.template_literal(vec![
+        crate::types::TemplateSpan::Text(prefix),
+        crate::types::TemplateSpan::Type(k),
+    ]);
+    let access = interner.index_access(mapped, idx);
+
+    let mut fmt = TypeFormatter::new(&interner);
+    let result = fmt.format(access);
+
+    // The alias was stored by the evaluator, so the formatter must not show the
+    // expanded `{ [P in K as ...]: ... }[...]` structural form.
+    assert!(
+        !result.contains("[P in K as"),
+        "formatter must use the evaluator-stored alias, not the expanded mapped form; got: {result}"
+    );
+}
+
 /// Tests for distributive conditional instantiation over union type parameters.
 ///
 /// Structural rule: when a distributive conditional `K extends K ? K : never`
@@ -43327,5 +43561,272 @@ fn test_distributive_conditional_renamed_param_evaluates_correctly() {
         matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
         "Expected union from distributive X extends X ? X : never with X='a'|'b', got: {:?}",
         interner.lookup(evaluated)
+    );
+}
+
+// --- Spreading a union of tuples into a tuple distributes (issue #9764) ---
+//
+// Structural rule: when a tuple type contains a spread (rest) element whose
+// operand is a union of array-like types, the tuple normalizer distributes
+// over the union — `[a, ...(X | Y), b]` becomes `[a, ...X, b] | [a, ...Y, b]`
+// — producing one concrete tuple per union member. Single (non-union) tuple
+// spreads already flatten; this extends that to union operands.
+
+fn fixed_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+fn rest_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+#[test]
+fn test_tuple_spread_union_distributes_with_trailing() {
+    // [0, ...([2] | [3, 4]), 1] -> [0, 2, 1] | [0, 3, 4, 1]
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3, l4) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+        interner.literal_number(4.0),
+    );
+
+    let t_a = interner.tuple(vec![fixed_elem(l2)]);
+    let t_b = interner.tuple(vec![fixed_elem(l3), fixed_elem(l4)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union), fixed_elem(l1)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(l2), fixed_elem(l1)]);
+    let exp_b = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(l3),
+        fixed_elem(l4),
+        fixed_elem(l1),
+    ]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0,2,1] | [0,3,4,1], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_union_distributes_no_trailing_keeps_literal() {
+    // [0, ...([2] | [3, 4])] -> [0, 2] | [0, 3, 4]; leading `0` stays literal.
+    let interner = TypeInterner::new();
+    let (l0, l2, l3, l4) = (
+        interner.literal_number(0.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+        interner.literal_number(4.0),
+    );
+
+    let t_a = interner.tuple(vec![fixed_elem(l2)]);
+    let t_b = interner.tuple(vec![fixed_elem(l3), fixed_elem(l4)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(l2)]);
+    let exp_b = interner.tuple(vec![fixed_elem(l0), fixed_elem(l3), fixed_elem(l4)]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0,2] | [0,3,4] with literal 0 preserved, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_single_tuple_still_flattens_control() {
+    // CONTROL: [0, ...[2, 3], 1] -> [0, 2, 3, 1] (single tuple, not a union).
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+    );
+
+    let inner = interner.tuple(vec![fixed_elem(l2), fixed_elem(l3)]);
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(inner), fixed_elem(l1)]);
+    let result = evaluate_type(&interner, src);
+
+    let expected = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(l2),
+        fixed_elem(l3),
+        fixed_elem(l1),
+    ]);
+    assert_eq!(
+        result,
+        expected,
+        "expected single tuple [0,2,3,1], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_union_member_with_rest_preserved() {
+    // [0, ...(["x"] | [number, ...string[]])] ->
+    //   [0, "x"] | [0, number, ...string[]]
+    // A union member that itself carries a rest keeps its rest after the
+    // spread distributes. (The leading element of the first member is a
+    // string literal so neither alternative is absorbed by the other.)
+    let interner = TypeInterner::new();
+    let l0 = interner.literal_number(0.0);
+    let lx = interner.literal_string("x");
+    let string_array = interner.array(TypeId::STRING);
+
+    let t_a = interner.tuple(vec![fixed_elem(lx)]);
+    let t_b = interner.tuple(vec![fixed_elem(TypeId::NUMBER), rest_elem(string_array)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(lx)]);
+    let exp_b = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(TypeId::NUMBER),
+        rest_elem(string_array),
+    ]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0, \"x\"] | [0, number, ...string[]], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_two_union_spreads_cartesian_product() {
+    // [...([0] | [1]), ...([2] | [3])] ->
+    //   [0, 2] | [0, 3] | [1, 2] | [1, 3]
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+    );
+
+    let u_left = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l0)]),
+        interner.tuple(vec![fixed_elem(l1)]),
+    ]);
+    let u_right = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l3)]),
+    ]);
+
+    let src = interner.tuple(vec![rest_elem(u_left), rest_elem(u_right)]);
+    let result = evaluate_type(&interner, src);
+
+    let expected = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l0), fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l0), fixed_elem(l3)]),
+        interner.tuple(vec![fixed_elem(l1), fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l1), fixed_elem(l3)]),
+    ]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected cartesian [0,2]|[0,3]|[1,2]|[1,3], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_array_union_is_not_distributed() {
+    // NEGATIVE/FALLBACK: [string, number, ...(string[] | boolean[])] is left
+    // undistributed (a single tuple). tsc keeps a union-of-arrays rest as one
+    // rest element — an unbounded rest already encodes the union without
+    // fanning out into a union of tuples. Distributing it (as an earlier
+    // iteration did) broke reverse-mapping inference through variadic tuples
+    // (TypeScript conformance `variadicTuples1.ts`).
+    let interner = TypeInterner::new();
+    let string_array = interner.array(TypeId::STRING);
+    let boolean_array = interner.array(TypeId::BOOLEAN);
+    let union = interner.union(vec![string_array, boolean_array]);
+
+    let src = interner.tuple(vec![
+        fixed_elem(TypeId::STRING),
+        fixed_elem(TypeId::NUMBER),
+        rest_elem(union),
+    ]);
+    let result = evaluate_type(&interner, src);
+
+    assert_eq!(
+        result,
+        src,
+        "array-union spread must stay undistributed, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "expected a single tuple, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_generic_union_is_not_distributed() {
+    // NEGATIVE/FALLBACK: [0, ...(T | U)] with T, U generic type parameters is
+    // left undistributed (a single tuple), matching tsc, which keeps generic
+    // spreads lazy until instantiation. Only concrete array-like unions fan out.
+    let interner = TypeInterner::new();
+    let l0 = interner.literal_number(0.0);
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![t_param, u_param]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    assert_eq!(
+        result,
+        src,
+        "generic type-parameter union spread must stay undistributed, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "expected a single tuple, got {:?}",
+        interner.lookup(result)
     );
 }

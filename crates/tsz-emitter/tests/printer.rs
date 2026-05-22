@@ -1359,6 +1359,54 @@ fn system_exported_object_binding_bracket_access_does_not_add_numeric_dot() {
 }
 
 #[test]
+fn trailing_decimal_numeric_follow_recovery_keeps_call_tail() {
+    let source = "var test = 2.toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test = 2., toString;\n();"),
+        "Numeric-follow recovery should preserve the identifier and call tail like tsc.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var test = 2.;"),
+        "Recovered numeric-follow initializer must not drop the identifier and call tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_access_spacing_still_disambiguates_property_dot() {
+    let source = "var test3 = 3 .toString();\nvar test11 = 3. /* comment */ .toString();\n";
+    let output = parse_lower_print(source, PrintOptions::es6());
+
+    assert!(
+        output.contains("var test3 = 3..toString();"),
+        "Integer literal property access separated by whitespace still needs a double dot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var test11 = 3. /* comment */.toString();"),
+        "Trailing-decimal literals with preserved comments should keep one property dot.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn trailing_decimal_remove_comments_keeps_newline_separator() {
+    let source = "var test15 = 3.\n    // comment\n    .toString();\n";
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            remove_comments: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var test15 = 3.\n    .toString();"),
+        "Removing comments should preserve the newline after a trailing-decimal literal before property access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn system_reexported_namespace_folds_export_into_es2015_iife_tail() {
     let source = "namespace N { export const x = 1; }\nexport { N as Out };\n";
     let output = parse_lower_print(
@@ -3277,5 +3325,106 @@ fn system_namespace_tslib_import_uses_user_binding_for_helpers() {
     assert!(
         !output.contains("var tslib_1"),
         "No redundant helper-binding hoist when the user already provides a binding.\nOutput:\n{output}"
+    );
+}
+
+/// Private field-stored-function calls must use `__classPrivateFieldGet(...).call(receiver)`.
+#[test]
+fn test_private_field_call_expression_lowering() {
+    let source = r#"class Foo {
+    #field = function() { return 1; };
+    test() {
+        this.#field();
+        this.#field(1, 2);
+    }
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::es6());
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Foo_field, \"f\").call(this)"),
+        "Private field call with no args should use .call(this)\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Foo_field, \"f\").call(this, 1, 2)"),
+        "Private field call with args should pass them after this\nOutput:\n{output}"
+    );
+}
+
+/// Private method calls must use `__classPrivateFieldGet(..., "m", fn).call(receiver)`.
+#[test]
+fn test_private_method_call_expression_lowering() {
+    let source = r#"class Bar {
+    #run() { return 1; }
+    test() {
+        this.#run();
+        this.#run(1, 2);
+    }
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::es6());
+    assert!(
+        output.contains("__classPrivateFieldGet(this, _Bar_instances, \"m\", _Bar_run).call(this)"),
+        "Private method call should use __classPrivateFieldGet with 'm' kind\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__classPrivateFieldGet(this, _Bar_instances, \"m\", _Bar_run).call(this, 1, 2)"
+        ),
+        "Private method call with args should pass them after this\nOutput:\n{output}"
+    );
+}
+
+/// Non-simple receivers must be captured in a temp var — `__classPrivateFieldGet(_a = expr, ...).call(_a)`.
+/// Without the temp, the receiver is evaluated twice (side effects fire twice and `this` mismatches).
+#[test]
+fn test_private_field_call_complex_receiver() {
+    let source = r#"class Foo {
+    #fn = () => 1;
+    static getInstance(): Foo { return new Foo(); }
+    test() {
+        Foo.getInstance().#fn();
+        Foo.getInstance().#fn(1, 2);
+    }
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::es6());
+    // Each call site gets its own temp (_a, _b, …) so both calls can coexist safely.
+    assert!(
+        output.contains("__classPrivateFieldGet(_a = Foo.getInstance(), _Foo_fn, \"f\").call(_a)"),
+        "First call should capture receiver in temp and reuse it in .call()\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__classPrivateFieldGet(_b = Foo.getInstance(), _Foo_fn, \"f\").call(_b, 1, 2)"
+        ),
+        "Second call should use its own temp and reuse it in .call()\nOutput:\n{output}"
+    );
+    // Confirm the receiver is never emitted raw in a .call() position.
+    assert!(
+        !output.contains(".call(Foo.getInstance())"),
+        "Complex receiver must not be evaluated twice in .call()\nOutput:\n{output}"
+    );
+}
+
+/// Static private field calls: simple (class-name) receiver — no temp needed, class alias substituted.
+#[test]
+fn test_private_static_field_call_expression() {
+    let source = r#"class Baz {
+    static #method = function() { return 1; };
+    static test() {
+        Baz.#method();
+        Baz.#method(1, 2);
+    }
+}
+"#;
+    let output = parse_lower_print(source, PrintOptions::es6());
+    // Static members use the class alias (_a = Baz) as both receiver and state.
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"f\", _Baz_method).call(_a)"),
+        "Static private field call should use class alias as receiver\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"f\", _Baz_method).call(_a, 1, 2)"),
+        "Static private field call with args should pass them after alias\nOutput:\n{output}"
     );
 }

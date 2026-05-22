@@ -9,7 +9,7 @@ use tsz_checker::module_resolution::build_module_resolution_maps;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files_for_test() -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(&[
@@ -263,6 +263,116 @@ fn duplicate_identifier_with_default_lib_symbol_reports_lib_locations() {
 #[test]
 fn duplicate_enum_member_names() {
     verify_errors("enum E { A, A }", &[(1, 13, "Duplicate identifier 'A'.")]);
+}
+
+fn count_ts2300(diagnostics: &[tsz_checker::diagnostics::Diagnostic]) -> usize {
+    diagnostics.iter().filter(|d| d.code == 2300).count()
+}
+
+/// Enum member colliding with a same-named namespace `export const`: TS2300 on
+/// both the enum member and the namespace export.
+#[test]
+fn enum_member_vs_namespace_const_export() {
+    let diagnostics = verify_errors(
+        "enum E { A }\nnamespace E { export const A = 1; }",
+        &[
+            (1, 10, "Duplicate identifier 'A'."),
+            (2, 28, "Duplicate identifier 'A'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+}
+
+/// Order-independence: namespace declared before the enum still reports both.
+#[test]
+fn namespace_export_before_enum_member() {
+    let diagnostics = verify_errors(
+        "namespace E { export const A = 1; }\nenum E { A }",
+        &[
+            (1, 28, "Duplicate identifier 'A'."),
+            (2, 10, "Duplicate identifier 'A'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+}
+
+/// The colliding export can be a function or a class (any value meaning).
+#[test]
+fn enum_member_vs_namespace_function_and_class_export() {
+    let diagnostics = verify_errors(
+        "enum E { A }\nnamespace E { export function A() {} }",
+        &[
+            (1, 10, "Duplicate identifier 'A'."),
+            (2, 31, "Duplicate identifier 'A'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+
+    let diagnostics = verify_errors(
+        "enum E { A }\nnamespace E { export class A {} }",
+        &[
+            (1, 10, "Duplicate identifier 'A'."),
+            (2, 28, "Duplicate identifier 'A'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+}
+
+/// A namespace `export type` shares the type meaning an enum member also
+/// occupies (`EnumMemberExcludes = Value | Type`), so it collides too.
+#[test]
+fn enum_member_vs_namespace_type_export() {
+    let diagnostics = verify_errors(
+        "enum E { A }\nnamespace E { export type A = number; }",
+        &[
+            (1, 10, "Duplicate identifier 'A'."),
+            (2, 27, "Duplicate identifier 'A'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+}
+
+/// Not hardcoded to the name `A`: a different identifier collides identically.
+#[test]
+fn enum_member_vs_namespace_export_renamed_member() {
+    let diagnostics = verify_errors(
+        "enum E { Foo }\nnamespace E { export const Foo = 1; }",
+        &[
+            (1, 10, "Duplicate identifier 'Foo'."),
+            (2, 28, "Duplicate identifier 'Foo'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 2);
+}
+
+/// Each colliding name reports its own pair.
+#[test]
+fn enum_member_vs_namespace_multiple_collisions() {
+    let diagnostics = verify_errors(
+        "enum E { A, B }\nnamespace E { export const A = 1; export const B = 2; }",
+        &[
+            (1, 10, "Duplicate identifier 'A'."),
+            (1, 13, "Duplicate identifier 'B'."),
+            (2, 28, "Duplicate identifier 'A'."),
+            (2, 48, "Duplicate identifier 'B'."),
+        ],
+    );
+    assert_eq!(count_ts2300(&diagnostics), 4);
+}
+
+/// Distinct names merge cleanly — no duplicate-identifier diagnostic.
+#[test]
+fn enum_member_distinct_from_namespace_export_no_error() {
+    let diagnostics = verify_errors("enum E { A }\nnamespace E { export const B = 1; }", &[]);
+    assert_eq!(count_ts2300(&diagnostics), 0);
+}
+
+/// A non-exported namespace local lives in a different table than the enum's
+/// members, so it must not collide.
+#[test]
+fn enum_member_vs_namespace_nonexported_local_no_error() {
+    let diagnostics = verify_errors("enum E { A }\nnamespace E { const A = 1; }", &[]);
+    assert_eq!(count_ts2300(&diagnostics), 0);
 }
 
 /// Test that method followed by property emits TS2300 only on the property.
@@ -1337,5 +1447,38 @@ fn same_file_merging_interfaces_no_ts2300() {
     assert_eq!(
         ts2300, 0,
         "Two separate interface declarations merge — no TS2300 expected"
+    );
+}
+
+#[test]
+fn reexport_plus_own_augmentation_keeps_third_file_augmentation_conflict() {
+    let source_ts = r#"export interface User {
+    id: number;
+}
+"#;
+    let test_ts = r#"export { User } from "./source";
+declare module "./source" {
+    interface User {
+        email?: string;
+    }
+}
+"#;
+    let augment_test_ts = r#"import "./test";
+declare module "./test" {
+    type User = { external: true };
+}
+"#;
+
+    let ts2300 = check_for_ts2300_multi_file(
+        &[
+            ("source.ts", source_ts),
+            ("test.ts", test_ts),
+            ("augment-test.ts", augment_test_ts),
+        ],
+        "augment-test.ts",
+    );
+    assert!(
+        !ts2300.is_empty(),
+        "third-file augmentation of the current re-exported name must still produce TS2300"
     );
 }

@@ -4,7 +4,7 @@
 //! (narrowing, type predicates, constructor instances) and advanced type queries
 //! (promise detection, comparability, contextual type parameter extraction).
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::type_queries::{
     StringLiteralKeyKind, classify_for_string_literal_keys, get_array_element_type,
@@ -965,6 +965,22 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // A template-literal type (and string-intrinsic mapping type such as
+    // `Uppercase<S>`) is a subtype of `string`. For assertion comparability
+    // tsc widens the source literal to its base primitive, so any string-domain
+    // type (`string`, a string literal, a template-literal, or a string
+    // intrinsic) sufficiently overlaps a template-literal/string-intrinsic
+    // target — e.g. `"x" as `a${number}b`` is legal even though the literal
+    // text does not match the pattern. This is the assertion-only widening
+    // rule; the strict comparable relation is intentionally unchanged.
+    if is_string_domain_type(db, source)
+        && is_string_domain_type(db, target)
+        && (is_template_or_string_intrinsic(db, source)
+            || is_template_or_string_intrinsic(db, target))
+    {
+        return true;
+    }
+
     // The `object` primitive overlaps with any non-primitive type, including
     // `{}` and arbitrary object/array shapes. tsc's `isTypeComparableTo`
     // treats `object` as a supertype of all object-like values for assertion
@@ -1608,6 +1624,33 @@ fn signatures_are_comparable(
     types_are_comparable_inner(db, source.return_type, target.return_type, depth + 1)
 }
 
+/// Whether `type_id` is a template-literal type or a string-intrinsic mapping
+/// type (`Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize`). Both are
+/// subtypes of `string` whose membership is pattern-defined.
+fn is_template_or_string_intrinsic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. })
+    )
+}
+
+/// Whether `type_id` belongs to the `string` domain for assertion overlap:
+/// the `string` primitive, a string-literal type, or a pattern-defined string
+/// subtype (template-literal / string-intrinsic). A literal source widens to
+/// its base primitive at the assertion site, so each of these overlaps a
+/// template-literal target.
+fn is_string_domain_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::STRING
+        || matches!(
+            db.lookup(type_id),
+            Some(
+                TypeData::Literal(crate::types::LiteralValue::String(_))
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::StringIntrinsic { .. }
+            )
+        )
+}
+
 /// Check if a base primitive type is comparable to a literal or other form of that primitive.
 fn is_primitive_comparable(db: &dyn TypeDatabase, base: TypeId, other: TypeId) -> bool {
     // Decompose union types: a union is primitive-comparable if any member is.
@@ -1849,7 +1892,6 @@ fn types_have_common_properties(
 /// Used for TS2502 detection (circular reference in type annotation).
 /// Traverses the type structure, expanding top-level lazy aliases via the provided callback.
 /// Stops recursion at Function, Object, and Mapped types which break the "direct" reference cycle.
-#[allow(clippy::match_same_arms)]
 pub fn has_type_query_for_symbol(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -1908,14 +1950,12 @@ pub fn has_type_query_for_symbol(
                 TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) => {
                     worklist.push(inner);
                 }
-                TypeData::Function(_)
-                | TypeData::Object(_)
-                | TypeData::ObjectWithIndex(_)
-                | TypeData::Mapped(_) => {
-                    // These types break the "direct" reference cycle logic for TS2502.
-                    // Recursive types via function return/params or object properties are allowed.
+                _ => {
+                    // `Function`, `Object`, `ObjectWithIndex`, and `Mapped` intentionally stop
+                    // traversal here: they break the "direct" reference cycle check for TS2502,
+                    // because recursive types via function return/params or object properties
+                    // are allowed.
                 }
-                _ => {}
             }
         }
         false
@@ -2005,7 +2045,7 @@ fn extract_contextual_type_params_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::types::TupleElement;
 
     #[test]

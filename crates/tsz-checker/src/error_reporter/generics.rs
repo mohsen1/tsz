@@ -573,7 +573,10 @@ impl<'a> CheckerState<'a> {
             let ready_type_arg_constraint = self.resolve_lazy_type(type_arg_constraint);
             let ready_type_arg_constraint =
                 self.evaluate_type_for_assignability(ready_type_arg_constraint);
-            if self.is_assignable_to_no_weak_checks(ready_type_arg_constraint, ready_constraint) {
+            if self.diagnostic_relation_boolean_guard_no_weak_checks(
+                ready_type_arg_constraint,
+                ready_constraint,
+            ) {
                 return;
             }
         }
@@ -599,7 +602,19 @@ impl<'a> CheckerState<'a> {
                 .and_then(|tq| tq.type_arguments.as_ref())
                 .is_some_and(|args| !args.nodes.is_empty())
         {
-            type_str = format!("typeof {type_str}");
+            if let Some(source_text) = self
+                .ctx
+                .arena
+                .source_files
+                .first()
+                .and_then(|source_file| source_file.text.get(node.pos as usize..node.end as usize))
+                .map(str::trim)
+                .filter(|text| text.starts_with("typeof "))
+            {
+                type_str = source_text.to_string();
+            } else {
+                type_str = format!("typeof {type_str}");
+            }
         }
         let constraint_str = self.format_type_diagnostic_constraint(constraint);
         // Structural check: `IndexedAccess(M, K)` where K is a bounded
@@ -730,10 +745,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
-            if !self.is_assignable_to(prop_value, resolved_constraint)
-                && !self.is_assignable_to(prop.type_id, constraint)
-                && !self.is_assignable_to(prop_value, constraint)
-                && !self.is_assignable_to(prop.type_id, resolved_constraint)
+            if !self.diagnostic_relation_boolean_guard(prop_value, resolved_constraint)
+                && !self.diagnostic_relation_boolean_guard(prop.type_id, constraint)
+                && !self.diagnostic_relation_boolean_guard(prop_value, constraint)
+                && !self.diagnostic_relation_boolean_guard(prop.type_id, resolved_constraint)
             {
                 return false;
             }

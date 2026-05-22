@@ -7,7 +7,7 @@ use super::accessors::get_object_shape;
 use super::content_predicates::{
     contains_infer_types_db, contains_type_parameters_db, get_intersection_members,
 };
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::evaluation::evaluate::TypeEvaluator;
 use crate::relations::subtype::SubtypeChecker;
 use crate::types::{IntrinsicKind, LiteralValue, TypeData, TypeId};
@@ -361,6 +361,21 @@ pub fn construct_return_type_for_type(db: &dyn TypeDatabase, type_id: TypeId) ->
                 None
             }
         }
+        InstanceTypeKind::Intersection(members) => {
+            let returns = members
+                .into_iter()
+                .filter_map(|member| construct_return_type_for_type(db, member))
+                .collect::<Vec<_>>();
+            (!returns.is_empty()).then(|| crate::utils::intersection_or_single(db, returns))
+        }
+        InstanceTypeKind::Union(members) => {
+            let mut returns = Vec::with_capacity(members.len());
+            for member in members {
+                returns.push(construct_return_type_for_type(db, member)?);
+            }
+            (!returns.is_empty()).then(|| crate::utils::union_or_single(db, returns))
+        }
+        InstanceTypeKind::Readonly(inner) => construct_return_type_for_type(db, inner),
         _ => None,
     }
 }
@@ -1246,7 +1261,7 @@ pub(crate) fn narrow_keyof_intersection_member_by_literal_discriminants(
                     return true;
                 };
                 !crate::type_queries::is_unit_type(db, prop.type_id)
-                    || crate::is_subtype_of(db, disc_type, prop.type_id)
+                    || crate::relations::subtype::is_subtype_of(db, disc_type, prop.type_id)
             })
         })
         .collect();
@@ -1287,8 +1302,8 @@ fn intersection_has_impossible_literal_discriminants(
 
             let seen = discriminants.entry(prop.name).or_default();
             if seen.iter().any(|&other| {
-                !crate::is_subtype_of(db, prop.type_id, other)
-                    && !crate::is_subtype_of(db, other, prop.type_id)
+                !crate::relations::subtype::is_subtype_of(db, prop.type_id, other)
+                    && !crate::relations::subtype::is_subtype_of(db, other, prop.type_id)
             }) {
                 return true;
             }
@@ -1348,7 +1363,8 @@ fn unit_intersection_is_impossible(db: &dyn TypeDatabase, type_id: TypeId) -> bo
             continue;
         }
         if units.iter().any(|&other| {
-            !crate::is_subtype_of(db, member, other) && !crate::is_subtype_of(db, other, member)
+            !crate::relations::subtype::is_subtype_of(db, member, other)
+                && !crate::relations::subtype::is_subtype_of(db, other, member)
         }) {
             return true;
         }
@@ -1460,11 +1476,13 @@ fn resolve_concrete_conditional_result(
         return None;
     }
 
-    Some(if crate::is_subtype_of(db, check_type, extends_type) {
-        cond.true_type
-    } else {
-        cond.false_type
-    })
+    Some(
+        if crate::relations::subtype::is_subtype_of(db, check_type, extends_type) {
+            cond.true_type
+        } else {
+            cond.false_type
+        },
+    )
 }
 
 /// Find the private brand name for a type.
@@ -1601,7 +1619,6 @@ pub fn get_enum_member_type(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
 ///
 /// Primitives, `never`, `void`, `undefined`, `null`, `unknown`, and literals
 /// are NOT valid base types. Used for TS2509 checking.
-#[allow(clippy::match_same_arms)]
 pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Fast path: only `any` and `object` intrinsics are valid base types;
     // all other intrinsics (including `BOOLEAN_TRUE` / `BOOLEAN_FALSE`,
@@ -1613,11 +1630,21 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             || type_id == TypeId::PROMISE_BASE;
     }
     match db.lookup(type_id) {
-        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
-        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
-        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
-        Some(TypeData::TypeParameter(_)) => true,
+        // Object-like types, callables, arrays/tuples, type params, and
+        // lazy/application/mapped refs are all valid class base types.
+        Some(
+            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Callable(_)
+            | TypeData::Function(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::TypeParameter(_)
+            | TypeData::Lazy(_)
+            | TypeData::Application(_)
+            | TypeData::Mapped(_),
+        ) => true,
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
             members.iter().all(|&m| is_valid_base_type(db, m))
@@ -1628,9 +1655,6 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
             let members = db.type_list(list_id);
             !members.is_empty() && members.iter().all(|&m| is_valid_base_type(db, m))
         }
-        Some(TypeData::Lazy(_)) => true, // unresolved references are assumed valid
-        Some(TypeData::Application(_)) => true, // generic applications are object-like
-        Some(TypeData::Mapped(_)) => true, // mapped types are object-like
         Some(TypeData::ReadonlyType(inner)) => is_valid_base_type(db, inner),
         // Intrinsics (never, void, null, etc.), literals, None => not valid base types
         _ => false,
@@ -1642,17 +1666,23 @@ pub fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
 /// Interface heritage is narrower than class heritage: the base must be an
 /// object type or an intersection of object types with statically known
 /// members. Unions and type parameters are rejected with TS2312.
-#[allow(clippy::match_same_arms)]
 pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return type_id == TypeId::ANY || type_id == TypeId::OBJECT;
     }
 
     match db.lookup(type_id) {
-        Some(TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)) => true,
-        Some(TypeData::Object(_) | TypeData::ObjectWithIndex(_)) => true,
-        Some(TypeData::Callable(_) | TypeData::Function(_)) => true,
-        Some(TypeData::Array(_) | TypeData::Tuple(_)) => true,
+        Some(
+            TypeData::Intrinsic(IntrinsicKind::Any | IntrinsicKind::Object)
+            | TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Callable(_)
+            | TypeData::Function(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Lazy(_)
+            | TypeData::Application(_),
+        ) => true,
         Some(TypeData::Intersection(list_id)) => {
             let members = db.type_list(list_id);
             !members.is_empty()
@@ -1668,8 +1698,6 @@ pub fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> b
                     .is_some_and(|name_type| contains_type_parameters_db(db, name_type))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_interface_base_type(db, inner),
-        Some(TypeData::Lazy(_) | TypeData::Application(_)) => true,
-        Some(TypeData::Union(_) | TypeData::TypeParameter(_)) => false,
         _ => false,
     }
 }

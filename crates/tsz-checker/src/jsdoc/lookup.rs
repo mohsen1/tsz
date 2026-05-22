@@ -1360,7 +1360,6 @@ impl<'a> CheckerState<'a> {
     /// position), or `(tag, None)` when it is a fully-dangling JSDoc comment
     /// not attached to any statement (tsc reports these at program level with
     /// no file/position).
-    #[allow(clippy::type_complexity)]
     pub(crate) fn find_orphaned_extends_tags_for_statements(
         &self,
         statements: &[NodeIndex],
@@ -1525,7 +1524,7 @@ mod tests {
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
     use tsz_parser::parser::node::NodeAccess;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn enclosing_expression_statement(parser: &ParserState, idx: NodeIndex) -> Option<NodeIndex> {
         let mut current = idx;

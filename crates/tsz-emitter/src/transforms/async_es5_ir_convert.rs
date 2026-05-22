@@ -5,7 +5,10 @@
 //! traversals of the `NodeArena` with no async-transform-specific state.
 
 use crate::transforms::ir::{IRNode, IRParam};
+use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::NodeList;
 use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -13,6 +16,22 @@ use tsz_scanner::SyntaxKind;
 use super::async_es5_ir::AsyncES5Transformer;
 
 impl<'a> AsyncES5Transformer<'a> {
+    pub(super) fn extract_hoisted_var_groups(
+        &self,
+        generator_body: &mut IRNode,
+    ) -> Vec<Vec<String>> {
+        let mut groups = Self::extract_and_remove_var_decl_groups(generator_body);
+        let lowering = self
+            .pending_lowering_hoists
+            .borrow_mut()
+            .drain(..)
+            .collect::<Vec<_>>();
+        if !lowering.is_empty() {
+            groups.push(lowering);
+        }
+        groups
+    }
+
     fn class_super_base_ir(&self) -> IRNode {
         if self.class_super_is_static {
             IRNode::id(self.class_super_name.clone())
@@ -156,6 +175,12 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::CALL_EXPRESSION => {
                 if let Some(call) = self.arena.get_call_expr(node) {
+                    if let Some(callee_node) = self.arena.get(call.expression)
+                        && callee_node.kind == SyntaxKind::ImportKeyword as u16
+                        && self.module_needs_dynamic_import_lowering()
+                    {
+                        return self.convert_dynamic_import_call(call.arguments.as_ref());
+                    }
                     let mut args = Vec::new();
                     if let Some(arg_list) = &call.arguments {
                         for &arg_idx in &arg_list.nodes {
@@ -216,6 +241,12 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::BINARY_EXPRESSION => {
                 if let Some(bin) = self.arena.get_binary_expr(node) {
+                    // ?? is ES2020; the state-machine path runs at ES5/ES2015,
+                    // so lower it inline before the operator reaches the IR
+                    // printer (which writes operators verbatim).
+                    if bin.operator_token == SyntaxKind::QuestionQuestionToken as u16 {
+                        return self.lower_nullish_coalescing_to_ir(bin.left, bin.right);
+                    }
                     let left = self.expression_to_ir(bin.left);
                     let right = self.expression_to_ir(bin.right);
                     let op = self.get_operator_text(bin.operator_token);
@@ -932,5 +963,143 @@ impl<'a> AsyncES5Transformer<'a> {
     /// Get operator text from a token kind
     pub fn get_operator_text(&self, op: u16) -> String {
         crate::transforms::emit_utils::operator_to_str(op).to_string()
+    }
+
+    /// Lower a nullish coalescing expression `left ?? right` to its
+    /// pre-ES2020 equivalent in IR form. The output shape mirrors tsc's
+    /// printer in `binary_downlevel.rs::emit_nullish_coalescing_expression`:
+    ///
+    /// - simple LHS (identifier / keyword / literal — safe to repeat
+    ///   without re-running side effects): `left !== null && left !== void 0
+    ///   ? left : right`.
+    /// - complex LHS: `(t = left) !== null && t !== void 0 ? t : right`,
+    ///   with `t` hoisted via `push_lowering_hoist` so the surrounding
+    ///   `transform_*` entry point declares it in the state-machine
+    ///   scope. Hoisting is required: the IR printer emits expressions
+    ///   one node at a time and has no place to inject a `var` decl
+    ///   inline.
+    pub(super) fn lower_nullish_coalescing_to_ir(
+        &self,
+        left_idx: NodeIndex,
+        right_idx: NodeIndex,
+    ) -> IRNode {
+        let right_ir = self.expression_to_ir(right_idx);
+        if crate::transforms::emit_utils::is_simple_copiable_expression(self.arena, left_idx) {
+            let left_ir = self.expression_to_ir(left_idx);
+            return Self::nullish_ternary(left_ir.clone(), left_ir.clone(), left_ir, right_ir);
+        }
+        let temp = self.generate_hoisted_temp();
+        self.push_lowering_hoist(temp.clone());
+        let left_ir = self.expression_to_ir(left_idx);
+        let assign_temp =
+            IRNode::Parenthesized(Box::new(IRNode::assign(IRNode::id(temp.clone()), left_ir)));
+        Self::nullish_ternary(
+            assign_temp,
+            IRNode::id(temp.clone()),
+            IRNode::id(temp),
+            right_ir,
+        )
+    }
+
+    fn nullish_ternary(
+        not_null_lhs: IRNode,
+        not_void_lhs: IRNode,
+        when_true: IRNode,
+        when_false: IRNode,
+    ) -> IRNode {
+        IRNode::ConditionalExpr {
+            condition: Box::new(IRNode::logical_and(
+                IRNode::binary(not_null_lhs, "!==", IRNode::NullLiteral),
+                IRNode::binary(not_void_lhs, "!==", IRNode::Undefined),
+            )),
+            when_true: Box::new(when_true),
+            when_false: Box::new(when_false),
+        }
+    }
+
+    // =========================================================================
+    // Dynamic import() lowering
+    // =========================================================================
+
+    /// Whether the current module kind requires lowering dynamic `import()`.
+    /// ESM and module:none pass through as native `import()`; everything else
+    /// (CJS, AMD, UMD, System) needs a module-specific transformation.
+    const fn module_needs_dynamic_import_lowering(&self) -> bool {
+        !matches!(
+            self.module_kind,
+            ModuleKind::None
+                | ModuleKind::ES2015
+                | ModuleKind::ES2020
+                | ModuleKind::ES2022
+                | ModuleKind::ESNext
+                | ModuleKind::Preserve
+        )
+    }
+
+    fn convert_dynamic_import_call(&self, args: Option<&NodeList>) -> IRNode {
+        let first_arg = self.first_dynamic_import_argument(args);
+        let is_string_like = first_arg.is_none_or(|a| {
+            crate::transforms::emit_utils::dynamic_import_arg_is_string_like(self.arena, a)
+        });
+
+        let mut specifier = first_arg
+            .map(|a| self.render_ir_to_string(&self.expression_to_ir(a)))
+            .unwrap_or_default();
+        let mut prefix = String::new();
+
+        if first_arg.is_some() && !is_string_like {
+            let temp = self.generate_hoisted_temp();
+            self.push_lowering_hoist(temp.clone());
+            prefix = format!("{temp} = {specifier}, ");
+            specifier = temp;
+        }
+
+        match self.module_kind {
+            ModuleKind::System => {
+                IRNode::Raw(format!("{prefix}context_1.import({specifier})").into())
+            }
+            ModuleKind::UMD => {
+                let cjs = self.dynamic_import_cjs_branch(&specifier);
+                let amd = self.dynamic_import_amd_branch(&specifier);
+                IRNode::Raw(format!("{prefix}__syncRequire ? {cjs} : {amd}").into())
+            }
+            ModuleKind::AMD => {
+                let amd = self.dynamic_import_amd_branch(&specifier);
+                IRNode::Raw(format!("{prefix}{amd}").into())
+            }
+            _ => {
+                let cjs = self.dynamic_import_cjs_branch(&specifier);
+                IRNode::Raw(format!("{prefix}{cjs}").into())
+            }
+        }
+    }
+
+    fn first_dynamic_import_argument(&self, args: Option<&NodeList>) -> Option<NodeIndex> {
+        args?
+            .nodes
+            .iter()
+            .copied()
+            .find(|&idx| crate::transforms::emit_utils::call_argument_should_emit(self.arena, idx))
+    }
+
+    fn render_ir_to_string(&self, ir: &IRNode) -> String {
+        let mut printer = if let Some(text) = self.source_text {
+            IRPrinter::with_arena_and_source(self.arena, text)
+        } else {
+            IRPrinter::with_arena(self.arena)
+        };
+        printer.emit(ir).to_string()
+    }
+
+    fn dynamic_import_cjs_branch(&self, specifier: &str) -> String {
+        crate::transforms::emit_utils::dynamic_import_cjs_form(specifier)
+    }
+
+    fn dynamic_import_amd_branch(&self, specifier: &str) -> String {
+        let id = self.dynamic_import_promise_counter.get();
+        self.dynamic_import_promise_counter.set(id + 1);
+        format!(
+            "new Promise(function (resolve_{id}, reject_{id}) {{ require([{specifier}], resolve_{id}, reject_{id}); }}).then(__importStar)"
+        )
     }
 }

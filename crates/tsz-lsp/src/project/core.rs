@@ -29,7 +29,7 @@ use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::{NodeArena, NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 use tsz_solver::def::DefinitionStore;
 
 pub(crate) enum ImportKind {
@@ -1563,6 +1563,25 @@ fn compile_auto_import_specifier_exclude_pattern(pattern: &str) -> Option<Regex>
     Regex::new(pattern).ok()
 }
 
+/// Auto-import specifier preference matching the LSP `importModuleSpecifierPreference` values.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ImportSpecifierPreference {
+    NonRelative,
+    Relative,
+    ProjectRelative,
+}
+
+impl ImportSpecifierPreference {
+    fn from_lsp_value(s: &str) -> Option<Self> {
+        match s {
+            "non-relative" => Some(Self::NonRelative),
+            "relative" => Some(Self::Relative),
+            "project-relative" => Some(Self::ProjectRelative),
+            _ => None,
+        }
+    }
+}
+
 /// Multi-file container for LSP operations.
 pub struct Project {
     pub(crate) files: FxHashMap<String, ProjectFile>,
@@ -1572,7 +1591,7 @@ pub struct Project {
     pub(crate) strict: bool,
     pub(crate) allow_importing_ts_extensions: bool,
     pub(crate) import_module_specifier_ending: Option<String>,
-    pub(crate) import_module_specifier_preference: Option<String>,
+    pub(crate) import_module_specifier_preference: Option<ImportSpecifierPreference>,
     pub(crate) auto_import_file_exclude_matchers: Vec<globset::GlobMatcher>,
     pub(crate) auto_import_specifier_exclude_matchers: Vec<Regex>,
     pub(crate) auto_imports_allowed_without_tsconfig: bool,
@@ -2052,9 +2071,13 @@ impl Project {
         self.import_module_specifier_ending = ending;
     }
 
-    /// Set preference for module specifier generation.
+    /// Set preference for module specifier generation from the LSP
+    /// `importModuleSpecifierPreference` string. Unknown or `"shortest"` values
+    /// are silently treated as the default (shortest-first) ordering.
     pub fn set_import_module_specifier_preference(&mut self, pref: Option<String>) {
-        self.import_module_specifier_preference = pref;
+        self.import_module_specifier_preference = pref
+            .as_deref()
+            .and_then(ImportSpecifierPreference::from_lsp_value);
     }
 
     /// Set auto-import exclusion patterns used by completions and import fixes.

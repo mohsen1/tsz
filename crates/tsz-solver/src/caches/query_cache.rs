@@ -5,7 +5,8 @@
 //! database implementation used by the checker at runtime.
 
 use crate::caches::db::{
-    QueryDatabase, TypeDatabase, TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
+    QueryDatabase, TypeCompilerOptions, TypeDatabase, TypeDisplayProvenance, TypePredicateCache,
+    TypeTupleLimitSignal,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
@@ -28,7 +29,7 @@ use crate::types::{
 };
 use crate::visitor::is_error_type;
 use dashmap::DashMap;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 use tsz_binder::SymbolId;
@@ -57,18 +58,25 @@ const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
 /// - `eval_cache`: type evaluation (conditional types, mapped types, etc.)
 /// - `subtype_cache`: subtype relation results
 /// - `assignability_cache`: assignability relation results
+///
+/// `application_eval_cache` and `instantiation_cache` are intentionally NOT
+/// shared cross-file: parallel file checking can observe incomplete lib-merge
+/// state during the first evaluation of a generic type alias (e.g. `Promise<T>`,
+/// `Awaited<T>`), producing a stale result that is then returned to sibling
+/// files. Keeping those caches per-file eliminates the ordering-sensitive
+/// correctness risk. See issue #9507.
 pub struct SharedQueryCache {
-    eval_cache: DashMap<EvaluationCacheKey, TypeId>,
-    subtype_cache: DashMap<RelationCacheKey, bool>,
-    assignability_cache: DashMap<RelationCacheKey, bool>,
+    eval_cache: DashMap<EvaluationCacheKey, TypeId, FxBuildHasher>,
+    subtype_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
+    assignability_cache: DashMap<RelationCacheKey, bool, FxBuildHasher>,
 }
 
 impl SharedQueryCache {
     pub fn new() -> Self {
         SharedQueryCache {
-            eval_cache: DashMap::new(),
-            subtype_cache: DashMap::new(),
-            assignability_cache: DashMap::new(),
+            eval_cache: DashMap::with_hasher(FxBuildHasher),
+            subtype_cache: DashMap::with_hasher(FxBuildHasher),
+            assignability_cache: DashMap::with_hasher(FxBuildHasher),
         }
     }
 
@@ -110,6 +118,10 @@ pub struct QueryCacheStatistics {
     pub eval_cache_entries: usize,
     /// Number of memoized application evaluation results.
     pub application_eval_cache_entries: usize,
+    /// Number of times the application eval cache returned a hit.
+    pub application_eval_cache_hits: u64,
+    /// Number of times the application eval cache was probed and missed.
+    pub application_eval_cache_misses: u64,
     /// Number of memoized element access results.
     pub element_access_cache_entries: usize,
     /// Number of memoized object spread property lists.
@@ -147,6 +159,8 @@ impl QueryCacheStatistics {
     pub const fn merge(&mut self, other: &QueryCacheStatistics) {
         self.eval_cache_entries += other.eval_cache_entries;
         self.application_eval_cache_entries += other.application_eval_cache_entries;
+        self.application_eval_cache_hits += other.application_eval_cache_hits;
+        self.application_eval_cache_misses += other.application_eval_cache_misses;
         self.element_access_cache_entries += other.element_access_cache_entries;
         self.object_spread_cache_entries += other.object_spread_cache_entries;
         self.property_cache_entries += other.property_cache_entries;
@@ -249,8 +263,10 @@ impl std::fmt::Display for QueryCacheStatistics {
         writeln!(f, "  eval_cache:             {}", self.eval_cache_entries)?;
         writeln!(
             f,
-            "  application_eval_cache: {}",
-            self.application_eval_cache_entries
+            "  application_eval_cache: {} entries ({} hits, {} misses)",
+            self.application_eval_cache_entries,
+            self.application_eval_cache_hits,
+            self.application_eval_cache_misses,
         )?;
         writeln!(
             f,
@@ -362,6 +378,8 @@ pub struct QueryCache<'a> {
     /// that share the same input list (e.g., the `BCT candidates=200` bench
     /// fixture exercises four such sites).
     subtype_reduction_cache: SubtypeReductionCache,
+    application_eval_cache_hits: Cell<u64>,
+    application_eval_cache_misses: Cell<u64>,
     subtype_cache_hits: Cell<u64>,
     subtype_cache_misses: Cell<u64>,
     assignability_cache_hits: Cell<u64>,
@@ -412,6 +430,8 @@ impl<'a> QueryCache<'a> {
             intersection_merge_cache: RefCell::new(FxHashMap::default()),
             instantiation_cache: InstantiationCache::new(),
             subtype_reduction_cache: SubtypeReductionCache::new(),
+            application_eval_cache_hits: Cell::new(0),
+            application_eval_cache_misses: Cell::new(0),
             subtype_cache_hits: Cell::new(0),
             subtype_cache_misses: Cell::new(0),
             assignability_cache_hits: Cell::new(0),
@@ -464,6 +484,8 @@ impl<'a> QueryCache<'a> {
         QueryCacheStatistics {
             eval_cache_entries: self.eval_cache.borrow().len(),
             application_eval_cache_entries: self.application_eval_cache.borrow().len(),
+            application_eval_cache_hits: self.application_eval_cache_hits.get(),
+            application_eval_cache_misses: self.application_eval_cache_misses.get(),
             element_access_cache_entries: self.element_access_cache.borrow().len(),
             object_spread_cache_entries: self.object_spread_properties_cache.borrow().len(),
             property_cache_entries: self.property_cache.borrow().len(),
@@ -617,6 +639,8 @@ impl<'a> QueryCache<'a> {
     }
 
     pub fn reset_relation_cache_stats(&self) {
+        self.application_eval_cache_hits.set(0);
+        self.application_eval_cache_misses.set(0);
         self.subtype_cache_hits.set(0);
         self.subtype_cache_misses.set(0);
         self.assignability_cache_hits.set(0);
@@ -672,7 +696,14 @@ impl<'a> QueryCache<'a> {
     }
 
     fn check_application_eval_cache(&self, key: ApplicationEvalCacheKey) -> Option<TypeId> {
-        self.application_eval_cache.borrow().get(&key).copied()
+        if let Some(result) = self.application_eval_cache.borrow().get(&key).copied() {
+            self.application_eval_cache_hits
+                .set(self.application_eval_cache_hits.get() + 1);
+            return Some(result);
+        }
+        self.application_eval_cache_misses
+            .set(self.application_eval_cache_misses.get() + 1);
+        None
     }
 
     fn insert_application_eval_cache(&self, key: ApplicationEvalCacheKey, result: TypeId) {
@@ -919,6 +950,16 @@ impl TypeDisplayProvenance for QueryCache<'_> {
 
     fn mark_union_too_complex(&self) {
         self.interner.set_union_too_complex();
+    }
+}
+
+impl TypeCompilerOptions for QueryCache<'_> {
+    fn no_unchecked_indexed_access(&self) -> bool {
+        self.no_unchecked_indexed_access.get()
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.get()
     }
 }
 
@@ -1228,10 +1269,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        self.exact_optional_property_types.get()
     }
 }
 
@@ -1765,7 +1802,7 @@ impl QueryDatabase for QueryCache<'_> {
         // with the current QueryDatabase.
         let prop_atom = self.interner.intern_string(prop_name);
         let exact_optional_property_types =
-            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
+            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
         let key = (
             object_type,
             prop_atom,
@@ -1790,7 +1827,7 @@ impl QueryDatabase for QueryCache<'_> {
         no_unchecked_indexed_access: bool,
     ) -> Option<crate::operations::property::PropertyAccessResult> {
         let exact_optional_property_types =
-            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
+            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.set_exact_optional_property_types(exact_optional_property_types);
@@ -1833,16 +1870,8 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn no_unchecked_indexed_access(&self) -> bool {
-        self.no_unchecked_indexed_access.get()
-    }
-
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access.set(enabled);
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        self.exact_optional_property_types.get()
     }
 
     fn set_exact_optional_property_types(&self, enabled: bool) {

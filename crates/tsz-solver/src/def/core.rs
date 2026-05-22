@@ -550,6 +550,16 @@ pub struct DefinitionStore {
     /// the structural form (e.g., show "A" instead of "{ a: string }").
     type_to_def: DefDashMap<TypeId, DefId>,
 
+    /// Forward map: `DefId` -> `TypeId` for type-parameter declarations.
+    ///
+    /// Lets the checker reuse the canonical `TypeId` allocated for a
+    /// type-parameter declaration across reprocessings of the same
+    /// signature. Cross-declaration distinctness is still guaranteed
+    /// by `intern_fresh` because lookups key on the declaration's
+    /// `DefId`, not on `TypeParamInfo` content. See
+    /// `CheckerState::intern_type_param_for_decl` for the rationale.
+    type_param_for_def: DefDashMap<DefId, TypeId>,
+
     /// Authoritative `(SymbolId, file_idx)` -> `DefId` index.
     ///
     /// This replaces the per-context `symbol_to_def` cache as the single source of
@@ -627,6 +637,24 @@ pub struct DefinitionStore {
     /// checker can reuse the pre-populated identity instead of creating a new
     /// `DefId` on demand during type checking.
     class_to_constructor: DefDashMap<DefId, DefId>,
+
+    /// Shared cross-file instance-type cache for class `DefId`s.
+    ///
+    /// A class has two `TypeId`s: the constructor (value side, written into
+    /// `body` for `typeof C` / value-position lookups via
+    /// `TypeEnvironment::insert_def`) and the instance (type side, returned
+    /// for `Lazy(class_def_id)` in type position).
+    /// `TypeEnvironment::class_instance_types` holds the instance type
+    /// *per checker*, which is unsuitable for cross-file resolution: a
+    /// consuming checker's local cache is empty for classes declared in
+    /// another file, and falling back to `body` returns the constructor.
+    /// This map provides a shared instance-type slot that any checker can
+    /// consult, populated by the producer's
+    /// `TypeEnvironment::insert_class_instance_type` write-through. Only
+    /// type-position resolvers (`resolve_lazy`) read this slot; value-
+    /// position resolvers (`resolve_type_query`) still go through the
+    /// SymbolRef/body path and continue to return the constructor.
+    class_to_instance: DefDashMap<DefId, TypeId>,
 
     /// Reverse index: `Atom` (name) -> `Vec<DefId>` for name-based lookups.
     ///
@@ -824,6 +852,10 @@ impl DefinitionStore {
             next_id: AtomicU32::new(DefId::FIRST_VALID),
             generation: AtomicU64::new(1),
             type_to_def: DefDashMap::default(),
+            type_param_for_def: DefDashMap::with_capacity_and_hasher(
+                id_capacity,
+                Default::default(),
+            ),
             symbol_def_index: DefDashMap::with_capacity_and_hasher(id_capacity, Default::default()),
             symbol_only_index: DefDashMap::with_capacity_and_hasher(
                 id_capacity,
@@ -835,6 +867,10 @@ impl DefinitionStore {
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
+                id_capacity / 2,
+                Default::default(),
+            ),
+            class_to_instance: DefDashMap::with_capacity_and_hasher(
                 id_capacity / 2,
                 Default::default(),
             ),
@@ -1204,6 +1240,7 @@ impl DefinitionStore {
     pub fn clear(&self) {
         self.definitions.clear();
         self.type_to_def.clear();
+        self.type_param_for_def.clear();
         self.symbol_def_index.clear();
         self.symbol_only_index.clear();
         self.body_to_alias.clear();
@@ -1211,6 +1248,7 @@ impl DefinitionStore {
         self.shape_to_def.clear();
         self.file_to_defs.clear();
         self.class_to_constructor.clear();
+        self.class_to_instance.clear();
         self.name_to_defs.clear();
         self.next_id.store(DefId::FIRST_VALID, Ordering::SeqCst);
         self.bump_generation();
@@ -1270,6 +1308,29 @@ impl DefinitionStore {
         self.type_to_def.get(&type_id).map(|r| *r)
     }
 
+    /// Look up the canonical `TypeId` previously allocated for a
+    /// type-parameter declaration's `DefId`.
+    ///
+    /// Returns `Some(type_id)` if `register_type_param_for_def` has been
+    /// called for this `DefId`. Callers reuse the returned `TypeId`
+    /// instead of allocating a fresh non-deduped one so that two
+    /// processings of the same declaration produce a single canonical
+    /// type parameter.
+    pub fn find_type_param_for_def(&self, def_id: DefId) -> Option<TypeId> {
+        self.type_param_for_def.get(&def_id).map(|r| *r)
+    }
+
+    /// Register the canonical `TypeId` for a type-parameter declaration's
+    /// `DefId`.
+    ///
+    /// Subsequent calls overwrite the previous registration, which lets a
+    /// second-pass constraint refinement replace the first-pass
+    /// unconstrained `TypeId`. The downstream identity then converges on
+    /// the most recent `(name, constraint, default, is_const)` content.
+    pub fn register_type_param_for_def(&self, def_id: DefId, type_id: TypeId) {
+        self.type_param_for_def.insert(def_id, type_id);
+    }
+
     /// Register a mapping from a `Class` `DefId` to its `ClassConstructor` companion `DefId`.
     ///
     /// Called during pre-population to establish constructor identity at merge time
@@ -1287,6 +1348,28 @@ impl DefinitionStore {
     /// companion (e.g., anonymous classes or those created on-demand).
     pub fn get_constructor_def(&self, class_def: DefId) -> Option<DefId> {
         self.class_to_constructor.get(&class_def).map(|r| *r)
+    }
+
+    /// Publish the resolved instance `TypeId` for a class `DefId` into the
+    /// shared cross-file cache (see `class_to_instance` field doc).
+    ///
+    /// Producer checkers call this whenever they finalize a class's instance
+    /// type. Consumer checkers in other files read it through
+    /// `get_class_instance_type` when their per-checker
+    /// `TypeEnvironment::class_instance_types` is cold.
+    pub fn register_class_instance_type(&self, class_def: DefId, instance_type: TypeId) {
+        self.class_to_instance.insert(class_def, instance_type);
+        self.bump_generation();
+    }
+
+    /// Look up the shared instance `TypeId` for a class `DefId`.
+    ///
+    /// Returns `Some(instance_type)` if some checker has already finalized
+    /// the class's instance type and published it via
+    /// `register_class_instance_type`. Returns `None` when no checker has
+    /// finished building the class yet.
+    pub fn get_class_instance_type(&self, class_def: DefId) -> Option<TypeId> {
+        self.class_to_instance.get(&class_def).map(|r| *r)
     }
 
     /// Get exports for a namespace/module `DefId`.
@@ -1488,7 +1571,7 @@ impl DefinitionStore {
             _ => return Vec::new(),
         };
 
-        let mut resolved = Vec::new();
+        let mut resolved = Vec::with_capacity(heritage_names.len());
         for name_str in &heritage_names {
             let name_atom = intern_fn(name_str);
             if let Some(candidates) = self.name_to_defs.get(&name_atom) {
@@ -1573,6 +1656,10 @@ impl DefinitionStore {
                 // is rare and bounded by per-file definition count).
                 self.type_to_def.retain(|_, v| *v != *def_id);
 
+                // Clean up the type-parameter canonical cache. Direct
+                // key remove: the map is keyed by `DefId`, no scan needed.
+                self.type_param_for_def.remove(def_id);
+
                 // Clean up body_to_alias.
                 if info.kind == DefKind::TypeAlias
                     && info.type_params.is_empty()
@@ -1598,6 +1685,7 @@ impl DefinitionStore {
                 // Clean up class_to_constructor (both directions).
                 if info.kind == DefKind::Class {
                     self.class_to_constructor.remove(def_id);
+                    self.class_to_instance.remove(def_id);
                 } else if info.kind == DefKind::ClassConstructor {
                     // Remove any forward mapping that points to this constructor.
                     self.class_to_constructor.retain(|_, v| *v != *def_id);
@@ -1732,6 +1820,12 @@ impl DefinitionStore {
         size += self.class_to_constructor.len()
             * (std::mem::size_of::<DefId>()
                 + std::mem::size_of::<DefId>()
+                + DASHMAP_ENTRY_OVERHEAD);
+
+        // class_to_instance: DefId -> TypeId
+        size += self.class_to_instance.len()
+            * (std::mem::size_of::<DefId>()
+                + std::mem::size_of::<TypeId>()
                 + DASHMAP_ENTRY_OVERHEAD);
 
         // file_to_defs: u32 -> Vec<DefId>
@@ -1988,7 +2082,7 @@ impl DefinitionStore {
 
             // Resolve implements_names → DefinitionInfo.implements
             if !entry.implements_names.is_empty() {
-                let mut resolved_implements = Vec::new();
+                let mut resolved_implements = Vec::with_capacity(entry.implements_names.len());
                 for name_str in &entry.implements_names {
                     if name_str.contains('.') {
                         continue;

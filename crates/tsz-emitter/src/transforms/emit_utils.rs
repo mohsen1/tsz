@@ -276,7 +276,13 @@ fn expression_generates_downlevel_temp_inner(arena: &NodeArena, idx: NodeIndex) 
     false
 }
 
-fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
+/// Match tsc's `isSimpleCopiableExpression`: an expression whose evaluation
+/// has no observable side effects and which is therefore safe to reference
+/// more than once in a lowered form (e.g. the `a` in
+/// `a !== null && a !== void 0 ? a : b`). Identifiers, keywords (including
+/// `this`, `super`, the boolean literals, `null`), numeric and string
+/// literals, and template literals without substitutions all qualify.
+pub(crate) fn is_simple_copiable_expression(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
     };
@@ -1343,6 +1349,39 @@ const fn is_assignment_operator(token: u16) -> bool {
             || t == SyntaxKind::BarBarEqualsToken as u16
             || t == SyntaxKind::QuestionQuestionEqualsToken as u16
     )
+}
+
+/// Returns `true` if a dynamic `import()` argument is a plain string literal
+/// (or a no-substitution template), meaning the specifier can be inlined
+/// directly into the lowered form without a temporary variable.
+pub(crate) fn dynamic_import_arg_is_string_like(arena: &NodeArena, arg: NodeIndex) -> bool {
+    arena.get(arg).is_some_and(|node| {
+        node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            || node.end <= node.pos
+    })
+}
+
+/// Returns `true` if a call-expression argument at `idx` should be emitted
+/// (i.e. is not a synthetic/empty placeholder).
+pub(crate) fn call_argument_should_emit(arena: &NodeArena, idx: NodeIndex) -> bool {
+    if idx.is_none() {
+        return false;
+    }
+    let Some(node) = arena.get(idx) else {
+        return false;
+    };
+    if node.end <= node.pos || node.kind == SyntaxKind::Unknown as u16 {
+        return false;
+    }
+    arena
+        .get_identifier(node)
+        .is_none_or(|ident| !ident.escaped_text.is_empty())
+}
+
+/// Emit a dynamic `import(specifier)` as the CommonJS `Promise.resolve().then(...)` form.
+pub(crate) fn dynamic_import_cjs_form(specifier: &str) -> String {
+    format!("Promise.resolve().then(function () {{ return __importStar(require({specifier})); }})")
 }
 
 #[cfg(test)]

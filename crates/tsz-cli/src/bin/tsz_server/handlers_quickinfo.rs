@@ -9,7 +9,18 @@ use tsz::lsp::position::LineMap;
 use tsz::lsp::signature_help::SignatureHelpProvider;
 use tsz::parser::node::NodeAccess;
 use tsz::parser::syntax_kind_ext;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
+
+/// Read-only parse/bind state threaded through quickinfo helper functions.
+struct QuickinfoContext<'a> {
+    arena: &'a tsz::parser::node::NodeArena,
+    binder: &'a tsz::binder::BinderState,
+    line_map: &'a LineMap,
+    source_text: &'a str,
+    root: tsz::parser::NodeIndex,
+    interner: &'a TypeInterner,
+    file: &'a str,
+}
 
 impl Server {
     fn checker_options_for_source(source_text: &str) -> tsz::checker::context::CheckerOptions {
@@ -183,20 +194,22 @@ impl Server {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn quickinfo_member_access_declaration_hover(
-        arena: &tsz::parser::node::NodeArena,
-        binder: &tsz::binder::BinderState,
-        line_map: &LineMap,
-        source_text: &str,
-        root: tsz::parser::NodeIndex,
+        ctx: &QuickinfoContext<'_>,
         provider: &HoverProvider<'_>,
         type_cache: &mut Option<tsz::checker::TypeCache>,
-        interner: &TypeInterner,
-        file: &str,
         probe_offset: u32,
         container_type_hint: Option<&str>,
     ) -> Option<tsz::lsp::hover::HoverInfo> {
+        let &QuickinfoContext {
+            arena,
+            binder,
+            line_map,
+            source_text,
+            root,
+            interner,
+            file,
+        } = ctx;
         let mut candidates = Vec::with_capacity(4);
         candidates.push(tsz::lsp::utils::find_node_at_or_before_offset(
             arena,
@@ -393,18 +406,20 @@ impl Server {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn constructor_quickinfo_from_new_expression(
-        arena: &tsz::parser::node::NodeArena,
-        binder: &tsz::binder::BinderState,
-        line_map: &LineMap,
-        source_text: &str,
-        root: tsz::parser::NodeIndex,
+        ctx: &QuickinfoContext<'_>,
         type_cache: &mut Option<tsz::checker::TypeCache>,
-        interner: &TypeInterner,
-        file: &str,
         probe_offset: u32,
     ) -> Option<HoverInfo> {
+        let &QuickinfoContext {
+            arena,
+            binder,
+            line_map,
+            source_text,
+            root,
+            interner,
+            file,
+        } = ctx;
         let mut current =
             tsz::lsp::utils::find_node_at_or_before_offset(arena, probe_offset, source_text);
         if !current.is_some() {
@@ -709,19 +724,21 @@ impl Server {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn quickinfo_from_arrow_token(
-        arena: &tsz::parser::node::NodeArena,
-        binder: &tsz::binder::BinderState,
-        line_map: &LineMap,
-        source_text: &str,
-        root: tsz::parser::NodeIndex,
+        ctx: &QuickinfoContext<'_>,
         provider: &HoverProvider<'_>,
         type_cache: &mut Option<tsz::checker::TypeCache>,
-        interner: &TypeInterner,
-        file: &str,
         probe_offset: u32,
     ) -> Option<HoverInfo> {
+        let &QuickinfoContext {
+            arena,
+            binder,
+            line_map,
+            source_text,
+            root: _,
+            interner,
+            file,
+        } = ctx;
         let bytes = source_text.as_bytes();
         let len = bytes.len() as u32;
         if len < 2 || probe_offset >= len {
@@ -788,10 +805,7 @@ impl Server {
 
         let return_type = text::arrow_return_type_from_type_text(&type_text)?;
         let display_string = Self::contextual_arrow_display_string(
-            arena,
-            line_map,
-            source_text,
-            root,
+            ctx,
             provider,
             type_cache,
             arrow_fn,
@@ -864,20 +878,22 @@ impl Server {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn contextual_parameter_hover_from_function_like(
-        arena: &tsz::parser::node::NodeArena,
-        binder: &tsz::binder::BinderState,
-        line_map: &LineMap,
-        source_text: &str,
-        file: &str,
+        ctx: &QuickinfoContext<'_>,
         parameter_probe_offset: u32,
         parameter_name: &str,
-        root: tsz::parser::NodeIndex,
         provider: &HoverProvider<'_>,
-        interner: &TypeInterner,
         type_cache: &mut Option<tsz::checker::TypeCache>,
     ) -> Option<HoverInfo> {
+        let &QuickinfoContext {
+            arena,
+            binder,
+            line_map,
+            source_text,
+            root,
+            interner,
+            file,
+        } = ctx;
         let (parameter_idx, function_idx, parameter_index) =
             Self::find_parameter_context_from_offset(
                 arena,
@@ -1016,18 +1032,21 @@ impl Server {
         text::contextual_first_parameter_type_from_text(type_text)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn contextual_arrow_display_string(
-        arena: &tsz::parser::node::NodeArena,
-        line_map: &LineMap,
-        source_text: &str,
-        root: tsz::parser::NodeIndex,
+        ctx: &QuickinfoContext<'_>,
         provider: &HoverProvider<'_>,
         type_cache: &mut Option<tsz::checker::TypeCache>,
         arrow_fn: tsz::parser::NodeIndex,
         arrow_start: u32,
         return_type: &str,
     ) -> Option<String> {
+        let &QuickinfoContext {
+            arena,
+            line_map,
+            source_text,
+            root,
+            ..
+        } = ctx;
         let arrow_node = arena.get(arrow_fn)?;
         let arrow = arena.get_function(arrow_node)?;
         let mut params = Vec::new();
@@ -1089,6 +1108,15 @@ impl Server {
                 &source_text,
                 file.clone(),
             );
+            let ctx = QuickinfoContext {
+                arena: &arena,
+                binder: &binder,
+                line_map: &line_map,
+                source_text: &source_text,
+                root,
+                interner: &interner,
+                file: &file,
+            };
             let mut type_cache = None;
             let mut info = provider.get_hover(root, position, &mut type_cache);
             let bytes = source_text.as_bytes();
@@ -1101,14 +1129,8 @@ impl Server {
                     ctor_probe += 1;
                 }
                 if let Some(ctor_hover) = Self::constructor_quickinfo_from_new_expression(
-                    &arena,
-                    &binder,
-                    &line_map,
-                    &source_text,
-                    root,
+                    &ctx,
                     &mut type_cache,
-                    &interner,
-                    &file,
                     ctor_probe,
                 ) && info.as_ref().is_none_or(|hover| {
                     hover.kind == "class"
@@ -1185,15 +1207,9 @@ impl Server {
                         .as_ref()
                         .and_then(|h| text::extract_trailing_type_name(&h.display_string))
                     && let Some(member_hover) = Self::quickinfo_member_access_declaration_hover(
-                        &arena,
-                        &binder,
-                        &line_map,
-                        &source_text,
-                        root,
+                        &ctx,
                         &provider,
                         &mut type_cache,
-                        &interner,
-                        &file,
                         member_probe.saturating_add(1),
                         Some(container_hint.as_str()),
                     )
@@ -1310,18 +1326,9 @@ impl Server {
                     }
                 }
                 for probe in arrow_probes.into_iter().take(probe_count) {
-                    if let Some(arrow_hover) = Self::quickinfo_from_arrow_token(
-                        &arena,
-                        &binder,
-                        &line_map,
-                        &source_text,
-                        root,
-                        &provider,
-                        &mut type_cache,
-                        &interner,
-                        &file,
-                        probe,
-                    ) {
+                    if let Some(arrow_hover) =
+                        Self::quickinfo_from_arrow_token(&ctx, &provider, &mut type_cache, probe)
+                    {
                         info = Some(arrow_hover);
                         break;
                     }
@@ -1329,15 +1336,9 @@ impl Server {
 
                 if info.is_none()
                     && let Some(member_hover) = Self::quickinfo_member_access_declaration_hover(
-                        &arena,
-                        &binder,
-                        &line_map,
-                        &source_text,
-                        root,
+                        &ctx,
                         &provider,
                         &mut type_cache,
-                        &interner,
-                        &file,
                         base_offset.saturating_add(1),
                         None,
                     )
@@ -1369,16 +1370,10 @@ impl Server {
                         text::nearest_identifier_offset(&source_text, parameter_probe_offset)
                     && let Some(parameter_hover) =
                         Self::contextual_parameter_hover_from_function_like(
-                            &arena,
-                            &binder,
-                            &line_map,
-                            &source_text,
-                            &file,
+                            &ctx,
                             normalized_probe_offset,
                             &parameter_name,
-                            root,
                             &provider,
-                            &interner,
                             &mut type_cache,
                         )
                 {

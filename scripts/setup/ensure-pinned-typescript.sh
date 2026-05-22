@@ -7,7 +7,8 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 VERSIONS_FILE="$ROOT_DIR/scripts/conformance/typescript-versions.json"
 
 usage() {
-    cat <<'EOF'
+    local stream="${1:-1}"
+    cat >&"$stream" <<'EOF'
 Usage: ./scripts/setup/ensure-pinned-typescript.sh <project_dir>
 
 Ensures a project directory has a TypeScript installation matching the
@@ -15,12 +16,22 @@ currently pinned version in scripts/conformance/typescript-versions.json.
 EOF
 }
 
-if [ $# -lt 1 ]; then
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
     usage
+    exit 0
+fi
+
+if [ $# -ne 1 ]; then
+    usage 2
     exit 2
 fi
 
 PROJECT_DIR="$1"
+if [[ "$PROJECT_DIR" == -* ]]; then
+    echo "Unknown option: $PROJECT_DIR (try --help)" >&2
+    exit 2
+fi
+
 if [ ! -d "$PROJECT_DIR" ]; then
     echo "ERROR: Project directory not found: $PROJECT_DIR" >&2
     exit 2

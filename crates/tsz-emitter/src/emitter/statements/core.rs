@@ -1,4 +1,6 @@
-use super::super::{Printer, get_trailing_comment_ranges};
+use super::super::Printer;
+use super::super::get_trailing_comment_ranges;
+use super::super::hoist_anchor::HoistAnchor;
 use crate::safe_slice;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::node_flags;
@@ -182,6 +184,7 @@ impl<'a> Printer<'a> {
             } else {
                 self.ctx.block_scope_state.enter_scope();
             }
+            self.preallocate_iterator_return_temps_for_statements(&block.statements.nodes);
             self.map_opening_brace(node);
             self.write("{ ");
             let var_insert_pos = if is_function_body_block {
@@ -218,6 +221,7 @@ impl<'a> Printer<'a> {
         } else {
             self.ctx.block_scope_state.enter_scope();
         }
+        self.preallocate_iterator_return_temps_for_statements(&block.statements.nodes);
         // Compute the block's closing `}` position so comment scans don't
         // overshoot into comments belonging to the closing brace line.
         // Use find_token_end_before_trivia which correctly skips `}` inside
@@ -294,10 +298,13 @@ impl<'a> Printer<'a> {
         let static_super_scope =
             self.enter_pending_lowered_async_arrow_super_capture_scope(is_function_body_block);
 
-        let block_scoped_private_byte_offset =
-            Some((self.writer.len(), self.writer.current_line()));
-        let hoisted_var_byte_offset = if is_function_body_block {
-            block_scoped_private_byte_offset
+        // The function-body hoist and the block-scoped private temp
+        // insertion share this anchor; both write at the surrounding
+        // block's indent regardless of whether a block-level `using` try
+        // wrapper later increases `indent_level`.
+        let block_scoped_private_anchor = Some(self.capture_hoist_anchor());
+        let hoisted_var_anchor = if is_function_body_block {
+            block_scoped_private_anchor
         } else {
             None
         };
@@ -343,8 +350,12 @@ impl<'a> Printer<'a> {
         self.recovered_module_syntax_block_depth += 1;
         let prev_lexical_block_missing_initializer_function_depth =
             self.lexical_block_missing_initializer_function_depth;
+        let prev_lexical_block_missing_initializer_is_loop_body =
+            self.lexical_block_missing_initializer_is_loop_body;
         if self.ctx.target_es5 && !is_function_body_block {
             self.lexical_block_missing_initializer_function_depth = Some(self.function_scope_depth);
+            self.lexical_block_missing_initializer_is_loop_body =
+                prev_lexical_block_missing_initializer_is_loop_body;
         }
         for (stmt_i, &stmt_idx) in stmts.iter().enumerate().skip(directive_prologue_count) {
             // Save state before leading comments so we can undo them if the
@@ -512,24 +523,27 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
         self.lexical_block_missing_initializer_function_depth =
             prev_lexical_block_missing_initializer_function_depth;
-        self.recovered_module_syntax_block_depth = prev_recovered_module_syntax_block_depth;
+        self.lexical_block_missing_initializer_is_loop_body =
+            prev_lexical_block_missing_initializer_is_loop_body;
 
-        if let Some((byte_offset, line_no)) = hoisted_var_byte_offset {
-            self.insert_function_body_hoisted_temps_at(byte_offset, line_no);
+        if let Some(anchor) = hoisted_var_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
         }
 
-        if let Some((byte_offset, line_no)) = block_scoped_private_byte_offset
+        if let Some(anchor) = block_scoped_private_anchor
             && !self.block_scoped_private_temps.is_empty()
         {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
+            let indent = self.writer.indent_string_at(anchor.indent_level);
             let let_decl = format!(
                 "{}let {};",
                 indent,
                 self.block_scoped_private_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &let_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &let_decl);
             self.block_scoped_private_temps.clear();
         }
 
@@ -644,17 +658,17 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn insert_function_body_hoisted_temps_at(
         &mut self,
-        byte_offset: usize,
-        line_no: u32,
+        anchor: HoistAnchor,
     ) {
-        let indent = " ".repeat(self.writer.indent_width() as usize);
+        let indent = self.writer.indent_string_at(anchor.indent_level);
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
 
         if !ref_vars.is_empty() {
             let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
 
         if !self.hoisted_assignment_value_temps.is_empty() {
@@ -663,7 +677,8 @@ impl<'a> Printer<'a> {
                 indent,
                 self.hoisted_assignment_value_temps.join(", ")
             );
-            self.writer.insert_line_at(byte_offset, line_no, &var_decl);
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &var_decl);
         }
     }
 
@@ -830,7 +845,68 @@ impl<'a> Printer<'a> {
             && !self.in_namespace_iife
             && is_var_declaration
         {
+            // Collect deferred named exports before the mutable emit call.
+            // When a `var` is assigned inside a nested block (if/for/while body) and
+            // its name is re-exported via `export { name }`, tsc emits
+            // `exports_1("name", name)` after the assignment statement.
+            // Top-level `var` statements are handled by the System execute loops
+            // (which call emit_system_variable_initializers directly, bypassing this
+            // path), so this deferred-export path only activates for vars inside
+            // nested blocks where the outer loop already skipped the export { name }
+            // declaration.
+            let deferred_exports: Vec<(String, String)> = if let Some(bindings) =
+                deferred_export_bindings.as_ref()
+                && !bindings.is_empty()
+                && !self
+                    .arena
+                    .has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
+            {
+                let mut result = Vec::new();
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                        continue;
+                    };
+                    let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                        continue;
+                    };
+                    for &decl_idx in &decl_list.declarations.nodes {
+                        let Some(decl_node) = self.arena.get(decl_idx) else {
+                            continue;
+                        };
+                        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                            continue;
+                        };
+                        if decl.initializer.is_none() {
+                            continue;
+                        }
+                        let Some(name_node) = self.arena.get(decl.name) else {
+                            continue;
+                        };
+                        if name_node.kind != SyntaxKind::Identifier as u16 {
+                            continue;
+                        }
+                        let local_name = self.get_identifier_text_idx(decl.name);
+                        if local_name.is_empty() {
+                            continue;
+                        }
+                        if let Some(export_name) = bindings.get(&local_name).cloned() {
+                            result.push((local_name, export_name));
+                        }
+                    }
+                }
+                result
+            } else {
+                Vec::new()
+            };
+
             self.emit_system_variable_initializers(node);
+
+            for (local_name, export_name) in deferred_exports {
+                self.write_line();
+                self.write_export_binding_start(&export_name);
+                self.write(&local_name);
+                self.write_export_binding_end();
+            }
             return;
         }
 
@@ -919,8 +995,33 @@ impl<'a> Printer<'a> {
         if is_accessor {
             self.write("accessor ");
         }
-        for &decl_list_idx in &var_stmt.declarations.nodes {
-            self.emit(decl_list_idx);
+        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+        let arrow_comment_scan_end = self
+            .source_text
+            .map_or(effective_end, |text| text.len() as u32);
+        let last_concise_arrow_comment_range = self
+            .variable_statement_last_concise_arrow_comment_range(
+                &var_stmt.declarations,
+                arrow_comment_scan_end,
+            );
+        let last_initializer_has_deferred_arrow_comment =
+            last_concise_arrow_comment_range.is_some();
+        let last_emitted_declaration_end =
+            self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    for &decl_list_idx in &var_stmt.declarations.nodes {
+                        this.emit(decl_list_idx);
+                    }
+                },
+            );
+        } else {
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                self.emit(decl_list_idx);
+            }
         }
         let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
         let recovered_bare_arrow_return = self.recovered_bare_arrow_return_name(node);
@@ -942,15 +1043,14 @@ impl<'a> Printer<'a> {
                 self.consumed_recovered_expression_statement_span =
                     Some((consumed_span.0, consumed_span.1, tail_name));
             }
-            if let Some(last_end) =
-                self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations)
-            {
-                let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
+            if let Some(last_end) = last_emitted_declaration_end {
                 if let Some(semi_after) =
                     self.find_declaration_semicolon_after(last_end, effective_end)
                 {
                     let comment_end = semi_after.saturating_sub(1);
-                    self.emit_comments_in_range(last_end, comment_end, true, false);
+                    if !last_initializer_has_deferred_arrow_comment {
+                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                    }
                 }
             }
             self.map_trailing_semicolon(node);
@@ -966,8 +1066,10 @@ impl<'a> Printer<'a> {
         // Use a bounded scan range that excludes erased type annotations.
         // For `var v: { (...); // comment }`, the backward `;` scan must
         // not find semicolons inside the erased type annotation.
-        let effective_end = self.variable_statement_effective_end(&var_stmt.declarations);
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
+        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
         self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
             &var_stmt.declarations,
         );
@@ -1617,7 +1719,24 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        self.emit_expression_in_statement_position(expr_stmt.expression);
+        let expression_trailing_comment_range = self.source_text.and_then(|text| {
+            self.rightmost_concise_arrow_deferred_comment_range(
+                expr_stmt.expression,
+                text.len() as u32,
+            )
+        });
+
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.with_arrow_concise_body_trailing_comments_deferred(
+                comment_start,
+                comment_end,
+                |this| {
+                    this.emit_expression_in_statement_position(expr_stmt.expression);
+                },
+            );
+        } else {
+            self.emit_expression_in_statement_position(expr_stmt.expression);
+        }
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
         }
@@ -1632,6 +1751,9 @@ impl<'a> Printer<'a> {
             self.write_semicolon();
         }
         self.emit_trailing_comment_after_semicolon(node);
+        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
     }
 
     /// Emit an arbitrary expression as a standalone statement expression.

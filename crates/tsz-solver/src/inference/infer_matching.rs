@@ -516,7 +516,12 @@ impl<'a> InferenceContext<'a> {
                         .flags
                         .contains(crate::types::ObjectFlags::ENUM_NAMESPACE);
 
-                let mut implicit_parts: Vec<TypeId> = Vec::new();
+                let implicit_capacity = if has_implicit_index {
+                    source_shape.properties.len() + usize::from(source_shape.number_index.is_some())
+                } else {
+                    0
+                };
+                let mut implicit_parts = Vec::with_capacity(implicit_capacity);
 
                 // Contribution from number index: in JS, numeric keys are converted
                 // to strings, so for anonymous/enum types a source number index
@@ -1793,7 +1798,7 @@ impl<'a> InferenceContext<'a> {
         source: &str,
         spans: &[TemplateSpan],
     ) -> Option<Vec<(InferenceVar, String)>> {
-        let mut bindings = Vec::new();
+        let mut bindings = Vec::with_capacity(spans.len());
         let mut pos = 0;
 
         for (i, span) in spans.iter().enumerate() {

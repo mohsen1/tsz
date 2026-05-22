@@ -116,18 +116,24 @@ impl<'a> Printer<'a> {
         spec.to_string()
     }
 
+    /// Rewrite a relative dynamic-import specifier for `--module none --outFile`
+    /// require-lowering. tsc names concatenated bundle modules without the
+    /// leading `./` in this mode.
+    pub(in crate::emitter) fn rewrite_module_none_out_file_spec(&self, spec: &str) -> String {
+        if !self.ctx.module_none_out_file {
+            return spec.to_string();
+        }
+        spec.strip_prefix("./").unwrap_or(spec).to_string()
+    }
+
     /// Emit a call expression argument that may be a module specifier string literal.
-    /// If rewriteRelativeImportExtensions is set and the arg is a string literal,
-    /// rewrite the extension inline. Otherwise, emit as-is.
+    /// If bundle/module settings require a string-literal rewrite, apply it
+    /// inline. Otherwise, emit as-is.
     pub(in crate::emitter) fn emit_maybe_rewritten_module_specifier_arg(
         &mut self,
         arg_idx: NodeIndex,
     ) {
         use tsz_scanner::SyntaxKind;
-        if !self.ctx.options.rewrite_relative_import_extensions {
-            self.emit(arg_idx);
-            return;
-        }
         let Some(node) = self.arena.get(arg_idx) else {
             self.emit(arg_idx);
             return;
@@ -144,7 +150,27 @@ impl<'a> Printer<'a> {
             self.emit(arg_idx);
             return;
         };
-        let rewritten = self.rewrite_module_spec(text);
+        if self.ctx.options.rewrite_relative_import_extensions {
+            let rewritten = self.rewrite_module_spec(text);
+            let rewritten = self.rewrite_module_none_out_file_spec(&rewritten);
+            if rewritten == *text {
+                self.emit(arg_idx);
+                return;
+            }
+            let quote = if let Some(src) = self.source_text_for_map() {
+                let pos = node.pos as usize;
+                if pos < src.len() && src.as_bytes()[pos] == b'\'' {
+                    '\''
+                } else {
+                    '"'
+                }
+            } else {
+                '"'
+            };
+            self.write(&format!("{quote}{rewritten}{quote}"));
+            return;
+        }
+        let rewritten = self.rewrite_module_none_out_file_spec(text);
         if rewritten == *text {
             self.emit(arg_idx);
             return;
@@ -227,17 +253,11 @@ impl<'a> Printer<'a> {
             self.write_line();
         }
 
-        let prev_module = self.ctx.options.module;
-        let prev_original = self.ctx.original_module_kind;
-        self.ctx.options.module = ModuleKind::None;
-        self.ctx.original_module_kind = Some(prev_module);
-
-        let before_len = self.writer.len();
-        emit_inner(self);
-        let inner_emitted = self.writer.len() > before_len;
-
-        self.ctx.options.module = prev_module;
-        self.ctx.original_module_kind = prev_original;
+        let inner_emitted = self.with_cjs_export_body_mask(|this| {
+            let before_len = this.writer.len();
+            emit_inner(this);
+            this.writer.len() > before_len
+        });
 
         // If the inner emit produced nothing (e.g., variable declaration with
         // no initializer where only the type annotation was stripped), skip
@@ -430,11 +450,7 @@ impl<'a> Printer<'a> {
         es5_emitter.set_transforms(self.transforms.clone());
         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
         es5_emitter.set_printer_options(self.ctx.options.clone());
-        es5_emitter.set_module_kind(
-            self.ctx
-                .original_module_kind
-                .unwrap_or(self.ctx.options.module),
-        );
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
         if let Some(text) = self.source_text_for_map() {
             if self.writer.has_source_map() {
                 es5_emitter.set_source_map_context(text, self.writer.current_source_index());
@@ -626,11 +642,7 @@ impl<'a> Printer<'a> {
                         es5_emitter.set_transforms(self.transforms.clone());
                         es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
                         es5_emitter.set_printer_options(self.ctx.options.clone());
-                        es5_emitter.set_module_kind(
-                            self.ctx
-                                .original_module_kind
-                                .unwrap_or(self.ctx.options.module),
-                        );
+                        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
                         if let Some(text) = self.source_text_for_map() {
                             if self.writer.has_source_map() {
                                 es5_emitter.set_source_map_context(

@@ -93,6 +93,112 @@ export const y: 0x8000_0000_0000_0000 = 0 as any;
     );
 }
 
+#[test]
+fn logical_or_function_expression_initializer_drops_unreachable_right_type() {
+    let output = emit_dts(
+        r#"
+var left = (() => 1) || "";
+var renamed = (function() { return "value"; }) || false;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var left: () => number;"),
+        "Expected always-truthy arrow function left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var renamed: () => string;"),
+        "Expected always-truthy function expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("string | (() => number)") && !output.contains("false | (() => string)"),
+        "Right operands of always-truthy function expressions should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_object_producing_initializer_drops_unreachable_right_type() {
+    let output = emit_dts_with_binding(
+        r#"
+var objectLeft = ({ value: 1 }) || "";
+var arrayLeft = ([1, 2]) || false;
+var classLeft = (class Box {}) || undefined;
+class C {
+    private p: string;
+}
+class D {
+    private q: string;
+}
+var newLeft = new C() || new D();
+"#,
+    );
+
+    assert!(
+        output.contains("declare var objectLeft: {\n    value: number;\n};"),
+        "Expected object literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var arrayLeft: number[];"),
+        "Expected array literal left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        output.contains("declare var classLeft: {\n    new (): {};\n};"),
+        "Expected class expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("undefined |"),
+        "Right operand of always-truthy class expression should not be emitted: {output}"
+    );
+    assert!(
+        output.contains("declare var newLeft: C;"),
+        "Expected new-expression left operand to determine `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("C | D"),
+        "Right operand of always-truthy new expression should not be emitted: {output}"
+    );
+}
+
+#[test]
+fn logical_or_chained_new_expression_initializer_keeps_first_truthy_type() {
+    let output = emit_dts_with_binding(
+        r#"
+class Box<T> {
+    private value: T;
+}
+namespace Nested {
+    export class Box<T> {
+        private nested: T;
+    }
+}
+var first = new Box<string>() || new Nested.Box<number>() || (() => 1);
+"#,
+    );
+
+    assert!(
+        output.contains("declare var first: Box<string>;"),
+        "Expected the first always-truthy new expression to determine chained `||` declaration type: {output}"
+    );
+    assert!(
+        !output.contains("Nested.Box<number>") && !output.contains("() => number"),
+        "Unreachable later operands should not be emitted for chained new-expression `||`: {output}"
+    );
+}
+
+#[test]
+fn logical_or_sometimes_truthy_initializer_keeps_right_type() {
+    let output = emit_dts(
+        r#"
+var kept = ("" as string) || 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare var kept: string | number;"),
+        "Sometimes-truthy left operands must still include the reachable right operand: {output}"
+    );
+}
+
 // =============================================================================
 // 16. Rest Parameters
 // =============================================================================
@@ -1790,23 +1896,23 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
 "#,
     );
 
+    // When the left operand of `||` is an always-truthy literal type (non-empty string),
+    // tsc gives just the left type — the right operand is unreachable.
     assert!(
-        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
-        "Expected `||` over literal-typed consts to preserve both arms: {output}"
+        output.contains("declare const stringOrNumber: \"string\";"),
+        "Expected `||` over definitely-truthy literal consts to keep the reachable left arm: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
-        "Expected `||` to preserve string and boolean literal arms: {output}"
+        output.contains("declare const stringOrBoolean: \"string\";"),
+        "Expected `||` to drop the unreachable right arm for a definitely-truthy left literal: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
-        "Expected `||` to preserve source declaration order for operands: {output}"
+        output.contains("declare const booleanOrNumber: \"number\";"),
+        "Expected `||` to keep the reachable left operand when it is definitely truthy: {output}"
     );
     assert!(
-        output.contains(
-            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
-        ),
-        "Expected chained `||` to merge prior literal unions in declaration order: {output}"
+        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
+        "Expected chained `||` to keep pruning unreachable right operands: {output}"
     );
 }
 
@@ -1827,6 +1933,123 @@ const value = empty || fallback;
 }
 
 #[test]
+fn test_short_circuit_keeps_fallback_when_left_union_can_be_falsy() {
+    let output = emit_dts_with_binding(
+        r#"
+const maybe: "" | "value" = "" as any;
+const fallback: "fallback" = "fallback";
+const value = maybe || fallback;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: \"value\" | \"fallback\";"),
+        "Expected `||` declaration inference to keep fallback only when the left side can be falsy: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_omits_right_operand_when_left_is_syntactically_truthy() {
+    let output = emit_dts_with_binding(
+        r#"
+class C {}
+const value = (() => new C()) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const value: () => C;"),
+        "Expected declaration inference to omit unreachable `||` right operand: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_keeps_uncovered_fallback_for_broad_falsy_primitives() {
+    let output = emit_dts_with_binding(
+        r#"
+export let s: string;
+export let n: number;
+export let b: boolean;
+export const stringOrNumber = s || 1;
+export const stringOrString = s || "fallback";
+export const numberOrString = n || "fallback";
+export const booleanOrString = b || "fallback";
+"#,
+    );
+
+    assert!(
+        output.contains("export declare const stringOrNumber: string | number;"),
+        "Expected broad string left operand to keep an uncovered number fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const stringOrString: string;"),
+        "Expected broad string left operand to cover string literal fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const numberOrString: number | string;"),
+        "Expected broad number left operand to keep an uncovered string fallback: {output}"
+    );
+    assert!(
+        output.contains("export declare const booleanOrString: true | string;"),
+        "Expected broad boolean left operand to narrow to true and keep fallback: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_numeric_and_bigint_truthiness_matches_tsc_dts_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+const zero = 0 || "";
+const one = 1 || "";
+const zeroBig = 0n || "";
+const oneBig = 1n || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare const zero: \"\";"),
+        "Expected numeric zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const one: 1;"),
+        "Expected non-zero numeric left operand to omit unreachable fallback: {output}"
+    );
+    assert!(
+        output.contains("declare const zeroBig: \"\";"),
+        "Expected bigint zero left operand to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const oneBig: 1n;"),
+        "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
+    );
+}
+
+#[test]
+fn test_short_circuit_drops_right_for_truthy_function_expression() {
+    let output = emit_dts_with_binding(
+        r#"
+class C { private p: string; }
+var l = (() => new C()) || "";
+var m = (function () { return new C(); }) || "";
+"#,
+    );
+
+    assert!(
+        output.contains("declare var l: () => C;"),
+        "Expected `||` with a parenthesized arrow left operand to keep only the function type: {output}"
+    );
+    assert!(
+        output.contains("declare var m: () => C;"),
+        "Expected `||` with a parenthesized function-expression left operand to keep only the function type: {output}"
+    );
+    assert!(
+        !output.contains("declare var l: (() => C) | string;")
+            && !output.contains("declare var m: (() => C) | string;"),
+        "Definitely-truthy function expressions should not union in the unreachable right operand: {output}"
+    );
+}
+
+#[test]
 fn test_short_circuit_reference_respects_annotated_widened_surface() {
     let output = emit_dts_with_binding(
         r#"
@@ -1840,7 +2063,7 @@ export const y = ab || c;
 
     assert!(
         output.contains("export declare const y: string;"),
-        "Expected referenced annotated short-circuit declarations to expose their declared surface: {output}"
+        "Expected referenced annotated short-circuit declarations to keep their reachable declared surface: {output}"
     );
     assert!(
         !output.contains("export declare const y: \"a\" | \"b\" | \"c\";"),
@@ -1861,6 +2084,31 @@ const value = maybe ?? fallback;
     assert!(
         output.contains("declare const value: \"value\" | \"fallback\";"),
         "Expected `??` declaration inference to remove nullish left arms and keep fallback: {output}"
+    );
+}
+
+#[test]
+fn test_instantiated_short_circuit_function_union_deduplicates_identical_members() {
+    let output = emit_dts_with_binding(
+        r#"
+declare let g: (<T>(x: T) => T) | undefined;
+
+const orValue = g<string> || ((x: string) => x);
+const nullishValue = g<string> ?? ((x: string) => x);
+"#,
+    );
+
+    assert!(
+        output.contains("declare const orValue: (x: string) => string;"),
+        "Expected `||` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        output.contains("declare const nullishValue: (x: string) => string;"),
+        "Expected `??` over identical instantiated function surfaces to collapse to one signature: {output}"
+    );
+    assert!(
+        !output.contains("((x: string) => string) | ((x: string) => string)"),
+        "Duplicate rendered function signatures should not remain in DTS unions: {output}"
     );
 }
 

@@ -1,6 +1,7 @@
 //! Flow-based definite assignment and declaration ordering checks.
 
 use crate::FlowAnalyzer;
+use crate::control_flow::type_guards::reference_uses_outer_class_property_initializer_binding;
 use crate::query_boundaries::definite_assignment::should_report_variable_use_before_assignment;
 use crate::state::{CheckerState, MAX_TREE_WALK_ITERATIONS};
 use tsz_binder::SymbolId;
@@ -47,6 +48,18 @@ impl<'a> CheckerState<'a> {
         // do not participate in definite-assignment analysis.
         if !self.symbol_participates_in_flow_analysis(sym_id) {
             trace!("Symbol does not participate in flow analysis, returning declared type");
+            return declared_type;
+        }
+
+        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
+            && symbol.value_declaration.is_some()
+            && reference_uses_outer_class_property_initializer_binding(
+                self.ctx.arena,
+                idx,
+                symbol.value_declaration,
+            )
+        {
+            trace!("Class property initializer outer binding, returning declared type");
             return declared_type;
         }
 
@@ -501,7 +514,7 @@ impl<'a> CheckerState<'a> {
     /// without strict null checks all types implicitly include `undefined`.
     pub(crate) fn skip_definite_assignment_for_type(&self, declared_type: TypeId) -> bool {
         use tsz_solver::TypeId;
-        use tsz_solver::type_contains_undefined;
+        use tsz_solver::narrowing::type_contains_undefined;
 
         // tsc gates TS2454 on strictNullChecks. Without it, every type implicitly
         // includes undefined/null, so an uninitialized variable is always valid.

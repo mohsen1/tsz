@@ -1781,11 +1781,11 @@ fn test_property_collection_from_conditional_in_intersection() {
 
     use crate::objects::PropertyCollectionResult;
     struct MockResolver;
-    impl crate::TypeResolver for MockResolver {
+    impl crate::relations::subtype::TypeResolver for MockResolver {
         fn resolve_lazy(
             &self,
             _def_id: crate::DefId,
-            _interner: &dyn crate::TypeDatabase,
+            _interner: &dyn crate::construction::TypeDatabase,
         ) -> Option<TypeId> {
             None
         }
@@ -1795,7 +1795,7 @@ fn test_property_collection_from_conditional_in_intersection() {
         fn resolve_ref(
             &self,
             _symbol: crate::types::SymbolRef,
-            _interner: &dyn crate::TypeDatabase,
+            _interner: &dyn crate::construction::TypeDatabase,
         ) -> Option<TypeId> {
             None
         }
@@ -2909,6 +2909,180 @@ fn test_colocated_infer_constrained_all_satisfy_keeps_union() {
 
     // "foo" | "bar" satisfies extends string → true branch with U = "foo" | "bar"
     let expected = interner.union2(foo, bar);
+    assert_eq!(result, expected);
+}
+
+// =============================================================================
+// Co-located infer variance-aware merge (#6407 broad fix).
+// Two-position tuple infer must union, function-parameter co-located infer must
+// intersect, and a name that appears in any contravariant position uses
+// intersection across all of its occurrences in the same pattern.
+// =============================================================================
+
+fn make_tuple_element(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+fn make_void_fn(interner: &TypeInterner, param_named: &[(&str, TypeId)]) -> TypeId {
+    use crate::types::{FunctionShape, ParamInfo};
+    let params = param_named
+        .iter()
+        .map(|(name, ty)| ParamInfo::required(interner.intern_string(name), *ty))
+        .collect();
+    interner.function(FunctionShape::new(params, TypeId::VOID))
+}
+
+/// `[string, number] extends [infer U, infer U] ? U : never` → `string | number`.
+#[test]
+fn test_colocated_infer_two_tuple_elements_unions() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_tup = interner.tuple(vec![
+        make_tuple_element(infer_u),
+        make_tuple_element(infer_u),
+    ]);
+    let check_tup = interner.tuple(vec![
+        make_tuple_element(TypeId::STRING),
+        make_tuple_element(TypeId::NUMBER),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_tup,
+        extends_type: extends_tup,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
+/// Same rule with a renamed variable and three positions — proves the fix is
+/// not keyed on `U` or the two-element shape.
+#[test]
+fn test_colocated_infer_three_tuple_elements_unions_renamed() {
+    let interner = TypeInterner::new();
+    let infer_k = make_infer(&interner, "K");
+
+    let extends_tup = interner.tuple(vec![
+        make_tuple_element(infer_k),
+        make_tuple_element(infer_k),
+        make_tuple_element(infer_k),
+    ]);
+    let check_tup = interner.tuple(vec![
+        make_tuple_element(TypeId::STRING),
+        make_tuple_element(TypeId::NUMBER),
+        make_tuple_element(TypeId::BOOLEAN),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_tup,
+        extends_type: extends_tup,
+        true_type: infer_k,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    let expected = interner.union2(
+        interner.union2(TypeId::STRING, TypeId::NUMBER),
+        TypeId::BOOLEAN,
+    );
+    assert_eq!(result, expected);
+}
+
+/// Equal tuple elements collapse without spurious duplication: `[string, string]`
+/// against `[infer U, infer U]` must produce `string`, not `string | string`.
+#[test]
+fn test_colocated_infer_two_tuple_elements_same_type() {
+    let interner = TypeInterner::new();
+    let infer_v = make_infer(&interner, "V");
+
+    let extends_tup = interner.tuple(vec![
+        make_tuple_element(infer_v),
+        make_tuple_element(infer_v),
+    ]);
+    let check_tup = interner.tuple(vec![
+        make_tuple_element(TypeId::STRING),
+        make_tuple_element(TypeId::STRING),
+    ]);
+    let cond = ConditionalType {
+        check_type: check_tup,
+        extends_type: extends_tup,
+        true_type: infer_v,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// `(a: string, b: "hello") => void extends (a: infer U, b: infer U) => void`
+/// must intersect because `U` appears in a contravariant (parameter) position
+/// in the pattern. tsc infers `U = string & "hello" = "hello"`.
+#[test]
+fn test_colocated_infer_function_params_intersect() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+    let hello = interner.literal_string("hello");
+
+    let extends_fn = make_void_fn(&interner, &[("a", infer_u), ("b", infer_u)]);
+    let check_fn = make_void_fn(&interner, &[("a", TypeId::STRING), ("b", hello)]);
+
+    let cond = ConditionalType {
+        check_type: check_fn,
+        extends_type: extends_fn,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    let expected = interner.intersection2(TypeId::STRING, hello);
+    assert_eq!(result, expected);
+}
+
+/// Same rule, renamed variable and three contravariant positions — proves the
+/// intersection policy generalizes beyond `U`/two parameters.
+#[test]
+fn test_colocated_infer_three_function_params_intersect_renamed() {
+    let interner = TypeInterner::new();
+    let infer_q = make_infer(&interner, "Q");
+
+    let extends_fn = make_void_fn(&interner, &[("x", infer_q), ("y", infer_q), ("z", infer_q)]);
+    let check_fn = make_void_fn(
+        &interner,
+        &[
+            ("x", TypeId::STRING),
+            ("y", TypeId::NUMBER),
+            ("z", TypeId::BOOLEAN),
+        ],
+    );
+
+    let cond = ConditionalType {
+        check_type: check_fn,
+        extends_type: extends_fn,
+        true_type: infer_q,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    let expected = interner.intersection2(
+        interner.intersection2(TypeId::STRING, TypeId::NUMBER),
+        TypeId::BOOLEAN,
+    );
     assert_eq!(result, expected);
 }
 

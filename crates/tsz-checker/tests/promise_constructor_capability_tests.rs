@@ -8,7 +8,7 @@ use tsz_checker::diagnostics::Diagnostic;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn load_lib_files(names: &[&str]) -> Vec<Arc<LibFile>> {
     tsz_checker::test_utils::load_compiled_lib_files(names)
@@ -265,6 +265,40 @@ async function generic(): Box<number> {
 }
 
 #[test]
+fn ts1064_does_not_fire_for_global_promise_with_indexed_return_type() {
+    let diagnostics = check_with_libs(
+        r#"
+interface Obj {
+  stringProp: string;
+  anyProp: any;
+}
+
+async function tuple(): Promise<[number, boolean]> {
+  throw 0;
+}
+
+async function indexed(obj: Obj): Promise<Obj["stringProp"]> {
+  return obj.stringProp;
+}
+
+async function genericIndexed<TObj extends Obj, K extends keyof TObj>(
+  obj: TObj,
+  key: K,
+): Promise<TObj[K]> {
+  return obj[key];
+}
+"#,
+        &["lib.es5.d.ts", "lib.es2015.promise.d.ts"],
+    );
+
+    let ts1064: Vec<_> = diagnostics.iter().filter(|d| d.code == 1064).collect();
+    assert!(
+        ts1064.is_empty(),
+        "Did not expect TS1064 for annotations resolving to the global Promise, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn preserves_type_parameter_from_custom_promise_like_type() {
     // Test that we preserve type parameters from custom Promise-like types
     // even when complex Promise unwrapping fails.
@@ -288,5 +322,56 @@ class Test {
     assert!(
         codes.contains(&2322),
         "Expected TS2322 for bare return with custom Promise type, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn preserves_imported_promise_subclass_type_parameter_in_async_diagnostics() {
+    let lib_files = load_lib_files(&["lib.es5.d.ts", "lib.es2015.promise.d.ts"]);
+    let diagnostics = tsz_checker::test_utils::check_multi_file_with_libs(
+        &[
+            (
+                "test.ts",
+                r#"
+import { Task } from "./task";
+
+class Test {
+    async example<T>(): Task<T> { return; }
+}
+"#,
+            ),
+            ("task.ts", "export class Task<T> extends Promise<T> { }\n"),
+        ],
+        "test.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Promise<T>")),
+        "Expected TS1064 suggestion to unwrap imported Task<T> to Promise<T>, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("not assignable to type 'T'")),
+        "Expected bare return check against imported Task<T>'s awaited payload T, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("Promise<Task<T>>")
+                && !message.contains("not assignable to type 'Task<T>'")),
+        "Imported Promise subclass diagnostics should not use the wrapper Task<T>, got: {messages:#?}"
     );
 }

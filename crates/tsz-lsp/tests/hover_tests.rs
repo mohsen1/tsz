@@ -10,7 +10,7 @@ use tsz_parser::NodeIndex;
 use tsz_parser::ParserState;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_solver::TypeId;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Helper to set up hover infrastructure and get hover info at a position.
 fn get_hover_at(source: &str, line: u32, col: u32) -> Option<HoverInfo> {
@@ -1833,4 +1833,167 @@ fn test_hover_jsdoc_summary_rule_is_name_independent() {
             "Bracket escape must apply regardless of identifier {label:?}; got: {md:?}"
         );
     }
+}
+
+// ── inline @link expansion ────────────────────────────────────────────────────
+
+#[test]
+fn test_hover_jsdoc_link_in_summary_becomes_inline_code() {
+    // When a JSDoc summary contains {@link X}, the hover Markdown must render
+    // it as `X` (inline code), not as the raw JSDoc {@link X} construct.
+    let source = "/** Use {@link Helper} to process. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`Helper`"),
+        "Link-to-symbol must render as inline code in Markdown hover; got: {md:?}"
+    );
+    assert!(
+        !md.contains("{@link"),
+        "Raw {{@link}} syntax must not appear in Markdown hover; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_link_in_summary_resolves_to_declaration_uri() {
+    for name in ["Helper", "WidgetX"] {
+        let source = format!(
+            "class {name} {{}}\n/** Use {{@link {name}}} to process. */\nfunction f() {{}}\nf();"
+        );
+        let info = get_hover_at(&source, 3, 0).expect("Should find hover info");
+        let md = hover_markdown_section(&info);
+        let expected = format!("[{name}](file://test.ts#L1,1)");
+        assert!(
+            md.contains(&expected),
+            "Resolved JSDoc link must point at declaration for {name:?}; got: {md:?}"
+        );
+    }
+}
+
+#[test]
+fn test_hover_jsdoc_link_in_param_resolves_to_declaration_uri() {
+    let source = "class Helper {}\n/**\n * @param value See {@link Helper}.\n */\nfunction f(value: number) {}\nf(1);";
+    let info = get_hover_at(source, 5, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`value` See [Helper](file://test.ts#L1,1)."),
+        "Param JSDoc link must resolve through the hover formatter; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_linkcode_resolves_with_code_label() {
+    let source = "function helper() {}\n/** Call {@linkcode helper}. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 3, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("[`helper`](file://test.ts#L1,1)"),
+        "Resolved @linkcode must keep code voice inside the Markdown link; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_link_plain_text_strips_syntax() {
+    // The plain-text documentation field (used in quickinfo protocol) must
+    // expand {@link X} to just X, with no JSDoc syntax.
+    let source = "/** Use {@link Helper} to process. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    assert!(
+        info.documentation.contains("Helper"),
+        "Symbol name must appear in plain documentation; got: {:?}",
+        info.documentation
+    );
+    assert!(
+        !info.documentation.contains("{@link"),
+        "Raw {{@link}} must not appear in plain documentation; got: {:?}",
+        info.documentation
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_link_with_display_text_uses_display() {
+    // {@link X the label} should show "the label", not "X".
+    let source = "/** See {@link Helper the handler} for usage. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("the handler") || md.contains("`the handler`"),
+        "Display text must be shown for @link with display; got: {md:?}"
+    );
+    assert!(
+        !md.contains("{@link"),
+        "Raw {{@link}} must not appear in Markdown; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_linkcode_renders_as_inline_code() {
+    let source = "/** Call {@linkcode process} here. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`process`"),
+        "{{@linkcode}} must render as inline code; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_linkplain_renders_as_plain_text() {
+    let source = "/** See {@linkplain MyType} for details. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    // linkplain must render as plain text, not code-formatted.
+    assert!(
+        md.contains("MyType") && !md.contains("`MyType`"),
+        "{{@linkplain}} must render as plain text, not code; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_link_url_renders_as_hyperlink() {
+    let source = "/** See {@link https://example.com} for more. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("[https://example.com](https://example.com)"),
+        "URL @link must render as Markdown hyperlink; got: {md:?}"
+    );
+}
+
+#[test]
+fn test_hover_jsdoc_link_is_name_independent() {
+    // The expansion rule applies to any symbol name, not just specific spellings.
+    for name in ["K", "MyClass", "X", "someFunc", "NS.Method"] {
+        let source = format!("/** Use {{@link {name}}} here. */\nfunction f() {{}}\nf();");
+        let info = get_hover_at(&source, 2, 0).expect("Should find hover info");
+        let md = hover_markdown_section(&info);
+        let expected_code = format!("`{name}`");
+        assert!(
+            md.contains(&expected_code),
+            "Link expansion must work for any name {name:?}; got: {md:?}"
+        );
+        assert!(
+            !md.contains("{@link"),
+            "Raw {{@link}} must not appear regardless of name; got: {md:?}"
+        );
+    }
+}
+
+#[test]
+fn test_hover_jsdoc_multiple_links_all_expanded() {
+    let source = "/** Use {@link Foo} or {@link Bar} for this. */\nfunction f() {}\nf();";
+    let info = get_hover_at(source, 2, 0).expect("Should find hover info");
+    let md = hover_markdown_section(&info);
+    assert!(
+        md.contains("`Foo`"),
+        "First link must be expanded; got: {md:?}"
+    );
+    assert!(
+        md.contains("`Bar`"),
+        "Second link must be expanded; got: {md:?}"
+    );
+    assert!(
+        !md.contains("{@link"),
+        "No raw @link must remain; got: {md:?}"
+    );
 }

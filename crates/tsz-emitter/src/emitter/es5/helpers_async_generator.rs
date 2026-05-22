@@ -33,6 +33,7 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text {
             transformer.set_source_text(text);
         }
+        transformer.set_module_kind(self.ctx.outer_module_kind());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         transformer
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
@@ -276,8 +277,10 @@ impl<'a> Printer<'a> {
         self.write(") {");
         self.write_line();
         self.increase_indent();
-        let generator_hoist_byte_offset = self.writer.len();
-        let generator_hoist_line = self.writer.current_line();
+        // Anchor hoist insertion at this scope's indent; the body emit
+        // below may open a `using` try wrapper that raises the live
+        // `indent_level` before the hoist line is inserted.
+        let generator_hoist_anchor = self.capture_hoist_anchor();
         let hoisted_assignment_start = self.hoisted_assignment_temps.len();
         let hoisted_for_of_start = self.hoisted_for_of_temps.len();
         let hoisted_value_start = self.hoisted_assignment_value_temps.len();
@@ -305,6 +308,9 @@ impl<'a> Printer<'a> {
 
         self.function_scope_depth -= 1;
         self.ctx.emit_await_as_yield_await = saved;
+        let indent = self
+            .writer
+            .indent_string_at(generator_hoist_anchor.indent_level);
         let mut ref_vars = Vec::new();
         ref_vars.extend(
             self.hoisted_assignment_temps
@@ -312,11 +318,10 @@ impl<'a> Printer<'a> {
         );
         ref_vars.extend(self.hoisted_for_of_temps.drain(hoisted_for_of_start..));
         if !ref_vars.is_empty() {
-            let indent = " ".repeat(self.writer.indent_width() as usize);
             let var_decl = format!("{}var {};", indent, ref_vars.join(", "));
             self.writer.insert_line_at(
-                generator_hoist_byte_offset,
-                generator_hoist_line,
+                generator_hoist_anchor.byte_offset,
+                generator_hoist_anchor.line_no,
                 &var_decl,
             );
         }
@@ -325,11 +330,10 @@ impl<'a> Printer<'a> {
                 .hoisted_assignment_value_temps
                 .drain(hoisted_value_start..)
                 .collect::<Vec<_>>();
-            let indent = " ".repeat(self.writer.indent_width() as usize);
             let var_decl = format!("{}var {};", indent, value_vars.join(", "));
             self.writer.insert_line_at(
-                generator_hoist_byte_offset,
-                generator_hoist_line,
+                generator_hoist_anchor.byte_offset,
+                generator_hoist_anchor.line_no,
                 &var_decl,
             );
         }

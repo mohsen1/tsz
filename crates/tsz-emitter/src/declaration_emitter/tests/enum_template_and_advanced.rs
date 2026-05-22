@@ -907,18 +907,31 @@ fn probe_constructor_type_in_conditional_check_position() {
 }
 
 #[test]
-fn probe_constructor_type_with_conditional_return_in_extends() {
-    // Constructor type in conditional extends position with conditional return type
-    // must be parenthesized to avoid ambiguous `extends` parsing.
-    // Without parens: `T extends new () => U extends V ? A : B ? C : D`
-    // would be mis-parsed as `T extends (new () => U) extends V ? A : B ? C : D`
-    let output =
-        emit_dts("export type X<T> = T extends (new () => (U extends V ? A : B)) ? C : D;");
-    // The constructor type with conditional return should be parenthesized
+fn probe_function_extends_type_with_conditional_return_stays_unparenthesized() {
+    // tsc does not add a wrapper around a function extends type just because
+    // the function return type is conditional.
+    let output = emit_dts(
+        "export type X = (<T>() => T) extends <T>() => T extends string ? 1 : 2 ? true : false;",
+    );
     assert!(
-        output.contains("(new () => U extends V ? A : B)")
-            || output.contains("(new () => (U extends V ? A : B))"),
-        "constructor type with conditional return should be parenthesized in extends: {output}"
+        output.contains("(<T>() => T) extends <T>() => T extends string ? 1 : 2 ? true : false"),
+        "function type with conditional return should stay unparenthesized in extends: {output}"
+    );
+    assert!(
+        !output.contains("extends (<T>() => T extends string ? 1 : 2) ?"),
+        "function type with conditional return should not get synthetic extends parens: {output}"
+    );
+}
+
+#[test]
+fn probe_parenthesized_conditional_extends_type_remains_grouped() {
+    // Parenthesized type nodes are transparent, but a structural conditional
+    // type in the extends position still needs grouping for the outer
+    // conditional to parse the same way.
+    let output = emit_dts("export type X<T, U, V> = T extends (U extends V ? A : B) ? C : D;");
+    assert!(
+        output.contains("T extends (U extends V ? A : B) ? C : D"),
+        "conditional extends type should remain grouped after peeling parens: {output}"
     );
 }
 
@@ -1281,10 +1294,12 @@ fn check_symbol_portability_prefers_symlinked_nested_package_over_public_root_ex
         sym_id,
         &binder,
         &current_path,
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
-        &mut rustc_hash::FxHashSet::default(),
+        &mut crate::declaration_emitter::helpers::PortabilityVisitState {
+            visited_types: &mut rustc_hash::FxHashSet::default(),
+            visited_symbols: &mut rustc_hash::FxHashSet::default(),
+            visited_declaration_symbols: &mut rustc_hash::FxHashSet::default(),
+            visited_nodes: &mut rustc_hash::FxHashSet::default(),
+        },
     );
 
     assert_eq!(

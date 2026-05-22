@@ -378,24 +378,13 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if type_params.is_empty() {
-            self.ctx.cache_stable_source_file_symbol_arena_type(
-                sym_id,
-                file_idx,
-                source_cache_scope,
-                type_id,
-                type_params,
-            );
-        } else {
-            self.ctx.cache_source_file_symbol_arena_type(
-                sym_id,
-                file_idx,
-                source_cache_scope,
-                self.ctx.current_file_idx as u32,
-                type_id,
-                type_params,
-            );
-        }
+        self.ctx.cache_stable_source_file_symbol_arena_type(
+            sym_id,
+            file_idx,
+            source_cache_scope,
+            type_id,
+            type_params,
+        );
     }
 
     /// Delegate symbol resolution to a checker using the correct arena.
@@ -1184,6 +1173,18 @@ impl<'a> CheckerState<'a> {
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
+        // Lib arenas are absent from `global_arena_index`, so the DefinitionStore
+        // cache below never fires for them; use the shared name-keyed lib class cache.
+        let shared_lib_class_name =
+            self.lib_class_shared_cache_name(sym_id, needs_cross_file_delegation);
+        if let Some(shared_name) = shared_lib_class_name.as_deref()
+            && let Some(cached) =
+                self.cached_shared_actual_lib_class_delegation(sym_id, shared_name)
+        {
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_lib();
+            return Some(cached);
+        }
+
         if needs_cross_file_delegation {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
                 "needs_cross_file_delegation derived from resolve_symbol_file_index returning true",
@@ -1204,7 +1205,6 @@ impl<'a> CheckerState<'a> {
             return Some((cached_type, cached_params));
         }
 
-        // Guard against deep cross-arena recursion
         if !Self::enter_cross_arena_delegation() {
             return None;
         }
@@ -1259,23 +1259,7 @@ impl<'a> CheckerState<'a> {
         checker.ctx.current_file_idx = query_file_idx
             .or(delegate_file_idx)
             .unwrap_or(self.ctx.current_file_idx);
-        for &id in &self.ctx.class_instance_resolution_set {
-            checker.ctx.class_instance_resolution_set.insert(id);
-        }
-        for &id in &self.ctx.symbol_resolution_set {
-            if id != sym_id {
-                checker.ctx.symbol_resolution_set.insert(id);
-            }
-        }
-        // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
-        // on cache miss — no parent-to-child copy needed.
-        for &id in &self.ctx.class_constructor_resolution_set {
-            checker.ctx.class_constructor_resolution_set.insert(id);
-        }
-
-        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
-        // so inner DefId→TypeId mappings survive child-checker teardown.
-        checker.ctx.ensure_both_envs_have_definition_store();
+        checker.propagate_class_delegation_setup(self, sym_id);
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results
@@ -1284,7 +1268,7 @@ impl<'a> CheckerState<'a> {
             && *type_id != TypeId::ERROR
         {
             self.ctx.definition_store.cache_resolved_cross_file_query(
-                CrossFileQueryKind::ClassInstanceType.as_storage_kind(),
+                CrossFileQueryKind::ClassInstance.as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
                 0,
@@ -1292,6 +1276,12 @@ impl<'a> CheckerState<'a> {
                 *type_id,
                 params.clone(),
             );
+        }
+
+        if let (Some(shared_name), Some((type_id, _))) =
+            (shared_lib_class_name.as_deref(), result.as_ref())
+        {
+            self.cache_shared_actual_lib_class_delegation(shared_name, *type_id);
         }
 
         self.ctx.leave_recursion();

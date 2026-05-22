@@ -1,5 +1,3 @@
-#![allow(clippy::match_same_arms)]
-
 //! Navigation, definition, and reference handlers for tsz-server.
 
 use super::{Server, TsServerRequest, TsServerResponse};
@@ -13,7 +11,7 @@ use tsz::lsp::references::FindReferences;
 use tsz::lsp::rename::RenameProvider;
 use tsz::lsp::symbols::document_symbols::DocumentSymbolProvider;
 use tsz::parser::node::NodeAccess;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 /// Bundled context for a parsed file, reducing parameter count in helpers.
 pub(super) struct ParsedFileContext<'a> {
@@ -55,7 +53,9 @@ fn symbol_kind_to_tsserver(
         SymbolKind::Class => "class",
         SymbolKind::Method => "method",
         SymbolKind::Property | SymbolKind::Field => "property",
-        SymbolKind::Constructor => "constructor",
+        // SynthesizedConstructor shares the "constructor" tsserver kind because it is
+        // backed by a synthesized function node and occupies the same protocol slot.
+        SymbolKind::Constructor | SymbolKind::SynthesizedConstructor => "constructor",
         SymbolKind::Enum => "enum",
         SymbolKind::Interface => "interface",
         SymbolKind::Function => "function",
@@ -76,7 +76,6 @@ fn symbol_kind_to_tsserver(
         SymbolKind::CallSignature => "call",
         SymbolKind::ConstructSignature => "construct",
         SymbolKind::IndexSignature => "index",
-        SymbolKind::SynthesizedConstructor => "constructor",
         SymbolKind::Unknown => "",
         _ => "unknown",
     }
@@ -287,7 +286,12 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             | SymbolKind::Null
             | SymbolKind::Number
             | SymbolKind::String => 260,
-            SymbolKind::Function | SymbolKind::Event | SymbolKind::Operator => 262,
+            // SynthesizedConstructor uses the FunctionDeclaration ordinal (262) because
+            // it is backed by a function node and tsc's comparer uses that SyntaxKind.
+            SymbolKind::Function
+            | SymbolKind::Event
+            | SymbolKind::Operator
+            | SymbolKind::SynthesizedConstructor => 262,
             SymbolKind::Class => 263,
             SymbolKind::Interface => 264,
             SymbolKind::Struct => 265, // type alias
@@ -301,10 +305,6 @@ fn sort_symbols_deep(symbols: &mut [tsz::lsp::symbols::document_symbols::Documen
             SymbolKind::CallSignature => 180,
             SymbolKind::ConstructSignature => 181,
             SymbolKind::IndexSignature => 182,
-            // Same ordinal as FunctionDeclaration: the synthetic
-            // constructor is backed by a function node, so tsc's
-            // comparer uses the FunctionDeclaration SyntaxKind.
-            SymbolKind::SynthesizedConstructor => 262,
             // Unknown maps to BinaryExpression (227) — expando assignments
             // like `X.y = 42` are BinaryExpression nav nodes in tsc.
             SymbolKind::Unknown => 227,

@@ -7,6 +7,19 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
+pub(crate) struct JsxPropsCheckOpts<'a> {
+    pub(crate) attributes_idx: NodeIndex,
+    pub(crate) props_type: TypeId,
+    pub(crate) tag_name_idx: NodeIndex,
+    pub(crate) component_type: Option<TypeId>,
+    pub(crate) special_attr_component_type: Option<TypeId>,
+    pub(crate) raw_props_has_type_params: bool,
+    pub(crate) display_target: String,
+    pub(crate) preferred_target_display: Option<&'a str>,
+    pub(crate) request: &'a TypingRequest,
+    pub(crate) children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
+}
+
 impl<'a> CheckerState<'a> {
     fn collect_jsx_union_resolution_attr_value_type(
         &mut self,
@@ -242,7 +255,8 @@ impl<'a> CheckerState<'a> {
                                 Some(attr_type) => {
                                     *attr_type == TypeId::ANY
                                         || *attr_type == TypeId::ERROR
-                                        || self.is_assignable_to(*attr_type, expected)
+                                        || self
+                                            .diagnostic_relation_boolean_guard(*attr_type, expected)
                                 }
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
@@ -330,20 +344,19 @@ impl<'a> CheckerState<'a> {
     /// for excess properties. tsc uses `IntrinsicAttributes & PropsType` (or
     /// `IntrinsicAttributes & IntrinsicClassAttributes<T> & PropsType`) rather
     /// than just `PropsType`.
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) fn check_jsx_attributes_against_props(
-        &mut self,
-        attributes_idx: NodeIndex,
-        props_type: TypeId,
-        tag_name_idx: NodeIndex,
-        component_type: Option<TypeId>,
-        special_attr_component_type: Option<TypeId>,
-        raw_props_has_type_params: bool,
-        display_target: String,
-        preferred_target_display: Option<&str>,
-        request: &TypingRequest,
-        children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
-    ) {
+    pub(crate) fn check_jsx_attributes_against_props(&mut self, opts: JsxPropsCheckOpts<'_>) {
+        let JsxPropsCheckOpts {
+            attributes_idx,
+            props_type,
+            tag_name_idx,
+            component_type,
+            special_attr_component_type,
+            raw_props_has_type_params,
+            display_target,
+            preferred_target_display,
+            request,
+            children_ctx,
+        } = opts;
         // Grammar check: TS17000 for empty expressions in JSX attributes.
         // Matches tsc: only the first empty expression per element is reported.
         self.check_grammar_jsx_element(attributes_idx);
@@ -584,7 +597,10 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                            if !self.diagnostic_relation_boolean_guard(
+                                TypeId::BOOLEAN_TRUE,
+                                expected_type,
+                            ) {
                                 use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
@@ -850,7 +866,8 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self.is_assignable_to(TypeId::BOOLEAN_TRUE, expected_type) {
+                    if !self.diagnostic_relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type)
+                    {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
                         };
@@ -992,7 +1009,7 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self.is_assignable_to(actual_type, expected_type)
+                            && !self.diagnostic_relation_boolean_guard(actual_type, expected_type)
                         {
                             needs_special_attr_object_assignability = true;
                         }
@@ -1184,7 +1201,9 @@ impl<'a> CheckerState<'a> {
                     spread_type,
                 ) {
                     spread_covers_all = true;
-                } else if !skip_prop_checks && self.is_assignable_to(spread_type, props_type) {
+                } else if !skip_prop_checks
+                    && self.diagnostic_relation_boolean_guard(spread_type, props_type)
+                {
                     // The solver reports the spread is structurally assignable to the
                     // whole props type, so all required members are satisfied — including
                     // ones inherited from Object.prototype (toString, valueOf, …) that
@@ -1330,21 +1349,23 @@ impl<'a> CheckerState<'a> {
                     children_ctx.as_ref().is_some_and(|ctx| ctx.child_count > 0);
                 let suppress_missing_props = spread_has_children && has_body_children;
 
-                let had_error = self.check_spread_property_types(
-                    spread_type,
-                    raw_spread_type,
-                    props_type,
-                    tag_name_idx,
-                    &overridden,
-                    &overridden_for_missing,
-                    &earlier_explicit_attrs,
-                    has_later_spreads,
-                    suppress_missing_props,
-                    has_prop_type_error || has_later_explicit_excess_attr,
-                    &display_target,
-                    preferred_target_display,
-                    merged_attrs_display.as_deref(),
-                );
+                let had_error =
+                    self.check_spread_property_types(super::super::spread::SpreadCheckOpts {
+                        spread_type,
+                        spread_source_type: raw_spread_type,
+                        props_type,
+                        tag_name_idx,
+                        overridden_names: &overridden,
+                        overridden_for_missing: &overridden_for_missing,
+                        earlier_explicit_attrs: &earlier_explicit_attrs,
+                        has_later_spreads,
+                        suppress_missing_props,
+                        suppress_unanchored_type_mismatch: has_prop_type_error
+                            || has_later_explicit_excess_attr,
+                        display_target: &display_target,
+                        preferred_target_display,
+                        merged_attrs_display: merged_attrs_display.as_deref(),
+                    });
                 suppress_missing_props_from_spread |= had_error || suppress_missing_props;
 
                 // Record this spread's property names for later iterations.
@@ -1493,7 +1514,7 @@ impl<'a> CheckerState<'a> {
             && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
                     &display_target,
@@ -1550,9 +1571,9 @@ impl<'a> CheckerState<'a> {
         // Checking a synthesized object (which loses the type parameter identity)
         // against the type parameter would produce a false TS2322.
         let spread_satisfies_type_param = props_is_type_param
-            && spread_entries
-                .iter()
-                .any(|&(spread_type, _, _, _)| self.is_assignable_to(spread_type, props_type));
+            && spread_entries.iter().any(|&(spread_type, _, _, _)| {
+                self.diagnostic_relation_boolean_guard(spread_type, props_type)
+            });
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1564,7 +1585,7 @@ impl<'a> CheckerState<'a> {
             && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.is_assignable_to(attrs_type, props_type) {
+            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                 // tsc uses just the type parameter name here (e.g. "P"), not the
                 // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
                 // intersection check for spread attributes is handled separately by
@@ -1635,7 +1656,7 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.is_assignable_to(attrs_type, raw_props_type) {
+                if !self.diagnostic_relation_boolean_guard(attrs_type, raw_props_type) {
                     let mut target = self.format_type(raw_props_type);
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
@@ -1918,7 +1939,7 @@ impl<'a> CheckerState<'a> {
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
                         }
-                        self.is_assignable_to(*attr_type, expected)
+                        self.diagnostic_relation_boolean_guard(*attr_type, expected)
                     }
                     // PropertyNotFound or other results: still compatible
                     // (excess property checking is separate)
@@ -2006,7 +2027,7 @@ impl<'a> CheckerState<'a> {
                     })
                     .collect();
                 let attrs_type = self.ctx.types.factory().object(properties);
-                if self.is_assignable_to(attrs_type, props_type) {
+                if self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
                     return;
                 }
                 // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),

@@ -580,6 +580,22 @@ impl<'a> CheckerState<'a> {
                 self.ctx.this_type_stack.push(prescan_type);
                 prescan_this_type = Some(prescan_type);
                 pushed_prescan_this = true;
+
+                // Register prescan body early so that Application property lookup can
+                // resolve Lazy(DefId(Self)) during Phase-2 method body checking. Without
+                // this, `f.x` where `f: Vec2<(a:A)=>B>` fails with TS2349 because
+                // resolve_lazy returns None until the end of this function. Final
+                // registration below overwrites with the complete instance type.
+                if let Some(sym_id) = current_sym {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    self.ctx
+                        .register_class_instance_in_envs(def_id, prescan_type);
+                    self.ctx.register_resolved_type(
+                        sym_id,
+                        prescan_type,
+                        class_type_params.clone(),
+                    );
+                }
             }
         }
 
@@ -2419,12 +2435,15 @@ impl<'a> CheckerState<'a> {
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut scope_updates = Vec::with_capacity(template_names.len());
         let factory = self.ctx.types.factory();
-        for (name, is_const) in template_names {
+        for (name, is_const, default_str) in template_names {
             let atom = self.ctx.types.intern_string(&name);
+            let default = default_str
+                .as_deref()
+                .and_then(|s| self.resolve_jsdoc_reference(s));
             let info = TypeParamInfo {
                 name: atom,
                 constraint: None,
-                default: None,
+                default,
                 is_const,
             };
             let ty = factory.type_param(info);

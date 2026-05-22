@@ -1,11 +1,11 @@
 //! Tests for type operations.
 
 use super::*;
-use crate::CompatChecker;
 use crate::def::DefId;
 use crate::intern::TypeInterner;
 use crate::operations::core::MAX_CONSTRAINT_STEPS;
 use crate::operations::property::{PropertyAccessEvaluator, PropertyAccessResult};
+use crate::relations::compat::CompatChecker;
 use crate::types::{CallableShape, MappedType, TypeData, Visibility};
 
 /// Build a `<param_name>(arg_name: param_name): param_name` identity `FunctionShape`.
@@ -7954,6 +7954,300 @@ fn test_infer_generic_tuple_rest_in_tuple_param_empty_tail() {
     assert_eq!(result, expected);
 }
 
+/// Non-const generic rest-tuple: literal args should widen to primitives.
+///
+/// Rule: `declare function f<T extends unknown[]>(...rest: T): T`
+/// called with literal args widens T to primitive element types, matching tsc:
+///   f(1, true) → T = [number, boolean], not [1, true]
+#[test]
+fn test_infer_non_const_rest_tuple_widens_literal_elements() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("rest")),
+            type_id: t_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // f(1, true) → T = [number, boolean]
+    let lit_1 = interner.literal_number(1.0);
+    let result = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &func,
+        &[lit_1, TypeId::BOOLEAN_TRUE],
+    );
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(
+        result, expected,
+        "f(1, true) should infer T = [number, boolean]"
+    );
+}
+
+/// Non-const rest tuple with a single literal element.
+///
+/// Rule: same as above but for single-argument case.
+///   f(1) → T = [number], not [1]
+#[test]
+fn test_infer_non_const_rest_tuple_single_literal_widens() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("rest")),
+            type_id: t_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let lit_1 = interner.literal_number(1.0);
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[lit_1]);
+    let expected = interner.tuple(vec![TupleElement {
+        type_id: TypeId::NUMBER,
+        name: None,
+        optional: false,
+        rest: false,
+    }]);
+    assert_eq!(result, expected, "f(1) should infer K = [number]");
+}
+
+/// Const generic rest-tuple preserves literal element types.
+///
+/// Rule: `declare function f<const T extends unknown[]>(...rest: T): T`
+/// keeps literal types because `const` modifier disables widening.
+/// The constraint `unknown[]` is a mutable array, so readonly is not applied;
+/// literals are preserved as-is: f(1, true) → T = [1, true] not [number, boolean].
+#[test]
+fn test_infer_const_rest_tuple_preserves_literal_elements() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: true,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("rest")),
+            type_id: t_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    // f(1, true) → T = [1, true]  (const preserves literals; mutable array
+    // constraint suppresses readonly wrapping per tsc semantics)
+    let lit_1 = interner.literal_number(1.0);
+    let result = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &func,
+        &[lit_1, TypeId::BOOLEAN_TRUE],
+    );
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: lit_1,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN_TRUE,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(
+        result, expected,
+        "const f(1, true) should infer T = [1, true]"
+    );
+}
+
+/// Non-const rest tuple with string literals widens to string.
+///
+/// Rule: f("a","b") with non-const T → [string, string], not ["a","b"]
+#[test]
+fn test_infer_non_const_rest_tuple_string_literals_widen() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("Args"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("rest")),
+            type_id: t_type,
+            optional: false,
+            rest: true,
+        }],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let result = infer_generic_function(&interner, &mut subtype, &func, &[lit_a, lit_b]);
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(
+        result, expected,
+        "f(\"a\",\"b\") should infer Args = [string, string]"
+    );
+}
+
+/// Non-const rest tuple after a fixed param: only rest args form the tuple.
+///
+/// Rule: `declare function g<T extends unknown[]>(first: string, ...rest: T): T`
+///   g("a", 1, true) → T = [number, boolean]
+#[test]
+fn test_infer_non_const_rest_tuple_with_leading_fixed_param_widens() {
+    let interner = TypeInterner::new();
+    let mut subtype = CompatChecker::new(&interner);
+
+    let unknown_array = interner.array(TypeId::UNKNOWN);
+    let t_param = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(unknown_array),
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+
+    let func = FunctionShape {
+        type_params: vec![t_param],
+        params: vec![
+            ParamInfo {
+                name: Some(interner.intern_string("first")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("rest")),
+                type_id: t_type,
+                optional: false,
+                rest: true,
+            },
+        ],
+        this_type: None,
+        return_type: t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    };
+
+    let lit_a = interner.literal_string("a");
+    let lit_1 = interner.literal_number(1.0);
+    let result = infer_generic_function(
+        &interner,
+        &mut subtype,
+        &func,
+        &[lit_a, lit_1, TypeId::BOOLEAN_TRUE],
+    );
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]);
+    assert_eq!(
+        result, expected,
+        "g(\"a\", 1, true) should infer T = [number, boolean]"
+    );
+}
+
 #[test]
 fn test_infer_generic_default_type_param() {
     let interner = TypeInterner::new();
@@ -10012,7 +10306,7 @@ fn test_is_arithmetic_operand_mixed_union_invalid() {
 /// does not exist on type 'any[]'".
 #[test]
 fn test_property_access_array_push_with_env_resolver() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeParamInfo;
 
     let interner = TypeInterner::new();
@@ -10272,7 +10566,7 @@ fn test_array_push_instantiates_intersection_array_base_parameter() {
 
 #[test]
 fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::{ObjectShape, SymbolRef};
 
     let interner = TypeInterner::new();
@@ -10352,7 +10646,7 @@ fn test_array_push_uses_symbol_params_when_array_base_params_missing() {
 /// it should resolve to the array method, not map through the template.
 #[test]
 fn test_array_mapped_type_method_resolution() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 
@@ -10973,7 +11267,7 @@ fn test_union_call_tuple_rest_combines_to_never() {
 /// argument unification to capture T = Bacon.
 #[test]
 fn test_infer_application_to_mapped_type_direct_arg_unification() {
-    use crate::TypeEnvironment;
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
 

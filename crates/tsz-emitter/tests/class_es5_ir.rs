@@ -27,6 +27,31 @@ fn transform_class(source: &str) -> Option<String> {
     None
 }
 
+fn transform_class_with_define_fields(source: &str) -> Option<String> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let root_node = parser.arena.get(root)?;
+    let source_file = parser.arena.get_source_file(root_node)?;
+
+    for &stmt_idx in &source_file.statements.nodes {
+        if let Some(node) = parser.arena.get(stmt_idx)
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            let mut transformer = ES5ClassTransformer::new(&parser.arena);
+            transformer.set_source_text(source);
+            transformer.set_use_define_for_class_fields(true);
+            if let Some(ir) = transformer.transform_class_to_ir(stmt_idx) {
+                let mut printer = IRPrinter::with_arena(&parser.arena);
+                printer.set_source_text(source);
+                return Some(printer.emit(&ir).to_string());
+            }
+        }
+    }
+
+    None
+}
+
 #[test]
 fn test_simple_class() {
     let source = r#"class Point {
@@ -45,6 +70,75 @@ fn test_simple_class() {
     assert!(output.contains("var Point = /** @class */ (function ()"));
     assert!(output.contains("function Point(x, y)"));
     assert!(output.contains("return Point;"));
+}
+
+#[test]
+fn define_fields_emits_uninitialized_public_instance_members() {
+    let source = r#"class C {
+            a;
+            public b: number;
+            declare c;
+            constructor() {}
+        }"#;
+
+    let output = transform_class_with_define_fields(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("Object.defineProperty(this, \"a\", {\n            enumerable: true,\n            configurable: true,\n            writable: true,\n            value: void 0\n        });"),
+        "uninitialized public field `a` should be materialized under define-fields mode.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Object.defineProperty(this, \"b\", {\n            enumerable: true,\n            configurable: true,\n            writable: true,\n            value: void 0\n        });"),
+        "typed uninitialized public field `b` should be materialized under define-fields mode.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\"c\""),
+        "declare fields must stay erased under define-fields mode.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn define_fields_uses_reserved_computed_instance_key_temp() {
+    let source = r#"var key = "field";
+        class C {
+            [key] = 1;
+        }"#;
+
+    let output = transform_class_with_define_fields(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("Object.defineProperty(this, _a, {"),
+        "define-fields lowering should reference the reserved computed key temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_a = key;"),
+        "computed key temp assignment should remain after the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty(this, key, {"),
+        "define-fields lowering must not re-evaluate the computed key expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn define_fields_rewrites_this_in_derived_instance_initializers() {
+    let source = r#"class C extends Base {
+            z = this.ka;
+            constructor(public ka: number) {
+                super();
+            }
+        }"#;
+
+    let output = transform_class_with_define_fields(source).expect("transform should succeed");
+
+    assert!(
+        output.contains("Object.defineProperty(_this, \"z\", {\n            enumerable: true,\n            configurable: true,\n            writable: true,\n            value: _this.ka\n        });"),
+        "derived define-fields initializer should read through the captured receiver.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("value: this.ka"),
+        "derived define-fields initializer must not read from bare `this` after super capture.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -425,7 +519,10 @@ fn test_computed_method_name() {
 }
 
 #[test]
-fn type_only_computed_field_side_effect_emits_inside_iife() {
+fn type_only_computed_field_side_effect_emits_after_iife() {
+    // When a class has only an instance computed property that is erased
+    // (type annotation, no value), the key expression is a side-effect
+    // statement. tsc emits it *after* the class IIFE, not inside it.
     let source = r#"class C {
             [Symbol.isRegExp]: string;
         }"#;
@@ -433,17 +530,20 @@ fn type_only_computed_field_side_effect_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("Symbol.isRegExp;\n    return C;"),
-        "type-only computed field side effect should emit inside the class IIFE.\nOutput:\n{output}"
+        output.contains("return C;\n}());\nSymbol.isRegExp;"),
+        "type-only computed field side effect should be deferred after the class IIFE.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("return C;\n}());\nSymbol.isRegExp;"),
-        "type-only computed field side effect should not be deferred after the class IIFE.\nOutput:\n{output}"
+        !output.contains("Symbol.isRegExp;\n    return C;"),
+        "type-only computed field side effect should not be emitted inside the class IIFE.\nOutput:\n{output}"
     );
 }
 
 #[test]
-fn computed_field_temp_assignment_emits_inside_iife() {
+fn computed_field_temp_assignment_emits_outside_iife() {
+    // When a class has only instance computed-property fields (no static
+    // computed value), tsc places `var _a;` before the IIFE and `_a = key;`
+    // after the IIFE so the constructor can close over the outer binding.
     let source = r#"class C {
             [Symbol.toStringTag]: string = "";
         }"#;
@@ -451,16 +551,20 @@ fn computed_field_temp_assignment_emits_inside_iife() {
     let output = transform_class(source).expect("transform should succeed in test");
 
     assert!(
-        output.contains("function C() {\n        this[_a] = \"\";\n    }\n    var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
-        "computed field temp should be declared and assigned inside the class IIFE.\nOutput:\n{output}"
-    );
-    assert!(
         output.contains("this[_a] = \"\";"),
         "constructor should reference the computed field temp.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("}());\n_a = Symbol.toStringTag;"),
-        "computed field temp assignment should not be deferred after the class IIFE.\nOutput:\n{output}"
+        output.contains("var _a;\nvar C"),
+        "computed field temp var should be declared before the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}());\n_a = Symbol.toStringTag;"),
+        "computed field temp assignment should be deferred after the class IIFE.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;\n    _a = Symbol.toStringTag;\n    return C;"),
+        "computed field temp should not be inside the class IIFE.\nOutput:\n{output}"
     );
 }
 

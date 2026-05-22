@@ -9,9 +9,9 @@ use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 use tsz::lsp::Project;
 use tsz::lsp::completions::{CompletionItem, CompletionItemKind, Completions, sort_priority};
-use tsz::lsp::jsdoc::{jsdoc_for_node, parse_jsdoc};
+use tsz::lsp::jsdoc::{inline_links, jsdoc_for_node, parse_jsdoc};
 use tsz::lsp::position::{LineMap, Position};
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 impl Server {
     fn is_class_member_snippet_context(
@@ -1353,7 +1353,7 @@ impl Server {
             .summary
             .filter(|text| !text.trim().is_empty())
             .unwrap_or_else(|| raw_doc.clone());
-        let documentation = serde_json::json!([{"text": summary, "kind": "text"}]);
+        let documentation = inline_links::build_doc_display_parts(&summary);
 
         let mut tags = Vec::new();
         let mut param_names: Vec<String> = parsed.params.keys().cloned().collect();

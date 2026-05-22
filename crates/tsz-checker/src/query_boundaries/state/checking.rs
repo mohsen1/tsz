@@ -1,7 +1,8 @@
 use tsz_common::Atom;
 #[cfg(test)]
 use tsz_solver::TupleElement;
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::{
     array_element_type, callable_shape_for_type as callable_shape, intersection_members,
@@ -23,6 +24,14 @@ pub(crate) fn keyof_target(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Typ
 
 pub(crate) fn unwrap_readonly_deep(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     tsz_solver::type_queries::unwrap_readonly_deep(db, type_id)
+}
+
+pub(crate) fn widen_recursive_intersection_member(
+    db: &dyn TypeDatabase,
+    nested_target: TypeId,
+    outer_intersection: TypeId,
+) -> TypeId {
+    tsz_solver::utils::widen_if_recursive_intersection_member(db, nested_target, outer_intersection)
 }
 
 /// Strict type parameter check: matches `TypeParameter` and `Infer` only.

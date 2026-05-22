@@ -409,7 +409,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn resolve_ref(
         &self,
         symbol: tsz_solver::SymbolRef,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         let sym_id = tsz_binder::SymbolId(symbol.0);
         self.symbol_types.get(&sym_id).copied()
@@ -432,7 +432,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn resolve_lazy(
         &self,
         def_id: tsz_solver::DefId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use tsz_binder::symbol_flags;
 
@@ -701,7 +701,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
             && file_idx != self.current_file_idx
             && self.share_owner_symbol_type_results
             && let Some((resolved, _)) = self.definition_store.get_resolved_cross_file_query(
-                crate::state_type_analysis::cross_file::CrossFileQueryKind::SymbolType
+                crate::state_type_analysis::cross_file::CrossFileQueryKind::Symbol
                     .as_storage_kind(),
                 file_idx as u32,
                 sym_id.0,
@@ -743,7 +743,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
 
     fn resolve_this_type(
         &self,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         // Prefer the active `this` binding from the checker stack. Class-member
         // checking pushes the concrete receiver type here, which is more precise
@@ -860,7 +860,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn get_base_type(
         &self,
         type_id: tsz_solver::TypeId,
-        interner: &dyn tsz_solver::TypeDatabase,
+        interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> Option<tsz_solver::TypeId> {
         use crate::query_boundaries::common::callable_shape_id;
         use crate::query_boundaries::common::{lazy_def_id, object_symbol};
@@ -1157,7 +1157,7 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     fn is_enum_type(
         &self,
         type_id: tsz_solver::TypeId,
-        _interner: &dyn tsz_solver::TypeDatabase,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
     ) -> bool {
         use tsz_binder::symbol_flags;
 

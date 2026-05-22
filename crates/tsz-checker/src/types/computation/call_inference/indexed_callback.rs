@@ -55,7 +55,7 @@ impl<'a> CheckerState<'a> {
 }
 
 fn type_param_feeds_sensitive_indexed_callback_param(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     shape: &FunctionShape,
     sensitive_args: &[bool],
     type_param_name: Atom,
@@ -67,7 +67,7 @@ fn type_param_feeds_sensitive_indexed_callback_param(
 }
 
 fn type_contains_index_access_indexed_by_param(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
     type_param_name: Atom,
     depth: usize,

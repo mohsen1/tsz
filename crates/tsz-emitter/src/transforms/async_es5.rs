@@ -68,6 +68,7 @@
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::ir::IRNode;
 use crate::transforms::ir_printer::IRPrinter;
+use tsz_common::common::ModuleKind;
 use tsz_common::source_map::Mapping;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
@@ -126,6 +127,10 @@ impl<'a> AsyncES5Emitter<'a> {
 
     pub const fn set_system_import_meta(&mut self, enabled: bool) {
         self.system_import_meta = enabled;
+    }
+
+    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
+        self.transformer.set_module_kind(kind);
     }
 
     pub fn set_temp_var_counter(&mut self, counter: u32) {
@@ -262,7 +267,7 @@ impl<'a> AsyncES5Emitter<'a> {
             .transformer
             .transform_generator_body(body_idx, has_await);
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
-        let hoisted = AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut ir);
+        let hoisted = self.transformer.extract_hoisted_var_groups(&mut ir);
         let needs_lexical_this_capture = ir.contains_captured_this_reference();
         let mut printer = IRPrinter::with_arena(self.arena);
         if let Some(text) = self.source_text {
@@ -299,12 +304,28 @@ impl<'a> AsyncES5Emitter<'a> {
         while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
             let directive = match expr.as_ref() {
                 IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => text.to_string(),
+                IRNode::Raw(text) => {
+                    let Some(text) = Self::raw_string_directive_text(text) else {
+                        break;
+                    };
+                    text
+                }
                 _ => break,
             };
             directives.push(directive);
             first_case.statements.remove(0);
         }
         directives
+    }
+
+    fn raw_string_directive_text(text: &str) -> Option<String> {
+        let trimmed = text.trim();
+        let bytes = trimmed.as_bytes();
+        let quote = bytes.first().copied()?;
+        if !matches!(quote, b'\'' | b'"') || bytes.last().copied() != Some(quote) {
+            return None;
+        }
+        Some(trimmed[1..trimmed.len() - 1].to_string())
     }
 
     /// Emit a complete async function transformation

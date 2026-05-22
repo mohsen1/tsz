@@ -25,6 +25,27 @@ use tsz_parser::parser::{NodeArena, NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
+struct CallFinalizationCtx<'a> {
+    idx: NodeIndex,
+    callee_expr: NodeIndex,
+    args: &'a [NodeIndex],
+    arg_types: Vec<TypeId>,
+    callee_type: TypeId,
+    callee_type_for_resolution: TypeId,
+    base_contextual_param_types: &'a [Option<TypeId>],
+    non_generic_contextual_types: Option<&'a [Option<TypeId>]>,
+    check_excess_properties: bool,
+    callable_ctx: crate::call_checker::CallableContext,
+    is_generic_call: bool,
+    contextual_type: Option<TypeId>,
+    force_bivariant_callbacks: bool,
+    actual_this_type: Option<TypeId>,
+    is_super_call: bool,
+    is_optional_chain: bool,
+    had_return_context_substitution: bool,
+    pushed_this_type_from_shape: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn assertion_predicate_for_call(
         &mut self,
@@ -829,29 +850,27 @@ impl<'a> CheckerState<'a> {
         let _ = self.report_namespace_value_access_for_type_only_import_equals_expr(base_expr);
     }
 
-    #[allow(clippy::too_many_arguments)]
-    fn finalize_call_after_argument_collection(
-        &mut self,
-        idx: NodeIndex,
-        callee_expr: NodeIndex,
-        args: &[NodeIndex],
-        mut arg_types: Vec<TypeId>,
-        callee_type: TypeId,
-        callee_type_for_resolution: TypeId,
-        base_contextual_param_types: &[Option<TypeId>],
-        non_generic_contextual_types: Option<&[Option<TypeId>]>,
-        check_excess_properties: bool,
-        callable_ctx: crate::call_checker::CallableContext,
-        is_generic_call: bool,
-        contextual_type: Option<TypeId>,
-        force_bivariant_callbacks: bool,
-        actual_this_type: Option<TypeId>,
-        is_super_call: bool,
-        is_optional_chain: bool,
-        had_return_context_substitution: bool,
-        shape_this_type: Option<TypeId>,
-        pushed_this_type_from_shape: bool,
-    ) -> TypeId {
+    fn finalize_call_after_argument_collection(&mut self, ctx: CallFinalizationCtx<'_>) -> TypeId {
+        let CallFinalizationCtx {
+            idx,
+            callee_expr,
+            args,
+            mut arg_types,
+            callee_type,
+            callee_type_for_resolution,
+            base_contextual_param_types,
+            non_generic_contextual_types,
+            check_excess_properties,
+            callable_ctx,
+            is_generic_call,
+            contextual_type,
+            force_bivariant_callbacks,
+            actual_this_type,
+            is_super_call,
+            is_optional_chain,
+            had_return_context_substitution,
+            pushed_this_type_from_shape,
+        } = ctx;
         use crate::query_boundaries::assignability as assign_query;
         use crate::query_boundaries::checkers::call as call_checker;
         use crate::query_boundaries::checkers::call::is_type_parameter_type;
@@ -1191,16 +1210,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let (mut result, mut allow_contextual_mismatch_deferral) = self
-            .finalize_generic_call_result(
+            .finalize_generic_call_result(super::call_finalize::GenericCallFinalizeCtx {
                 callee_type_for_call,
-                generic_instantiated_params.as_ref(),
+                generic_instantiated_params: generic_instantiated_params.as_ref(),
                 args,
-                &arg_types,
+                arg_types: &arg_types,
                 result,
                 sanitized_generic_inference,
                 needs_real_type_recheck,
-                shape_this_type,
-            );
+            });
         let finalized_contextual_param_types = generic_instantiated_params
             .as_ref()
             .map(|params| self.contextual_param_types_from_instantiated_params(params, args.len()));

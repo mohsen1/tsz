@@ -7,6 +7,19 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn preallocate_iterator_return_temps_for_statements(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        if !self.ctx.target_es5 || !self.ctx.options.downlevel_iteration {
+            return;
+        }
+
+        for &stmt_idx in statements {
+            self.visit_for_of_return_temp_prealloc(stmt_idx);
+        }
+    }
+
     pub(in crate::emitter) fn preallocate_nested_iterator_return_temps(
         &mut self,
         stmt_idx: NodeIndex,
@@ -154,12 +167,26 @@ impl<'a> Printer<'a> {
             name
         };
 
+        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
+        let using_info = if !self.ctx.options.target.supports_es2025() {
+            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
+        } else {
+            None
+        };
+
         // For assignment-pattern for-of with object/array literals, tsc allocates
         // destructuring temps before choosing the array temp in the loop header.
         // Reserve those temps now so later lowering reuses them in order.
         let reserve_count = self.estimate_for_of_assignment_temp_reserve(for_in_of.initializer);
         if reserve_count > 0 {
             self.preallocate_temp_names(reserve_count);
+        }
+        if using_info.is_some() {
+            let resource_temp_count =
+                self.count_es5_resource_expression_hoisted_temps(for_in_of.expression);
+            if resource_temp_count > 0 {
+                self.preallocate_hoisted_temp_names(resource_temp_count);
+            }
         }
 
         // Derive array name from expression:
@@ -204,13 +231,6 @@ impl<'a> Printer<'a> {
             let name = self.make_unique_name_fresh();
             self.ctx.block_scope_state.reserve_name(name.clone());
             name
-        };
-
-        // Check if the for-of initializer is a `using` declaration that needs dispose lowering.
-        let using_info = if !self.ctx.options.target.supports_es2025() {
-            crate::transforms::emit_utils::for_of_using_info(self.arena, for_in_of.initializer)
-        } else {
-            None
         };
 
         let capture_context = if using_info.is_none() {
@@ -271,7 +291,11 @@ impl<'a> Printer<'a> {
         self.write(" = 0, ");
         self.write(&array_name);
         self.write(" = ");
-        self.emit_expression(for_in_of.expression);
+        if using_info.is_none()
+            || !self.try_emit_array_literal_es5_inline_computed_elements(for_in_of.expression)
+        {
+            self.emit_expression(for_in_of.expression);
+        }
         self.write("; ");
         self.write(&index_name);
         self.write(" < ");
@@ -404,6 +428,74 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn try_emit_array_literal_es5_inline_computed_elements(
+        &mut self,
+        expression: NodeIndex,
+    ) -> bool {
+        if !self.ctx.target_es5 {
+            return false;
+        }
+
+        let Some(node) = self.arena.get(expression) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return false;
+        }
+
+        let Some(array) = self.arena.get_literal_expr(node) else {
+            return false;
+        };
+        if self.has_trailing_comma_in_source(node, &array.elements.nodes) {
+            return false;
+        }
+
+        let elements = array.elements.nodes.to_vec();
+        let mut has_inline_computed_object = false;
+        for &element_idx in &elements {
+            if element_idx.is_none() {
+                return false;
+            }
+            let Some(element_node) = self.arena.get(element_idx) else {
+                return false;
+            };
+            if element_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            let Some(literal) = self.arena.get_literal_expr(element_node) else {
+                return false;
+            };
+            if literal
+                .elements
+                .nodes
+                .iter()
+                .any(|&idx| crate::transforms::emit_utils::is_spread_element(self.arena, idx))
+            {
+                return false;
+            }
+            if literal.elements.nodes.iter().any(|&idx| {
+                crate::transforms::emit_utils::is_computed_property_member(self.arena, idx)
+            }) {
+                has_inline_computed_object = true;
+            }
+        }
+        if !has_inline_computed_object {
+            return false;
+        }
+
+        self.write("[");
+        for (i, &element_idx) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            if !self.try_emit_object_literal_es5_inline_computed_expression(element_idx) {
+                self.emit(element_idx);
+            }
+        }
+        self.write("]");
+        true
     }
 
     fn count_downlevel_expression_hoisted_temps(&self, idx: NodeIndex) -> usize {
@@ -573,6 +665,28 @@ impl<'a> Printer<'a> {
                     {
                         // Check if name is a binding pattern (array or object destructuring)
                         if self.is_binding_pattern(decl.name) {
+                            if self.binding_pattern_is_empty(decl.name) {
+                                let temp_name = self.get_temp_var_name();
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.write(&temp_name);
+                                self.write(" = ");
+                                if self.arena.get(decl.name).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                }) {
+                                    self.write_helper("__read");
+                                    self.write("(");
+                                    self.write(result_name);
+                                    self.write(".value, 0)");
+                                } else {
+                                    self.write(result_name);
+                                    self.write(".value");
+                                }
+                                continue;
+                            }
+
                             // For downlevelIteration with binding patterns, use __read
                             // Transform: var [a = 0, b = 1] = _c.value
                             // Into: var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, ...
@@ -834,6 +948,27 @@ impl<'a> Printer<'a> {
                     {
                         if self.is_binding_pattern(decl.name) {
                             if let Some(pattern_node) = self.arena.get(decl.name) {
+                                if self.binding_pattern_is_empty(decl.name) {
+                                    let temp_name = self.get_temp_var_name();
+                                    if !first {
+                                        self.write(", ");
+                                    }
+                                    first = false;
+                                    self.write(&temp_name);
+                                    self.write(" = ");
+                                    if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        && self.ctx.options.downlevel_iteration
+                                    {
+                                        self.write_helper("__read");
+                                        self.write("(");
+                                        self.write(&element_expr);
+                                        self.write(", 0)");
+                                    } else {
+                                        self.write(&element_expr);
+                                    }
+                                    continue;
+                                }
+
                                 // Object patterns: for single-property patterns, use element_expr
                                 // directly. For multi-property, create a temp.
                                 if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {

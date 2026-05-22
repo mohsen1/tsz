@@ -1,4 +1,5 @@
-use tsz_solver::{TypeDatabase, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -80,7 +81,7 @@ pub(crate) fn conditional_type_components(
 ///
 /// Returns `Some((check_type, extends_type, true_type, false_type))` if the
 /// type is a `Conditional`. Used for distinguishing true Extract patterns
-/// (`T extends C ? T : never` where true_type == check_type) from general
+/// (`T extends C ? T : never` where `true_type` == `check_type`) from general
 /// conditional types with custom true branches.
 pub(crate) fn full_conditional_type_components(
     db: &dyn TypeDatabase,
@@ -103,6 +104,12 @@ pub(crate) fn full_conditional_type_components(
 /// Check if a type is callable (Function or Callable shape).
 pub(crate) fn is_callable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_callable_type(db, type_id)
+}
+
+/// Check whether a constraint is, or evaluates to, a union whose members all
+/// carry call or construct signatures.
+pub(crate) fn constraint_expands_to_callable_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::constraint_expands_to_callable_union(db, type_id)
 }
 
 /// Check if a type has construct signatures or is a constructor function.
@@ -194,7 +201,7 @@ pub(crate) fn overload_type_param_counts(
 // Index-key classification
 // =========================================================================
 
-/// Re-export `IndexKeyKind` so generic_checker doesn't import solver directly.
+/// Re-export `IndexKeyKind` so `generic_checker` doesn't import solver directly.
 pub(crate) use tsz_solver::type_queries::IndexKeyKind;
 
 /// Classify a type for index-key matching (string, number, literal, union, etc.).
@@ -281,7 +288,7 @@ pub(crate) fn application_base_def_and_args(
 // Array-like structural surface helpers
 // =========================================================================
 
-/// Re-export `ArrayLikeKind` so generic_checker doesn't import solver directly.
+/// Re-export `ArrayLikeKind` so `generic_checker` doesn't import solver directly.
 pub(crate) use tsz_solver::type_queries::ArrayLikeKind;
 
 /// Classify whether a type is an array, tuple, or readonly array.

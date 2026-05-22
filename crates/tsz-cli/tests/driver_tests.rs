@@ -16,7 +16,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_common::diagnostics::diagnostic_codes;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -2919,7 +2919,7 @@ export const publicProcedure = trpc.procedure;
     .expect("batch-style args");
 
     tsz_solver::construction::clear_thread_local_cache();
-    tsz_solver::reset_subtype_thread_local_state();
+    tsz_solver::relations::subtype::reset_subtype_thread_local_state();
     tsz::checker::clear_all_thread_local_state();
 
     let repo_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
@@ -3535,6 +3535,151 @@ fn compile_with_tsconfig_emits_outputs() {
     assert!(result.diagnostics.is_empty());
     assert!(base.join("dist/src/index.js").is_file());
     assert!(base.join("dist/src/index.d.ts").is_file());
+}
+
+#[test]
+fn compile_import_equals_const_enum_only_elides_require() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("m.d.ts"),
+        "export const enum E { A = 1, B = 2 }\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import X = require(\"./m\");\nconst v = X.E.A;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected import-equals module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through import-equals alias should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        !js.contains("require(\"./m\")"),
+        "require should be elided when the import-equals alias is only used for const enum access.\nOutput:\n{js}"
+    );
+}
+
+#[test]
+fn compile_namespace_import_const_enum_only_elides_require() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(&base.join("m.d.ts"), "export const enum E { A = 1 }\n");
+    write_file(
+        &base.join("main.ts"),
+        "import * as X from \"./m\";\nconst v = X.E.A;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected namespace import module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through namespace import should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        !js.contains("require(\"./m\")"),
+        "namespace import should be elided when only used for const enum access.\nOutput:\n{js}"
+    );
+}
+
+#[test]
+fn compile_import_equals_const_enum_keeps_require_for_runtime_member() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "target": "es5",
+            "module": "commonjs",
+            "outDir": "dist",
+            "noCheck": true,
+            "noLib": true,
+            "ignoreDeprecations": "6.0"
+          },
+          "files": ["m.d.ts", "main.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("m.d.ts"),
+        "export const enum E { A = 1 }\nexport const value: number;\n",
+    );
+    write_file(
+        &base.join("main.ts"),
+        "import X = require(\"./m\");\nconst v = X.E.A;\nconst runtime = X.value;\n",
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.iter().all(|diag| diag.code
+            != diagnostic_codes::CANNOT_FIND_MODULE_OR_ITS_CORRESPONDING_TYPE_DECLARATIONS),
+        "expected import-equals module to resolve, got: {:?}",
+        result.diagnostics
+    );
+    let js = std::fs::read_to_string(base.join("dist/main.js")).expect("read emitted JS");
+    assert!(
+        js.contains("1 /* X.E.A */"),
+        "const enum member through import-equals alias should inline.\nOutput:\n{js}"
+    );
+    assert!(
+        js.contains("require(\"./m\")"),
+        "runtime use through the same alias should keep the require.\nOutput:\n{js}"
+    );
+    assert!(
+        js.contains("X.value"),
+        "runtime member access should be preserved.\nOutput:\n{js}"
+    );
 }
 
 #[test]
@@ -6919,6 +7064,65 @@ fn compile_respects_no_emit_on_error() {
 
     assert!(!result.diagnostics.is_empty());
     assert!(!base.join("dist/src/index.js").is_file());
+}
+
+#[test]
+fn compile_dts_qualifies_imported_return_type_reused_from_another_file() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = &temp.path;
+
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+          "compilerOptions": {
+            "module": "commonjs",
+            "target": "es2015",
+            "declaration": true,
+            "allowArbitraryExtensions": true,
+            "outDir": "dist"
+          },
+          "files": ["foo.d.html.ts", "reexporter.ts", "index.ts"]
+        }"#,
+    );
+    write_file(
+        &base.join("foo.d.html.ts"),
+        "export declare class CustomHtmlRepresentationThing {}\n",
+    );
+    write_file(
+        &base.join("reexporter.ts"),
+        r#"import { CustomHtmlRepresentationThing } from "./foo.html";
+
+export function func() {
+    return new CustomHtmlRepresentationThing();
+}
+"#,
+    );
+    write_file(
+        &base.join("index.ts"),
+        r#"import { func } from "./reexporter";
+export const c = func();
+"#,
+    );
+
+    let args = default_args();
+    let result = compile(&args, base).expect("compile should succeed");
+
+    assert!(
+        result.diagnostics.is_empty(),
+        "Expected no diagnostics, got: {:?}",
+        result.diagnostics
+    );
+    let dts = std::fs::read_to_string(base.join("dist/index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains(
+            r#"export declare const c: import("./foo.html").CustomHtmlRepresentationThing;"#
+        ),
+        "Expected cross-file inferred return type to be qualified: {dts}"
+    );
+    assert!(
+        !dts.contains("c: CustomHtmlRepresentationThing"),
+        "Expected no unbound local name from reexporter scope: {dts}"
+    );
 }
 
 #[test]

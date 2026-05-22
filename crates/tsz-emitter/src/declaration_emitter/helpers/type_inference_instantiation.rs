@@ -34,22 +34,281 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
 
-        let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
-        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
-
-        if operator == SyntaxKind::BarBarToken as u16 {
-            left_parts.retain(|part| !Self::short_circuit_or_excludes_left_type(&part.text));
-        } else {
-            left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
+        if self.short_circuit_left_operand_skips_right(operator, binary.left) {
+            return self.short_circuit_operand_type_parts(binary.left, depth + 1);
         }
 
+        let mut left_parts = self.short_circuit_operand_type_parts(binary.left, depth + 1)?;
+        if operator == SyntaxKind::BarBarToken as u16
+            && self.short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
+        // When every component of the left type is semantically always truthy (e.g. a
+        // non-empty string literal, non-zero number literal, or `true`), the right operand
+        // of `||` is unreachable — mirrors tsc's evaluate_logical returning `left` when
+        // narrow_to_falsy(left) == never.  The `!left_parts.is_empty()` guard is required
+        // because `.all(…)` on an empty iterator is vacuously true.
+        if operator == SyntaxKind::BarBarToken as u16
+            && !left_parts.is_empty()
+            && left_parts
+                .iter()
+                .all(|part| Self::short_circuit_part_is_always_truthy(&part.text))
+        {
+            Self::dedupe_and_sort_short_circuit_type_parts(&mut left_parts);
+            return Some(left_parts);
+        }
+
+        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
+
+        let (include_right_parts, widen_right_parts) = if operator == SyntaxKind::BarBarToken as u16
+        {
+            let (include, widen) =
+                Self::filter_short_circuit_or_left_parts(&mut left_parts, &right_parts);
+            (include, widen)
+        } else {
+            let include_right_parts = left_parts
+                .iter()
+                .any(|part| Self::short_circuit_nullish_excludes_left_type(&part.text));
+            left_parts.retain(|part| !Self::short_circuit_nullish_excludes_left_type(&part.text));
+            (include_right_parts, false)
+        };
+
         let mut parts = left_parts;
-        parts.extend(right_parts);
+        if include_right_parts {
+            if widen_right_parts {
+                parts.extend(right_parts.into_iter().map(|mut p| {
+                    let trimmed = p.text.trim();
+                    if Self::is_short_circuit_number_literal_type(trimmed) {
+                        p.text = "number".to_string();
+                    } else if Self::is_short_circuit_string_literal_type(trimmed) {
+                        p.text = "string".to_string();
+                    } else if Self::is_short_circuit_bigint_literal_type(trimmed) {
+                        p.text = "bigint".to_string();
+                    }
+                    p
+                }));
+            } else {
+                parts.extend(right_parts);
+            }
+        }
         Self::dedupe_and_sort_short_circuit_type_parts(&mut parts);
         if parts.is_empty() {
             return None;
         }
         Some(parts)
+    }
+
+    fn short_circuit_left_operand_skips_right(&self, operator: u16, left_idx: NodeIndex) -> bool {
+        let Some(left_idx) = self.skip_outer_truthiness_expressions(left_idx) else {
+            return false;
+        };
+
+        match operator {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(left_idx, 0)
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(left_idx, 0)
+            }
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_always_truthy_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if self.short_circuit_operand_is_syntactically_truthy(expr_idx, depth + 1) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => self
+                .expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ),
+            _ => false,
+        }
+    }
+
+    fn expression_result_is_syntactically_non_nullish_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if self.expression_is_syntactically_non_nullish_for_declaration(expr_idx, expr_node) {
+            return true;
+        }
+
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        match binary.operator_token {
+            op if op == SyntaxKind::BarBarToken as u16 => {
+                self.expression_result_is_syntactically_always_truthy_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            op if op == SyntaxKind::QuestionQuestionToken as u16 => {
+                self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.left,
+                    depth + 1,
+                ) || self.expression_result_is_syntactically_non_nullish_for_declaration(
+                    binary.right,
+                    depth + 1,
+                )
+            }
+            _ => false,
+        }
+    }
+
+    fn short_circuit_operand_is_syntactically_truthy(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        let Some(expr_idx) = self.skip_outer_truthiness_expressions(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        match expr_node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARROW_FUNCTION
+                || k == syntax_kind_ext::CLASS_EXPRESSION
+                || k == syntax_kind_ext::FUNCTION_EXPRESSION
+                || k == syntax_kind_ext::NEW_EXPRESSION
+                || k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == SyntaxKind::RegularExpressionLiteral as u16 =>
+            {
+                true
+            }
+            k if k == SyntaxKind::BigIntLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .is_some_and(|lit| Self::bigint_literal_is_nonzero(&lit.text)),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                self.arena
+                    .get_literal(expr_node)
+                    .is_some_and(|lit| !lit.text.is_empty())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => self
+                .arena
+                .get_literal(expr_node)
+                .is_some_and(|lit| Self::numeric_literal_is_nonzero(&lit.text)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(expr_node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::BarBarToken as u16
+                        && self
+                            .short_circuit_operand_is_syntactically_truthy(binary.left, depth + 1)
+                })
+            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .arena
+                .get_conditional_expr(expr_node)
+                .is_some_and(|cond| {
+                    self.short_circuit_operand_is_syntactically_truthy(cond.when_true, depth + 1)
+                        && self.short_circuit_operand_is_syntactically_truthy(
+                            cond.when_false,
+                            depth + 1,
+                        )
+                }),
+            _ => false,
+        }
+    }
+
+    fn expression_is_syntactically_non_nullish_for_declaration(
+        &self,
+        expr_idx: NodeIndex,
+        node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        self.short_circuit_operand_is_syntactically_truthy(expr_idx, 0)
+            || matches!(
+                node.kind,
+                k if k == SyntaxKind::NumericLiteral as u16
+                    || k == SyntaxKind::StringLiteral as u16
+                    || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                    || k == SyntaxKind::TrueKeyword as u16
+                    || k == SyntaxKind::FalseKeyword as u16
+                    || k == SyntaxKind::BigIntLiteral as u16
+            )
+    }
+
+    fn skip_outer_truthiness_expressions(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = self.arena.get_parenthesized(node)?.expression;
+            } else if node.kind == syntax_kind_ext::NON_NULL_EXPRESSION {
+                current = self.arena.get_unary_expr_ex(node)?.expression;
+            } else if node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION
+            {
+                current = self.arena.get_type_assertion(node)?.expression;
+            } else {
+                return Some(current);
+            }
+        }
+    }
+
+    fn numeric_literal_is_nonzero(text: &str) -> bool {
+        tsz_common::numeric::parse_numeric_literal_value(text).is_some_and(|value| value != 0.0)
+    }
+
+    fn bigint_literal_is_nonzero(text: &str) -> bool {
+        let Some(digits) = text.strip_suffix('n') else {
+            return false;
+        };
+        Self::numeric_literal_is_nonzero(digits)
     }
 
     fn short_circuit_operand_type_parts(
@@ -122,6 +381,74 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena.get(expr_idx).map(|node| node.pos)
     }
 
+    /// Returns `(include_right_parts, widen_right_parts)`.
+    ///
+    /// `include_right_parts` is true when the right operand of `||` is reachable.
+    /// `widen_right_parts` is true when the right was included because a broad primitive
+    /// type (`string`, `number`, `bigint`, or the `true` half of `boolean`) on the left
+    /// does not fully cover the right — in that case the right literal types should be
+    /// widened to their primitive (matching tsc's union inference for `||`).
+    fn filter_short_circuit_or_left_parts(
+        left_parts: &mut Vec<ShortCircuitTypePart>,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> (bool, bool) {
+        let mut include_right_parts = false;
+        let mut widen_right_parts = false;
+        let mut retained = Vec::with_capacity(left_parts.len());
+
+        for mut part in left_parts.drain(..) {
+            let trimmed = part.text.trim();
+            if Self::short_circuit_or_excludes_left_type(trimmed) {
+                include_right_parts = true;
+                continue;
+            }
+
+            if trimmed == "boolean" {
+                part.text = "true".to_string();
+                include_right_parts = true;
+                widen_right_parts = true;
+            } else if Self::short_circuit_or_broad_primitive_needs_right(trimmed, right_parts) {
+                include_right_parts = true;
+                widen_right_parts = true;
+            }
+
+            retained.push(part);
+        }
+
+        *left_parts = retained;
+        (include_right_parts, widen_right_parts)
+    }
+
+    fn short_circuit_or_broad_primitive_needs_right(
+        type_text: &str,
+        right_parts: &[ShortCircuitTypePart],
+    ) -> bool {
+        match type_text {
+            "string" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_string_covers(part.text.trim())),
+            "number" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_number_covers(part.text.trim())),
+            "bigint" => !right_parts
+                .iter()
+                .all(|part| Self::short_circuit_bigint_covers(part.text.trim())),
+            _ => false,
+        }
+    }
+
+    fn short_circuit_string_covers(type_text: &str) -> bool {
+        type_text == "string" || Self::is_short_circuit_string_literal_type(type_text)
+    }
+
+    fn short_circuit_number_covers(type_text: &str) -> bool {
+        type_text == "number" || Self::is_short_circuit_number_literal_type(type_text)
+    }
+
+    fn short_circuit_bigint_covers(type_text: &str) -> bool {
+        type_text == "bigint" || Self::is_short_circuit_bigint_literal_type(type_text)
+    }
+
     fn short_circuit_or_excludes_left_type(type_text: &str) -> bool {
         let trimmed = type_text.trim();
         Self::short_circuit_nullish_excludes_left_type(trimmed)
@@ -135,6 +462,25 @@ impl<'a> DeclarationEmitter<'a> {
 
     fn short_circuit_nullish_excludes_left_type(type_text: &str) -> bool {
         matches!(type_text.trim(), "null" | "undefined" | "void")
+    }
+
+    fn short_circuit_part_is_always_truthy(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        // Mixed-truthiness primitives — can be empty string, zero, false, etc.
+        if matches!(
+            trimmed,
+            "string" | "number" | "boolean" | "bigint" | "any" | "unknown" | "object" | "never"
+        ) {
+            return false;
+        }
+        // Delegates to the canonical falsy-set (null/undefined/void/false/0/-0/0n/""/''
+        // as tracked by `short_circuit_or_excludes_left_type`).
+        if Self::short_circuit_or_excludes_left_type(trimmed) {
+            return false;
+        }
+        Self::is_short_circuit_string_literal_type(trimmed)
+            || Self::is_short_circuit_number_literal_type(trimmed)
+            || trimmed == "true"
     }
 
     fn dedupe_and_sort_short_circuit_type_parts(parts: &mut Vec<ShortCircuitTypePart>) {
@@ -218,9 +564,22 @@ impl<'a> DeclarationEmitter<'a> {
         if parts.len() == 1 {
             return parts[0].text.clone();
         }
-        parts
+        let mut formatted: Vec<(String, String)> = Vec::with_capacity(parts.len());
+        for part in parts {
+            let formatted_text = Self::parenthesize_type_text_in_union_position(&part.text);
+            if !formatted
+                .iter()
+                .any(|(raw, rendered)| raw == &part.text || rendered == &formatted_text)
+            {
+                formatted.push((part.text, formatted_text));
+            }
+        }
+        if formatted.len() == 1 {
+            return Self::strip_single_parenthesized_function_type_text(&formatted.remove(0).0);
+        }
+        formatted
             .into_iter()
-            .map(|part| Self::parenthesize_type_text_in_union_position(&part.text))
+            .map(|(_, rendered)| rendered)
             .collect::<Vec<_>>()
             .join(" | ")
     }
@@ -238,13 +597,74 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
-        self.preferred_expression_type_text(expr_idx)
+        self.short_circuit_const_literal_reference_type_text(expr_idx)
+            .or_else(|| self.js_literal_type_text(expr_idx))
+            .or_else(|| self.preferred_expression_type_text(expr_idx))
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
-                self.preferred_expression_type_text(expr_idx)
+                self.short_circuit_const_literal_reference_type_text(expr_idx)
+                    .or_else(|| self.js_literal_type_text(expr_idx))
+                    .or_else(|| self.preferred_expression_type_text(expr_idx))
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
+    }
+
+    fn short_circuit_const_literal_reference_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let var_decl = self.arena.get_variable_declaration(decl_node)?;
+            if self.arena.is_const_variable_declaration(decl_idx)
+                && var_decl.type_annotation.is_none()
+                && var_decl.initializer.is_some()
+            {
+                return self
+                    .short_circuit_widened_literal_initializer_type_text(var_decl.initializer);
+            }
+        }
+        None
+    }
+
+    fn short_circuit_widened_literal_initializer_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string".to_string())
+            }
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+                && self.is_negative_literal(expr_node) =>
+            {
+                let unary = self.arena.get_unary_expr(expr_node)?;
+                let operand = self.arena.get(unary.operand)?;
+                match operand.kind {
+                    k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+                    k if k == SyntaxKind::BigIntLiteral as u16 => Some("bigint".to_string()),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 
     fn skip_parenthesized_expression_via_parent_node(
@@ -289,18 +709,45 @@ impl<'a> DeclarationEmitter<'a> {
 
         let parts = Self::split_top_level_union_type_parts(trimmed);
         if parts.len() > 1 {
-            let instantiated_parts: Vec<String> = parts
-                .iter()
-                .map(|part| {
-                    Self::instantiate_generic_function_type_text(part, type_arg)
-                        .unwrap_or_else(|| part.to_string())
-                })
-                .map(|part| Self::parenthesize_type_text_in_union_position(&part))
-                .collect();
-            return Some(instantiated_parts.join(" | "));
+            let mut instantiated_parts: Vec<(String, String)> = Vec::with_capacity(parts.len());
+            for part in parts.iter() {
+                let instantiated = Self::instantiate_generic_function_type_text(part, type_arg)
+                    .unwrap_or_else(|| part.to_string());
+                let formatted = Self::parenthesize_type_text_in_union_position(&instantiated);
+                if !instantiated_parts
+                    .iter()
+                    .any(|(raw, rendered)| raw == &instantiated || rendered == &formatted)
+                {
+                    instantiated_parts.push((instantiated, formatted));
+                }
+            }
+            if instantiated_parts.len() == 1 {
+                return Some(Self::strip_single_parenthesized_function_type_text(
+                    &instantiated_parts.remove(0).0,
+                ));
+            }
+            return Some(
+                instantiated_parts
+                    .into_iter()
+                    .map(|(_, rendered)| rendered)
+                    .collect::<Vec<_>>()
+                    .join(" | "),
+            );
         }
 
         Self::instantiate_generic_function_type_text(trimmed, type_arg)
+    }
+
+    fn strip_single_parenthesized_function_type_text(type_text: &str) -> String {
+        let trimmed = type_text.trim();
+        if trimmed.starts_with('(')
+            && trimmed.ends_with(')')
+            && let Some(inner) = trimmed.get(1..trimmed.len() - 1)
+            && inner.contains("=>")
+        {
+            return inner.trim().to_string();
+        }
+        trimmed.to_string()
     }
 
     fn instantiate_object_type_text_with_single_type_arg(

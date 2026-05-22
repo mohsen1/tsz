@@ -3,7 +3,7 @@
 //! Contains `contains_*`, `is_*` predicates, union/intersection member access,
 //! array/tuple extraction, and compound member mapping.
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefinitionStore;
 use crate::types::{IntrinsicKind, TypeData, TypeId};
 use crate::visitors::visitor_predicates::contains_type_matching;
@@ -569,6 +569,40 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
         }
         _ => false,
     }
+}
+
+/// Return true when `type_id` contains an application of a generic alias whose
+/// body both references itself and requires concrete evaluation. This identifies
+/// recursive conditional/mapped aliases such as
+/// `Schema<T> = ... { [P in keyof T]: Schema<T[P]> } ...` without exposing
+/// `TypeData` matching to checker code.
+pub fn contains_recursive_operation_application_db(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let mut found = false;
+    crate::visitor::walk_referenced_types(db, type_id, |current| {
+        if found {
+            return;
+        }
+        let Some(TypeData::Application(app_id)) = db.lookup(current) else {
+            return;
+        };
+        let app = db.type_application(app_id);
+        let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) else {
+            return;
+        };
+        let Some(body) = def_store.get_body(def_id) else {
+            return;
+        };
+        if super::signatures_and_advanced::body_arg_requires_concrete_form(db, body)
+            && crate::visitor::contains_lazy_def_id(db, body, def_id)
+        {
+            found = true;
+        }
+    });
+    found
 }
 
 /// Return true when `type_id` (or any union/intersection member reachable from it)

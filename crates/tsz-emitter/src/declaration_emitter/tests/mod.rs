@@ -3,13 +3,14 @@
 pub(super) use super::*;
 pub(super) use rustc_hash::FxHashMap;
 pub(super) use std::sync::Arc;
-pub(super) use tsz_binder::{BinderState, symbol_flags};
+pub(super) use tsz_binder::{BinderState, lib_loader::LibFile, symbol_flags};
 pub(super) use tsz_parser::parser::node::NodeAccess;
 pub(super) use tsz_parser::parser::syntax_kind_ext;
 pub(super) use tsz_parser::parser::{NodeIndex, ParserState};
+pub(super) use tsz_solver::construction::TypeInterner;
 pub(super) use tsz_solver::{
     CallSignature, CallableShape, DefId, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeId, TypeInterner,
+    ParamInfo, PropertyInfo, SymbolRef, TupleElement, TypeId,
 };
 
 // =============================================================================
@@ -60,6 +61,27 @@ pub(super) fn emit_dts_with_usage_analysis(source: &str) -> String {
     emitter.emit(root)
 }
 
+pub(super) fn emit_dts_with_usage_analysis_and_parameters_lib(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib = Arc::new(LibFile::from_source(
+        "lib.es5.d.ts".to_string(),
+        "type Parameters<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;"
+            .to_string(),
+    ));
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&parser.arena, root, &[lib]);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.emit(root)
+}
+
 pub(super) fn emit_js_dts(source: &str) -> String {
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -72,6 +94,26 @@ pub(super) fn emit_js_dts_with_usage_analysis(source: &str) -> String {
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.js".to_string());
+    emitter.emit(root)
+}
+
+pub(super) fn emit_js_dts_with_usage_analysis_and_lib(source: &str, lib_source: &str) -> String {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib = Arc::new(LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        lib_source.to_string(),
+    ));
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&parser.arena, root, &[lib]);
 
     let interner = TypeInterner::new();
     let type_cache = crate::type_cache_view::TypeCacheView::default();

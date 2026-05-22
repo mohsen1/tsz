@@ -1,23 +1,19 @@
 use crate::diagnostics::{Diagnostic, diagnostic_codes, diagnostic_messages, format_message};
 use crate::error_reporter::assignability::is_object_prototype_method;
+use crate::error_reporter::render_failure::RenderContext;
 use crate::error_reporter::type_display_policy::DiagnosticTypeDisplayRole;
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn render_type_mismatch(
-        &mut self,
-        _reason: &tsz_solver::SubtypeFailureReason,
-        source: TypeId,
-        target: TypeId,
-        idx: NodeIndex,
-        depth: u32,
-        start: u32,
-        length: u32,
-        file_name: String,
-    ) -> Diagnostic {
+    pub(super) fn render_type_mismatch(&mut self, ctx: &RenderContext) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
         let declared_numeric_literal_union_source_display = if depth == 0 {
             self.direct_diagnostic_source_expression(idx)
                 .or_else(|| self.assignment_source_expression(idx))
@@ -426,16 +422,12 @@ impl<'a> CheckerState<'a> {
         if depth == 0 {
             (source_str, target_str) =
                 self.finalize_pair_display_for_diagnostic(source, target, source_str, target_str);
-            if !crate::error_reporter::assignability::display_is_literal_value(&source_str)
-                && let Some(display) = self.nonmissing_ts2739_alias_source_display_text(source)
-            {
-                source_str = display;
-            }
-            if target_str.trim() != "{}"
-                && let Some(unfolded) = self.ts2739_alias_target_display(target, &target_str)
-            {
-                target_str = self.format_type_diagnostic(unfolded);
-            }
+            // NOTE: do not apply `ts2739_alias_of_application_source_display`
+            // here. That helper unfolds `type B = A<X>` to `A<X>` for the
+            // TS2739 / TS2741 missing-properties messages where tsc displays
+            // the body application form. For the generic TS2322 mismatch,
+            // tsc preserves the alias name (`B`), so the unfold must stay
+            // scoped to the missing-property render paths above.
             if let Some(display) = self.static_schema_array_structural_display(source, target) {
                 source_str = display;
             }

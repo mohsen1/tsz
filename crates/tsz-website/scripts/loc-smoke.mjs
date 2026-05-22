@@ -40,6 +40,11 @@ check("test_ prefix is test", () => {
   assert.equal(isTestFile("crates/foo/src/test_utils.rs"), true);
 });
 
+check("tests_ prefix is test", () => {
+  assert.equal(isTestFile("crates/foo/src/tests_completions.rs"), true);
+  assert.equal(isTestFile("crates/foo/src/bin/server/tests_navigation.rs"), true);
+});
+
 check("regular source files are not test", () => {
   assert.equal(isTestFile("crates/tsz-binder/src/lib.rs"), false);
   assert.equal(isTestFile("crates/tsz-binder/src/symbols.rs"), false);
@@ -318,6 +323,76 @@ check("does not match cfg(testing) (not the test ident)", () => {
   assert.equal(testNl, 0);
 });
 
+check("counts bare #[test] function as test region", () => {
+  const src = [
+    "fn a() {}",
+    "",
+    "#[test]",
+    "fn t() {",
+    "    assert!(true);",
+    "}",
+    "",
+    "fn b() {}",
+    "",
+  ].join("\n");
+  const { totalNl, testNl } = scanRust(src);
+  assert.equal(totalNl, 8);
+  assert.equal(testNl, 4);
+});
+
+check("counts #[tokio::test] path attribute as test region", () => {
+  const src = [
+    "fn a() {}",
+    "",
+    "#[tokio::test]",
+    "async fn t() {",
+    "    do_thing().await;",
+    "}",
+    "",
+    "fn b() {}",
+    "",
+  ].join("\n");
+  const { testNl } = scanRust(src);
+  assert.equal(testNl, 4);
+});
+
+check("counts #[test] with arg list like #[test(skip)]", () => {
+  const src = [
+    "fn a() {}",
+    "",
+    "#[test(skip)]",
+    "fn t() {}",
+    "",
+    "fn b() {}",
+    "",
+  ].join("\n");
+  const { testNl } = scanRust(src);
+  assert.equal(testNl, 2);
+});
+
+check("does not match #[test_case] (last segment must be exactly `test`)", () => {
+  const src = [
+    "#[test_case(1, 2 ; \"one\")]",
+    "fn parametric(a: u32, b: u32) {}",
+    "",
+    "fn a() {}",
+    "",
+  ].join("\n");
+  const { testNl } = scanRust(src);
+  assert.equal(testNl, 0);
+});
+
+check("does not match #[test] inside string literal", () => {
+  const src = [
+    "fn a() {",
+    "    let s = \"#[test]\\nfn t() {}\";",
+    "}",
+    "",
+  ].join("\n");
+  const { testNl } = scanRust(src);
+  assert.equal(testNl, 0);
+});
+
 check("does not double-count nested cfg(test) inside an outer cfg(test)", () => {
   const src = [
     "#[cfg(test)]",
@@ -381,10 +456,41 @@ try {
   const sharedTestsContent = ["#[test]", "fn shared() {}", ""].join("\n");
   const libBContent = ["pub fn hello() -> &'static str { \"hi\" }", ""].join("\n");
   const buildContent = ["fn main() {}", ""].join("\n");
+  // Pluralized `tests_` prefix: whole file should be classified test.
+  const testsPluralContent = [
+    "use super::*;",
+    "",
+    "#[test]",
+    "fn pluralized_prefix() { assert!(true); }",
+    "",
+  ].join("\n");
+  // Integration tests file under `tests/` directory (currently missed by globs).
+  const integrationTestContent = [
+    "#[test]",
+    "fn integration() {}",
+    "",
+  ].join("\n");
+  // Bench file under `benches/` directory.
+  const benchContent = [
+    "fn bench_main() {}",
+    "",
+  ].join("\n");
   const countNl = (s) => (s.match(/\n/g) || []).length;
 
   await fs.writeFile(path.join(crateASrc, "lib.rs"), libContent);
   await fs.writeFile(path.join(crateASrc, "tests.rs"), sharedTestsContent);
+  await fs.writeFile(path.join(crateASrc, "tests_navigation.rs"), testsPluralContent);
+
+  const crateAIntegrationDir = path.join(crateA, "tests");
+  await fs.mkdir(crateAIntegrationDir, { recursive: true });
+  await fs.writeFile(
+    path.join(crateAIntegrationDir, "integration_tests.rs"),
+    integrationTestContent,
+  );
+
+  const crateABenchDir = path.join(crateA, "benches");
+  await fs.mkdir(crateABenchDir, { recursive: true });
+  await fs.writeFile(path.join(crateABenchDir, "throughput.rs"), benchContent);
 
   const crateB = path.join(crates, "crate-b");
   await fs.mkdir(path.join(crateB, "src"), { recursive: true });
@@ -404,11 +510,17 @@ try {
   );
 
   const libInlineTest = scanRust(libContent).testNl;
+  const expectedTestLines =
+    libInlineTest +
+    countNl(sharedTestsContent) +
+    countNl(testsPluralContent) +
+    countNl(integrationTestContent) +
+    countNl(benchContent);
 
   assert.equal(
     split.test_lines,
-    libInlineTest + countNl(sharedTestsContent),
-    "test lines: libContent inline tests + tests.rs",
+    expectedTestLines,
+    "test lines: inline + tests.rs + tests_*.rs + tests/*.rs + benches/*.rs",
   );
   assert.equal(
     split.source_lines,

@@ -97,7 +97,9 @@ impl<'a> DeclarationEmitter<'a> {
         let has_export_aliases = planned_members
             .iter()
             .any(|(_, _, _, export_alias)| export_alias.is_some());
-
+        let prop_types_import_text = planned_members.iter().find_map(|(_, initializer, _, _)| {
+            self.prop_types_import_text_for_initializer(*initializer)
+        });
         for (_member_text, initializer, local_name, export_alias) in planned_members {
             let emit_export = export_alias.is_none() && has_export_aliases;
             if let Some(init_node) = self.arena.get(initializer) {
@@ -115,6 +117,13 @@ impl<'a> DeclarationEmitter<'a> {
                             emit_export,
                         );
                     }
+                } else if init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && self.emit_js_namespace_object_member_text(
+                        &local_name,
+                        initializer,
+                        emit_export,
+                    )
+                {
                 } else if let Some(type_text) =
                     self.js_namespace_value_member_type_text(initializer)
                 {
@@ -136,6 +145,263 @@ impl<'a> DeclarationEmitter<'a> {
         self.write_indent();
         self.write("}");
         self.write_line();
+        if let Some(import_text) = prop_types_import_text
+            && !self.writer.get_output().contains(&import_text)
+        {
+            self.write_indent();
+            self.write(&import_text);
+            self.write_line();
+        }
+    }
+
+    fn emit_js_namespace_object_member_text(
+        &mut self,
+        name: &str,
+        initializer: NodeIndex,
+        emit_export: bool,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        let Some(object) = self.arena.get_literal_expr(init_node) else {
+            return false;
+        };
+        if object.elements.nodes.is_empty() {
+            self.emit_js_namespace_value_member_text(name, "{}", emit_export);
+            return true;
+        }
+
+        self.write_indent();
+        if emit_export {
+            self.write("export ");
+        }
+        self.write("namespace ");
+        self.write(name);
+        self.write(" {");
+        self.write_line();
+        self.increase_indent();
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                    let Some(prop) = self.arena.get_property_assignment(member_node) else {
+                        continue;
+                    };
+                    let Some(prop_name) = self.get_identifier_text(prop.name) else {
+                        continue;
+                    };
+                    if let Some(type_text) =
+                        self.js_prop_types_validator_member_type_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_value_member_text(&prop_name, &type_text, false);
+                    } else if self
+                        .arena
+                        .get(prop.initializer)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+                    {
+                        let _ = self.emit_js_namespace_object_member_text(
+                            &prop_name,
+                            prop.initializer,
+                            false,
+                        );
+                    } else if let Some(type_text) =
+                        self.js_namespace_value_member_type_text(prop.initializer)
+                    {
+                        self.emit_js_namespace_value_member_text(&prop_name, &type_text, false);
+                    }
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    self.emit_js_namespace_function_member(
+                        method.name,
+                        method.type_parameters.as_ref(),
+                        &method.parameters,
+                        method.body,
+                        method.type_annotation,
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        self.decrease_indent();
+        self.write_indent();
+        self.write("}");
+        self.write_line();
+        true
+    }
+
+    pub(in crate::declaration_emitter) fn js_prop_types_validator_member_type_text(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(init_node)?;
+        let receiver = self.get_identifier_text(access.expression)?;
+        if !self.current_file_imports_default_or_namespace_from_module(&receiver, "prop-types") {
+            return None;
+        }
+        let validator = self.get_identifier_text(access.name_or_argument)?;
+        let value_type = match validator.as_str() {
+            "any" => "any",
+            "array" => "any[]",
+            "bool" => "boolean",
+            "element" | "node" => "React.ReactNode",
+            "func" => "Function",
+            "number" => "number",
+            "object" => "object",
+            "string" => "string",
+            _ => return None,
+        };
+        Some(format!("{receiver}.Requireable<{value_type}>"))
+    }
+
+    fn prop_types_import_text_for_initializer(&self, initializer: NodeIndex) -> Option<String> {
+        let initializer = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(initializer);
+        let init_node = self.arena.get(initializer)?;
+        match init_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(init_node)?;
+                let receiver = self.get_identifier_text(access.expression)?;
+                self.current_file_default_or_namespace_import_text_from_module(
+                    &receiver,
+                    "prop-types",
+                )
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                let object = self.arena.get_literal_expr(init_node)?;
+                object.elements.nodes.iter().find_map(|&member_idx| {
+                    let member_node = self.arena.get(member_idx)?;
+                    if member_node.kind != syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                        return None;
+                    }
+                    let prop = self.arena.get_property_assignment(member_node)?;
+                    self.prop_types_import_text_for_initializer(prop.initializer)
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn current_file_imports_default_or_namespace_from_module(
+        &self,
+        local_name: &str,
+        module_specifier: &str,
+    ) -> bool {
+        let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))
+        else {
+            return false;
+        };
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module_specifier {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if self.get_identifier_text(clause.name).as_deref() == Some(local_name) {
+                return true;
+            }
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+                && self.get_identifier_text(bindings.name).as_deref() == Some(local_name)
+            {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    fn current_file_default_or_namespace_import_text_from_module(
+        &self,
+        local_name: &str,
+        module_specifier: &str,
+    ) -> Option<String> {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module_specifier {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            let has_matching_default =
+                self.get_identifier_text(clause.name).as_deref() == Some(local_name);
+            let has_matching_namespace = self
+                .arena
+                .get(clause.named_bindings)
+                .and_then(|bindings_node| {
+                    (bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT)
+                        .then_some(bindings_node)
+                })
+                .and_then(|bindings_node| self.arena.get_named_imports(bindings_node))
+                .and_then(|bindings| self.get_identifier_text(bindings.name))
+                .as_deref()
+                == Some(local_name);
+            if !has_matching_default && !has_matching_namespace {
+                continue;
+            }
+            return self
+                .source_slice_from_arena(self.current_arena.as_deref()?, stmt_idx)
+                .map(|text| text.trim_end_matches(';').to_string() + ";");
+        }
+
+        None
     }
 
     fn emit_js_namespace_function_member_text(

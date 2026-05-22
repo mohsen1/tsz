@@ -273,7 +273,7 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_value(
         literal: &tsz_solver::types::LiteralValue,
-        interner: &tsz_solver::TypeInterner,
+        interner: &tsz_solver::construction::TypeInterner,
     ) -> String {
         match literal {
             tsz_solver::types::LiteralValue::String(atom) => {
@@ -324,6 +324,9 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if let Some(enum_type_text) = self.enum_member_widened_type_text(initializer) {
             return Some(enum_type_text);
+        }
+        if let Some(type_text) = self.widened_inferred_expression_type_text(initializer) {
+            return Some(type_text);
         }
         if self
             .arena

@@ -8,7 +8,7 @@
 
 use std::sync::Arc;
 
-use crate::TypeDatabase;
+use crate::construction::TypeDatabase;
 use crate::objects::apparent::apparent_primitive_shape;
 use crate::operations::iterators::{get_iterator_info, target_has_non_iterable_property_shape};
 use crate::types::{FunctionShape, IntrinsicKind, LiteralValue, ObjectShape, TypeId};
@@ -286,7 +286,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// ```
     ///
     /// Rule #29: Function intrinsic accepts any callable type as a subtype.
-    #[allow(clippy::match_same_arms)]
     pub(crate) fn is_callable_type(&mut self, source: TypeId) -> bool {
         let allow_any = self.any_propagation.allows_any_at_depth(self.guard.depth());
         match source {

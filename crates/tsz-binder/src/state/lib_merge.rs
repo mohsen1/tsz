@@ -11,6 +11,30 @@ use tsz_common::interner::{Atom, Interner};
 use super::{BinderState, LibContext};
 
 impl BinderState {
+    /// Record `lib_sym_id` in `lib_type_namespace` under `name` when a local VALUE-only
+    /// symbol blocks it from `file_locals`. TypeScript's namespaces are separate: a local
+    /// `declare const Foo: unique symbol` (value namespace only) must not prevent
+    /// `type Foo<T>` (type namespace) from being found in type position.
+    ///
+    /// No-op if the lib symbol has no TYPE flags or if the local symbol also has TYPE flags.
+    pub(super) fn try_record_lib_type_shadow(&mut self, name: &str, lib_sym_id: SymbolId) {
+        let lib_has_type =
+            (self.symbols.get(lib_sym_id).map_or(0, |s| s.flags) & symbol_flags::TYPE) != 0;
+        if !lib_has_type {
+            return;
+        }
+        let local_flags = self
+            .file_locals
+            .get(name)
+            .and_then(|id| self.symbols.get(id))
+            .map_or(0, |s| s.flags);
+        if (local_flags & symbol_flags::VALUE) != 0 && (local_flags & symbol_flags::TYPE) == 0 {
+            Arc::make_mut(&mut self.lib_type_namespace)
+                .entry(name.to_owned())
+                .or_insert(lib_sym_id);
+        }
+    }
+
     // =========================================================================
     // Lib Symbol Merging (SymbolId collision fix)
     // =========================================================================
@@ -425,6 +449,8 @@ impl BinderState {
                     // Only add if not already present (user symbols take precedence)
                     if !self.file_locals.has(name) {
                         self.file_locals.set(name.clone(), new_id);
+                    } else {
+                        self.try_record_lib_type_shadow(name, new_id);
                     }
                     // Track all lib-originating symbols for unused checking exclusion
                     Arc::make_mut(&mut self.lib_symbol_ids).insert(new_id);

@@ -102,7 +102,7 @@ impl EvaluationRequest {
 #[cfg(test)]
 mod tests {
     use super::{EvaluationCacheKey, EvaluationOptions, EvaluationRequest};
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
     use crate::evaluation::evaluate::evaluate_type_with_request;
     use crate::types::TypeId;
 

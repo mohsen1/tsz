@@ -610,7 +610,7 @@ impl<'a> CheckerState<'a> {
                     || branch_type == TypeId::ANY
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
-                    || self.is_assignable_to(branch_type, target_type)
+                    || self.diagnostic_relation_boolean_guard(branch_type, target_type)
                 {
                     continue;
                 }
@@ -751,7 +751,7 @@ impl<'a> CheckerState<'a> {
                 if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
                     continue;
                 }
-                if self.is_assignable_to(source_prop_type, target_prop_type)
+                if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
                     && self.emit_polymorphic_this_property_assignment_error(
                         source_prop_type,
                         target_prop_type,
@@ -989,7 +989,7 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.is_assignable_to(body_type, expected_return_type)
+                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
                 {
                     return false;
                 }
@@ -1065,7 +1065,7 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.is_assignable_to(body_type, expected_return_type)
+                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
                 {
                     return false;
                 }
@@ -1476,8 +1476,17 @@ impl<'a> CheckerState<'a> {
                 .arena
                 .get(prop_name_idx)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
+            // Track whether the computed key is a numeric/string literal (text-resolvable).
+            // Symbol-keyed computed properties (`[sym]`, `[Symbol.iterator]`) fall through to
+            // `get_property_name_resolved` and must always use TS2418, not TS2322.
+            let mut is_computed_literal_key = false;
             let prop_name = match self.object_literal_property_name_text(prop_name_idx) {
-                Some(name) => name,
+                Some(name) => {
+                    if is_computed_property {
+                        is_computed_literal_key = true;
+                    }
+                    name
+                }
                 None if is_computed_property => {
                     match self.get_property_name_resolved(prop_name_idx) {
                         Some(name) => name,
@@ -1558,13 +1567,13 @@ impl<'a> CheckerState<'a> {
                 && cached_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(cached_prop_type, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(cached_prop_type, target_prop_type)
             {
                 // If the cached type fails, try the literal type from the initializer.
                 // When a generic call widens literals during inference (e.g., `'name'` → string),
                 // the literal type may actually be assignable to the inferred target.
                 if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
-                    if self.is_assignable_to(literal_type, target_prop_type) {
+                    if self.diagnostic_relation_boolean_guard(literal_type, target_prop_type) {
                         literal_type
                     } else {
                         cached_prop_type
@@ -1628,7 +1637,10 @@ impl<'a> CheckerState<'a> {
                 if let Some(duplicate_source_for_check) = duplicate_source_for_check
                     && duplicate_source_for_check != TypeId::ERROR
                     && duplicate_source_for_check != TypeId::ANY
-                    && !self.is_assignable_to(duplicate_source_for_check, target_prop_type)
+                    && !self.diagnostic_relation_boolean_guard(
+                        duplicate_source_for_check,
+                        target_prop_type,
+                    )
                 {
                     let source_prop_type_for_diagnostic =
                         crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -1666,7 +1678,7 @@ impl<'a> CheckerState<'a> {
                 && effective_source_prop != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(effective_source_prop, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(effective_source_prop, target_prop_type)
             {
                 let source_prop_type_for_diagnostic =
                     crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -1755,7 +1767,7 @@ impl<'a> CheckerState<'a> {
                         let body_type = self.get_type_of_node(func.body);
                         if body_type == TypeId::ERROR
                             || body_type == TypeId::ANY
-                            || self.is_assignable_to(body_type, expected_ret)
+                            || self.diagnostic_relation_boolean_guard(body_type, expected_ret)
                         {
                             return None;
                         }
@@ -1838,7 +1850,7 @@ impl<'a> CheckerState<'a> {
                 && source_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.is_assignable_to(source_prop_type, target_prop_type)
+                && !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
                 && self
                     .ctx
                     .arena
@@ -1879,7 +1891,8 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the property value type is assignable to the target property type
-            let prop_assignable = self.is_assignable_to(source_prop_type, target_prop_type);
+            let prop_assignable =
+                self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type);
             if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
@@ -1940,12 +1953,17 @@ impl<'a> CheckerState<'a> {
                     }
                 }
 
-                // For computed property names, emit TS2418 ("Type of computed
-                // property's value is '{0}', which is not assignable to type
-                // '{1}'.") instead of the generic TS2322.  This matches tsc's
-                // behavior in `elaborateElementwise`.  tsc does not widen
-                // literal types in the TS2418 message.
-                if is_computed_property {
+                // TS2418 applies when:
+                //   (a) the key is computed, AND
+                //   (b) either the key is a symbol (unique/well-known, never TS2322)
+                //       or the key is a numeric/string literal but the target has
+                //       no named property for it (matches only via index signature).
+                // When a literal key like `[0]` or `["x"]` resolves to a named
+                // property in the target, tsc uses TS2322 instead.
+                if is_computed_property
+                    && !(is_computed_literal_key
+                        && self.target_has_named_property_for_key(effective_param_type, &prop_name))
+                {
                     // For TS2418, use the literal type from the initializer
                     // expression when available (tsc shows "str" not string).
                     let computed_source = self
@@ -2132,7 +2150,7 @@ impl<'a> CheckerState<'a> {
             if source_member_type == TypeId::ERROR || source_member_type == TypeId::ANY {
                 continue;
             }
-            if !self.is_assignable_to(source_member_type, target_member_type) {
+            if !self.diagnostic_relation_boolean_guard(source_member_type, target_member_type) {
                 return false;
             }
         }
@@ -2169,6 +2187,27 @@ impl<'a> CheckerState<'a> {
 
     fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
         self.type_has_indexed_access_surface(target_type, 0)
+    }
+
+    /// `true` when any shape reachable from `target_type` has a named property
+    /// (not an index signature) whose atom equals `prop_name`.
+    fn target_has_named_property_for_key(&mut self, target_type: TypeId, prop_name: &str) -> bool {
+        let prop_atom = self.ctx.types.intern_string(prop_name);
+        let resolved = self.resolve_type_for_property_access(target_type);
+        let evaluated = self.evaluate_type_with_env(target_type);
+        let has_named = |type_id: TypeId| {
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+                .is_some_and(|shape| shape.properties.iter().any(|p| p.name == prop_atom))
+        };
+        [target_type, resolved, evaluated]
+            .into_iter()
+            .any(|candidate| {
+                crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+                    .map_or_else(
+                        || has_named(candidate),
+                        |ms| ms.iter().copied().any(has_named),
+                    )
+            })
     }
 
     fn type_has_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
@@ -2582,7 +2621,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(elem_type, target_element_type) {
+            if !self.diagnostic_relation_boolean_guard(elem_type, target_element_type) {
                 let widen_source_display = self.array_elaboration_widening_required_for_display(
                     elem_type,
                     target_element_type,
@@ -2710,7 +2749,7 @@ impl<'a> CheckerState<'a> {
         if iterated_element_type == spread_expr_type {
             return false;
         }
-        if self.is_assignable_to(iterated_element_type, target_element_type) {
+        if self.diagnostic_relation_boolean_guard(iterated_element_type, target_element_type) {
             return false;
         }
 
@@ -2811,7 +2850,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.is_assignable_to(source_prop_type, target_prop_type) {
+            if !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
                 return false;
             }
         }
@@ -2939,7 +2978,7 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only elaborate when the overall assignment fails.
-        if self.is_assignable_to(init_type, declared_type) {
+        if self.diagnostic_relation_boolean_guard(init_type, declared_type) {
             return false;
         }
 

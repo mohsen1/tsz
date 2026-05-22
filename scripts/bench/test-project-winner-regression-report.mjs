@@ -78,18 +78,48 @@ const nonGreenReport = createProjectWinnerRegressionReport(
     row("vite-vanilla-ts-app", "tsz", RED_COMPAT, 2),
     row("nextjs-fresh-app", "tsz", GREEN_COMPAT, 2),
     { name: "large-ts-repo", winner: "tsz", factor: 2, tsz_ms: 10, tsgo_ms: 20, artifact_missing: true },
+    row("type-fest-project", "tsz", null, 2),
     row("single-file", "tsz", null, 2),
   ]),
   artifact([
     row("vite-vanilla-ts-app", "tsgo", GREEN_COMPAT, 2),
     row("nextjs-fresh-app", "tsgo", YELLOW_COMPAT, 2),
     row("large-ts-repo", "tsgo", GREEN_COMPAT, 2),
+    row("type-fest-project", "tsgo", null, 2),
     row("single-file", "tsgo", null, 2),
   ]),
   "previous.json",
   "current.json",
 );
 assert.equal(nonGreenReport.totals.tsz_to_tsgo_regressions, 0);
+
+// Duplicate known project rows make the winner comparison non-authoritative.
+const duplicateProjectReport = createProjectWinnerRegressionReport(
+  artifact([
+    row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 2),
+    row("ts-essentials-project", "tsz", GREEN_COMPAT, 1.4),
+  ]),
+  artifact([
+    row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 1.9),
+    row("vite-vanilla-ts-app", "tsgo", GREEN_COMPAT, 1.8),
+    row("ts-essentials-project", "tsz", GREEN_COMPAT, 1.2),
+    row("single-file", "tsz", null, 2.0),
+    row("single-file", "tsgo", null, 1.8),
+  ]),
+  "previous.json",
+  "current.json",
+);
+assert.equal(duplicateProjectReport.totals.duplicate_project_rows, 1);
+assert.equal(duplicateProjectReport.totals.green_project_rows_compared, 1);
+assert.equal(duplicateProjectReport.totals.tsz_to_tsgo_regressions, 0);
+assert.deepEqual(duplicateProjectReport.duplicate_rows, [
+  {
+    artifact: "current",
+    name: "vite-vanilla-ts-app",
+    label: "generated Vite app",
+    count: 2,
+  },
+]);
 
 withTempDir((dir) => {
   const before = path.join(dir, "before.json");
@@ -123,6 +153,24 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   const parsed = JSON.parse(result.stdout);
   assert.equal(parsed.totals.tsz_to_tsgo_regressions, 0);
+});
+
+withTempDir((dir) => {
+  const before = path.join(dir, "before.json");
+  const after = path.join(dir, "after.json");
+  writeJson(before, artifact([row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 2)]));
+  writeJson(after, artifact([
+    row("vite-vanilla-ts-app", "tsz", GREEN_COMPAT, 1.9),
+    row("vite-vanilla-ts-app", "tsgo", GREEN_COMPAT, 1.8),
+  ]));
+
+  const result = spawnSync(process.execPath, [SCRIPT, before, after], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 1, "duplicate project rows should fail winner regression audit");
+  assert.match(result.stdout, /Duplicate Project Rows/);
+  assert.match(result.stdout, /generated Vite app/);
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");

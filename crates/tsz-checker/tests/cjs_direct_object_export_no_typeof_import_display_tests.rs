@@ -14,7 +14,7 @@ use tsz_binder::BinderState;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::state::CheckerState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 fn diagnostics_for_three_files(
     json_source: &str,

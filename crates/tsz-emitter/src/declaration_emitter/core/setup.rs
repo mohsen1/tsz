@@ -8,7 +8,7 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeInterner;
+use tsz_solver::construction::TypeInterner;
 
 use super::{DeclarationEmitter, ImportPlan, SourceMapState};
 
@@ -49,6 +49,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            current_ambient_module_specifier: None,
             enclosing_namespace_symbol: None,
             current_namespace_self_import_alias: None,
             current_namespace_self_export_names: FxHashSet::default(),
@@ -166,6 +167,7 @@ impl<'a> DeclarationEmitter<'a> {
             symbol_module_specifier_cache: FxHashMap::default(),
             import_plan: ImportPlan::default(),
             inside_declare_namespace: false,
+            current_ambient_module_specifier: None,
             enclosing_namespace_symbol: None,
             current_namespace_self_import_alias: None,
             current_namespace_self_export_names: FxHashSet::default(),

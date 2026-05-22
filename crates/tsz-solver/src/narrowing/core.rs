@@ -1,4 +1,7 @@
+use crate::caches::db::TypeCompilerOptions;
+use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
+use crate::narrowing::request::{NarrowTypeCacheKey, NarrowingOptions, NarrowingRequest};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::type_queries::{UnionMembersKind, classify_for_union_members};
 use crate::types::{FunctionShape, LiteralValue, ParamInfo, TypeData, TypeId};
@@ -9,7 +12,6 @@ use crate::visitor::{
     lazy_def_id, literal_value, object_shape_id, object_with_index_shape_id, template_literal_id,
     type_param_info, union_list_id,
 };
-use crate::{QueryDatabase, TypeDatabase};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -48,15 +50,6 @@ pub struct OptionalPropertyChainKey {
     pub properties: Vec<Atom>,
     pub optional_mask: u64,
     pub no_unchecked_indexed_access: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) struct NarrowTypeCacheKey {
-    source_type: TypeId,
-    guard: TypeGuard,
-    sense: GuardSense,
-    compiler_flags: u8,
-    resolver_generation: u64,
 }
 
 /// The result of a `typeof` expression, restricted to the 8 standard JavaScript types.
@@ -614,15 +607,14 @@ impl<'a> NarrowingContext<'a> {
         self
     }
 
-    fn cache_compiler_flags(&self) -> u8 {
-        let mut flags = 0;
-        if QueryDatabase::no_unchecked_indexed_access(self.db) {
-            flags |= 1 << 0;
-        }
-        if QueryDatabase::exact_optional_property_types(self.db) {
-            flags |= 1 << 1;
-        }
-        flags
+    fn narrowing_options(&self) -> NarrowingOptions {
+        NarrowingOptions::new()
+            .with_no_unchecked_indexed_access(TypeCompilerOptions::no_unchecked_indexed_access(
+                self.db,
+            ))
+            .with_exact_optional_property_types(TypeCompilerOptions::exact_optional_property_types(
+                self.db,
+            ))
     }
 
     pub(crate) fn resolver_generation(&self) -> u64 {
@@ -2185,19 +2177,29 @@ impl<'a> NarrowingContext<'a> {
         if !matches!(guard, TypeGuard::Predicate { .. }) {
             return self.narrow_type_uncached(source_type, guard, sense);
         }
+        let request = NarrowingRequest::new(source_type, guard.clone(), sense);
+        self.narrow_predicate_cached(&request)
+    }
 
-        let key = NarrowTypeCacheKey {
-            source_type,
-            guard: guard.clone(),
-            sense,
-            compiler_flags: self.cache_compiler_flags(),
-            resolver_generation: self.resolver_generation(),
-        };
+    /// Avoids re-cloning the guard when the caller already holds a `NarrowingRequest`.
+    pub fn narrow_type_with_request(&self, request: &NarrowingRequest) -> TypeId {
+        if !matches!(request.guard(), TypeGuard::Predicate { .. }) {
+            return self.narrow_type_uncached(
+                request.source_type(),
+                request.guard(),
+                request.sense(),
+            );
+        }
+        self.narrow_predicate_cached(request)
+    }
+
+    fn narrow_predicate_cached(&self, request: &NarrowingRequest) -> TypeId {
+        let key = request.cache_key(self.narrowing_options(), self.resolver_generation());
         if let Some(cached) = self.cache.narrow_type_cache.borrow().get(&key).copied() {
             return cached;
         }
-
-        let narrowed = self.narrow_type_uncached(source_type, guard, sense);
+        let narrowed =
+            self.narrow_type_uncached(request.source_type(), request.guard(), request.sense());
         self.cache
             .narrow_type_cache
             .borrow_mut()
@@ -2674,13 +2676,8 @@ mod cache_visibility_tests {
             .borrow_mut()
             .insert((TypeId::STRING, prop), Arc::new(discriminants));
         cache.narrow_type_cache.borrow_mut().insert(
-            NarrowTypeCacheKey {
-                source_type: TypeId::STRING,
-                guard: TypeGuard::Truthy,
-                sense: GuardSense::Positive,
-                compiler_flags: 0,
-                resolver_generation: 0,
-            },
+            NarrowingRequest::new(TypeId::STRING, TypeGuard::Truthy, GuardSense::Positive)
+                .cache_key(NarrowingOptions::new(), 0),
             TypeId::STRING,
         );
 

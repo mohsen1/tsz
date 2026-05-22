@@ -21,9 +21,9 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::NarrowingContext;
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
+use tsz_solver::narrowing::NarrowingContext;
 
 impl<'a> CheckerState<'a> {
     /// Merge overflow flags into the checker context (sticky: only ever sets to `true`).
@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn get_keyof_type_keys(
         &mut self,
         type_id: TypeId,
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
     ) -> FxHashSet<Atom> {
         if let Some(keyof_type) = get_keyof_type(db, type_id)
             && let Some(key_type) = keyof_object_properties(db, keyof_type)
@@ -1257,7 +1257,10 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Check if a type contains an error application (recursively).
-    fn type_contains_error_application(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+    fn type_contains_error_application(
+        db: &dyn tsz_solver::construction::TypeDatabase,
+        type_id: TypeId,
+    ) -> bool {
         // Check if it's a direct error application
         if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
             && app.base == TypeId::ERROR
@@ -2027,21 +2030,7 @@ impl<'a> CheckerState<'a> {
         let raw_source = self.substitute_this_type_if_needed(source);
         let raw_target = self.substitute_this_type_if_needed(target);
         let source = self.evaluate_type_for_assignability(raw_source);
-        let target = crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
-            self.ctx.types,
-            &self.ctx,
-            raw_source,
-            raw_target,
-        )
-        .or_else(|| {
-            crate::query_boundaries::assignability::homomorphic_mapped_projection_target(
-                self.ctx.types,
-                &self.ctx,
-                source,
-                raw_target,
-            )
-        })
-        .unwrap_or_else(|| self.evaluate_type_for_assignability(raw_target));
+        let target = self.evaluate_type_for_assignability(raw_target);
         (source, target)
     }
 
@@ -2061,6 +2050,20 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::execute_relation;
 
         let flags = self.ctx.pack_relation_flags();
+
+        if self
+            .homomorphic_mapped_display_source_assignable_to_target(request.source, request.target)
+        {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+
         let overrides = CheckerOverrideProvider::new(self, None);
 
         let mut outcome = execute_relation(
@@ -2100,6 +2103,17 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
+        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+            return crate::query_boundaries::assignability::RelationOutcome {
+                related: true,
+                depth_exceeded: false,
+                iteration_exceeded: false,
+                failure: None,
+                weak_union_violation: false,
+                property_classification: None,
+            };
+        }
+
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
@@ -2144,6 +2158,42 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
     ) -> bool {
         self.is_assignable_to(source, target)
+    }
+
+    /// Environment-aware boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the current
+    /// `TypeEnvironment` and no relation-cache lookup.
+    pub(crate) fn diagnostic_relation_boolean_guard_with_env(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_with_env(source, target)
+    }
+
+    /// Bivariant-callback boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally needs the legacy bivariant
+    /// callback relation rather than the default assignability relation.
+    pub(crate) fn diagnostic_relation_boolean_guard_bivariant(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_bivariant(source, target)
+    }
+
+    /// No-weak-checks boolean relation guard for diagnostic code paths.
+    ///
+    /// Use this only when the caller intentionally mirrors `tsc`'s
+    /// `isTypeAssignableTo` path without TS2559 weak-type detection.
+    pub(crate) fn diagnostic_relation_boolean_guard_no_weak_checks(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        self.is_assignable_to_no_weak_checks(source, target)
     }
 
     /// Check if source type is assignable to target type.
@@ -2195,6 +2245,10 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+            return true;
+        }
+
         // Variance-aware fast path: when both source and target are Application
         // types with the same base (e.g., Covariant<A> vs Covariant<B>), check
         // type arguments using computed variance BEFORE structural expansion.
@@ -2217,6 +2271,10 @@ impl<'a> CheckerState<'a> {
         }
 
         if self.same_base_application_to_constrained_type_param_target(source, target) {
+            return false;
+        }
+
+        if self.same_type_alias_application_args_reject(source, target) {
             return false;
         }
 
@@ -2552,23 +2610,19 @@ impl<'a> CheckerState<'a> {
                 if target_arg.is_any() {
                     return false;
                 }
-                // When variance for this parameter is `rejection_unreliable`
-                // (e.g. the type parameter only appears inside a template
-                // literal interpolation, where stringification can make a
-                // structurally valid assignment look like a covariant
-                // failure), the structural check that already passed is the
-                // authoritative signal. Forcing strict covariance here would
-                // override that with a spurious rejection — for example
-                // `AGen<number>` should be assignable to `AGen<string>` when
-                // `type AGen<T> = { field: \`a${T}\` }` because
-                // \`a${number}\` <: \`a${string}\`.
-                if let Some(ref vs) = variances
-                    && let Some(variance) = vs.get(i)
-                    && variance.rejection_unreliable()
-                {
-                    return false;
+                let variance = variances.as_ref().and_then(|vs| vs.get(i)).copied();
+                match variance {
+                    // Variance is unreliable or requires a structural fallback — the
+                    // structural check is authoritative; don't force a rejection here.
+                    Some(v) if v.rejection_unreliable() || v.needs_structural_fallback() => false,
+                    // K in `{ [P in K]: V }` is CONTRAVARIANT: a source with wider keys
+                    // covers a target with narrower keys, so reverse the direction.
+                    Some(v) if v.is_contravariant() => {
+                        !self.is_assignable_to(target_arg, source_arg)
+                    }
+                    // Covariant or unknown: source must be assignable to target.
+                    _ => !self.is_assignable_to(source_arg, target_arg),
                 }
-                !self.is_assignable_to(source_arg, target_arg)
             },
         )
     }
@@ -2591,6 +2645,27 @@ impl<'a> CheckerState<'a> {
 
     fn application_display_info(&self, type_id: TypeId) -> Option<(TypeId, Vec<TypeId>)> {
         self.application_info_or_display_alias(type_id)
+    }
+
+    fn homomorphic_mapped_display_source_assignable_to_target(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> bool {
+        let source_display = self.application_display_info(source);
+        let target_display = self.application_display_info(target);
+        let source = source_display
+            .map(|(base, args)| self.ctx.types.application(base, args))
+            .unwrap_or(source);
+        let target = target_display
+            .map(|(base, args)| self.ctx.types.application(base, args))
+            .unwrap_or(target);
+        crate::query_boundaries::assignability::homomorphic_mapped_source_assignable_to_target(
+            self.ctx.types,
+            &self.ctx,
+            source,
+            target,
+        )
     }
 
     /// Type assertion overlap uses tsc's comparable relation, not ordinary

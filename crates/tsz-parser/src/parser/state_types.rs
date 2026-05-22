@@ -940,7 +940,10 @@ impl ParserState {
         start_pos: u32,
         base_type: NodeIndex,
     ) -> NodeIndex {
-        if self.is_token(SyntaxKind::OpenBracketToken) && !self.scanner.has_preceding_line_break() {
+        if self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                return base_type;
+            }
             return self.parse_array_type(start_pos, base_type);
         }
 
@@ -2628,6 +2631,9 @@ impl ParserState {
         let mut current = element_type;
 
         while self.is_token(SyntaxKind::OpenBracketToken) {
+            if self.look_ahead_is_computed_type_member_boundary() {
+                break;
+            }
             if self.look_ahead_is_index_signature() {
                 break;
             }
@@ -2676,6 +2682,66 @@ impl ParserState {
         }
 
         current
+    }
+
+    fn look_ahead_is_computed_type_member_boundary(&mut self) -> bool {
+        if !self.scanner.has_preceding_line_break() || !self.is_token(SyntaxKind::OpenBracketToken)
+        {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        self.next_token(); // skip `[`
+        let empty_brackets = self.is_token(SyntaxKind::CloseBracketToken);
+        let mut bracket_depth = 1_u32;
+        while bracket_depth > 0 && !self.is_token(SyntaxKind::EndOfFileToken) {
+            match self.token() {
+                SyntaxKind::OpenBracketToken => {
+                    bracket_depth += 1;
+                    self.next_token();
+                }
+                SyntaxKind::CloseBracketToken => {
+                    bracket_depth -= 1;
+                    self.next_token();
+                }
+                _ => {
+                    self.next_token();
+                }
+            }
+        }
+
+        let is_boundary = if bracket_depth == 0 {
+            match self.token() {
+                SyntaxKind::ColonToken | SyntaxKind::OpenParenToken | SyntaxKind::LessThanToken => {
+                    true
+                }
+                SyntaxKind::SemicolonToken
+                | SyntaxKind::CommaToken
+                | SyntaxKind::CloseBraceToken
+                    if empty_brackets =>
+                {
+                    true
+                }
+                SyntaxKind::QuestionToken => {
+                    self.next_token();
+                    matches!(
+                        self.token(),
+                        SyntaxKind::ColonToken
+                            | SyntaxKind::OpenParenToken
+                            | SyntaxKind::LessThanToken
+                    )
+                }
+                _ => false,
+            }
+        } else {
+            false
+        };
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_boundary
     }
 
     /// Check if current keyword can be used as a property name

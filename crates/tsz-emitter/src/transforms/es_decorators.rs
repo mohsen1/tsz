@@ -16,6 +16,87 @@ use helpers::*;
 
 use crate::transforms::emit_utils::hygienic_temp_name;
 
+struct ClassDecoratorVars<'a> {
+    class_descriptor: &'a str,
+    class_this_var: &'a str,
+    class_super_var: &'a str,
+    class_decorators_var: &'a str,
+    class_extra_initializers_var: &'a str,
+    instance_extra_initializers_var: &'a str,
+    static_extra_initializers_var: &'a str,
+    metadata_var: &'a str,
+}
+
+struct DecoratorApplicationCtx<'a> {
+    decorated_members: &'a [DecoratedMember],
+    member_vars: &'a [MemberVarInfo],
+    class_decorators: &'a [String],
+    class_name: &'a str,
+    ctor_ref: &'a str,
+    computed_key_vars: &'a [(usize, String)],
+    has_extends: bool,
+    class_data: &'a tsz_parser::parser::node::ClassData,
+}
+
+struct ClassBodyCtx<'a> {
+    class_node: &'a tsz_parser::parser::node::Node,
+    class_data: &'a tsz_parser::parser::node::ClassData,
+    decorated_members: &'a [DecoratedMember],
+    member_vars: &'a [MemberVarInfo],
+    computed_key_vars: &'a [(usize, String)],
+    class_decorator_static_private_methods: &'a [ClassDecoratorStaticPrivateMethodInfo],
+}
+
+struct ClassBodyFlags<'a> {
+    has_any_instance: bool,
+    class_alias: &'a str,
+    class_name: &'a str,
+    defer_class_extra_init: bool,
+    class_this_var: &'a str,
+    class_extra_initializers_var: &'a str,
+    instance_extra_initializers_var: &'a str,
+}
+
+struct EsDecorateMemberCtx<'a> {
+    member_index: usize,
+    class_alias: &'a str,
+    computed_key_vars: &'a [(usize, String)],
+}
+
+struct EsDecorateVars<'a> {
+    instance_extra_initializers_var: &'a str,
+    static_extra_initializers_var: &'a str,
+    metadata_var: &'a str,
+}
+
+struct AutoAccessorClassCtx<'a> {
+    class_name: &'a str,
+    class_alias: &'a str,
+}
+
+struct CtorMembersCtx<'a> {
+    parameter_properties: &'a [ParameterPropertyInfo],
+    field_infos: &'a [DecoratedFieldInfo],
+    auto_accessor_infos: &'a [DecoratedAutoAccessorInfo],
+    decorated_members: &'a [DecoratedMember],
+    member_vars: &'a [MemberVarInfo],
+}
+
+struct CtorInitFlags {
+    fields_in_class_body: bool,
+    has_instance_fields: bool,
+    has_instance_auto_accessors: bool,
+    has_instance_method: bool,
+    has_extends: bool,
+}
+
+struct CtorOutputCtx<'a> {
+    class_name: &'a str,
+    indent: &'a str,
+    inner_indent: &'a str,
+    instance_extra_initializers_var: &'a str,
+}
+
 /// TC39 Decorator Emitter
 pub struct TC39DecoratorEmitter<'a> {
     arena: &'a NodeArena,
@@ -162,7 +243,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         let has_any_instance = decorated_members.iter().any(|m| !m.is_static);
-        let has_any_static = decorated_members.iter().any(|m| m.is_static);
+        let _has_any_static = decorated_members.iter().any(|m| m.is_static);
 
         // Compute temp var allocation.
         // For IIFE mode (ES2015), always need a class alias (_a).
@@ -453,26 +534,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 has_class_decorators && self.has_user_static_members(&class_data.members);
             out.push_str(&format!("{i2}static {{\n"));
             self.emit_decorator_application(
-                &decorated_members,
-                &member_vars,
-                &class_decorators,
-                &class_name,
-                &ctor_ref,
-                &computed_key_vars,
-                has_extends,
-                has_any_static,
-                class_data,
+                &DecoratorApplicationCtx {
+                    decorated_members: &decorated_members,
+                    member_vars: &member_vars,
+                    class_decorators: &class_decorators,
+                    class_name: &class_name,
+                    ctor_ref: &ctor_ref,
+                    computed_key_vars: &computed_key_vars,
+                    has_extends,
+                    class_data,
+                },
                 &i3,
                 &mut out,
                 defer_class_init_inner,
-                &class_descriptor_var,
-                &class_this_var,
-                &class_super_var,
-                &class_decorators_var,
-                &class_extra_initializers_var,
-                &instance_extra_initializers_var,
-                &static_extra_initializers_var,
-                &metadata_var,
+                &ClassDecoratorVars {
+                    class_descriptor: &class_descriptor_var,
+                    class_this_var: &class_this_var,
+                    class_super_var: &class_super_var,
+                    class_decorators_var: &class_decorators_var,
+                    class_extra_initializers_var: &class_extra_initializers_var,
+                    instance_extra_initializers_var: &instance_extra_initializers_var,
+                    static_extra_initializers_var: &static_extra_initializers_var,
+                    metadata_var: &metadata_var,
+                },
             );
             out.push_str(&format!("{i2}}}\n"));
         }
@@ -491,23 +575,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
             (&i3, &i4)
         };
         let (external_assignments, post_iife_assignments) = self.emit_class_body(
-            class_node,
-            class_data,
-            &decorated_members,
-            &member_vars,
-            &computed_key_vars,
-            has_any_instance,
-            has_any_static,
-            &ctor_ref,
-            &class_name,
+            &ClassBodyCtx {
+                class_node,
+                class_data,
+                decorated_members: &decorated_members,
+                member_vars: &member_vars,
+                computed_key_vars: &computed_key_vars,
+                class_decorator_static_private_methods: &class_decorator_static_private_methods,
+            },
+            &ClassBodyFlags {
+                has_any_instance,
+                class_alias: &ctor_ref,
+                class_name: &class_name,
+                defer_class_extra_init: defer_class_init,
+                class_this_var: &class_this_var,
+                class_extra_initializers_var: &class_extra_initializers_var,
+                instance_extra_initializers_var: &instance_extra_initializers_var,
+            },
             member_indent,
             member_inner_indent,
             &mut out,
-            defer_class_init,
-            &class_this_var,
-            &class_extra_initializers_var,
-            &instance_extra_initializers_var,
-            &class_decorator_static_private_methods,
         );
 
         if self.use_static_blocks {
@@ -536,26 +623,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // Decorator application as separate IIFE
             out.push_str(&format!("{i1}(() => {{\n"));
             self.emit_decorator_application(
-                &decorated_members,
-                &member_vars,
-                &class_decorators,
-                &class_name,
-                &ctor_ref,
-                &computed_key_vars,
-                has_extends,
-                has_any_static,
-                class_data,
+                &DecoratorApplicationCtx {
+                    decorated_members: &decorated_members,
+                    member_vars: &member_vars,
+                    class_decorators: &class_decorators,
+                    class_name: &class_name,
+                    ctor_ref: &ctor_ref,
+                    computed_key_vars: &computed_key_vars,
+                    has_extends,
+                    class_data,
+                },
                 &i2,
                 &mut out,
                 defer_class_init,
-                &class_descriptor_var,
-                &class_this_var,
-                &class_super_var,
-                &class_decorators_var,
-                &class_extra_initializers_var,
-                &instance_extra_initializers_var,
-                &static_extra_initializers_var,
-                &metadata_var,
+                &ClassDecoratorVars {
+                    class_descriptor: &class_descriptor_var,
+                    class_this_var: &class_this_var,
+                    class_super_var: &class_super_var,
+                    class_decorators_var: &class_decorators_var,
+                    class_extra_initializers_var: &class_extra_initializers_var,
+                    instance_extra_initializers_var: &instance_extra_initializers_var,
+                    static_extra_initializers_var: &static_extra_initializers_var,
+                    metadata_var: &metadata_var,
+                },
             );
             out.push_str(&format!("{i1}}})();\n"));
 
@@ -581,26 +671,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
             out.push_str(&format!("{i2}(() => {{\n"));
             self.emit_decorator_application(
-                &decorated_members,
-                &member_vars,
-                &class_decorators,
-                &class_name,
-                &ctor_ref,
-                &computed_key_vars,
-                has_extends,
-                has_any_static,
-                class_data,
+                &DecoratorApplicationCtx {
+                    decorated_members: &decorated_members,
+                    member_vars: &member_vars,
+                    class_decorators: &class_decorators,
+                    class_name: &class_name,
+                    ctor_ref: &ctor_ref,
+                    computed_key_vars: &computed_key_vars,
+                    has_extends,
+                    class_data,
+                },
                 &i3,
                 &mut out,
                 false,
-                &class_descriptor_var,
-                &class_this_var,
-                &class_super_var,
-                &class_decorators_var,
-                &class_extra_initializers_var,
-                &instance_extra_initializers_var,
-                &static_extra_initializers_var,
-                &metadata_var,
+                &ClassDecoratorVars {
+                    class_descriptor: &class_descriptor_var,
+                    class_this_var: &class_this_var,
+                    class_super_var: &class_super_var,
+                    class_decorators_var: &class_decorators_var,
+                    class_extra_initializers_var: &class_extra_initializers_var,
+                    instance_extra_initializers_var: &instance_extra_initializers_var,
+                    static_extra_initializers_var: &static_extra_initializers_var,
+                    metadata_var: &metadata_var,
+                },
             );
             out.push_str(&format!("{i2}}})(),\n"));
 
@@ -630,31 +723,35 @@ impl<'a> TC39DecoratorEmitter<'a> {
     }
 
     /// Emit the decorator application code (metadata, __esDecorate calls, etc.)
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     fn emit_decorator_application(
         &self,
-        decorated_members: &[DecoratedMember],
-        member_vars: &[MemberVarInfo],
-        class_decorators: &[String],
-        class_name: &str,
-        ctor_ref: &str,
-        computed_key_vars: &[(usize, String)],
-        has_extends: bool,
-        _has_any_static: bool,
-        class_data: &tsz_parser::parser::node::ClassData,
+        ctx: &DecoratorApplicationCtx<'_>,
         indent: &str,
         out: &mut String,
         defer_class_extra_init: bool,
-        class_descriptor: &str,
-        class_this_var: &str,
-        class_super_var: &str,
-        class_decorators_var: &str,
-        class_extra_initializers_var: &str,
-        instance_extra_initializers_var: &str,
-        static_extra_initializers_var: &str,
-        metadata_var: &str,
+        vars: &ClassDecoratorVars<'_>,
     ) {
+        let DecoratorApplicationCtx {
+            decorated_members,
+            member_vars,
+            class_decorators,
+            class_name,
+            ctor_ref,
+            computed_key_vars,
+            has_extends,
+            class_data,
+        } = ctx;
+        let ClassDecoratorVars {
+            class_descriptor,
+            class_this_var,
+            class_super_var,
+            class_decorators_var,
+            class_extra_initializers_var,
+            instance_extra_initializers_var,
+            static_extra_initializers_var,
+            metadata_var,
+        } = vars;
+        let has_extends = *has_extends;
         // Metadata
         let has_class_decorators = !class_decorators.is_empty();
         if has_extends {
@@ -719,14 +816,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
             self.emit_es_decorate_call(
                 member,
                 var_info,
-                member_class_ref,
-                computed_key_vars,
-                i,
+                &EsDecorateMemberCtx {
+                    member_index: i,
+                    class_alias: member_class_ref,
+                    computed_key_vars,
+                },
                 indent,
                 out,
-                instance_extra_initializers_var,
-                static_extra_initializers_var,
-                metadata_var,
+                &EsDecorateVars {
+                    instance_extra_initializers_var,
+                    static_extra_initializers_var,
+                    metadata_var,
+                },
             );
         }
 
@@ -764,27 +865,33 @@ impl<'a> TC39DecoratorEmitter<'a> {
     /// Emit class body members with field decorator rewriting.
     ///
     /// Returns (`pre_iife_assignments`, `post_iife_assignments`) for ES2015 comma expression placement.
-    #[allow(clippy::too_many_arguments)]
     fn emit_class_body(
         &self,
-        class_node: &tsz_parser::parser::node::Node,
-        class_data: &tsz_parser::parser::node::ClassData,
-        decorated_members: &[DecoratedMember],
-        member_vars: &[MemberVarInfo],
-        computed_key_vars: &[(usize, String)],
-        has_any_instance: bool,
-        _has_any_static: bool,
-        _class_alias: &str,
-        class_name: &str,
+        ctx: &ClassBodyCtx<'_>,
+        flags: &ClassBodyFlags<'_>,
         indent: &str,
         inner_indent: &str,
         out: &mut String,
-        defer_class_extra_init: bool,
-        class_this_var: &str,
-        class_extra_initializers_var: &str,
-        instance_extra_initializers_var: &str,
-        class_decorator_static_private_methods: &[ClassDecoratorStaticPrivateMethodInfo],
     ) -> (Vec<String>, Vec<String>) {
+        let ClassBodyCtx {
+            class_node,
+            class_data,
+            decorated_members,
+            member_vars,
+            computed_key_vars,
+            class_decorator_static_private_methods,
+        } = ctx;
+        let ClassBodyFlags {
+            has_any_instance,
+            class_alias: _class_alias,
+            class_name,
+            defer_class_extra_init,
+            class_this_var,
+            class_extra_initializers_var,
+            instance_extra_initializers_var,
+        } = flags;
+        let has_any_instance = *has_any_instance;
+        let defer_class_extra_init = *defer_class_extra_init;
         let run_init = self.helper("__runInitializers");
         let fields_in_class_body = self.use_static_blocks && self.use_define_for_class_fields;
 
@@ -834,20 +941,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let constructor_output = if needs_ctor {
             Some(self.render_decorated_constructor(
                 source_ctor.as_ref(),
-                &parameter_properties,
-                &field_infos,
-                &auto_accessor_infos,
-                decorated_members,
-                member_vars,
-                fields_in_class_body,
-                has_instance_fields,
-                has_instance_auto_accessors,
-                has_instance_method,
-                class_name,
-                self.has_extends_clause(&class_data.heritage_clauses),
-                indent,
-                inner_indent,
-                instance_extra_initializers_var,
+                &CtorMembersCtx {
+                    parameter_properties: &parameter_properties,
+                    field_infos: &field_infos,
+                    auto_accessor_infos: &auto_accessor_infos,
+                    decorated_members,
+                    member_vars,
+                },
+                &CtorInitFlags {
+                    fields_in_class_body,
+                    has_instance_fields,
+                    has_instance_auto_accessors,
+                    has_instance_method,
+                    has_extends: self.has_extends_clause(&class_data.heritage_clauses),
+                },
+                &CtorOutputCtx {
+                    class_name,
+                    indent,
+                    inner_indent,
+                    instance_extra_initializers_var,
+                },
             ))
         } else {
             None
@@ -978,8 +1091,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         info,
                         var_info,
                         injected_assignments.get(&member_idx).map(Vec::as_slice),
-                        class_name,
-                        _class_alias,
+                        &AutoAccessorClassCtx {
+                            class_name,
+                            class_alias: _class_alias,
+                        },
                         indent,
                         out,
                     );
@@ -1099,7 +1214,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 )
             })
         });
-        let es2015_class_decorators = !self.use_static_blocks && _class_alias == "_classThis";
+        let es2015_class_decorators = !self.use_static_blocks && *_class_alias == "_classThis";
         let skip_sink = if self.use_static_blocks {
             !has_computed_method_sink && !decorated_members.is_empty()
         } else if es2015_class_decorators {
@@ -1275,25 +1390,33 @@ impl<'a> TC39DecoratorEmitter<'a> {
         (external_assignments, post_iife_assignments)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_decorated_constructor(
         &self,
         source_ctor: Option<&ConstructorInfo>,
-        parameter_properties: &[ParameterPropertyInfo],
-        field_infos: &[DecoratedFieldInfo],
-        auto_accessor_infos: &[DecoratedAutoAccessorInfo],
-        decorated_members: &[DecoratedMember],
-        member_vars: &[MemberVarInfo],
-        fields_in_class_body: bool,
-        has_instance_fields: bool,
-        has_instance_auto_accessors: bool,
-        has_instance_method: bool,
-        class_name: &str,
-        has_extends: bool,
-        indent: &str,
-        inner_indent: &str,
-        instance_extra_initializers_var: &str,
+        members: &CtorMembersCtx<'_>,
+        flags: &CtorInitFlags,
+        output_ctx: &CtorOutputCtx<'_>,
     ) -> String {
+        let CtorMembersCtx {
+            parameter_properties,
+            field_infos,
+            auto_accessor_infos,
+            decorated_members,
+            member_vars,
+        } = members;
+        let CtorInitFlags {
+            fields_in_class_body,
+            has_instance_fields,
+            has_instance_auto_accessors,
+            has_instance_method,
+            has_extends,
+        } = *flags;
+        let CtorOutputCtx {
+            class_name,
+            indent,
+            inner_indent,
+            instance_extra_initializers_var,
+        } = output_ctx;
         let run_init = self.helper("__runInitializers");
         let parameter_properties_run_instance_initializers =
             has_instance_method && !parameter_properties.is_empty();
@@ -1474,7 +1597,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             output.push_str(&format!("{indent}}}\n"));
         } else {
-            output.push_str(") {\n");
+            // Synthetic constructor: derived classes need a pass-through to super.
+            // tsc always uses `...args` / `super(...args)` for the forwarding form.
+            if has_extends {
+                output.push_str("...args) {\n");
+                output.push_str(&format!("{inner_indent}super(...args);\n"));
+            } else {
+                output.push_str(") {\n");
+            }
             for call in &ctor_init_calls {
                 output.push_str(call);
             }
@@ -1483,18 +1613,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
         output
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn emit_decorated_auto_accessor_member(
         &self,
         member: &DecoratedMember,
         info: &DecoratedAutoAccessorInfo,
         var_info: &MemberVarInfo,
         injected_assignments: Option<&[String]>,
-        class_name: &str,
-        class_alias: &str,
+        class_ctx: &AutoAccessorClassCtx<'_>,
         indent: &str,
         out: &mut String,
     ) {
+        let AutoAccessorClassCtx {
+            class_name,
+            class_alias,
+        } = class_ctx;
         let run_init = self.helper("__runInitializers");
         let init_var = var_info
             .initializers_var
@@ -2307,20 +2439,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn emit_es_decorate_call(
         &self,
         member: &DecoratedMember,
         var_info: &MemberVarInfo,
-        class_alias: &str,
-        computed_key_vars: &[(usize, String)],
-        member_index: usize,
+        member_ctx: &EsDecorateMemberCtx<'_>,
         indent: &str,
         out: &mut String,
-        instance_extra_initializers_var: &str,
-        static_extra_initializers_var: &str,
-        metadata_var: &str,
+        vars: &EsDecorateVars<'_>,
     ) {
+        let EsDecorateMemberCtx {
+            member_index,
+            class_alias,
+            computed_key_vars,
+        } = member_ctx;
+        let EsDecorateVars {
+            instance_extra_initializers_var,
+            static_extra_initializers_var,
+            metadata_var,
+        } = vars;
         let kind_str = match member.kind {
             MemberKind::Method => "method",
             MemberKind::Getter => "getter",
@@ -2329,8 +2466,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
             MemberKind::Accessor => "accessor",
         };
 
-        let name_str = self.member_name_for_context(member, computed_key_vars, member_index);
-        let access_str = self.member_access_for_context(member, computed_key_vars, member_index);
+        let name_str = self.member_name_for_context(member, computed_key_vars, *member_index);
+        let access_str = self.member_access_for_context(member, computed_key_vars, *member_index);
 
         let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
 

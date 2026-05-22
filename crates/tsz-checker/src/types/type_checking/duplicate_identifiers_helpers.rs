@@ -371,15 +371,13 @@ impl<'a> CheckerState<'a> {
         let mut seen = FxHashSet::default();
 
         let mut push_remote_decl =
-            |file_idx: usize, decl_idx: NodeIndex, flags: u32, is_exported: bool| {
+            |file_idx: usize,
+             decl_idx: NodeIndex,
+             flags: u32,
+             is_exported: bool,
+             origin: DuplicateDeclarationOrigin| {
                 if seen.insert((file_idx, decl_idx.0)) {
-                    declarations.push((
-                        decl_idx,
-                        flags,
-                        false,
-                        is_exported,
-                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
-                    ));
+                    declarations.push((decl_idx, flags, false, is_exported, origin));
                 }
             };
 
@@ -407,7 +405,13 @@ impl<'a> CheckerState<'a> {
                         return;
                     };
                     let is_exported = self.is_declaration_exported(arena, augmentation.node);
-                    push_remote_decl(augmenting_file_idx, augmentation.node, flags, is_exported);
+                    push_remote_decl(
+                        augmenting_file_idx,
+                        augmentation.node,
+                        flags,
+                        is_exported,
+                        DuplicateDeclarationOrigin::TargetedModuleAugmentation,
+                    );
                     return;
                 }
 
@@ -415,7 +419,15 @@ impl<'a> CheckerState<'a> {
                     for (decl_idx, flags, is_exported) in
                         self.export_surface_declarations_in_file(target_idx, name)
                     {
-                        push_remote_decl(target_idx, decl_idx, flags, is_exported);
+                        push_remote_decl(
+                            target_idx,
+                            decl_idx,
+                            flags,
+                            is_exported,
+                            DuplicateDeclarationOrigin::CurrentFileAugmentationTargetExport(
+                                target_idx,
+                            ),
+                        );
                     }
                 }
             };
@@ -2132,6 +2144,127 @@ impl<'a> CheckerState<'a> {
                     member_idx,
                     diagnostic_codes::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
                     &[],
+                );
+            }
+        }
+    }
+
+    /// TS2300 for an enum member whose name collides with an export of a
+    /// namespace it merges with.
+    ///
+    /// When an enum and a same-named namespace merge (a valid merge) and the
+    /// enum declares member `A` while the namespace `export`s `A`, both `A`s
+    /// occupy one slot in the merged symbol's export table and `tsc` reports
+    /// "Duplicate identifier" on each. The collision rule is the binder's own
+    /// exclusion set: an enum member excludes everything in `VALUE | TYPE`
+    /// (`ENUM_MEMBER_EXCLUDES`), so any *exported* namespace member that carries
+    /// a value or type meaning conflicts (`const`/`var`, `function`, `class`,
+    /// nested namespace, `type`, `interface`). Non-exported namespace locals
+    /// live in a different table and never collide, and distinct names merge
+    /// cleanly.
+    pub(super) fn check_enum_namespace_export_collisions(
+        &mut self,
+        declarations: &[(NodeIndex, u32)],
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use rustc_hash::FxHashMap;
+
+        // One pass over the merged symbol's declarations: collect the namespace
+        // blocks and map each enum member name to its name node.
+        let mut module_decls: Vec<NodeIndex> = Vec::new();
+        let mut enum_member_name_nodes: FxHashMap<String, NodeIndex> = FxHashMap::default();
+        for &(decl_idx, flags) in declarations {
+            if (flags & symbol_flags::MODULE) != 0 {
+                module_decls.push(decl_idx);
+                continue;
+            }
+            if (flags & symbol_flags::ENUM) == 0 {
+                continue;
+            }
+            let Some(enum_decl) = self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_enum(node))
+            else {
+                continue;
+            };
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(name_node) = self
+                    .ctx
+                    .arena
+                    .get(member_idx)
+                    .and_then(|node| self.ctx.arena.get_enum_member(node))
+                    .map(|member| member.name)
+                else {
+                    continue;
+                };
+                let Some(name_data) = self.ctx.arena.get(name_node) else {
+                    continue;
+                };
+                let name = if let Some(ident) = self.ctx.arena.get_identifier(name_data) {
+                    ident.escaped_text.clone()
+                } else if let Some(literal) = self.ctx.arena.get_literal(name_data) {
+                    literal.text.clone()
+                } else {
+                    continue;
+                };
+                enum_member_name_nodes.entry(name).or_insert(name_node);
+            }
+        }
+        if module_decls.is_empty() || enum_member_name_nodes.is_empty() {
+            return;
+        }
+
+        for module_decl_idx in module_decls {
+            // Snapshot only the namespace exports whose name matches an enum
+            // member, so the `scopes` borrow is released before we emit.
+            let candidates: Vec<(String, SymbolId)> =
+                match self.ctx.binder.scopes.iter().find(|scope| {
+                    scope.kind == ContainerKind::Module && scope.container_node == module_decl_idx
+                }) {
+                    Some(scope) => scope
+                        .table
+                        .iter()
+                        .filter(|(name, _)| enum_member_name_nodes.contains_key(name.as_str()))
+                        .map(|(name, &sym_id)| (name.clone(), sym_id))
+                        .collect(),
+                    None => continue,
+                };
+            for (name, sym_id) in candidates {
+                let enum_name_node = enum_member_name_nodes[&name];
+                // An enum member excludes everything in `VALUE | TYPE`, so only
+                // an *exported* namespace member that carries a value or type
+                // meaning collides; the guard skips non-exported locals.
+                let export_decl = match self.ctx.binder.get_symbol(sym_id) {
+                    Some(sym)
+                        if sym.is_exported
+                            && (sym.flags & symbol_flags::ENUM_MEMBER_EXCLUDES) != 0 =>
+                    {
+                        if sym.value_declaration.is_some() {
+                            sym.value_declaration
+                        } else if let Some(&decl) = sym.declarations.first() {
+                            decl
+                        } else {
+                            continue;
+                        }
+                    }
+                    _ => continue,
+                };
+                let export_name_node = self
+                    .get_declaration_name_node(export_decl)
+                    .unwrap_or(export_decl);
+                // `error_at_node` dedupes by (start, code), so repeating the
+                // enum member node across several colliding exports is harmless.
+                self.error_at_node_msg(
+                    enum_name_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name],
+                );
+                self.error_at_node_msg(
+                    export_name_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name],
                 );
             }
         }

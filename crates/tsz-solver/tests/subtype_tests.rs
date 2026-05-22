@@ -1,10 +1,11 @@
 use super::*;
-use crate::TypeInterner;
-use crate::TypeResolver;
+use crate::Visibility;
 use crate::construction::QueryCache;
+use crate::construction::TypeInterner;
 use crate::def::DefId;
 use crate::diagnostics::SubtypeFailureReason;
-use crate::{TypeSubstitution, Visibility, instantiate_type};
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
 use tsz_binder::SymbolId;
 
 #[test]
@@ -1506,7 +1507,7 @@ impl TypeResolver for ReadonlyArrayDefResolver {
     fn resolve_ref(
         &self,
         _symbol: SymbolRef,
-        _interner: &dyn crate::TypeDatabase,
+        _interner: &dyn crate::construction::TypeDatabase,
     ) -> Option<TypeId> {
         None
     }
@@ -3715,6 +3716,189 @@ fn test_object_with_index_satisfies_numeric_property_number_index() {
 
     // Index signatures do NOT satisfy required named properties (TS2741)
     assert!(!checker.is_subtype_of(source, target));
+}
+
+// =============================================================================
+// Recursion-identity tests for conditional alias Applications (Bug B fix)
+//
+// Structural rule: when same-base Application types whose base is a conditional
+// type alias are compared, def_guard cycle detection must engage. After the guard
+// sees the same (DefId, DefId) pair a second time it returns compatible (cycle
+// detected), matching tsc's getRecursionIdentity behavior for deeply recursive
+// conditional types such as RequiredDeep<T>, DeepReadonly<T>, and NestedRecord<K,V>.
+// =============================================================================
+
+/// Build a recursive conditional alias application and verify that the
+/// subtype check terminates (does not hang or overflow) and returns a
+/// non-False result, matching tsc's coinductive treatment of recursive
+/// conditional aliases.
+///
+/// Models a type family similar to:
+///   `type Wrap<T> = T extends object ? { inner: Wrap<T> } : T`
+///
+/// Two Applications of the same conditional alias base should terminate via
+/// the `def_guard` cycle detector rather than recursing indefinitely.
+#[test]
+fn test_same_base_conditional_alias_check_terminates() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // DefId for the conditional alias "Wrap"
+    let wrap_def = DefId(9001);
+
+    // Type parameter T
+    let t_info = TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let t_type = interner.type_param(t_info);
+
+    // Body: T extends object ? { inner: Wrap<T> } : T
+    // (represented as a Conditional whose true branch is a placeholder)
+    // For the test we use a simple recursive conditional body
+    let lazy_wrap = interner.lazy(wrap_def);
+    let app_of_t = interner.application(lazy_wrap, vec![t_type]);
+
+    let prop_inner = interner.intern_string("inner");
+    let true_branch = interner.object(vec![PropertyInfo::new(prop_inner, app_of_t)]);
+
+    let cond_body = interner.conditional(ConditionalType {
+        check_type: t_type,
+        extends_type: TypeId::OBJECT,
+        true_type: true_branch,
+        false_type: t_type,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(wrap_def, cond_body, vec![t_info]);
+    env.insert_def_kind(wrap_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(wrap_def);
+    let app_string = interner.application(base, vec![TypeId::STRING]);
+    let app_number = interner.application(base, vec![TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // The check must terminate (not hang). The result is either True/CycleDetected
+    // (cycle guard fired, compatible assumed) or False (structurally incompatible
+    // before cycle). Either is acceptable — what matters is termination.
+    let result = checker.check_subtype(app_string, app_string);
+    // Same application is always a subtype of itself
+    assert!(
+        result.is_true(),
+        "Wrap<string> should be a subtype of itself"
+    );
+
+    let result2 = checker.check_subtype(app_string, app_number);
+    assert!(
+        result2.is_false(),
+        "Wrap<string> should not be a subtype of Wrap<number>; recursion identity must not hide different args"
+    );
+}
+
+/// Verify that two Applications of the same conditional alias with identical
+/// args are recognized as compatible (cycle detected) even when the alias
+/// body is deeply recursive.
+///
+/// Models `RequiredDeep<T>` / `DeepReadonly<T>` patterns where
+/// `Alias<X>` compared against itself should always be compatible.
+/// Tests name variants (K and X) to prove the fix is not name-dependent.
+#[test]
+fn test_conditional_alias_self_comparison_is_compatible() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    // DefId for alias "DeepReq"
+    let alias_def = DefId(9002);
+
+    let k_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let k_type = interner.type_param(k_info);
+
+    // Body: K extends string ? { v: DeepReq<K> } : never
+    let lazy_alias = interner.lazy(alias_def);
+    let recursive_app = interner.application(lazy_alias, vec![k_type]);
+
+    let prop_v = interner.intern_string("v");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_v, recursive_app)]);
+
+    let body = interner.conditional(ConditionalType {
+        check_type: k_type,
+        extends_type: TypeId::STRING,
+        true_type: true_br,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(alias_def, body, vec![k_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app1 = interner.application(base, vec![TypeId::STRING]);
+    let app2 = interner.application(base, vec![TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    // Two Applications of the same conditional alias with the same arg
+    // must be found compatible (tsc's recursion identity: assume related on cycle).
+    let result = checker.check_subtype(app1, app2);
+    assert!(
+        result.is_true(),
+        "DeepReq<string> <: DeepReq<string> should be compatible (recursion identity)"
+    );
+}
+
+/// Same test with type parameter named "X" instead of "K" to prove the fix
+/// is structural (not name-dependent), per the anti-hardcoding directive (§25).
+#[test]
+fn test_conditional_alias_self_comparison_is_compatible_renamed_param() {
+    let interner = TypeInterner::new();
+    let mut env = TypeEnvironment::new();
+
+    let alias_def = DefId(9003);
+
+    let x_info = TypeParamInfo {
+        name: interner.intern_string("X"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let x_type = interner.type_param(x_info);
+
+    let lazy_alias = interner.lazy(alias_def);
+    let recursive_app = interner.application(lazy_alias, vec![x_type]);
+
+    let prop_v = interner.intern_string("value");
+    let true_br = interner.object(vec![PropertyInfo::new(prop_v, recursive_app)]);
+
+    let body = interner.conditional(ConditionalType {
+        check_type: x_type,
+        extends_type: TypeId::STRING,
+        true_type: true_br,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    });
+
+    env.insert_def_with_params(alias_def, body, vec![x_info]);
+    env.insert_def_kind(alias_def, crate::def::DefKind::TypeAlias);
+
+    let base = interner.lazy(alias_def);
+    let app1 = interner.application(base, vec![TypeId::NUMBER]);
+    let app2 = interner.application(base, vec![TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    let result = checker.check_subtype(app1, app2);
+    assert!(
+        result.is_true(),
+        "DeepReq<number> <: DeepReq<number> (X-named param) should be compatible"
+    );
 }
 
 #[test]
@@ -26808,8 +26992,9 @@ fn test_explain_failure_resolves_typequery_to_structural_form() {
     //
     // Assignment `x5 = Outer` where `x5: typeof importInst` should produce
     // MissingProperty for 'C' (TS2741), not generic TypeMismatch (TS2322).
+    use crate::SymbolRef;
+    use crate::relations::subtype::TypeEnvironment;
     use crate::types::TypeData;
-    use crate::{SymbolRef, TypeEnvironment};
 
     let interner = TypeInterner::new();
 
@@ -27091,5 +27276,211 @@ fn global_function_intrinsic_assignability_is_one_way() {
     assert!(
         !checker.is_subtype_of(TypeId::FUNCTION, specific_fn),
         "the global Function type does not assign to a specific call signature"
+    );
+}
+
+// =============================================================================
+// Mapped Type Key Constraint Contravariance Tests
+// =============================================================================
+//
+// Structural rule: when `type M<K, V> = { [P in K]: V }` is used,
+// K is CONTRAVARIANT — a source with wider keys (K1 ⊇ K2) is assignable to
+// a target with narrower keys (K2) because the source provides every property
+// the target requires.  `M<"a"|"b"|"c", number> <: M<"a"|"b", number>` = TRUE.
+
+fn unconstrained_type_param(interner: &TypeInterner, name: &str) -> TypeParamInfo {
+    TypeParamInfo {
+        name: interner.intern_string(name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }
+}
+
+fn mapped_type_alias_env(
+    def_id: DefId,
+    body: TypeId,
+    params: Vec<TypeParamInfo>,
+) -> TypeEnvironment {
+    let mut env = TypeEnvironment::new();
+    env.insert_def_with_params(def_id, body, params);
+    env.insert_def_kind(def_id, crate::def::DefKind::TypeAlias);
+    env
+}
+
+/// Core case: `type M<K, V> = { [P in K]: V }` — Application with wider key
+/// constraint should be assignable to one with narrower key constraint.
+#[test]
+fn test_mapped_key_constraint_application_wider_source_subtype_of_narrower_target() {
+    // M<"a"|"b"|"c", number> <: M<"a"|"b", number>   ← TRUE  (wider ⊇ narrower)
+    // M<"a"|"b", number>      <: M<"a"|"b"|"c", number> ← FALSE (narrower ⊄ wider)
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9200);
+    let k_param = unconstrained_type_param(&interner, "K");
+    let v_param = unconstrained_type_param(&interner, "V");
+    let k_type = interner.type_param(k_param);
+    let v_type = interner.type_param(v_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "P"),
+        constraint: k_type,
+        name_type: None,
+        template: v_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![k_param, v_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abc = interner.union(vec![lit_a, lit_b, lit_c]);
+
+    let app_abc = interner.application(base, vec![keys_abc, TypeId::NUMBER]);
+    let app_ab = interner.application(base, vec![keys_ab, TypeId::NUMBER]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        checker.is_subtype_of(app_abc, app_ab),
+        "M<'a'|'b'|'c', number> must be assignable to M<'a'|'b', number> — \
+         key constraint is contravariant (wider source covers narrower target)"
+    );
+    assert!(
+        !checker.is_subtype_of(app_ab, app_abc),
+        "M<'a'|'b', number> must NOT be assignable to M<'a'|'b'|'c', number> — \
+         narrower source does not cover wider target"
+    );
+}
+
+/// Renamed params (X, Y instead of K, V) prove the fix is structural, not name-dependent.
+#[test]
+fn test_mapped_key_constraint_application_wider_source_renamed_params() {
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9201);
+    let x_param = unconstrained_type_param(&interner, "X");
+    let y_param = unconstrained_type_param(&interner, "Y");
+    let x_type = interner.type_param(x_param);
+    let y_type = interner.type_param(y_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "Q"),
+        constraint: x_type,
+        name_type: None,
+        template: y_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![x_param, y_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let lit_d = interner.literal_string("d");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abcd = interner.union(vec![lit_a, lit_b, lit_c, lit_d]);
+
+    let app_abcd = interner.application(base, vec![keys_abcd, TypeId::STRING]);
+    let app_ab = interner.application(base, vec![keys_ab, TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        checker.is_subtype_of(app_abcd, app_ab),
+        "M<4 keys, string> must be assignable to M<2 keys, string>"
+    );
+    assert!(
+        !checker.is_subtype_of(app_ab, app_abcd),
+        "M<2 keys, string> must NOT be assignable to M<4 keys, string>"
+    );
+}
+
+/// Raw mapped types (not wrapped in Application): wider constraint ⊇ narrower.
+#[test]
+fn test_mapped_key_constraint_raw_wider_subtype_of_narrower() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let iter_var = unconstrained_type_param(&interner, "K");
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_c = interner.literal_string("c");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+    let keys_abc = interner.union(vec![lit_a, lit_b, lit_c]);
+
+    let mapped_abc = interner.mapped(MappedType {
+        type_param: iter_var,
+        constraint: keys_abc,
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let mapped_ab = interner.mapped(MappedType {
+        type_param: iter_var,
+        constraint: keys_ab,
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    assert!(
+        checker.is_subtype_of(mapped_abc, mapped_ab),
+        "{{[K in 'a'|'b'|'c']: number}} must be assignable to {{[K in 'a'|'b']: number}}"
+    );
+    assert!(
+        !checker.is_subtype_of(mapped_ab, mapped_abc),
+        "{{[K in 'a'|'b']: number}} must NOT be assignable to {{[K in 'a'|'b'|'c']: number}}"
+    );
+}
+
+/// Value type (template) mismatch must still be rejected even when key sets match.
+#[test]
+fn test_mapped_key_constraint_value_mismatch_rejected() {
+    let interner = TypeInterner::new();
+
+    let def_id = DefId(9202);
+    let k_param = unconstrained_type_param(&interner, "K");
+    let v_param = unconstrained_type_param(&interner, "V");
+    let k_type = interner.type_param(k_param);
+    let v_type = interner.type_param(v_param);
+
+    let body = interner.mapped(MappedType {
+        type_param: unconstrained_type_param(&interner, "P"),
+        constraint: k_type,
+        name_type: None,
+        template: v_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+
+    let env = mapped_type_alias_env(def_id, body, vec![k_param, v_param]);
+    let base = interner.lazy(def_id);
+
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let keys_ab = interner.union(vec![lit_a, lit_b]);
+
+    let app_num = interner.application(base, vec![keys_ab, TypeId::NUMBER]);
+    let app_str = interner.application(base, vec![keys_ab, TypeId::STRING]);
+
+    let mut checker = SubtypeChecker::with_resolver(&interner, &env);
+
+    assert!(
+        !checker.is_subtype_of(app_num, app_str),
+        "M<keys, number> must NOT be assignable to M<keys, string> — V is covariant"
+    );
+    assert!(
+        !checker.is_subtype_of(app_str, app_num),
+        "M<keys, string> must NOT be assignable to M<keys, number> — V is covariant"
     );
 }

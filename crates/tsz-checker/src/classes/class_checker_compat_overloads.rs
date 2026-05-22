@@ -5,8 +5,19 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext::METHOD_SIGNATURE;
 use tsz_solver::TypeId;
 
+pub(crate) struct InterfaceOverloadCoverageCtx<'a> {
+    pub(crate) iface_name: NodeIndex,
+    pub(crate) derived_name: &'a str,
+    pub(crate) base_name: &'a str,
+    pub(crate) base_iface_indices: &'a [NodeIndex],
+    pub(crate) derived_member_names: &'a rustc_hash::FxHashSet<String>,
+    pub(crate) derived_members: &'a [(String, TypeId, NodeIndex, u16, bool, bool)],
+    pub(crate) substitution: &'a TypeSubstitution,
+    pub(crate) interface_self_type: Option<TypeId>,
+}
+
 fn overload_method_wrapper_value_type(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn tsz_solver::construction::QueryDatabase,
     type_id: TypeId,
 ) -> Option<TypeId> {
     if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(types, type_id)
@@ -18,18 +29,71 @@ fn overload_method_wrapper_value_type(
     None
 }
 
+fn function_signature_uses_own_type_params(
+    checker: &CheckerState<'_>,
+    shape: &tsz_solver::FunctionShape,
+) -> bool {
+    let own_type_params = shape
+        .type_params
+        .iter()
+        .map(|param| checker.ctx.types.type_param(*param))
+        .collect::<Vec<_>>();
+    if own_type_params.is_empty() {
+        return false;
+    }
+
+    let contains_own_param = |type_id: TypeId| {
+        own_type_params.iter().copied().any(|param_type| {
+            crate::query_boundaries::common::contains_type_by_id(
+                checker.ctx.types,
+                type_id,
+                param_type,
+            )
+        })
+    };
+
+    shape
+        .params
+        .iter()
+        .any(|param| contains_own_param(param.type_id))
+        || shape.this_type.is_some_and(contains_own_param)
+        || contains_own_param(shape.return_type)
+}
+
+fn can_use_fresh_generic_overload_assignability(
+    checker: &CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    let (Some(source_shape), Some(target_shape)) = (
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, source),
+        crate::query_boundaries::common::function_shape_for_type(checker.ctx.types, target),
+    ) else {
+        return false;
+    };
+
+    !source_shape.type_params.is_empty()
+        && source_shape.type_params.len() == target_shape.type_params.len()
+        && source_shape.params.len() == target_shape.params.len()
+        && function_signature_uses_own_type_params(checker, &source_shape)
+        && function_signature_uses_own_type_params(checker, &target_shape)
+}
+
 impl<'a> CheckerState<'a> {
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn check_interface_overload_coverage(
         &mut self,
-        iface_name: NodeIndex,
-        derived_name: &str,
-        base_name: &str,
-        base_iface_indices: &[NodeIndex],
-        derived_member_names: &rustc_hash::FxHashSet<String>,
-        derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
-        substitution: &TypeSubstitution,
+        ctx: InterfaceOverloadCoverageCtx<'_>,
     ) {
+        let InterfaceOverloadCoverageCtx {
+            iface_name,
+            derived_name,
+            base_name,
+            base_iface_indices,
+            derived_member_names,
+            derived_members,
+            substitution,
+            interface_self_type,
+        } = ctx;
         let base_method_overloads: Vec<(String, Vec<TypeId>)>;
         {
             let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
@@ -54,10 +118,14 @@ impl<'a> CheckerState<'a> {
                         if !derived_member_names.contains(&name) {
                             continue;
                         }
-                        let base_type = instantiate_type(
+                        let base_type = crate::query_boundaries::class::maybe_substitute_this_type(
                             self.ctx.types,
-                            self.get_type_of_interface_member(base_member_idx),
-                            substitution,
+                            instantiate_type(
+                                self.ctx.types,
+                                self.get_type_of_interface_member(base_member_idx),
+                                substitution,
+                            ),
+                            interface_self_type,
                         );
                         by_name.entry(name).or_default().push(base_type);
                     }
@@ -187,10 +255,19 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::contains_error_type_in_args(self.ctx.types, signature)
         };
 
+        tracing::debug!(
+            derived = derived_name,
+            base = base_name,
+            n_base_overloaded = base_method_overloads.len(),
+            interface_self_type = interface_self_type.map(|t| t.0),
+            "overload coverage check"
+        );
+
         // For overloaded method inheritance, tsc compatibility hinges on the trailing
         // implementation signature.
         'overload_check: for (method_name, base_sigs) in &base_method_overloads {
             let Some(derived_sigs) = derived_method_overloads.get(method_name) else {
+                tracing::debug!(method = method_name, "no derived overloads found");
                 continue;
             };
             if base_sigs.iter().copied().any(signature_contains_error)
@@ -203,6 +280,10 @@ impl<'a> CheckerState<'a> {
             if has_non_specialized_signature(base_sigs)
                 && !has_non_specialized_signature_with_node(derived_sigs)
             {
+                tracing::debug!(
+                    method = method_name,
+                    "base has non-specialized but derived does not -> error"
+                );
                 self.error_at_node(
                     iface_name,
                     &format!(
@@ -232,7 +313,19 @@ impl<'a> CheckerState<'a> {
                     _ => (derived_trailing_sig, base_trailing_sig),
                 };
 
-            if !self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig)
+            // When the no-erase check fails for equivalent generic trailing
+            // overload signatures, allow the normal relation to fresh-instantiate
+            // the method-local type params. Keep this gated to matching generic
+            // shapes so ordinary TS2430 overload mismatches still report.
+            let strict_assignable =
+                self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig);
+            let assignable = strict_assignable
+                || (can_use_fresh_generic_overload_assignability(
+                    self,
+                    derived_compare_sig,
+                    base_compare_sig,
+                ) && self.is_assignable_to(derived_compare_sig, base_compare_sig));
+            if !assignable
                 && !self.should_suppress_assignability_for_parse_recovery(
                     derived_trailing_idx,
                     derived_trailing_idx,

@@ -12,12 +12,12 @@
 
 use std::sync::Arc;
 
-use crate::AssignabilityChecker;
-use crate::TypeDatabase;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
 use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{
@@ -29,8 +29,8 @@ use crate::visitor::{
     enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
     is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, string_intrinsic_components,
-    template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
-    unique_symbol_ref,
+    template_literal_id, template_literal_spans_full_string_domain, tuple_list_id, type_param_info,
+    type_query_symbol, union_list_id, unique_symbol_ref,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::limits;
@@ -568,35 +568,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         result
     }
 
-    /// Apply compiler flags from a packed u16 bitmask.
-    ///
-    /// This unpacks the flags used by `RelationCacheKey` and applies them to the checker.
-    /// The bit layout matches the cache key definition in types.rs:
-    /// - bit 0: `strict_null_checks`
-    /// - bit 1: `strict_function_types`
-    /// - bit 2: `exact_optional_property_types`
-    /// - bit 3: `no_unchecked_indexed_access`
-    /// - bit 4: `disable_method_bivariance`
-    /// - bit 5: `allow_void_return`
-    /// - bit 6: `allow_bivariant_rest`
-    /// - bit 7: `allow_bivariant_param_count`
-    /// - bit 15: `strict_readonly_identity`
-    pub(crate) const fn apply_flags(mut self, flags: u16) -> Self {
-        self.strict_null_checks = (flags & (1 << 0)) != 0;
-        self.strict_function_types = (flags & (1 << 1)) != 0;
-        self.exact_optional_property_types = (flags & (1 << 2)) != 0;
-        self.no_unchecked_indexed_access = (flags & (1 << 3)) != 0;
-        self.disable_method_bivariance = (flags & (1 << 4)) != 0;
-        self.allow_void_return = (flags & (1 << 5)) != 0;
-        self.allow_bivariant_rest = (flags & (1 << 6)) != 0;
-        self.allow_bivariant_param_count = (flags & (1 << 7)) != 0;
-        self.strict_readonly_identity = (flags & (1 << 15)) != 0;
-        self.erase_generics = (flags & crate::RelationCacheKey::FLAG_NO_ERASE_GENERICS) == 0;
-        self.allow_erased_generic_signature_retry =
-            (flags & crate::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY) != 0;
-        self
-    }
-
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
             self.resolver
@@ -610,7 +581,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn bind_polymorphic_this(&self, receiver: TypeId, resolved: TypeId) -> TypeId {
         if crate::contains_this_type(self.interner, resolved) {
-            crate::substitute_this_type_cached(self.interner, self.query_db, resolved, receiver)
+            crate::instantiation::instantiate::substitute_this_type_cached(
+                self.interner,
+                self.query_db,
+                resolved,
+                receiver,
+            )
         } else {
             resolved
         }
@@ -1534,6 +1510,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
             if self.is_boxed_primitive_subtype(s_kind, target) {
+                return SubtypeResult::True;
+            }
+            // `string` is assignable to a template literal that spans the full
+            // string domain (e.g. `` `${string}${string}` ``): any string can
+            // be partitioned across the all-`${string}` placeholders. A lone
+            // `${string}` already collapses to `string` at construction, so
+            // this covers the multi-placeholder case. Mirrors tsc, which treats
+            // such a template as mutually assignable with `string`.
+            if s_kind == IntrinsicKind::String
+                && template_literal_spans_full_string_domain(self.interner, target)
+            {
                 return SubtypeResult::True;
             }
             // `object` keyword is structurally equivalent to `{}` (empty object).
@@ -2744,6 +2731,35 @@ pub fn are_types_structurally_identical<R: TypeResolver>(
     canon_a == canon_b
 }
 
+/// Check if two types are structurally identical with an outer type-parameter
+/// scope visible to both sides.
+///
+/// This generalizes [`are_types_structurally_identical`] for callers comparing
+/// type expressions whose `TypeData::TypeParameter` references are bound
+/// outside the supplied types — for example, constraints attached to merged
+/// interface declarations, where each declaration's `T` resolves to a distinct
+/// underlying `TypeParameter` `TypeId` even though both should be treated as
+/// the "same" positional parameter under tsc's declaration-merge rule.
+///
+/// `param_names` lists the outer-scope parameter names in declaration order.
+/// References to those names inside `a` or `b` are rewritten to the matching
+/// `BoundParameter(n)` before structural equality is checked.
+pub fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
+    interner: &dyn TypeDatabase,
+    resolver: &R,
+    a: TypeId,
+    b: TypeId,
+    param_names: &[tsz_common::interner::Atom],
+) -> bool {
+    if a == b {
+        return true;
+    }
+    let mut canonicalizer = crate::canonicalize::Canonicalizer::new(interner, resolver);
+    let canon_a = canonicalizer.canonicalize_with_param_scope(a, param_names);
+    let canon_b = canonicalizer.canonicalize_with_param_scope(b, param_names);
+    canon_a == canon_b
+}
+
 /// Convenience function for one-off subtype checks routed through a `QueryDatabase`.
 /// The `QueryDatabase` enables Salsa memoization when available.
 pub fn is_subtype_of_with_db(db: &dyn QueryDatabase, source: TypeId, target: TypeId) -> bool {
@@ -2795,7 +2811,7 @@ mod intrinsic_object_tests;
 #[cfg(test)]
 mod with_identity_check_mode_tests {
     use super::*;
-    use crate::TypeInterner;
+    use crate::construction::TypeInterner;
 
     #[test]
     fn restores_flags_after_closure() {

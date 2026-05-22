@@ -145,7 +145,15 @@ impl<'a> Completions<'a> {
                     CompletionItemKind::Property
                 };
                 let mut item = CompletionItem::new(name.clone(), kind);
-                item = item.with_detail(checker.format_type(info.type_id));
+                let raw_detail = checker.format_type(info.type_id);
+                // Method completions use colon notation `(params): RetType`; property
+                // completions keep the type as-is (arrow types stay as arrows).
+                let detail = if info.is_method {
+                    crate::hover::format::arrow_to_colon(&raw_detail)
+                } else {
+                    raw_detail
+                };
+                item = item.with_detail(detail);
                 if name == "substr" {
                     item.sort_text =
                         Some(sort_priority::deprecated(sort_priority::LOCATION_PRIORITY));
@@ -1410,8 +1418,17 @@ impl<'a> Completions<'a> {
             self.collect_properties_for_type_inner(
                 boxed_type, interner, checker, visited, props, false,
             );
+            Self::remove_hidden_primitive_boxed_completions(props);
         } else {
             self.collect_intrinsic_members(kind, interner, props);
+        }
+    }
+
+    fn remove_hidden_primitive_boxed_completions(
+        props: &mut FxHashMap<String, PropertyCompletion>,
+    ) {
+        for name in OBJECT_PROTOTYPE_ONLY_MEMBERS {
+            props.remove(*name);
         }
     }
 

@@ -1,4 +1,5 @@
-use crate::{TypeDatabase, TypeId, type_queries};
+use crate::construction::TypeDatabase;
+use crate::{TypeId, type_queries};
 use tsz_scanner::SyntaxKind;
 
 pub const fn is_compound_assignment_operator(operator_token: u16) -> bool {

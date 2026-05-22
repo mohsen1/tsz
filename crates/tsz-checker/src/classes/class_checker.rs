@@ -16,6 +16,20 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+struct OverloadCompatCtx<'a> {
+    member_name: &'a str,
+    member_type: TypeId,
+    member_name_idx: NodeIndex,
+    is_static: bool,
+    derived_class_name: &'a str,
+    base_class_name: &'a str,
+    base_info: &'a ClassMemberInfo,
+    base_chain_summary: &'a ClassChainSummary,
+    derived_overloads: &'a rustc_hash::FxHashMap<String, TypeId>,
+    substitution: &'a TypeSubstitution,
+    overload_compat_checked: &'a mut rustc_hash::FxHashSet<(String, bool)>,
+}
+
 /// Format a property name for error messages.
 ///
 /// If the property name is not a valid identifier (e.g., `2.0`, `my-prop`),
@@ -2029,6 +2043,10 @@ impl<'a> CheckerState<'a> {
                 && !base_info.from_interface
                 && !accessor_mismatch_reported.contains(&member_name)
             {
+                // Note: do NOT `continue` after emitting TS2610/TS2611 — tsc treats the
+                // property/accessor kind mismatch and the override type-incompatibility
+                // (TS2416) as independent diagnostics, so the assignability gate below must
+                // still run when the overriding type is not assignable to the base type.
                 if !is_accessor && base_info.is_accessor {
                     // TS2610: derived property overrides base accessor
                     accessor_mismatch_reported.insert(member_name.clone());
@@ -2039,9 +2057,7 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
                     );
-                    continue;
-                }
-                if is_accessor && !base_info.is_accessor {
+                } else if is_accessor && !base_info.is_accessor {
                     // TS2611: derived accessor overrides base property
                     accessor_mismatch_reported.insert(member_name.clone());
                     self.error_at_node(
@@ -2051,7 +2067,6 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
                     );
-                    continue;
                 }
             }
 
@@ -2118,23 +2133,23 @@ impl<'a> CheckerState<'a> {
             // type for the externally-visible `CallableShape` and run the
             // compat check once per name.
             if is_method
-                && self.check_overloaded_method_compat(
-                    &member_name,
+                && self.check_overloaded_method_compat(OverloadCompatCtx {
+                    member_name: &member_name,
                     member_type,
                     member_name_idx,
                     is_static,
-                    &derived_class_name,
-                    &base_class_name,
-                    &base_info,
-                    &base_chain_summary,
-                    if is_static {
+                    derived_class_name: &derived_class_name,
+                    base_class_name: &base_class_name,
+                    base_info: &base_info,
+                    base_chain_summary: &base_chain_summary,
+                    derived_overloads: if is_static {
                         &derived_static_method_overloads
                     } else {
                         &derived_instance_method_overloads
                     },
-                    &substitution,
-                    &mut overload_compat_checked,
-                )
+                    substitution: &substitution,
+                    overload_compat_checked: &mut overload_compat_checked,
+                })
             {
                 continue;
             }
@@ -2307,21 +2322,20 @@ impl<'a> CheckerState<'a> {
     /// recognized as overloaded and handled here, so the per-node compat
     /// check should be skipped for every declaration of this name in the
     /// derived class.
-    #[allow(clippy::too_many_arguments)]
-    fn check_overloaded_method_compat(
-        &mut self,
-        member_name: &str,
-        member_type: TypeId,
-        member_name_idx: NodeIndex,
-        is_static: bool,
-        derived_class_name: &str,
-        base_class_name: &str,
-        base_info: &ClassMemberInfo,
-        base_chain_summary: &ClassChainSummary,
-        derived_overloads: &rustc_hash::FxHashMap<String, TypeId>,
-        substitution: &crate::query_boundaries::common::TypeSubstitution,
-        overload_compat_checked: &mut rustc_hash::FxHashSet<(String, bool)>,
-    ) -> bool {
+    fn check_overloaded_method_compat(&mut self, ctx: OverloadCompatCtx<'_>) -> bool {
+        let OverloadCompatCtx {
+            member_name,
+            member_type,
+            member_name_idx,
+            is_static,
+            derived_class_name,
+            base_class_name,
+            base_info,
+            base_chain_summary,
+            derived_overloads,
+            substitution,
+            overload_compat_checked,
+        } = ctx;
         use crate::query_boundaries::common::instantiate_type;
 
         let derived_overload_type = derived_overloads.get(member_name).copied();

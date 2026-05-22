@@ -32,6 +32,7 @@ mod core;
 mod discriminants;
 mod instanceof;
 mod property;
+pub mod request;
 pub(crate) mod utils;
 
 // Re-export utility functions from the utils submodule
@@ -50,6 +51,7 @@ pub use self::core::{
     NarrowingResult, OptionalPropertyChainKey, TypeGuard, TypeofKind,
 };
 pub(crate) use self::core::{union_excluding_one, union_or_single_preserve};
+pub use self::request::{NarrowingOptions, NarrowingRequest};
 
 #[cfg(test)]
 use crate::types::*;

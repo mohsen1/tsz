@@ -35,6 +35,12 @@ pub(in crate::declaration_emitter) struct CallableDeclParts<'b> {
     pub(in crate::declaration_emitter) body: NodeIndex,
 }
 
+struct ImportedMethodRef<'a> {
+    imported_module: &'a str,
+    imported_name: &'a str,
+    method_name: &'a str,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_source_type_text(
         &self,
@@ -254,6 +260,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     ReturnPart::Verbatim(member_idx) => {
                         let member_node = self.arena.get(*member_idx)?;
+                        if member_node.kind == syntax_kind_ext::TYPE_LITERAL
+                            && let Some(type_text) =
+                                self.emit_type_node_text_from_arena(self.arena, *member_idx)
+                        {
+                            parts.push(type_text.trim().to_string());
+                            continue;
+                        }
                         let raw = self.get_source_slice(member_node.pos, member_node.end)?;
                         // The parser's `end` can extend past the closing
                         // delimiter into the next significant token (e.g.
@@ -694,6 +707,12 @@ impl<'a> DeclarationEmitter<'a> {
             return type_text;
         }
 
+        if self.initializer_is_new_expression(initializer)
+            && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
+        {
+            return type_text;
+        }
+
         if self.object_literal_prefers_syntax_type_text(initializer)
             && let Some(type_text) =
                 self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
@@ -705,6 +724,23 @@ impl<'a> DeclarationEmitter<'a> {
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {
             return self.rewrite_exported_import_equals_type_text(typeof_text);
+        }
+
+        if self
+            .arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            && let Some(type_text) = self.infer_object_literal_type_text_at(initializer, 0)
+        {
+            return self.rewrite_exported_import_equals_type_text(type_text);
+        }
+
+        let widened = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+        if widened != type_id
+            && !self.inferred_declaration_preserves_initializer_type_arguments(initializer, type_id)
+        {
+            let type_text = self.print_type_id_for_inferred_declaration(widened);
+            return self.rewrite_exported_import_equals_type_text(type_text);
         }
 
         if (type_id == tsz_solver::types::TypeId::ANY
@@ -775,6 +811,49 @@ impl<'a> DeclarationEmitter<'a> {
             .enum_value_index_access_alias_type_text(&type_text)
             .unwrap_or(type_text);
         self.rewrite_exported_import_equals_type_text(type_text)
+    }
+
+    fn inferred_declaration_preserves_initializer_type_arguments(
+        &self,
+        initializer: NodeIndex,
+        type_id: tsz_solver::types::TypeId,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        self.arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+            && tsz_solver::visitor::application_id(interner, type_id).is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn widened_inferred_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && self.symbol_has_unique_symbol_type(sym_id)
+        {
+            return Some("symbol".to_string());
+        }
+        let type_id = self
+            .get_node_type_or_names(&[expr_idx])
+            .or_else(|| self.get_type_via_symbol(expr_idx))?;
+        self.type_interner?;
+        let widened = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
+        (widened != type_id).then(|| self.print_type_id_for_inferred_declaration(widened))
+    }
+
+    pub(in crate::declaration_emitter) fn widen_unique_symbol_value_type_for_dts(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        _depth: usize,
+    ) -> tsz_solver::types::TypeId {
+        let Some(interner) = self.type_interner else {
+            return type_id;
+        };
+        tsz_solver::visitor::widen_unique_symbol_value_type_for_dts(interner, type_id)
     }
 
     pub(in crate::declaration_emitter) fn rewrite_exported_import_equals_type_text(
@@ -1873,9 +1952,11 @@ impl<'a> DeclarationEmitter<'a> {
                 binder,
                 source_arena,
                 class_decl,
-                &imported_module,
-                &imported_name,
-                &method_name,
+                &ImportedMethodRef {
+                    imported_module: &imported_module,
+                    imported_name: &imported_name,
+                    method_name: &method_name,
+                },
                 call,
                 &explicit_type_args,
             )
@@ -1922,9 +2003,11 @@ impl<'a> DeclarationEmitter<'a> {
                     binder,
                     source_arena,
                     class_decl,
-                    imported_module,
-                    imported_name,
-                    method_name,
+                    &ImportedMethodRef {
+                        imported_module,
+                        imported_name,
+                        method_name,
+                    },
                     call,
                     explicit_type_args,
                 ) {
@@ -1936,18 +2019,20 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn imported_static_method_return_type_from_class_decl(
         &self,
         binder: &BinderState,
         source_arena: &NodeArena,
         class_decl: &tsz_parser::parser::node::ClassData,
-        imported_module: &str,
-        imported_name: &str,
-        method_name: &str,
+        method_ref: &ImportedMethodRef<'_>,
         call: &tsz_parser::parser::node::CallExprData,
         explicit_type_args: &[String],
     ) -> Option<String> {
+        let ImportedMethodRef {
+            imported_module,
+            imported_name,
+            method_name,
+        } = method_ref;
         for &member_idx in &class_decl.members.nodes {
             let Some(member_node) = source_arena.get(member_idx) else {
                 continue;

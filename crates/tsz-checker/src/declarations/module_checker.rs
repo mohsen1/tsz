@@ -835,20 +835,18 @@ impl<'a> CheckerState<'a> {
         // Resolve Promise as Lazy(DefId), the same form that type annotations use.
         // `var p: Promise<T>` goes through create_lazy_type_ref → Application(Lazy(DefId), [T]).
         // We must do the same here so that `import()` returns a structurally compatible type.
-        let lib_binders = self.get_lib_binders();
         let factory = self.ctx.types.factory();
 
-        if let Some(sym_id) = self
-            .ctx
-            .binder
-            .get_global_type_with_libs("Promise", &lib_binders)
-        {
+        if let Some(sym_id) = self.ctx.lib_promise_sym_id() {
             let _ = self.get_type_of_symbol(sym_id);
             // Ensure the Promise DefId has its type parameters and body registered
             // so that resolve_application_property can substitute T with the inner type.
             // Without this, .then() callback parameters remain as unsubstituted `T`.
             self.ensure_def_ready_for_lowering(sym_id, "Promise");
-            let promise_base = self.ctx.create_lazy_type_ref(sym_id);
+            let promise_base = self
+                .ctx
+                .lib_promise_type_ref()
+                .unwrap_or_else(|| self.ctx.create_lazy_type_ref(sym_id));
             return factory.application(promise_base, vec![inner_type]);
         }
 

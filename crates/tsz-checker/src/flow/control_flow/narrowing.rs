@@ -5,7 +5,8 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::CallExprData;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{GuardSense, ParamInfo, TypeGuard, TypeId, TypePredicate, TypePredicateTarget};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
+use tsz_solver::{ParamInfo, TypeId, TypePredicate, TypePredicateTarget};
 
 use super::{FlowAnalyzer, PredicateSignature};
 use crate::query_boundaries::flow as flow_boundary;
@@ -1568,16 +1569,20 @@ impl<'a> FlowAnalyzer<'a> {
             })
     }
 
-    /// For a const-declared identifier that is a destructuring alias,
-    /// return the (`base_initializer`, `property_name`).
+    /// For a const-declared identifier that is a destructuring alias, return
+    /// `(base_initializer, property_path)`.
     ///
-    /// Example: `const { type: alias } = obj` → `(obj, "type")`
+    /// Works for top-level object destructuring:
+    /// - `const { type: alias } = obj` → `(obj, ["type"])`
     ///
-    /// Returns `None` for non-identifiers, non-const bindings, or nested patterns.
+    /// Returns `None` for non-identifiers, non-const bindings, array patterns,
+    /// rest elements, default initializers, computed property keys, or nested
+    /// object binding patterns. Current `tsc` does not narrow the root object
+    /// from `const { s: { kind } } = outer; if (kind === "a") outer.s.a`.
     pub(super) fn binding_element_property_alias(
         &self,
         node: NodeIndex,
-    ) -> Option<(NodeIndex, Atom)> {
+    ) -> Option<(NodeIndex, Vec<Atom>)> {
         let node_data = self.arena.get(node)?;
         if node_data.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -1594,29 +1599,25 @@ impl<'a> FlowAnalyzer<'a> {
         // (the name/alias) rather than the BINDING_ELEMENT itself, because the binder calls
         // `declare_symbol(name_ident, ...)`. In that case, walk up to the parent to find
         // the actual BINDING_ELEMENT.
-        let decl_idx = if decl_node.kind == SyntaxKind::Identifier as u16 {
+        let current_be_idx = if decl_node.kind == SyntaxKind::Identifier as u16 {
             let ext = self.arena.get_extended(decl_idx)?;
             ext.parent
         } else {
             decl_idx
         };
-        let decl_node = self.arena.get(decl_idx)?;
-        // Must be a binding element (from object destructuring)
-        if decl_node.kind != syntax_kind_ext::BINDING_ELEMENT {
+
+        // Collect property names bottom-up; reversed before returning.
+        let mut path: Vec<Atom> = Vec::new();
+
+        let current_be_node = self.arena.get(current_be_idx)?;
+        if current_be_node.kind != syntax_kind_ext::BINDING_ELEMENT {
             return None;
         }
-        let be = self.arena.get_binding_element(decl_node)?;
-        // Must not be a rest element (`...rest`)
-        if be.dot_dot_dot_token {
+        let be = self.arena.get_binding_element(current_be_node)?;
+        if be.dot_dot_dot_token || be.initializer.is_some() {
             return None;
         }
-        // Must not have a default initializer (const { type: alias = "default" } = ...)
-        if be.initializer.is_some() {
-            return None;
-        }
-        // Get the property name being destructured
-        // `{ type: alias }` → property_name node is "type"
-        // `{ type }` shorthand → name node IS the property name
+        // `{ type: alias }` → property_name is "type"; `{ type }` shorthand → name is "type".
         let prop_name_idx = if be.property_name.is_some() {
             be.property_name
         } else {
@@ -1624,10 +1625,9 @@ impl<'a> FlowAnalyzer<'a> {
         };
         let prop_name_node = self.arena.get(prop_name_idx)?;
         let prop_ident = self.arena.get_identifier(prop_name_node)?;
-        let prop_name = self.interner.intern_string(&prop_ident.escaped_text);
+        path.push(self.interner.intern_string(&prop_ident.escaped_text));
 
-        // Walk up: BindingElement → ObjectBindingPattern → VariableDeclaration
-        let be_ext = self.arena.get_extended(decl_idx)?;
+        let be_ext = self.arena.get_extended(current_be_idx)?;
         let binding_pattern_idx = be_ext.parent;
         if binding_pattern_idx.is_none() {
             return None;
@@ -1637,23 +1637,23 @@ impl<'a> FlowAnalyzer<'a> {
             return None;
         }
         let bp_ext = self.arena.get_extended(binding_pattern_idx)?;
-        let var_decl_idx = bp_ext.parent;
-        if var_decl_idx.is_none() {
+        let parent_idx = bp_ext.parent;
+        if parent_idx.is_none() {
             return None;
         }
-        let var_decl_node = self.arena.get(var_decl_idx)?;
-        if var_decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+        let parent_node = self.arena.get(parent_idx)?;
+        if parent_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
             return None;
         }
-        if !self.is_const_variable_declaration(var_decl_idx) {
+        if !self.is_const_variable_declaration(parent_idx) {
             return None;
         }
-        let var_decl = self.arena.get_variable_declaration(var_decl_node)?;
+        let var_decl = self.arena.get_variable_declaration(parent_node)?;
         if var_decl.initializer.is_none() {
             return None;
         }
         let base = self.skip_parenthesized(var_decl.initializer);
-        Some((base, prop_name))
+        Some((base, path))
     }
 
     pub(crate) fn discriminant_property_info(
@@ -1795,11 +1795,18 @@ impl<'a> FlowAnalyzer<'a> {
                 return Some(TypeId::UNDEFINED);
             }
 
-            if let Some(sym_id) = self.reference_symbol(idx)
-                && let Some(sym) = self.binder.get_symbol(sym_id)
-                && sym.has_any_flags(symbol_flags::ENUM_MEMBER)
-            {
-                return self.literal_type_from_node(idx);
+            if let Some(sym_id) = self.reference_symbol(idx) {
+                if let Some(sym) = self.binder.get_symbol(sym_id)
+                    && sym.has_any_flags(symbol_flags::ENUM_MEMBER)
+                {
+                    return self.literal_type_from_node(idx);
+                }
+
+                if let Some(ty) = self.annotation_comparison_type(sym_id)
+                    && crate::query_boundaries::flow_analysis::is_unit_type(self.interner, ty)
+                {
+                    return Some(ty);
+                }
             }
 
             if let Some((_sym, initializer)) = self.const_condition_initializer(idx) {
@@ -1827,12 +1834,6 @@ impl<'a> FlowAnalyzer<'a> {
     }
 
     /// Try to extract a discriminant guard for an aliased condition.
-    ///
-    /// Handles:
-    /// - `const alias = target.prop` → `alias === literal` narrows `target` by `prop`
-    /// - `const { prop: alias } = target` → `alias === literal` narrows `target` by `prop`
-    ///
-    /// Returns `(path, literal_type, is_optional, base)` where `base = target`.
     fn aliased_discriminant(
         &self,
         alias_node: NodeIndex,
@@ -1846,8 +1847,7 @@ impl<'a> FlowAnalyzer<'a> {
 
         let literal = self.literal_type_from_node(literal_node)?;
 
-        // Case 1: Simple const alias `const alias = target.prop` (or deeper: target.a.b)
-        // Resolve alias to its property access initializer, then compute relative path.
+        // Simple const alias `const alias = target.prop` (or deeper: target.a.b).
         if let Some((_, initializer)) = self.const_condition_initializer(alias_node) {
             let init_expr = self.skip_parenthesized(initializer);
             let init_node = self.arena.get(init_expr)?;
@@ -1863,23 +1863,17 @@ impl<'a> FlowAnalyzer<'a> {
             }
         }
 
-        // Case 2: Destructuring alias `const { prop: alias } = target`
-        if let Some((base, prop_name)) = self.binding_element_property_alias(alias_node)
+        // Top-level destructuring alias `const { prop: alias } = target`.
+        if let Some((base, prop_names)) = self.binding_element_property_alias(alias_node)
             && self.is_matching_reference(base, target)
         {
-            return Some((vec![prop_name], literal, false, target));
+            return Some((prop_names, literal, false, target));
         }
 
         None
     }
 
-    /// Given a property access `prop_access` (e.g. `this.test.type`) and a target node
-    /// (e.g. `this.test`), walk backwards collecting property names until we reach `target`.
-    ///
-    /// Returns `(relative_path, is_optional)` where `relative_path` is the list of property
-    /// names from `target` to `prop_access` (e.g. `["type"]`).
-    ///
-    /// Returns `None` if `target` is not found in the access chain.
+    /// Walk backwards from a property access, collecting property names until `target`.
     pub(super) fn relative_discriminant_path(
         &self,
         prop_access: NodeIndex,

@@ -19,12 +19,13 @@ use tsz_common::Atom;
 use tsz_common::diagnostics::diagnostic_codes;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{FunctionShape, TypeId};
 
 /// Detect spread marker tuples `[...T]` created by the checker for generic
 /// `TypeParameter` spreads. A spread marker is a 1-element tuple where the single
 /// element is a rest element whose inner type is a `TypeParameter`.
-fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) -> bool {
+fn is_spread_marker_tuple(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if let Some(elems) = common::tuple_elements(db, type_id) {
         elems.len() == 1 && elems[0].rest && is_type_parameter_type(db, elems[0].type_id)
     } else {
@@ -37,7 +38,7 @@ fn is_spread_marker_tuple(db: &dyn tsz_solver::TypeDatabase, type_id: TypeId) ->
 /// Used to compare contextual type candidates: whichever has more specific
 /// (non-`any`) parameter types provides better contextual typing for callbacks.
 /// Returns 0 for non-callable types.
-fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) -> usize {
+fn callable_param_specificity(db: &dyn QueryDatabase, ty: TypeId) -> usize {
     if let Some(shape) = common::function_shape_for_type(db, ty) {
         shape
             .params
@@ -49,10 +50,7 @@ fn callable_param_specificity(db: &dyn tsz_solver::QueryDatabase, ty: TypeId) ->
     }
 }
 
-fn contextual_constraint_preserves_literals(
-    db: &dyn tsz_solver::QueryDatabase,
-    type_id: TypeId,
-) -> bool {
+fn contextual_constraint_preserves_literals(db: &dyn QueryDatabase, type_id: TypeId) -> bool {
     if type_id == TypeId::STRING
         || type_id == TypeId::NUMBER
         || type_id == TypeId::BOOLEAN
@@ -93,14 +91,14 @@ fn sanitize_function_shape_binding_pattern_params(
 }
 
 pub(crate) fn should_preserve_contextual_application_shape(
-    db: &dyn tsz_solver::TypeDatabase,
+    db: &dyn TypeDatabase,
     ty: TypeId,
 ) -> bool {
     common::contains_application_in_structure(db, ty)
 }
 
 fn instantiate_function_shape_with_substitution(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn QueryDatabase,
     func: &tsz_solver::FunctionShape,
     substitution: &crate::query_boundaries::common::TypeSubstitution,
 ) -> tsz_solver::FunctionShape {
@@ -108,7 +106,7 @@ fn instantiate_function_shape_with_substitution(
 }
 
 fn instantiate_contextual_target_shape_for_return_context(
-    types: &dyn tsz_solver::QueryDatabase,
+    types: &dyn QueryDatabase,
     func: &tsz_solver::FunctionShape,
 ) -> tsz_solver::FunctionShape {
     common::instantiate_shape_to_defaults(types, func)
@@ -859,7 +857,7 @@ impl<'a> CheckerState<'a> {
         let resolved = self.resolve_lazy_type(type_id);
         let resolved = self.evaluate_type_with_env(resolved);
         let resolved = self.resolve_type_for_property_access(resolved);
-        let resolver = tsz_solver::IndexSignatureResolver::new(self.ctx.types);
+        let resolver = tsz_solver::objects::IndexSignatureResolver::new(self.ctx.types);
         resolver.resolve_number_index(resolved)
     }
 
@@ -2435,7 +2433,8 @@ impl<'a> CheckerState<'a> {
                     && (common::contains_type_parameters(self.ctx.types, evaluated)
                         || common::contains_infer_types(self.ctx.types, evaluated))
                 {
-                    self.instantiate_remaining_contextual_type_params(
+                    crate::query_boundaries::inference::instantiate_remaining_contextual_type_params(
+                        self.ctx.types,
                         evaluated,
                         &shape.type_params,
                         &contextual_substitution,
@@ -2454,120 +2453,6 @@ impl<'a> CheckerState<'a> {
             round2_contextual_types.push(ctx_type);
         }
         round2_contextual_types
-    }
-
-    fn instantiate_remaining_contextual_type_params(
-        &self,
-        type_id: TypeId,
-        type_params: &[tsz_solver::TypeParamInfo],
-        current_substitution: &crate::query_boundaries::common::TypeSubstitution,
-    ) -> TypeId {
-        // A return-context substitution can bind a callee type parameter to a
-        // contextual callback that mentions an outer type parameter with the
-        // same name. Because substitutions are name-keyed, do not default that
-        // outer parameter to the callee's constraint; use the outer parameter's
-        // own bound instead.
-        for tp in type_params {
-            if current_substitution.get(tp.name) != Some(type_id)
-                || !common::contains_type_parameter_named(self.ctx.types, type_id, tp.name)
-            {
-                continue;
-            }
-
-            let declared_param = self.ctx.types.factory().type_param(*tp);
-            let mut shadow_substitution = crate::query_boundaries::common::TypeSubstitution::new();
-            for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
-                let Some(referenced_info) = common::type_param_info(self.ctx.types, referenced)
-                else {
-                    continue;
-                };
-                if referenced_info.name != tp.name || referenced == declared_param {
-                    continue;
-                }
-                if let Some(replacement) = referenced_info.default.or(referenced_info.constraint) {
-                    shadow_substitution.insert(tp.name, replacement);
-                } else {
-                    return type_id;
-                }
-            }
-
-            if !shadow_substitution.is_empty() {
-                return crate::query_boundaries::common::instantiate_type(
-                    self.ctx.types,
-                    type_id,
-                    &shadow_substitution,
-                );
-            }
-        }
-
-        let mut infer_bindings =
-            crate::query_boundaries::inference::collect_infer_bindings(self.ctx.types, type_id);
-        for referenced in common::collect_referenced_types(self.ctx.types, type_id) {
-            let Some(info) = common::type_param_info(self.ctx.types, referenced) else {
-                continue;
-            };
-            let name = self.ctx.types.resolve_atom(info.name);
-            if name.starts_with("__infer_") || name.starts_with("__infer_src_") {
-                infer_bindings.push((info.name, referenced));
-            }
-        }
-        if type_params.is_empty() && infer_bindings.is_empty() {
-            return type_id;
-        }
-
-        let mut substitution = current_substitution.clone();
-        for tp in type_params {
-            if substitution.get(tp.name).is_some_and(|mapped| {
-                !common::contains_type_parameters(self.ctx.types, mapped)
-                    && !common::contains_infer_types(self.ctx.types, mapped)
-            }) {
-                continue;
-            }
-            let replacement = tp.default.or(tp.constraint).unwrap_or(TypeId::UNKNOWN);
-            let replacement = crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                replacement,
-                &substitution,
-            );
-            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
-                || common::contains_infer_types(self.ctx.types, replacement)
-            {
-                TypeId::UNKNOWN
-            } else {
-                replacement
-            };
-            substitution.insert(tp.name, replacement);
-        }
-        for (name, infer_type) in infer_bindings {
-            if substitution.get(name).is_some_and(|mapped| {
-                !common::contains_type_parameters(self.ctx.types, mapped)
-                    && !common::contains_infer_types(self.ctx.types, mapped)
-            }) {
-                continue;
-            }
-            let replacement = common::type_param_info(self.ctx.types, infer_type)
-                .and_then(|info| info.default.or(info.constraint))
-                .unwrap_or(TypeId::UNKNOWN);
-            let replacement = crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                replacement,
-                &substitution,
-            );
-            let replacement = if common::contains_type_parameters(self.ctx.types, replacement)
-                || common::contains_infer_types(self.ctx.types, replacement)
-            {
-                TypeId::UNKNOWN
-            } else {
-                replacement
-            };
-            substitution.insert(name, replacement);
-        }
-
-        crate::query_boundaries::inference::instantiate_type_with_infer(
-            self.ctx.types,
-            type_id,
-            &substitution,
-        )
     }
 
     pub(crate) fn compute_single_call_argument_type(

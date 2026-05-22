@@ -239,7 +239,8 @@ impl TypeInterner {
             let mut new_combinations = Vec::with_capacity(combinations.len() * part.len());
             for prefix in &combinations {
                 for suffix in part {
-                    let mut combined = prefix.clone();
+                    let mut combined = String::with_capacity(prefix.len() + suffix.len());
+                    combined.push_str(prefix);
                     combined.push_str(suffix);
                     new_combinations.push(combined);
                 }
@@ -498,6 +499,15 @@ impl TypeInterner {
         // `getTemplateLiteralType` "Normalize `${Mapping<xxx>}` into Mapping<xxx>".
         if let [TemplateSpan::Type(only_type)] = normalized.as_slice() {
             let only_type = *only_type;
+            // A lone `${string}` placeholder spans the entire `string` domain,
+            // so the template is mutually assignable with — and `Equal` to —
+            // `string`. tsc's `getTemplateLiteralType` collapses it to
+            // `string`. (`number`/`bigint` are proper subsets and stay
+            // templates; `any`/`unknown` are handled by the absorption passes
+            // above.)
+            if only_type == TypeId::STRING {
+                return TypeId::STRING;
+            }
             if self.is_pattern_literal_type(only_type) {
                 return only_type;
             }
@@ -548,7 +558,8 @@ impl TypeInterner {
             let mut next = Vec::with_capacity(combinations.len() * choices.len());
             for prefix in &combinations {
                 for choice in &choices {
-                    let mut combined = prefix.clone();
+                    let mut combined = Vec::with_capacity(prefix.len() + 1);
+                    combined.extend_from_slice(prefix);
                     combined.push(choice.clone());
                     next.push(combined);
                 }

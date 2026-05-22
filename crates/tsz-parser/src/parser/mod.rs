@@ -17,6 +17,7 @@
 
 pub mod base;
 pub mod flags;
+pub mod incomplete_call;
 pub mod node;
 mod node_access;
 mod node_access_typed_getters;
@@ -25,6 +26,7 @@ mod node_children;
 mod node_modifiers;
 mod node_view;
 pub mod parse_rules;
+mod speculation;
 pub mod spelling;
 pub mod state;
 mod state_declarations;
@@ -36,6 +38,7 @@ mod state_import_attributes;
 mod state_statements;
 mod state_statements_class;
 mod state_statements_class_members;
+mod state_statements_recovery;
 mod state_type_parameters;
 mod state_types;
 mod state_types_jsx;
@@ -126,6 +129,10 @@ mod this_param_modifier_tests;
 #[cfg(test)]
 #[path = "../../tests/legacy_octal_bigint_continuation_tests.rs"]
 mod legacy_octal_bigint_continuation_tests;
+
+#[cfg(test)]
+#[path = "../../tests/computed_property_binding_recovery_tests.rs"]
+mod computed_property_binding_recovery_tests;
 
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};

@@ -19,6 +19,200 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+// Structural rule: when an async ES5 function contains a try statement where
+// any region (try, catch, finally) suspends on `await`, the generator state
+// machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
+// where each absent slot is sparse, allocate region boundary labels
+// just-in-time so resume labels stay sequential within each region, bind the
+// caught exception via `_a.sent()`, and route breaks from both try and catch
+// to the region's *end* label. tsc's `__generator` driver routes the pending
+// break through a finally region by pushing onto `_.ops`; breaking directly
+// to the finally label would leave `_.ops` empty and wedge `endfinally`.
+
+#[test]
+fn try_catch_finally_with_await_in_each_block_lowers_to_sequential_state_machine() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch { await b(); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, 4, 6]);"),
+        "trys.push should reserve the four region labels in start/catch/finally/end order so the runtime can dispatch throws and breaks correctly.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0:") && output.contains("return [4 /*yield*/, a()];"),
+        "Try body yield must live at the start label that trys.push references.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 6];"),
+        "Try-body resume must break to the region end label so the runtime can route through finally via `_.ops`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [4 /*yield*/, b()];"),
+        "Catch body must start at the catch label and emit its yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 3:") && output.contains("return [3 /*break*/, 6];"),
+        "Catch-body resume must also break to the region end label; the driver pushes the break onto `_.ops` and dispatches finally for cleanup.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [4 /*yield*/, c()];"),
+        "Finally body must start at the finally label and emit its yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 5:") && output.contains("return [7 /*endfinally*/];"),
+        "Finally-body resume must end the region with endfinally.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 6: return [2 /*return*/];"),
+        "End label must finalize the function.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a[1]"),
+        "Catch should bind through _a.sent(), never raw element access on _a.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_finally_bound_exception_uses_sent_for_catch_binding() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (e) { await b(e); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("e = _a.sent();"),
+        "Bound catch must capture the exception via `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_finally_uses_user_chosen_catch_binding_name() {
+    // The catch binding name flows through unchanged — the fix must be
+    // structural, not keyed on the spelling `e`.
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (err) { await b(err); } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("err = _a.sent();"),
+        "Catch binding spelled `err` must round-trip through the `_a.sent()` capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("e = _a.sent();"),
+        "No phantom `e` binding should appear when the user named the variable `err`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_finally_without_catch_in_async_keeps_sparse_catch_slot() {
+    let output =
+        transform_and_print("async function f() { try { await a(); } finally { await c(); } }");
+
+    assert!(
+        output.contains("_a.trys.push([0, , 2, 4]);"),
+        "Try-finally without a catch must emit the sparse catch slot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
+        "Try-body break must target the end label even when a finally is present — the runtime routes the break through finally via `_.ops`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2: return [4 /*yield*/, c()];"),
+        "Finally body must start at the allocated finally label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [2 /*return*/];"),
+        "End label must come after the finally body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_catch_without_finally_in_async_keeps_sparse_finally_slot() {
+    let output =
+        transform_and_print("async function f() { try { await a(); } catch (e) { await b(e); } }");
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, , 4]);"),
+        "Try-catch without a finally must emit the sparse finally slot.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 1:") && output.contains("return [3 /*break*/, 4];"),
+        "Try-body break must target the end label when no finally is present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("e = _a.sent();"),
+        "Bound catch must bind the exception via `_a.sent()`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 3:") && output.contains("return [3 /*break*/, 4];"),
+        "Catch-body resume must break to the end label when no finally is present.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 4: return [2 /*return*/];"),
+        "End label must come right after the catch body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn try_with_await_only_in_try_body_still_threads_through_finally() {
+    let output = transform_and_print(
+        "async function f() { try { await a(); } catch (e) { e; } finally { c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, 2, 3, 4]);"),
+        "When catch and finally are sync, their labels still occupy distinct slots after the try-body resume.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("e = _a.sent();") && output.contains("e;"),
+        "Bound catch with no await still uses `_a.sent()`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [7 /*endfinally*/];"),
+        "Finally must end with endfinally even if its body is sync.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn nested_try_in_async_uses_distinct_placeholder_regions() {
+    let output = transform_and_print(
+        "async function f() { try { try { await a(); } catch { await b(); } } finally { await c(); } }",
+    );
+
+    assert!(
+        output.contains("_a.trys.push([0, , 5, 7]);"),
+        "Outer try-finally must reserve start=0, finally=5, end=7 after all inner labels.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.trys.push([0, 2, , 4]);"),
+        "Inner try-catch must reserve start=0, catch=2, end=4 — independent of the outer region's placeholders.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 5: return [4 /*yield*/, c()];"),
+        "Outer finally body must yield at its allocated label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 7: return [2 /*return*/];"),
+        "Outer end label must follow the finally body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_try_block_without_handler_emits_inline_body() {
+    // A try with no catch and no finally is structurally equivalent to its
+    // body; no trys.push entry should be emitted.
+    let output = transform_and_print("async function f() { try { await a(); } }");
+
+    assert!(
+        !output.contains("_a.trys.push"),
+        "A handler-less try should not produce a trys.push entry.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a()];"),
+        "The body of a handler-less try must still emit the yield.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
     let output =
@@ -348,6 +542,213 @@ fn test_async_do_while_single_if_body_continue_jumps_to_condition() {
             && continue_jump_pos.expect("continue jump is present")
                 < condition_pos.expect("condition check is present"),
         "Single-statement do body continue should target the post-body condition check.\nOutput:\n{output}"
+    );
+}
+
+// Structural rule (added 2026-05-20, issue #8515):
+// When the top-level expression of a `while` or `do-while` condition inside an
+// async function is `await <expr>`, the condition must be lowered into a
+// generator yield. `_a.sent()` then becomes the boolean tested by the IfBreak,
+// so no raw `await` syntax remains in the generator body.
+//
+// Each test uses a different name choice for the awaited callee (`ok`,
+// `keepGoing`, `tick`, `done`, `skip`, `body`) to prove the rule is structural
+// rather than keyed on any particular identifier.
+
+#[test]
+fn test_async_while_condition_await_yields_then_branches_on_sent() {
+    let output = transform_and_print("async function f() { while (await ok()) { work(); } }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, ok()];"),
+        "While condition await should lower into the loop-entry yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Post-resume IfBreak must read `_a.sent()` instead of the original condition.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Loop body must jump back to the yield case to re-evaluate the condition.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_and_body_await_chain_yields() {
+    let output = transform_and_print("async function f() { while (await ok()) { await tick(); } }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when both condition and body suspend.\nOutput:\n{output}"
+    );
+    let cond_yield = output.find("return [4 /*yield*/, ok()];");
+    let body_yield = output.find("return [4 /*yield*/, tick()];");
+    assert!(
+        cond_yield.is_some()
+            && body_yield.is_some()
+            && cond_yield.expect("condition yield present")
+                < body_yield.expect("body yield present"),
+        "Condition yield must precede body yield in the generated case order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_yields_after_body_in_same_case() {
+    let output =
+        transform_and_print("async function f() { do { work(); } while (await keepGoing()); }");
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when only the do-while condition suspends.\nOutput:\n{output}"
+    );
+    // Without `continue` in the body, body and condition-yield share a single
+    // case: the body runs, then the yield is the case's terminating return.
+    assert!(
+        output.contains("work();"),
+        "Body statement should still be emitted in the first case.\nOutput:\n{output}"
+    );
+    let body_pos = output.find("work();");
+    let yield_pos = output.find("return [4 /*yield*/, keepGoing()];");
+    assert!(
+        body_pos.is_some()
+            && yield_pos.is_some()
+            && body_pos.expect("body present") < yield_pos.expect("condition yield present"),
+        "Body must precede the condition yield (do-while semantics).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Resume case must test `_a.sent()` to decide loop exit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 0];"),
+        "Truthy condition must jump back to the loop-entry case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_both_body_and_condition_await_lower_separately() {
+    let output = transform_and_print(
+        "async function f() { do { await tick(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain when both body and condition suspend.\nOutput:\n{output}"
+    );
+    let body_yield = output.find("return [4 /*yield*/, tick()];");
+    let cond_yield = output.find("return [4 /*yield*/, keepGoing()];");
+    assert!(
+        body_yield.is_some()
+            && cond_yield.is_some()
+            && body_yield.expect("body yield present")
+                < cond_yield.expect("condition yield present"),
+        "Body yield must precede condition yield for do-while semantics.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_parenthesized_await_condition_still_lowers() {
+    // Redundant parens around the await must be stripped before the
+    // top-level-await pattern match so this case is treated identically.
+    let output =
+        transform_and_print("async function f() { do { work(); } while ((await keepGoing())); }");
+    assert!(
+        output.contains("return [4 /*yield*/, keepGoing()];"),
+        "Parenthesised await condition must still lower to a yield.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "No raw await syntax should remain after parenthesised condition lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_with_continue_uses_own_case_for_yield() {
+    // With `continue`, the yield case must be separate from the body case so
+    // continue can jump to the condition check without re-running the body.
+    let output = transform_and_print(
+        "async function f(skip) { do { if (skip) continue; body(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("continue;"),
+        "Unlabeled continue inside an awaited do-while body must become a generator branch.\nOutput:\n{output}"
+    );
+    // The continue jumps to the yield case; that case label is whatever
+    // `label_assignment_before` recorded right before the awaited condition.
+    let condition_yield_label = label_assignment_before(&output, "return [4 /*yield*/, keepGoing");
+    assert!(
+        output.contains(&format!("return [3 /*break*/, {condition_yield_label}];")),
+        "Continue must jump to the awaited-condition yield case (label {condition_yield_label}).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_with_break_jumps_to_exit() {
+    let output = transform_and_print(
+        "async function f(done) { do { if (done) break; body(); } while (await keepGoing()); }",
+    );
+    assert!(
+        !output.contains("break;"),
+        "Unlabeled break inside an awaited do-while body must become a generator branch.\nOutput:\n{output}"
+    );
+    let exit_label = if_break_target_after(&output, "if (!_a.sent())");
+    assert!(
+        count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2,
+        "Both the body break and the false-condition branch should target the loop exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_with_continue_jumps_back_to_yield_case() {
+    let output = transform_and_print(
+        "async function f(skip) { while (await keepGoing()) { if (skip) continue; body(); } }",
+    );
+    assert!(
+        !output.contains("continue;"),
+        "Unlabeled continue inside an awaited while body must become a generator branch.\nOutput:\n{output}"
+    );
+    // For `while`, the yield case is also the loop-entry case (case 0). The
+    // continue must jump back to it so the condition re-evaluates next cycle.
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, keepGoing()];"),
+        "Loop entry should be the condition yield case.\nOutput:\n{output}"
+    );
+    assert!(
+        count_substring(&output, "return [3 /*break*/, 0];") >= 2,
+        "Both the continue and the natural loop back-edge should jump to the loop-entry case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_while_condition_await_with_break_jumps_to_exit_case() {
+    let output = transform_and_print(
+        "async function f(done) { while (await keepGoing()) { if (done) break; body(); } }",
+    );
+    assert!(
+        !output.contains("break;"),
+        "Unlabeled break inside an awaited while body must become a generator branch.\nOutput:\n{output}"
+    );
+    let exit_label = if_break_target_after(&output, "if (!_a.sent())");
+    assert!(
+        count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2,
+        "Both the body break and the false-condition branch should target the loop exit case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_do_while_condition_await_renamed_identifiers_not_hardcoded() {
+    // Different identifier names must produce the same structural shape; the
+    // rule is about the AST kind (AwaitExpression at top-level of the
+    // condition), not the spelling of the callee.
+    let output =
+        transform_and_print("async function gizmo() { do { step(); } while (await poll()); }");
+    assert!(
+        output.contains("return [4 /*yield*/, poll()];"),
+        "Renamed callee should still produce the same yield lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
+        "Renamed callee should still drive the post-resume IfBreak on `_a.sent()`.\nOutput:\n{output}"
     );
 }
 
@@ -865,3 +1266,415 @@ fn discovery_generator_mode_ignores_body_without_yield() {
 fn discovery_body_contains_await_returns_false_for_pure_body() {
     assert!(!body_contains_await("async function f() { var x = 1; }"));
 }
+
+// ---------------------------------------------------------------------
+// Async/generator state-machine ES2020+ operator lowering
+//
+// The state machine path (`AsyncES5Transformer`) is only engaged when
+// the target predates native async/generators. At those targets `??` /
+// `?.` / logical-assignment also do not exist, so the IR converter must
+// lower them inline. The IR printer writes operators verbatim, so any
+// ?? that survives into the IR ends up emitted as raw `??` — illegal
+// ES5 syntax in tsc's baseline.
+
+fn transform_async_generator_inner_and_print(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let Some(root_node) = parser.arena.get(root) else {
+        return String::new();
+    };
+    let Some(source_file) = parser.arena.get_source_file(root_node) else {
+        return String::new();
+    };
+    let Some(&func_idx) = source_file.statements.nodes.first() else {
+        return String::new();
+    };
+    let Some(func_node) = parser.arena.get(func_idx) else {
+        return String::new();
+    };
+    let Some(func) = parser.arena.get_function(func_node) else {
+        return String::new();
+    };
+
+    let mut transformer = AsyncES5Transformer::new(&parser.arena);
+    transformer.set_source_text(source);
+    let ir = transformer.transform_async_generator_inner_function(
+        Some("f_1".to_string()),
+        &func.parameters.nodes,
+        func.body,
+        false,
+    );
+
+    let mut printer = IRPrinter::with_arena(&parser.arena);
+    printer.set_target_es5(true);
+    printer.set_source_text(source);
+    printer.emit(&ir);
+    printer.take_output()
+}
+
+#[test]
+fn async_generator_state_machine_lowers_nullish_coalescing_with_complex_lhs() {
+    // The repro from issue #37686 in the conformance baseline: a
+    // complex LHS (property access) on `??` must allocate a hoisted
+    // temp `_a`, evaluate the LHS exactly once into that temp, and
+    // reference the temp on the truthy branch. tsc emits this for
+    // every target that predates ES2020; the state-machine path is
+    // only engaged at ES5/ES2015 so we always lower here.
+    let output = transform_async_generator_inner_and_print(
+        "async function* f(a: { b?: number }) { let c = a.b ?? 10; while (c) { yield c--; } }",
+    );
+
+    assert!(
+        !output.contains(" ?? "),
+        "Raw `??` must not survive into the generator state-machine IR.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_a = a.b) !== null && _a !== void 0 ? _a : 10"),
+        "Complex-LHS nullish coalescing must lower to (_a = lhs) !== null && _a !== void 0 ? _a : rhs.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a;"),
+        "The hoisted nullish temp `_a` must be declared in the outer state-machine scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_state_machine_lowers_nullish_coalescing_with_simple_lhs() {
+    // tsc's `isSimpleCopiableExpression` allows the LHS to be repeated
+    // when it is an identifier/literal/keyword — no temp is allocated
+    // in that case. The lowering must match.
+    let output = transform_async_generator_inner_and_print(
+        "async function* f(a: any) { let c = a ?? 10; await x; }",
+    );
+
+    assert!(
+        !output.contains(" ?? "),
+        "Raw `??` must not survive into the generator state-machine IR.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("a !== null && a !== void 0 ? a : 10"),
+        "Simple-LHS nullish coalescing must lower without a hoisted temp.\nOutput:\n{output}"
+    );
+    // Without a complex LHS we should not see `(_a = ...)` from the
+    // nullish lowering, and no helper temp should be hoisted *because
+    // of* this lowering (the generator may still allocate `_a` as its
+    // state argument name; that lives inside `function (_a)` and is
+    // not declared via `var`).
+    assert!(
+        !output.contains("(_a = a)"),
+        "Simple-LHS path must not allocate a hoisted temp around the LHS.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_state_machine_lowers_nested_nullish_coalescing() {
+    // `a ?? b ?? c` is left-associative in tsc: it lowers as
+    // `(a ?? b) ?? c`, allocating one temp per non-simple subexpression.
+    // The right-associative parsing would be `a ?? (b ?? c)`, which is
+    // semantically different (different short-circuit grouping). Both
+    // sides here are property accesses, so every step allocates a temp.
+    let output = transform_async_generator_inner_and_print(
+        "async function* f(o: any) { let c = o.x ?? o.y ?? 10; await q; }",
+    );
+
+    assert!(
+        !output.contains(" ?? "),
+        "Raw `??` must not survive into the generator state-machine IR.\nOutput:\n{output}"
+    );
+    // Both lowerings should each declare their own temp in the outer
+    // scope, declared together in a single `var _a, _b;` line. Two
+    // distinct `!== null && _ !== void 0` checks confirm two distinct
+    // temps drove the lowering.
+    let temp_checks = output.matches("!== null && _").count();
+    assert!(
+        temp_checks >= 2,
+        "Nested nullish coalescing must lower with two distinct temporaries.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a") && output.contains("_b"),
+        "Both temps must be declared in the outer state-machine scope.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_state_machine_rule_is_name_independent() {
+    // §25/§26: the structural rule is "lower `??` in the state-machine
+    // path", not "lower when the user picked a particular spelling".
+    // Renaming the binding `c` to `x`, the parameter `a` to `paramX`,
+    // and the property `b` to `propY` must produce the same lowered
+    // shape — only the user-chosen spellings change.
+    let baseline = transform_async_generator_inner_and_print(
+        "async function* f(a: { b?: number }) { let c = a.b ?? 10; while (c) { yield c--; } }",
+    );
+    let renamed = transform_async_generator_inner_and_print(
+        "async function* myAsync(paramX: { propY?: number }) { let x = paramX.propY ?? 10; while (x) { yield x--; } }",
+    );
+
+    for fragment in ["var _a;", ") !== null && _a !== void 0 ? _a : 10"] {
+        assert!(
+            baseline.contains(fragment),
+            "Expected `{fragment}` in baseline output.\nOutput:\n{baseline}"
+        );
+        assert!(
+            renamed.contains(fragment),
+            "Expected `{fragment}` in renamed output (rule must be spelling-independent).\nOutput:\n{renamed}"
+        );
+    }
+}
+
+#[test]
+fn async_generator_state_machine_emits_loop_entry_label_after_prefix() {
+    // Correctness bug: when statements precede a suspending loop, the
+    // loop entry must be its own case so `[3 /*break*/, <entry>]` from
+    // the body re-enters at the condition check, not at the prefix.
+    // Without an explicit `_b.label = <entry>` and a fresh case label,
+    // the loop-back re-executes the initializer every iteration —
+    // turning `let c = init; while (c) { yield c--; }` into an
+    // infinite loop.
+    let output = transform_async_generator_inner_and_print(
+        "async function* f(a: any) { let c = a; while (c) { yield c--; } }",
+    );
+
+    // The loop entry must be on its own case, and the prior case must
+    // end with `_b.label = <entry-label>` so fall-through reaches it.
+    assert!(
+        output.contains(".label = 1;"),
+        "Prefix-then-loop must emit an explicit label assignment before the loop entry case.\nOutput:\n{output}"
+    );
+    // Loop-back inside the body must target the loop ENTRY label, not
+    // the initial case (label 0) — otherwise the initializer re-runs.
+    // We don't pin the exact opcode here; we just assert no
+    // `[3 /*break*/, 0]` (the symptom of looping back to the prefix
+    // case).
+    assert!(
+        !output.contains("[3 /*break*/, 0]"),
+        "Loop-back must not target the initial case (where the prefix lives).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_generator_state_machine_keeps_simple_loop_label_intact() {
+    // Negative: when there is no prefix, the loop entry stays on the
+    // initial case (label 0). The label-flush helper must not insert a
+    // spurious `_a.label = 1;` in that case — that would also be valid
+    // semantics but tsc's output is the unprefixed shape, and gratuitous
+    // label assignments produce baseline noise across the whole async
+    // family. Verify the helper only fires when there is something to
+    // flush.
+    let output = transform_async_generator_inner_and_print(
+        "async function* f() { while (true) { yield 1; } }",
+    );
+
+    assert!(
+        !output.contains(".label = 1;"),
+        "Loop without a prefix must not flush an empty preceding case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_function_state_machine_lowers_nullish_coalescing() {
+    // The same rule applies to `async function` (non-generator) at the
+    // state-machine targets. Lower `??` inline; hoist the temp into the
+    // awaiter wrapper's var scope so it lives alongside any user
+    // hoisted vars and is shared across the `__generator` state.
+    let output = emit_async_function_from_source(
+        "async function f(o: { x?: number }) { let v = o.x ?? 0; await q(); }",
+    );
+
+    assert!(
+        !output.contains(" ?? "),
+        "Raw `??` must not survive into the async state-machine IR.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(_a = o.x) !== null && _a !== void 0 ? _a : 0"),
+        "Async-function path must lower nullish coalescing identically to async-generator path.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _a;"),
+        "The hoisted nullish temp must be declared in the awaiter wrapper scope.\nOutput:\n{output}"
+    );
+}
+
+// Structural rule: when an async ES5 function contains
+// `for (init; cond; incr) body` where any of init/cond/incr/body suspends on
+// `await`, the generator state machine must lower it like `while` — the
+// continue target is the incrementor case (so `continue` runs the incrementor
+// and re-checks the condition), the backedge returns to the condition case,
+// and `break` exits the loop. `var`s declared in the initializer are hoisted
+// into the awaiter wrapper. None of this is keyed on identifier spelling.
+
+#[test]
+fn async_for_body_await_lowers_to_generator_cases() {
+    let output = transform_and_print("async function f() { for (x; y; z) { await a; } }");
+
+    assert!(
+        !output.contains("for ("),
+        "Raw for statement must not remain around a suspended body.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("await "),
+        "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "Loop condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a];"),
+        "Await in the body should become a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "Body should jump back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_condition_await_yields_before_test() {
+    let output = transform_and_print("async function f() { for (x; await y; z) { a; } }");
+
+    assert!(
+        output.contains("return [4 /*yield*/, y];"),
+        "A top-level await in the condition should lower to a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!_a.sent()) return [3 /*break*/, 4];"),
+        "The yielded condition result should be tested via `_a.sent()`.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_incrementor_await_yields_before_backedge() {
+    let output = transform_and_print("async function f() { for (x; y; await z) { a; } }");
+
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "A top-level await in the incrementor should lower to a generator yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "After the incrementor yield, the loop should branch back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_initializer_await_yields_before_loop() {
+    let output = transform_and_print("async function f() { for (await x; y; z) { a; } }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, x];"),
+        "A top-level await in the initializer should yield in the entry case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "The condition check should follow the initializer in its own case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_lowering_is_not_keyed_on_identifier_spelling() {
+    // Same structure as `async_for_body_await_lowers_to_generator_cases` with
+    // every identifier renamed; the lowering must be identical.
+    let output =
+        transform_and_print("async function loop() { for (init; cond; step) { await work; } }");
+
+    assert!(
+        !output.contains("for (") && !output.contains("await "),
+        "Renamed for-loop must lower the same way.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (!cond) return [3 /*break*/, 4];"),
+        "Renamed condition should still branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, work];"),
+        "Renamed body await should still yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "Renamed loop should still branch back to the condition case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_continue_routes_to_incrementor_case() {
+    let output = transform_and_print("async function f() { for (x; y; z) { await a; continue; } }");
+
+    // continue must jump to the incrementor case (not the condition case),
+    // so the incrementor runs before the condition is re-tested.
+    assert!(
+        output.contains("if (!y) return [3 /*break*/, 4];"),
+        "Condition should branch to the exit case.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 3];"),
+        "`continue` should target the incrementor case (label 3).\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 1];"),
+        "The incrementor case should branch back to the condition case (label 1).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_var_initializer_is_hoisted_without_state_machine() {
+    // No suspension anywhere: tsc keeps the `for` as-is but hoists the
+    // initializer `var` into the awaiter wrapper and rewrites the init to a
+    // bare assignment.
+    let output = transform_and_print("async function f() { for (var c = x; y; z) { a; } }");
+
+    assert!(
+        output.contains("var c;"),
+        "The for-initializer `var` must be hoisted into the awaiter wrapper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (c = x; y; z)"),
+        "The hoisted initializer must be rewritten to a bare assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("for (var c"),
+        "The `var` keyword must not remain in the for-initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_var_initializer_without_value_is_hoisted() {
+    let output = transform_and_print("async function f() { for (var b; y; z) { a; } }");
+
+    assert!(
+        output.contains("var b;"),
+        "An uninitialized for `var` must still be hoisted.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (; y; z)"),
+        "With no initializer value the for-init slot must be empty.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_for_block_scoped_initializer_is_not_var_hoisted() {
+    // `let`/`const` are block-scoped: the `var`-hoist shortcut must not apply,
+    // otherwise the binding's scope/semantics would change. The block-scoped
+    // initializer is left to the verbatim / ES5 block-scoping path. With the
+    // bug present the emitter would produce a hoisted `var c;` plus
+    // `for (c = x; y; z)`; the gate prevents both.
+    for keyword in ["let", "const"] {
+        let output = transform_and_print(&format!(
+            "async function f() {{ for ({keyword} c = x; y; z) {{ a; }} }}"
+        ));
+
+        assert!(
+            !output.contains("var c;"),
+            "A block-scoped `{keyword}` for-initializer must not be hoisted to `var`.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("for (c = x"),
+            "A block-scoped `{keyword}` initializer must not be rewritten to a bare assignment.\nOutput:\n{output}"
+        );
+    }
+}
+
+// Negative/fallback case (no suspension and no hoistable `var` -> the for loop
+// is emitted verbatim, not a state machine) is covered end-to-end by the
+// `es5-asyncFunctionForStatements` emit baseline (`forStatement0`); the
+// standalone IR-printer test harness cannot render verbatim AST references.

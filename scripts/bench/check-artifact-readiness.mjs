@@ -24,6 +24,10 @@ import {
   REQUIRED_PROJECT_ROWS,
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
+import {
+  isGreen,
+  isIncompleteCompat,
+} from "./row-utils.mjs";
 
 const args = process.argv.slice(2);
 const jsonOutput = args.includes("--json");
@@ -46,12 +50,16 @@ function loadArtifact() {
   }
 }
 
-function rowState(row) {
+function rowState(row, duplicate = false) {
   if (!row) return "missing";
+  if (duplicate) return "gray";
   if (row.status) return "red";
+  if (isIncompleteCompat(row)) return "gray";
   const compat = row.compatibility;
   if (!compat) return "gray";
-  return compat.state ?? "gray";
+  if (isGreen(row)) return "green";
+  if (compat.state === "yellow" || compat.state === "red") return compat.state;
+  return "gray";
 }
 
 const STATE_ICON = { green: "✅", yellow: "⚠️", red: "❌", gray: "⬜", missing: "🚫" };
@@ -107,39 +115,97 @@ function analyzeMeasurementProfile(artifact) {
   };
 }
 
+function cleanValidationWarnings(warnings) {
+  if (!Array.isArray(warnings)) return [];
+  return warnings
+    .filter((warning) => warning && typeof warning === "object" && !Array.isArray(warning))
+    .map((warning) => ({
+      file: typeof warning.file === "string" && warning.file.trim() ? warning.file.trim() : null,
+      mismatched_fields: Array.isArray(warning.mismatched_fields)
+        ? warning.mismatched_fields
+          .filter((field) => typeof field === "string" && field.trim())
+          .map((field) => field.trim())
+        : [],
+      expected: warning.expected ?? null,
+      actual: warning.actual ?? null,
+    }));
+}
+
+function analyzeValidationWarnings(artifact) {
+  const validation = artifact?.validation && typeof artifact.validation === "object"
+    ? artifact.validation
+    : {};
+  const runnerEnvironment = cleanValidationWarnings(validation.runner_environment_warnings);
+  const measurementProfile = cleanValidationWarnings(validation.measurement_profile_warnings);
+  return {
+    runner_environment: runnerEnvironment,
+    measurement_profile: measurementProfile,
+    total: runnerEnvironment.length + measurementProfile.length,
+  };
+}
+
 function analyzeArtifact(artifact) {
-  const byName = new Map(
-    (artifact.results ?? []).map((r) => [r?.name, r]),
-  );
+  const byName = new Map();
+  const duplicateCounts = new Map();
+  for (const row of Array.isArray(artifact?.results) ? artifact.results : []) {
+    const name = row?.name;
+    if (typeof name !== "string") continue;
+    if (byName.has(name)) {
+      duplicateCounts.set(name, (duplicateCounts.get(name) ?? 1) + 1);
+    } else {
+      byName.set(name, row);
+    }
+  }
 
   const rows = REQUIRED_PROJECT_ROWS.map((name) => {
     const row = byName.get(name) ?? null;
-    const state = rowState(row);
+    const duplicateCount = duplicateCounts.get(name) ?? (row ? 1 : 0);
+    const duplicate = duplicateCount > 1;
+    const state = rowState(row, duplicate);
     const def = PROJECT_ROWS_BY_NAME[name];
+    const compatibility = row?.compatibility ?? {};
     return {
       name,
       label: def?.label ?? name,
       state,
+      duplicate_count: duplicateCount,
       tsz_ms: row?.tsz_ms ?? null,
       tsgo_ms: row?.tsgo_ms ?? null,
       winner: row?.winner ?? null,
-      exit_class: row?.compatibility?.exit_class ?? null,
-      diagnostic_status: row?.compatibility?.diagnostic_status ?? null,
+      exit_class: duplicate ? "duplicate row" : compatibility.exit_class ?? null,
+      phase: compatibility.phase ?? null,
+      last_successful_phase: compatibility.last_successful_phase ?? null,
+      first_failure_class: duplicate
+        ? `${duplicateCount} entries found`
+        : compatibility.first_failure_class ?? null,
+      owner_family: compatibility.semantic_owner_family ?? compatibility.owner_family ?? null,
+      known_blockers: duplicate
+        ? ["duplicate project row"]
+        : Array.isArray(compatibility.known_blockers)
+        ? compatibility.known_blockers.filter(Boolean).slice(0, 8)
+        : [],
+      diagnostic_status: compatibility.diagnostic_status ?? null,
+      files_reached: compatibility.files_reached ?? null,
+      files_reached_reason: compatibility.files_reached_reason ?? null,
+      peak_memory_bytes: compatibility.peak_memory_bytes ?? null,
+      peak_memory_bytes_reason: compatibility.peak_memory_bytes_reason ?? null,
     };
   });
 
   return {
     measurementProfile: analyzeMeasurementProfile(artifact),
+    validationWarnings: analyzeValidationWarnings(artifact),
     rows,
     missing: rows.filter((r) => r.state === "missing"),
     red: rows.filter((r) => r.state === "red"),
     yellow: rows.filter((r) => r.state === "yellow"),
     gray: rows.filter((r) => r.state === "gray"),
     green: rows.filter((r) => r.state === "green"),
+    duplicates: rows.filter((r) => r.duplicate_count > 1),
   };
 }
 
-function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
+function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const missingNames = missing?.map((r) => r.name) ?? REQUIRED_PROJECT_ROWS;
   return {
     artifact_absent: artifactAbsent,
@@ -148,6 +214,11 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
     generated_at: artifact?.generated_at ?? null,
     workflow_run_url: artifact?.workflow_run_url ?? null,
     measurement_profile: measurementProfile ?? null,
+    validation_warnings: validationWarnings ?? {
+      runner_environment: [],
+      measurement_profile: [],
+      total: 0,
+    },
     required_row_count: rows?.length ?? REQUIRED_PROJECT_ROWS.length,
     green: green?.length ?? 0,
     yellow: yellow?.length ?? 0,
@@ -155,17 +226,28 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
     gray: gray?.length ?? 0,
     missing: missingNames.length,
     missing_rows: missingNames,
+    duplicate_rows: duplicates?.map((r) => ({ name: r.name, count: r.duplicate_count })) ?? [],
     red_rows: red?.map((r) => r.name) ?? [],
     yellow_rows: yellow?.map((r) => r.name) ?? [],
     rows: rows?.map((r) => ({
       name: r.name,
       label: r.label,
       state: r.state,
+      duplicate_count: r.duplicate_count,
       tsz_ms: r.tsz_ms,
       tsgo_ms: r.tsgo_ms,
       winner: r.winner,
       exit_class: r.exit_class,
+      phase: r.phase,
+      last_successful_phase: r.last_successful_phase,
+      first_failure_class: r.first_failure_class,
+      owner_family: r.owner_family,
+      known_blockers: r.known_blockers,
       diagnostic_status: r.diagnostic_status,
+      files_reached: r.files_reached,
+      files_reached_reason: r.files_reached_reason,
+      peak_memory_bytes: r.peak_memory_bytes,
+      peak_memory_bytes_reason: r.peak_memory_bytes_reason,
     })) ?? [],
   };
 }
@@ -173,6 +255,28 @@ function buildJson({ artifactAbsent, parseError, artifact, measurementProfile, r
 function fmtMs(ms) {
   if (ms == null) return "—";
   return `${Number(ms).toFixed(0)} ms`;
+}
+
+function mdCell(value) {
+  return String(value ?? "—").replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+function fmtFilesReached(value, reason) {
+  if (Number.isFinite(Number(value))) return String(Number(value));
+  return reason ? `n/a (${reason})` : "—";
+}
+
+function fmtPeakMemory(value, reason) {
+  if (Number.isFinite(Number(value))) {
+    return `${(Number(value) / (1024 * 1024)).toFixed(1)} MiB`;
+  }
+  return reason ? `n/a (${reason})` : "—";
+}
+
+function fmtWarningFields(warning) {
+  return warning.mismatched_fields.length > 0
+    ? warning.mismatched_fields.join(", ")
+    : "metadata mismatch";
 }
 
 function artifactAge(generatedAt) {
@@ -183,7 +287,7 @@ function artifactAge(generatedAt) {
   return `${h} h ago`;
 }
 
-function buildReport({ artifact, measurementProfile, rows, missing, red, yellow, gray, green }) {
+function buildReport({ artifact, measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates }) {
   const sourceCommit = artifact?.source_commit?.slice(0, 10) ?? "unknown";
   const generatedAt = artifact?.generated_at ?? null;
   const workflowUrl = artifact?.workflow_run_url ?? null;
@@ -209,6 +313,9 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
     `| ❌ red | ${red.length} |`,
     `| ⬜ gray | ${gray.length} |`,
     `| 🚫 missing | ${missing.length} |`,
+    `| Duplicate rows | ${duplicates.length} |`,
+    `| Runner metadata warnings | ${validationWarnings.runner_environment.length} |`,
+    `| Measurement profile warnings | ${validationWarnings.measurement_profile.length} |`,
     "",
   ];
 
@@ -218,13 +325,36 @@ function buildReport({ artifact, measurementProfile, rows, missing, red, yellow,
     lines.push("");
   }
 
+  if (duplicates.length > 0) {
+    lines.push(`### ⬜ Duplicate required rows (${duplicates.length})`, "");
+    for (const r of duplicates) lines.push(`- \`${r.name}\` appears ${r.duplicate_count} times`);
+    lines.push("");
+  }
+
+  if (validationWarnings.runner_environment.length > 0) {
+    lines.push(`### Runner metadata warnings (${validationWarnings.runner_environment.length})`, "");
+    for (const warning of validationWarnings.runner_environment) {
+      lines.push(`- \`${mdCell(warning.file ?? "unknown input")}\`: ${mdCell(fmtWarningFields(warning))}`);
+    }
+    lines.push("");
+  }
+
+  if (validationWarnings.measurement_profile.length > 0) {
+    lines.push(`### Measurement profile warnings (${validationWarnings.measurement_profile.length})`, "");
+    for (const warning of validationWarnings.measurement_profile) {
+      lines.push(`- \`${mdCell(warning.file ?? "unknown input")}\`: ${mdCell(fmtWarningFields(warning))}`);
+    }
+    lines.push("");
+  }
+
   lines.push("### All required rows", "");
-  lines.push("| State | Row | tsz | tsgo | Winner | Exit | Diagnostics |");
-  lines.push("|:-----:|-----|----:|----:|--------|------|-------------|");
+  lines.push("| State | Row | tsz | tsgo | Winner | Exit | Phase | Last phase | Files | Peak RSS | Failure | Blocker family | Diagnostics |");
+  lines.push("|:-----:|-----|----:|----:|--------|------|-------|------------|------:|---------:|---------|----------------|-------------|");
   for (const r of rows) {
     const icon = STATE_ICON[r.state] ?? "?";
+    const blockerFamily = r.known_blockers?.[0] ?? r.first_failure_class ?? r.owner_family ?? "—";
     lines.push(
-      `| ${icon} | \`${r.label}\` | ${fmtMs(r.tsz_ms)} | ${fmtMs(r.tsgo_ms)} | ${r.winner ?? "—"} | ${r.exit_class ?? "—"} | ${r.diagnostic_status ?? "—"} |`,
+      `| ${icon} | \`${mdCell(r.label)}\` | ${fmtMs(r.tsz_ms)} | ${fmtMs(r.tsgo_ms)} | ${mdCell(r.winner)} | ${mdCell(r.exit_class)} | ${mdCell(r.phase)} | ${mdCell(r.last_successful_phase)} | ${mdCell(fmtFilesReached(r.files_reached, r.files_reached_reason))} | ${mdCell(fmtPeakMemory(r.peak_memory_bytes, r.peak_memory_bytes_reason))} | ${mdCell(r.first_failure_class)} | ${mdCell(blockerFamily)} | ${mdCell(r.diagnostic_status)} |`,
     );
   }
 
@@ -278,6 +408,7 @@ if (artifactAbsent || parseError) {
         yellow: null,
         gray: null,
         green: null,
+        duplicates: null,
       })) + "\n",
     );
   }
@@ -285,7 +416,7 @@ if (artifactAbsent || parseError) {
 }
 
 const analysis = analyzeArtifact(artifact);
-const { measurementProfile, rows, missing, red, yellow, gray, green } = analysis;
+const { measurementProfile, validationWarnings, rows, missing, red, yellow, gray, green, duplicates } = analysis;
 
 writeReport(buildReport({ artifact, ...analysis }));
 
@@ -296,21 +427,31 @@ if (jsonOutput) {
       parseError: null,
       artifact,
       measurementProfile,
+      validationWarnings,
       rows,
       missing,
       red,
       yellow,
       gray,
       green,
+      duplicates,
     })) + "\n",
   );
 }
 
-if (missing.length > 0) {
-  process.stderr.write(
-    `bench-artifact-readiness: ${missing.length} required row(s) missing from artifact: ` +
-      missing.map((r) => r.name).join(", ") + "\n",
-  );
+if (missing.length > 0 || duplicates.length > 0) {
+  if (duplicates.length > 0) {
+    process.stderr.write(
+      `bench-artifact-readiness: ${duplicates.length} required row(s) duplicated in artifact: ` +
+        duplicates.map((r) => `${r.name} (${r.duplicate_count})`).join(", ") + "\n",
+    );
+  }
+  if (missing.length > 0) {
+    process.stderr.write(
+      `bench-artifact-readiness: ${missing.length} required row(s) missing from artifact: ` +
+        missing.map((r) => r.name).join(", ") + "\n",
+    );
+  }
   process.exit(1);
 }
 

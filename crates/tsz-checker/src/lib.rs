@@ -100,6 +100,9 @@ mod assertion_overlap_keyof_primitive_tests;
 #[path = "../tests/assertion_overlap_object_primitive_tests.rs"]
 mod assertion_overlap_object_primitive_tests;
 #[cfg(test)]
+#[path = "../tests/assertion_overlap_template_literal_tests.rs"]
+mod assertion_overlap_template_literal_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
@@ -316,6 +319,9 @@ mod ts2498_tests;
 #[path = "../tests/ts2540_readonly_tests.rs"]
 mod ts2540_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/ts2542_readonly_index_coemission_tests.rs"]
+mod ts2542_readonly_index_coemission_tests;
+#[cfg(test)]
 #[path = "../tests/ts2558_new_type_args_tests.rs"]
 mod ts2558_new_type_args_tests;
 #[cfg(test)]
@@ -397,6 +403,9 @@ mod assertion_type_predicate_diagnostics_tests;
 #[path = "../tests/bigint_target_ts2737_tests.rs"]
 mod bigint_target_ts2737_tests;
 #[cfg(test)]
+#[path = "tests/builtin_iterator_implements_tests.rs"]
+mod builtin_iterator_implements_tests;
+#[cfg(test)]
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
@@ -442,6 +451,9 @@ mod cross_file_class_merge_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
+mod destructured_discriminant_source_narrowing_tests;
+#[cfg(test)]
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[cfg(test)]
@@ -474,6 +486,9 @@ mod generic_callback_outer_context_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/generic_class_self_ref_method_param_tests.rs"]
+mod generic_class_self_ref_method_param_tests;
 #[cfg(test)]
 #[path = "../tests/generic_inference_manual.rs"]
 mod generic_inference_manual;
@@ -628,6 +643,9 @@ mod repro_parserreal;
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]
+#[path = "tests/satisfies_callback_return_widening_tests.rs"]
+mod satisfies_callback_return_widening_tests;
+#[cfg(test)]
 #[path = "tests/split_accessor_variance_tests.rs"]
 mod split_accessor_variance_tests;
 #[cfg(test)]
@@ -649,6 +667,9 @@ mod synthetic_unique_atom_union_display_tests;
 #[path = "tests/this_context_self_type_tests.rs"]
 mod this_context_self_type_tests;
 #[cfg(test)]
+#[path = "tests/this_void_method_call_tests.rs"]
+mod this_void_method_call_tests;
+#[cfg(test)]
 #[path = "tests/ts1101_with_in_strict_mode_tests.rs"]
 mod ts1101_with_in_strict_mode_tests;
 #[cfg(test)]
@@ -657,6 +678,9 @@ mod ts1170_computed_property_syntactic_form_tests;
 #[cfg(test)]
 #[path = "tests/ts18010_jsdoc_tag_anchor_tests.rs"]
 mod ts18010_jsdoc_tag_anchor_tests;
+#[cfg(test)]
+#[path = "../tests/ts18048_unary_arithmetic_nullish_tests.rs"]
+mod ts18048_unary_arithmetic_nullish_tests;
 #[cfg(test)]
 #[path = "tests/ts2322_private_field_narrowing_write_tests.rs"]
 mod ts2322_private_field_narrowing_write_tests;
@@ -732,7 +756,7 @@ pub fn run_js_grammar_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_js_grammar_statements(&statements);
     checker.ctx.diagnostics
@@ -764,7 +788,7 @@ pub fn run_isolated_declarations_pass(
     if statements.is_empty() {
         return Vec::new();
     }
-    let interner = tsz_solver::TypeInterner::new();
+    let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
     checker.check_isolated_declarations(&statements);
     checker.check_isolated_decl_class_expressions(&statements);

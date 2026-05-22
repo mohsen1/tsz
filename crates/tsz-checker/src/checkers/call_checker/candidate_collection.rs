@@ -904,8 +904,24 @@ impl<'a> CheckerState<'a> {
             // expressions. Without this, the argument type is computed as a regular
             // array/object, but the inferred const type parameter expects a readonly
             // tuple/object, causing a false TS2322.
+            //
+            // Exception: when the argument is syntactically a `satisfies E`
+            // expression, the satisfies target `E` already provides explicit
+            // contextual typing for the wrapped expression. tsc's
+            // `isConstTypeParameterContext` checks `getContextualType`, which
+            // returns the satisfies target at a `SatisfiesExpression` boundary
+            // (never the outer call's `const T`), so the const-type-parameter
+            // context does not propagate through the satisfies wrapper. Skipping
+            // the const-assertion enable here keeps property-value widening
+            // inside the satisfies inner driven by the satisfies target's
+            // contextual type — fixing #9785.
             let prev_const_assertion = self.ctx.in_const_assertion;
-            if !self.ctx.in_const_assertion {
+            let arg_is_satisfies_expr = self
+                .ctx
+                .arena
+                .get(self.ctx.arena.skip_parenthesized(arg_idx))
+                .is_some_and(|node| node.kind == syntax_kind_ext::SATISFIES_EXPRESSION);
+            if !self.ctx.in_const_assertion && !arg_is_satisfies_expr {
                 let mut should_enable_const = false;
                 if let Some(et) = expected_type
                     && Self::type_references_const_type_param_requiring_readonly_argument_context(
@@ -1392,7 +1408,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn recursive_mapped_tuple_spread_may_exceed_depth_in_types(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         spread_type: TypeId,
         expected_type: TypeId,
     ) -> bool {
@@ -1432,7 +1448,7 @@ impl<'a> CheckerState<'a> {
     /// allows readonly literal inference.
     /// Used to propagate const assertion context into call argument expressions.
     fn type_references_const_type_param_requiring_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1450,7 +1466,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn direct_const_type_param_requires_readonly_argument_context(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         use crate::query_boundaries::common;
@@ -1467,7 +1483,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(super) fn constraint_allows_mutable_array_like(
-        db: &dyn tsz_solver::TypeDatabase,
+        db: &dyn tsz_solver::construction::TypeDatabase,
         type_id: TypeId,
     ) -> bool {
         crate::query_boundaries::common::constraint_allows_mutable_array_like(db, type_id)
@@ -1673,7 +1689,7 @@ mod tests {
     use std::sync::Arc;
     use tsz_binder::BinderState;
     use tsz_parser::parser::ParserState;
-    use tsz_solver::TypeInterner;
+    use tsz_solver::construction::TypeInterner;
 
     fn first_argument_for_call(checker: &CheckerState<'_>, callee_name: &str) -> NodeIndex {
         checker

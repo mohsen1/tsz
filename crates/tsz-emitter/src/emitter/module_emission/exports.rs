@@ -60,9 +60,21 @@ enum CjsLiveExportKind {
 }
 
 impl<'a> Printer<'a> {
+    /// Not `is_effectively_commonjs()`: that helper also returns true for AMD/UMD/System
+    /// wrapper bodies, which use a different export protocol and must not receive
+    /// clause-export live binding rewrites (`exports.x = ...`).
     const fn is_commonjs_live_export_context(&self) -> bool {
+        // Check the mask field explicitly: with_cjs_export_body_mask() temporarily
+        // sets options.module = None while emitting hoisted function bodies, so
+        // is_commonjs() alone misses that window. is_effectively_commonjs() is
+        // intentionally not used here: it also returns true for AMD/UMD/System
+        // wrappers, which are not CJS live-export contexts.
         self.ctx.is_commonjs()
             || matches!(self.ctx.original_module_kind, Some(ModuleKind::CommonJS))
+            || matches!(
+                self.ctx.cjs_export_body_outer_module,
+                Some(ModuleKind::CommonJS)
+            )
     }
 
     /// Write `exports.name` or `exports["name"]` depending on whether the name
@@ -1214,11 +1226,7 @@ impl<'a> Printer<'a> {
                                 es5_emitter.set_transforms(self.transforms.clone());
                                 es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
                                 es5_emitter.set_printer_options(self.ctx.options.clone());
-                                es5_emitter.set_module_kind(
-                                    self.ctx
-                                        .original_module_kind
-                                        .unwrap_or(self.ctx.options.module),
-                                );
+                                es5_emitter.set_module_kind(self.ctx.outer_module_kind());
                                 if let Some(text) = self.source_text_for_map() {
                                     if self.writer.has_source_map() {
                                         es5_emitter.set_source_map_context(

@@ -1,6 +1,6 @@
 use super::*;
-use crate::TypeInterner;
 use crate::caches::db::QueryDatabase;
+use crate::construction::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, MappedModifier, MappedType, ParamInfo,
     PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo,
@@ -2546,6 +2546,153 @@ fn homomorphic_mapped_index_access_skips_non_identity_template() {
     assert!(
         formatted.contains("[P in keyof U]"),
         "expected structural mapped form for non-homomorphic template, got: {formatted}"
+    );
+}
+
+/// When a generic type alias evaluates to a fresh remapped Mapped type, the
+/// display alias must be stored so that `Alias<K>[IndexType]` shows the alias
+/// name instead of the expanded `{ [P in K as ...]: ... }[IndexType]` form.
+///
+/// Structural rule: for any `Application(Alias, [T])` where `T` contains a
+/// generic type param and the body evaluates to a fresh Mapped node, the
+/// `IndexAccess` display must use the alias name.
+#[test]
+fn remapped_mapped_type_alias_index_access_shows_alias_name() {
+    // Simulates: `type GetterMap<K extends string> = { [P in K as `get${P}`]: { a: P } }`
+    // and an IndexAccess: `GetterMap<K>['get${K}']`
+    let db = TypeInterner::new();
+
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let p = db.type_param(TypeParamInfo::simple(db.intern_string("P")));
+    // Template: { a: P }
+    let a_prop = db.intern_string("a");
+    let template = db.object(vec![PropertyInfo::new(a_prop, p)]);
+    // name_type: `get${P}`
+    let get_prefix = db.intern_string("get");
+    let name_type =
+        db.template_literal(vec![TemplateSpan::Text(get_prefix), TemplateSpan::Type(p)]);
+    // The Mapped type body: { [P in K as `get${P}`]: { a: P } }
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo::simple(db.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    // Application alias: GetterMap<K>
+    let app = db.application(db.lazy(crate::def::DefId(9001)), vec![k]);
+    // Store display alias: mapped → app (simulates evaluate(Application) result)
+    db.store_display_alias_preferring_application(mapped, app);
+    // Index access: GetterMap<K>['get${K}']
+    let idx = db.template_literal(vec![TemplateSpan::Text(get_prefix), TemplateSpan::Type(k)]);
+    let access = db.index_access(mapped, idx);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(access);
+    // The alias was stored, so the formatter uses the alias form, not the
+    // expanded `{ [P in K as ...]: ... }` structural form.
+    assert!(
+        !result.contains("[P in K as"),
+        "expected alias name form, not expanded mapped form, got: {result}"
+    );
+}
+
+/// The alias-name display for remapped mapped index access must be
+/// independent of the iteration variable name (`P`, `Q`, `X`, etc.).
+/// A name-hardcoded check would silently fall back to structural form
+/// when the alias uses a different variable name.
+#[test]
+fn remapped_mapped_type_alias_index_access_independent_of_iteration_var_name() {
+    let db = TypeInterner::new();
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+
+    // Build two structurally-distinct mapped types differing only in the
+    // iteration variable name. Both get an Application alias stored.
+    // The formatter must use the alias in both cases (structural rule, not name-matched).
+    let make_aliased_access = |var_name: &str, def_id: u32| {
+        let var = db.type_param(TypeParamInfo::simple(db.intern_string(var_name)));
+        let prefix = db.intern_string("get");
+        let name_type =
+            db.template_literal(vec![TemplateSpan::Text(prefix), TemplateSpan::Type(var)]);
+        let prop = db.intern_string("val");
+        let template = db.object(vec![PropertyInfo::new(prop, var)]);
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo::simple(db.intern_string(var_name)),
+            constraint: k,
+            template,
+            name_type: Some(name_type),
+            readonly_modifier: None,
+            optional_modifier: None,
+        });
+        let app = db.application(db.lazy(crate::def::DefId(def_id)), vec![k]);
+        db.store_display_alias_preferring_application(mapped, app);
+        let idx = db.template_literal(vec![TemplateSpan::Text(prefix), TemplateSpan::Type(k)]);
+        db.index_access(mapped, idx)
+    };
+
+    let access_q = make_aliased_access("Q", 9002);
+    let access_x = make_aliased_access("X", 9003);
+
+    let mut fmt = TypeFormatter::new(&db);
+
+    let result_q = fmt.format(access_q);
+    assert!(
+        !result_q.contains("[Q in K as"),
+        "iteration var `Q`: expected alias form, got structural: {result_q}"
+    );
+
+    let result_x = fmt.format(access_x);
+    assert!(
+        !result_x.contains("[X in K as"),
+        "iteration var `X`: expected alias form, got structural: {result_x}"
+    );
+}
+
+/// A Mapped type without a display alias (simulating a raw mapped type not
+/// produced from a known type alias) must format structurally for `IndexAccess`.
+#[test]
+fn remapped_mapped_type_without_alias_formats_structurally_in_index_access() {
+    let db = TypeInterner::new();
+    let k = db.type_param(TypeParamInfo {
+        name: db.intern_string("K"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    });
+    let p = db.type_param(TypeParamInfo::simple(db.intern_string("P")));
+    let prefix = db.intern_string("pfx");
+    let name_type = db.template_literal(vec![TemplateSpan::Text(prefix), TemplateSpan::Type(p)]);
+    let prop = db.intern_string("v");
+    let template = db.object(vec![PropertyInfo::new(prop, p)]);
+    // No display alias stored — structural display expected.
+    let mapped = db.mapped(MappedType {
+        type_param: TypeParamInfo::simple(db.intern_string("P")),
+        constraint: k,
+        template,
+        name_type: Some(name_type),
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let idx = db.template_literal(vec![TemplateSpan::Text(prefix), TemplateSpan::Type(k)]);
+    let access = db.index_access(mapped, idx);
+
+    let mut fmt = TypeFormatter::new(&db);
+    let result = fmt.format(access);
+    // Without an alias, the structural expanded form is shown.
+    assert!(
+        result.contains("[P in K as"),
+        "expected structural mapped form when no alias stored, got: {result}"
     );
 }
 

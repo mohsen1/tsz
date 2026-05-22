@@ -1,4 +1,5 @@
-use tsz_solver::{CallSignature, TypeDatabase, TypeId};
+use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{CallSignature, TypeId};
 
 pub(crate) fn construct_signatures_for_type(
     db: &dyn TypeDatabase,

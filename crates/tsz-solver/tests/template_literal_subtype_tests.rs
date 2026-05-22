@@ -225,8 +225,9 @@ fn test_large_template_cross_product_sets_too_complex_flag() {
 
 #[test]
 fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let digits = (0..=9).map(|n| interner.literal_number(n as f64)).collect();
@@ -254,8 +255,9 @@ fn test_large_template_cross_product_sets_flag_after_lazy_resolution() {
 
 #[test]
 fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let zero = interner.literal_string("0");
@@ -302,8 +304,9 @@ fn test_mixed_template_union_counts_lazy_template_alternatives_for_complexity() 
 
 #[test]
 fn test_tuple_spread_cross_product_sets_flag_after_lazy_resolution() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let tuple_members = (0..=9)
@@ -683,9 +686,10 @@ fn test_template_literal_union_hole_distributes_over_remaining_pattern() {
 
 #[test]
 fn test_template_literal_evaluation_preserves_evaluated_pattern_spans() {
+    use crate::TypeEvaluator;
     use crate::def::DefId;
     use crate::diagnostics::format::TypeFormatter;
-    use crate::{TypeEnvironment, TypeEvaluator};
+    use crate::relations::subtype::TypeEnvironment;
 
     let interner = TypeInterner::new();
     let number_pattern = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
@@ -853,4 +857,104 @@ fn test_plus_signed_string_matches_number_pattern() {
             "{value:?} should match `${{number}}`"
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// `${string}`-only templates collapse to / are mutually assignable with string.
+// Issue #9693: a template literal spanning the entire string domain must behave
+// exactly like `string` (tsc's `getTemplateLiteralType` collapse).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_single_string_placeholder_collapses_to_string() {
+    // `${string}` is exactly the full string domain → collapses to `string`.
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    assert_eq!(template, TypeId::STRING);
+}
+
+#[test]
+fn test_string_assignable_both_ways_to_single_string_placeholder() {
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(TypeId::STRING, template));
+    assert!(checker.is_subtype_of(template, TypeId::STRING));
+}
+
+#[test]
+fn test_multi_string_placeholder_mutually_assignable_with_string() {
+    // `${string}${string}` stays a template (display parity with tsc) but
+    // `string` is assignable to it and vice-versa: any string partitions
+    // across the placeholders.
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(TypeId::STRING, template));
+    assert!(checker.is_subtype_of(template, TypeId::STRING));
+}
+
+#[test]
+fn test_three_string_placeholders_accept_string() {
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(checker.is_subtype_of(TypeId::STRING, template));
+}
+
+#[test]
+fn test_string_not_assignable_to_suffixed_string_template() {
+    // Control: `${string}x` has a literal suffix and does NOT span the full
+    // string domain, so `string` is NOT assignable.
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("x")),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(TypeId::STRING, template));
+}
+
+#[test]
+fn test_string_not_assignable_to_prefixed_string_template() {
+    // Control: `x${string}` has a literal prefix and does NOT span the full
+    // string domain.
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("x")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(TypeId::STRING, template));
+}
+
+#[test]
+fn test_string_not_assignable_to_number_placeholder() {
+    // Control: `${number}` is a proper subset of the string domain; `string`
+    // is NOT assignable, and the template does not collapse to `string`.
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    assert_ne!(template, TypeId::STRING);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(TypeId::STRING, template));
+}
+
+#[test]
+fn test_string_not_assignable_to_string_number_template() {
+    // Control: `${string}${number}` does not span the full string domain
+    // (the trailing `${number}` requires a numeric suffix).
+    let interner = TypeInterner::new();
+    let template = interner.template_literal(vec![
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Type(TypeId::NUMBER),
+    ]);
+    let mut checker = SubtypeChecker::new(&interner);
+    assert!(!checker.is_subtype_of(TypeId::STRING, template));
 }

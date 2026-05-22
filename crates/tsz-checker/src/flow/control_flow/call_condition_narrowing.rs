@@ -1,9 +1,10 @@
 use super::FlowAnalyzer;
-use crate::query_boundaries::common::union_members;
 use crate::query_boundaries::flow as flow_boundary;
+use crate::query_boundaries::flow_analysis as flow_query;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
-use tsz_solver::{GuardSense, NarrowingContext, TypeGuard, TypeId};
+use tsz_solver::TypeId;
+use tsz_solver::narrowing::{GuardSense, NarrowingContext, TypeGuard};
 
 impl<'a> FlowAnalyzer<'a> {
     pub(crate) fn narrow_call_expression_condition(
@@ -115,12 +116,11 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         let property_name = self.interner.resolve_atom_ref(property_name);
-        let predicate_property_type =
-            crate::query_boundaries::common::ContextualTypeContext::with_expected(
-                self.interner,
-                predicate_type,
-            )
-            .get_property_type(property_name.as_ref())?;
+        let predicate_property_type = flow_query::property_type_for_contextual_type(
+            self.interner,
+            predicate_type,
+            property_name.as_ref(),
+        )?;
         if matches!(
             predicate_property_type,
             TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN
@@ -174,7 +174,8 @@ impl<'a> FlowAnalyzer<'a> {
                 }
             }
 
-            let members = union_members(self.interner, type_id).unwrap_or_else(|| vec![type_id]);
+            let members = flow_query::union_members_for_type(self.interner, type_id)
+                .unwrap_or_else(|| vec![type_id]);
             let excluded_members: Vec<TypeId> = members
                 .iter()
                 .copied()

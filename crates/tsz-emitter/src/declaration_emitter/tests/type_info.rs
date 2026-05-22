@@ -679,6 +679,218 @@ export const Mixed = mixin(Unmixed);
 }
 
 #[test]
+fn test_inline_abstract_any_mixin_inherits_index_signature_at_call_site() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+abstract class AbstractBase {
+    abstractBaseMethod(): void {}
+}
+
+function Mixin2<TBase extends abstract new (...args: any[]) => any>(baseClass: TBase) {
+    abstract class MixinClass extends baseClass {
+        mixinMethod(): void {}
+        static staticMixinMethod(): void {}
+    }
+    return MixinClass;
+}
+
+export const X_base = Mixin2(AbstractBase);
+"#,
+    );
+
+    let expected_call_site = "export declare const X_base: ((abstract new (...args: any[]) => {\n    [x: string]: any;\n    mixinMethod(): void;\n}) & {\n    staticMixinMethod(): void;\n}) & typeof AbstractBase;";
+    assert!(
+        output.contains(expected_call_site),
+        "Expected call-site to inherit [x: string]: any from `extends abstract new (...) => any`:\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_inline_abstract_any_mixin_index_signature_is_name_independent() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+abstract class HostBase {
+    base(): void {}
+}
+
+function Apply<Ctor extends abstract new (...rest: any[]) => any>(base: Ctor) {
+    abstract class Applied extends base {
+        applied(): void {}
+    }
+    return Applied;
+}
+
+export const Out = Apply(HostBase);
+"#,
+    );
+
+    assert!(
+        output.contains("[x: string]: any;"),
+        "Renaming the type-parameter and rest parameter must not change the structural rule:\n{output}"
+    );
+}
+
+#[test]
+fn test_inline_constructor_type_mixin_inherits_named_instance_members() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Shape {
+    shapeMember: number;
+}
+
+declare class Anchor {
+    constructor(...args: any[]);
+    shapeMember: number;
+}
+
+function mixin<T extends new (...args: any[]) => Shape>(BaseCtor: T) {
+    abstract class Local extends BaseCtor {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = mixin(Anchor);
+"#,
+    );
+
+    assert!(
+        output.contains("localMethod(): void;"),
+        "Local own member must remain: {output}"
+    );
+    assert!(
+        output.contains("shapeMember: number;"),
+        "Inherited members from `new (...) => Shape` must appear in the constructor's instance shape: {output}"
+    );
+}
+
+#[test]
+fn test_inline_constructor_type_mixin_with_type_literal_instance() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+declare class Anchor {
+    constructor(...args: any[]);
+    literalMember: string;
+}
+
+function mixin<T extends new (...args: any[]) => { literalMember: string }>(B: T) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = mixin(Anchor);
+"#,
+    );
+
+    assert!(
+        output.contains("literalMember: string;"),
+        "Inline `new (...) => {{ ... }}` should contribute the literal's members verbatim: {output}"
+    );
+}
+
+#[test]
+fn test_named_constructor_alias_with_explicit_any_inherits_index_signature() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Constructor<T = any> { new (...args: any[]): T; }
+
+declare class Host {
+    constructor(...args: any[]);
+}
+
+function applyMixin<T extends Constructor<any>>(B: T) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = applyMixin(Host);
+"#,
+    );
+
+    assert!(
+        output.contains("[x: string]: any;"),
+        "When the first type argument to a constructor-shaped alias is `any`, the inherited instance shape must include the index signature: {output}"
+    );
+}
+
+#[test]
+fn test_named_constructor_alias_uses_return_type_parameter_for_instance_members() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface PairConstructor<StaticSide, InstanceSide> {
+    new (...args: any[]): InstanceSide;
+    prototype: InstanceSide;
+}
+
+interface Shape {
+    shapeMember: number;
+}
+
+declare class Host {
+    constructor(...args: any[]);
+}
+
+function applyMixin<T extends PairConstructor<{ staticOnly: boolean }, Shape>>(B: T) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = applyMixin(Host);
+"#,
+    );
+
+    assert!(
+        output.contains("shapeMember: number;"),
+        "Constructor-shaped aliases should use the type argument returned by the construct signature: {output}"
+    );
+    assert!(
+        !output.contains("staticOnly: boolean;"),
+        "Constructor-shaped aliases must not blindly use the first type argument as the instance shape: {output}"
+    );
+}
+
+#[test]
+fn test_non_constructor_generic_constraint_does_not_inherit_first_type_argument() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Box<Payload> {
+    value: Payload;
+}
+
+interface Shape {
+    shapeMember: number;
+}
+
+declare const RuntimeBase: any;
+
+function applyMixin<TBase extends Box<Shape>>(B: TBase) {
+    abstract class Local extends B {
+        localMethod(): void {}
+    }
+    return Local;
+}
+
+export const Out = applyMixin(RuntimeBase);
+"#,
+    );
+
+    assert!(
+        output.contains("localMethod(): void;"),
+        "Local own member must remain: {output}"
+    );
+    assert!(
+        !output.contains("shapeMember: number;"),
+        "Non-constructor generic constraints must not contribute members from their first type argument: {output}"
+    );
+}
+
+#[test]
 fn test_abstract_constructor_with_static_members_parenthesizes_in_intersection() {
     let (parser, _root) = parse_test_source("");
     let binder = BinderState::new();
@@ -1924,4 +2136,146 @@ export class Direct {
         output.contains("readonly BRAND = \"MyBrand\""),
         "Expected top-level class to keep `static readonly BRAND = \"MyBrand\"`: {output}"
     );
+}
+
+fn build_abstract_constructor_with_index_sig(
+    interner: &TypeInterner,
+    method_name: &str,
+) -> tsz_solver::TypeId {
+    let args = interner.intern_string("args");
+    let method = interner.intern_string(method_name);
+    let x = interner.intern_string("x");
+    let void_fn = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let instance_shape = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: vec![PropertyInfo::method(method, void_fn)],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::ANY,
+            readonly: false,
+            param_name: Some(x),
+        }),
+        number_index: None,
+        symbol: None,
+    });
+    interner.callable(CallableShape {
+        call_signatures: Vec::new(),
+        construct_signatures: vec![CallSignature::new(
+            vec![ParamInfo {
+                name: Some(args),
+                type_id: interner.array(TypeId::ANY),
+                optional: false,
+                rest: true,
+            }],
+            instance_shape,
+        )],
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: true,
+    })
+}
+
+fn find_call_by_callee(
+    arena: &tsz_parser::parser::node::NodeArena,
+    callee_name: &str,
+) -> NodeIndex {
+    arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+            let call = arena.get_call_expr(node)?;
+            (arena.get_identifier_text(call.expression) == Some(callee_name))
+                .then_some(NodeIndex(idx as u32))
+        })
+        .unwrap_or_else(|| panic!("missing call expression for callee `{callee_name}`"))
+}
+
+#[test]
+fn test_mixin_call_prefers_solver_type_for_index_signature() {
+    // When the checker's type cache has a TypeId for a mixin call expression,
+    // the emitter must use it directly. Text-based reconstruction cannot reproduce
+    // call-site refinements like `[x: string]: any` from abstract constructor constraints.
+    let source = r#"
+type AbstractConstructor<T = {}> = abstract new (...args: any[]) => T;
+function Mixin<TBase extends AbstractConstructor>(base: TBase) {
+    abstract class Mixed extends base {
+        abstract mixinMethod(): void;
+    }
+    return Mixed;
+}
+abstract class AbstractBase {}
+export const C = Mixin(AbstractBase);
+"#;
+    let (parser, root) = parse_test_source(source);
+    let call_idx = find_call_by_callee(&parser.arena, "Mixin");
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let solver_type = build_abstract_constructor_with_index_sig(&interner, "mixinMethod");
+
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    type_cache.node_types.insert(call_idx.0, solver_type);
+
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let type_text = emitter
+        .call_expression_source_return_type_text(call_idx)
+        .expect("expected call return type text");
+
+    assert!(
+        type_text.contains("[x: string]: any"),
+        "Solver TypeId with index signature should be used when cached: {type_text}"
+    );
+    assert!(
+        type_text.contains("mixinMethod"),
+        "Own instance members must be preserved alongside the index signature: {type_text}"
+    );
+}
+
+#[test]
+fn test_mixin_call_solver_path_is_name_independent() {
+    // The solver-preference path keys on TypeId, not type-parameter spelling.
+    // Renaming `TBase` to `T` or `K` must not change whether the index signature appears.
+    for tparam in ["TBase", "T", "K"] {
+        let source = format!(
+            r#"
+type AC = abstract new (...args: any[]) => any;
+function M<{tparam} extends AC>(base: {tparam}) {{
+    abstract class Mix extends base {{ abstract m(): void; }}
+    return Mix;
+}}
+abstract class B {{}}
+export const C = M(B);
+"#
+        );
+        let (parser, root) = parse_test_source(&source);
+        let call_idx = find_call_by_callee(&parser.arena, "M");
+
+        let mut binder = BinderState::new();
+        binder.bind_source_file(&parser.arena, root);
+
+        let interner = TypeInterner::new();
+        let solver_type = build_abstract_constructor_with_index_sig(&interner, "m");
+
+        let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+        type_cache.node_types.insert(call_idx.0, solver_type);
+
+        let emitter =
+            DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+        let type_text = emitter
+            .call_expression_source_return_type_text(call_idx)
+            .expect("expected call return type text");
+
+        assert!(
+            type_text.contains("[x: string]: any"),
+            "Type param name `{tparam}` should not affect index-signature emission: {type_text}"
+        );
+    }
 }

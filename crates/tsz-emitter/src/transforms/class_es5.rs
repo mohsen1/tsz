@@ -83,6 +83,8 @@ pub struct ClassES5Emitter<'a> {
     commonjs_import_substitutions: rustc_hash::FxHashMap<String, String>,
     printer_options: Option<crate::emitter::PrinterOptions>,
     externally_hoisted_decls: rustc_hash::FxHashSet<String>,
+    block_scope_shadowed_names: Vec<String>,
+    block_scope_reserved_names: Vec<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -103,6 +105,8 @@ impl<'a> ClassES5Emitter<'a> {
             commonjs_import_substitutions: rustc_hash::FxHashMap::default(),
             printer_options: None,
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
+            block_scope_shadowed_names: Vec::new(),
+            block_scope_reserved_names: Vec::new(),
         }
     }
 
@@ -114,6 +118,28 @@ impl<'a> ClassES5Emitter<'a> {
     pub fn set_tslib_import_binding(&mut self, binding: String) {
         self.transformer.set_tslib_import_binding(binding.clone());
         self.tslib_import_binding = binding;
+    }
+
+    pub fn set_block_scope_shadowed_names(&mut self, names: Vec<String>) {
+        self.block_scope_shadowed_names = names;
+    }
+
+    pub fn set_block_scope_reserved_names(&mut self, names: Vec<String>) {
+        self.block_scope_reserved_names = names;
+    }
+
+    pub fn block_scope_reserved_names(&self) -> Vec<String> {
+        let mut names = self.block_scope_reserved_names.clone();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    fn merge_ir_printer_block_scope_reserved_names(&mut self, printer: &IRPrinter<'a>) {
+        self.block_scope_reserved_names
+            .extend(printer.block_scope_reserved_names());
+        self.block_scope_reserved_names.sort();
+        self.block_scope_reserved_names.dedup();
     }
 
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
@@ -268,6 +294,71 @@ impl<'a> ClassES5Emitter<'a> {
         self.emit_class_internal(class_idx, Some(name))
     }
 
+    /// Emit a class expression as an IIFE expression and return structured parts
+    /// so callers can build the outer comma-expression pattern:
+    ///
+    /// ```js
+    /// (_classTemp = IIFE, _propTemp = propNameExpr, _classTemp)
+    /// ```
+    ///
+    /// Returns `(iife_expr, computed_prop_decls, computed_prop_init_exprs)` where:
+    /// - `iife_expr` is the rendered `/** @class */ (function () { ... }())` expression
+    /// - `computed_prop_decls` are temp names to hoist as `var _a, ...;`
+    /// - `computed_prop_init_exprs` are structured assignment IR nodes like `_a = x`
+    pub fn emit_class_as_iife_expr(
+        &mut self,
+        class_idx: NodeIndex,
+        name: &str,
+    ) -> (String, Vec<String>, Vec<IRNode>) {
+        self.transformer.set_emit_computed_props_outside(true);
+        let ir_opt = self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(name));
+        self.transformer.set_emit_computed_props_outside(false);
+
+        let Some(ir) = ir_opt else {
+            return (String::new(), Vec::new(), Vec::new());
+        };
+
+        let IRNode::ES5ClassIIFE {
+            name: ir_name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls: _,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits: _,
+            leading_comment: _,
+            deferred_static_blocks: _,
+            deferred_block_class_alias: _,
+        } = ir
+        else {
+            return (
+                self.emit_class_ir(class_idx, Some(name), ir),
+                Vec::new(),
+                Vec::new(),
+            );
+        };
+
+        let mut printer = self.make_ir_printer();
+        printer.emit_es5_class_expression(
+            &ir_name,
+            base_class.as_deref(),
+            super_param.as_deref(),
+            &body,
+        );
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
+        let iife_expr = printer.take_output();
+
+        (
+            iife_expr,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+        )
+    }
+
     /// Emit a class declaration with a different outer binding name while
     /// preserving the class's own lexical name inside the generated IIFE.
     pub fn emit_class_with_binding_name(
@@ -389,6 +480,8 @@ impl<'a> ClassES5Emitter<'a> {
         if let Some(ref opts) = self.printer_options {
             printer.set_base_printer_options(opts.clone());
         }
+        printer.set_block_scope_shadowed_names(self.block_scope_shadowed_names.clone());
+        printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
         printer
     }
 
@@ -462,10 +555,13 @@ impl<'a> ClassES5Emitter<'a> {
         output.push_str(&assignment);
 
         // Render each deferred static block as a separate string.
-        let static_strings: Vec<String> = deferred_static_blocks
-            .into_iter()
-            .map(|block| self.make_ir_printer().emit(&block).to_string())
-            .collect();
+        let mut static_strings = Vec::new();
+        for block in deferred_static_blocks {
+            let mut printer = self.make_ir_printer();
+            let output = printer.emit(&block).to_string();
+            self.merge_ir_printer_block_scope_reserved_names(&printer);
+            static_strings.push(output);
+        }
 
         (output, static_strings)
     }
@@ -479,10 +575,12 @@ impl<'a> ClassES5Emitter<'a> {
         if !self.externally_hoisted_decls.is_empty()
             && let IRNode::ES5ClassIIFE {
                 ref mut weakmap_decls,
+                ref mut computed_prop_temp_decls,
                 ..
             } = ir
         {
             weakmap_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
+            computed_prop_temp_decls.retain(|decl| !self.externally_hoisted_decls.contains(decl));
         }
 
         // Inject leading comment from the main emitter's comment system.
@@ -497,6 +595,7 @@ impl<'a> ClassES5Emitter<'a> {
 
         let mut printer = self.make_ir_printer();
         let mut output = printer.emit(&ir).to_string();
+        self.merge_ir_printer_block_scope_reserved_names(&printer);
         if self.tc39_decorators
             && let Some(wrapped) =
                 self.transformer
