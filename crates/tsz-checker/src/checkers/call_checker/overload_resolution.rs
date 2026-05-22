@@ -3,6 +3,7 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 mod contextual_retry;
+mod helpers;
 mod return_context;
 
 use crate::context::TypingRequest;
@@ -339,12 +340,20 @@ impl<'a> CheckerState<'a> {
                     // leaving inline callback bodies typed under a lossy contextual union.
                     // Defer those candidates to the signature-specific pass, which can
                     // re-evaluate callbacks with per-overload parameter types.
+                    //
+                    // A union of function-typed parameters yields an `any` callback
+                    // parameter, so body errors specific to the selected signature
+                    // (e.g. `o?.a.b` continuation typing, or a property that only exists
+                    // under a different overload) never surface in the union pass.
+                    // Speculatively re-type the callbacks against the selected
+                    // signature so those cases are deferred too.
                     if has_multiple_arity_compatible_signatures
                         && (union_arg_collection_has_callback_body_errors
                             || self.overload_candidate_has_callback_body_errors(
                                 args,
                                 &post_union_arg_diag_snap,
-                            ))
+                            )
+                            || self.selected_overload_callback_body_has_errors(args, func_type))
                     {
                         self.prune_callback_body_diagnostics(args, &overload_snap.diag);
                         continue;
@@ -900,6 +909,13 @@ impl<'a> CheckerState<'a> {
         let mut mismatch_recovery_return: Option<TypeId> = None;
         let mut callback_body_failure_return: Option<TypeId> = None;
         let mut callback_body_overload_diagnostics = Vec::new();
+        // The most recent overload that matched at the signature level (arguments
+        // assignable) but produced errors *inside* a callback body. tsc selects the
+        // overload from the discriminating arguments and then reports the callback
+        // body errors against the resolved signature; it does not treat a body error
+        // as an overload mismatch. When no overload resolves cleanly we commit to
+        // this candidate and surface its diagnostics instead of silently recovering.
+        let mut callback_body_only_success: Option<BestTypeMismatch> = None;
         // When an overload returns TypeParameterConstraintViolation and there are
         // more overloads to try, we store it as a fallback and continue. If no
         // later overload succeeds, we use this fallback (e.g., for single-overload
@@ -1514,6 +1530,22 @@ impl<'a> CheckerState<'a> {
                     {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
+                        // A non-generic overload matched at the signature level, so its
+                        // callback body diagnostics are real. Keep the last such overload
+                        // (mirroring tsc's final-candidate choice) to commit if no other
+                        // overload resolves cleanly. Generic overloads are left to the
+                        // instantiation machinery, whose transient body errors must not leak.
+                        if sig.type_params.is_empty() {
+                            callback_body_only_success =
+                                Some(self.build_callback_body_only_candidate(
+                                    args,
+                                    &overload_snap.diag,
+                                    &candidate_snap,
+                                    sig_arg_types.clone(),
+                                    return_type,
+                                    selected_type_predicate.clone(),
+                                ));
+                        }
                         let nested_no_overload_diags =
                             self.callback_body_no_overload_diagnostics_since(args, &candidate_snap);
                         self.extend_unique_diagnostics(
@@ -1820,6 +1852,18 @@ impl<'a> CheckerState<'a> {
             });
         }
 
+        // No overload resolved cleanly, but at least one matched at the signature
+        // level and failed only inside a callback body. Commit to it and surface its
+        // diagnostics instead of silently recovering (via `callback_body_failure_return`),
+        // which would hide real errors only visible under the resolved parameter type.
+        if let Some(candidate) = callback_body_only_success {
+            return Some(self.commit_callback_body_only_candidate(
+                candidate,
+                &overload_snap,
+                &mut original_node_types,
+            ));
+        }
+
         // No overload matched: drop speculative diagnostics from overload argument
         // collection and keep only overload-level diagnostics.
         // Roll back diagnostics and TS2454 state to the pre-overload snapshot
@@ -1907,40 +1951,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn signature_const_type_params_require_readonly_argument_context(
-        db: &dyn tsz_solver::construction::TypeDatabase,
-        type_params: &[tsz_solver::TypeParamInfo],
-    ) -> bool {
-        type_params.iter().any(|type_param| {
-            type_param.is_const
-                && !type_param.constraint.is_some_and(|constraint| {
-                    Self::constraint_allows_mutable_array_like(db, constraint)
-                })
-        })
-    }
-
-    fn diagnostics_for_overload_mismatch_argument_between(
-        &self,
-        args: &[NodeIndex],
-        index: usize,
-        from_snap: &crate::context::speculation::DiagnosticSnapshot,
-        to_snap: &crate::context::speculation::DiagnosticSnapshot,
-    ) -> Vec<crate::diagnostics::Diagnostic> {
-        let Some(&arg_idx) = args.get(index) else {
-            return Vec::new();
-        };
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return Vec::new();
-        };
-
-        self.ctx
-            .diagnostics_between(from_snap, to_snap)
-            .iter()
-            .filter(|diag| diag.start >= arg_node.pos && diag.start < arg_node.end)
-            .cloned()
-            .collect()
-    }
-
     fn recheck_overload_args_after_mismatch_without_context(
         &mut self,
         args: &[NodeIndex],
@@ -1960,41 +1970,5 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
-    }
-
-    fn overload_string_argument_array_parameter_mismatch(
-        &mut self,
-        sig: &tsz_solver::CallSignature,
-        arg_types: &[TypeId],
-    ) -> Option<CallResult> {
-        arg_types
-            .iter()
-            .copied()
-            .enumerate()
-            .find_map(|(index, actual)| {
-                if actual != TypeId::STRING
-                    && !crate::query_boundaries::common::is_string_type(self.ctx.types, actual)
-                    && crate::query_boundaries::common::string_literal_value(self.ctx.types, actual)
-                        .is_none()
-                {
-                    return None;
-                }
-                let expected = sig
-                    .params
-                    .get(index)
-                    .map(|param| param.type_id)
-                    .or_else(|| {
-                        sig.params
-                            .last()
-                            .and_then(|param| param.rest.then_some(param.type_id))
-                    })?;
-                self.is_array_like_type(expected)
-                    .then_some(CallResult::ArgumentTypeMismatch {
-                        index,
-                        expected,
-                        actual,
-                        fallback_return: sig.return_type,
-                    })
-            })
     }
 }
