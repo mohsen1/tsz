@@ -2138,26 +2138,21 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // For a constraint that exposes exactly one construct signature,
-            // require the full mixin shape (single rest parameter of `any` /
-            // `any[]` / `readonly any[]`). This catches the single-sig
-            // zero-parameter case reported in #9729 alongside the existing
-            // single-non-rest / wrong-rest-type cases.
-            //
-            // Constraints with multiple construct signatures (overload sets,
-            // intersection-of-ctor) preserve the pre-existing per-sig check
-            // that skips empty-parameter signatures — `isMixinConstructorType`
-            // in tsc additionally requires `signatures.length === 1`, but
-            // catching that here would broaden the rule beyond the issue's
-            // scope and risk regressions in unrelated tests; tracked
-            // separately.
-            let has_invalid_sig = if construct_sigs.len() == 1 {
-                !self.is_valid_mixin_construct_signature(&construct_sigs[0])
-            } else {
-                construct_sigs.iter().any(|sig| {
+            // Surgical fix for #9729: when the constraint has a *single*
+            // construct signature with *zero* parameters, fire TS2545. tsc's
+            // `isMixinConstructorType` requires exactly one parameter that is
+            // rest-`any[]`, so a single-sig zero-parameter constraint trivially
+            // fails that contract. Every other shape (single non-rest, wrong
+            // rest element type, multiple sigs, etc.) goes through the
+            // pre-existing per-sig check verbatim — broadening the rule risks
+            // regressing tests where tsz's evaluated construct-signature list
+            // diverges from tsc's, and the issue only reports this one shape.
+            let single_sig_zero_param =
+                construct_sigs.len() == 1 && construct_sigs[0].params.is_empty();
+            let has_invalid_sig = single_sig_zero_param
+                || construct_sigs.iter().any(|sig| {
                     !sig.params.is_empty() && !self.is_valid_mixin_construct_signature(sig)
-                })
-            };
+                });
             if has_invalid_sig {
                 self.error_at_node(
                     class_idx,
