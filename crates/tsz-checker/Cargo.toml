@@ -386,6 +386,10 @@ name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
 [[test]]
+name = "mapped_readonly_tuple_tests"
+path = "tests/mapped_readonly_tuple_tests.rs"
+
+[[test]]
 name = "tuple_index_access_tests"
 path = "tests/tuple_index_access_tests.rs"
 
