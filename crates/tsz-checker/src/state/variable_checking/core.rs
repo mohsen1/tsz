@@ -9,7 +9,6 @@ use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -186,75 +185,65 @@ impl<'a> CheckerState<'a> {
             .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
     }
 
-    fn jsdoc_enum_object_literal_initializer(&self, initializer_idx: NodeIndex) -> NodeIndex {
-        let initializer_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer_idx);
-        let Some(init_node) = self.ctx.arena.get(initializer_idx) else {
-            return initializer_idx;
-        };
-        if init_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return initializer_idx;
-        }
-        let Some(call) = self.ctx.arena.get_call_expr(init_node) else {
-            return initializer_idx;
-        };
-        let is_object_freeze = self
-            .ctx
-            .arena
-            .get(call.expression)
-            .and_then(|callee| self.ctx.arena.get_access_expr(callee))
-            .is_some_and(|access| {
-                self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
-                    && self.ctx.arena.get_identifier_text(access.name_or_argument) == Some("freeze")
-            });
-        if !is_object_freeze {
-            return initializer_idx;
-        }
-        call.arguments
-            .as_ref()
-            .and_then(|args| args.nodes.first().copied())
-            .map(|arg| self.ctx.arena.skip_parenthesized_and_assertions(arg))
-            .unwrap_or(initializer_idx)
-    }
-
     pub(super) fn check_jsdoc_enum_initializer_values(
         &mut self,
         initializer_idx: NodeIndex,
         enum_element_type: TypeId,
     ) {
-        let object_idx = self.jsdoc_enum_object_literal_initializer(initializer_idx);
-        let Some(object_node) = self.ctx.arena.get(object_idx) else {
-            return;
-        };
-        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+        if enum_element_type == TypeId::ERROR || enum_element_type == TypeId::ANY {
             return;
         }
+        // tsc per-member validates `@enum {T}` only when the initializer is a
+        // direct object literal. `Object.freeze({...})` and other call/wrapper
+        // expressions opt out: the value type stays as the inferred object
+        // literal type and any downstream `T`-typed use site emits its own
+        // diagnostic at the use site.
+        let object_idx = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(initializer_idx);
+        let object_node = match self.ctx.arena.get(object_idx) {
+            Some(n) if n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => n,
+            _ => return,
+        };
         let Some(literal) = self.ctx.arena.get_literal_expr(object_node) else {
             return;
         };
-        let property_initializers: Vec<NodeIndex> = literal
+        // Property assignments only: methods, shorthand, accessors, and
+        // spread elements aren't value-positioned literals participating in
+        // tsc's per-member enum-element validation.
+        let property_pairs: Vec<(NodeIndex, NodeIndex)> = literal
             .elements
             .nodes
             .iter()
             .filter_map(|&element_idx| {
-                self.ctx
-                    .arena
-                    .get(element_idx)
-                    .and_then(|element_node| self.ctx.arena.get_property_assignment(element_node))
-                    .map(|property| property.initializer)
+                let element_node = self.ctx.arena.get(element_idx)?;
+                let property = self.ctx.arena.get_property_assignment(element_node)?;
+                Some((property.name, property.initializer))
             })
             .collect();
 
         let request = TypingRequest::with_contextual_type(enum_element_type);
-        for property_initializer in property_initializers {
-            let value_type = self.get_type_of_node_with_request(property_initializer, &request);
+        for (prop_name_idx, prop_value_idx) in property_pairs {
+            let value_type = self.get_type_of_node_with_request(prop_value_idx, &request);
             let value_type = self.resolve_lazy_type(value_type);
-            let _ = self.check_assignable_or_report(
+            if value_type == TypeId::ERROR
+                || value_type == TypeId::ANY
+                || self.is_assignable_to(value_type, enum_element_type)
+            {
+                continue;
+            }
+            // Match tsc's `elaborateElementwise`: anchor TS2322 at the property
+            // name with the offending value's type vs the enum element type.
+            // The default `check_assignable_or_report` path uses
+            // `DiagnosticAnchorKind::RewriteAssignment`, which walks up to the
+            // variable declaration and reformats the source as the whole
+            // object-literal type — emitting one merged `{ … }` vs `T` error
+            // at the binding name. tsc instead reports per-member.
+            self.error_type_not_assignable_at_with_anchor_elaboration(
                 value_type,
                 enum_element_type,
-                property_initializer,
+                prop_name_idx,
             );
         }
     }

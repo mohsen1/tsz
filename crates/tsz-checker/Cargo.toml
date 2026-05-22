@@ -46,6 +46,10 @@ name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
 [[test]]
+name = "abstract_constructor_elaboration_tests"
+path = "tests/abstract_constructor_elaboration_tests.rs"
+
+[[test]]
 name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 
@@ -388,6 +392,10 @@ path = "tests/control_flow_type_guard_tests.rs"
 [[test]]
 name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
+
+[[test]]
+name = "typeof_const_member_conditional_tests"
+path = "tests/typeof_const_member_conditional_tests.rs"
 
 [[test]]
 name = "typeof_function_like_flow_tests"
@@ -1378,6 +1386,10 @@ name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
 [[test]]
+name = "override_accessor_property_kind_mismatch_ts2416_tests"
+path = "tests/override_accessor_property_kind_mismatch_ts2416_tests.rs"
+
+[[test]]
 name = "abstract_parameter_property_impl_tests"
 path = "tests/abstract_parameter_property_impl_tests.rs"
 
@@ -1504,6 +1516,10 @@ path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 [[test]]
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
+
+[[test]]
+name = "jsdoc_enum_member_assignability_tests"
+path = "tests/jsdoc_enum_member_assignability_tests.rs"
 
 [lints]
 workspace = true
