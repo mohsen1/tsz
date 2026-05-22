@@ -864,4 +864,84 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
+
+    pub(super) fn diagnostics_for_overload_mismatch_argument_between(
+        &self,
+        args: &[NodeIndex],
+        index: usize,
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let Some(&arg_idx) = args.get(index) else {
+            return Vec::new();
+        };
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return Vec::new();
+        };
+
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
+            .iter()
+            .filter(|diag| diag.start >= arg_node.pos && diag.start < arg_node.end)
+            .cloned()
+            .collect()
+    }
+
+    /// Snapshot a non-generic overload that matched at the signature level but
+    /// failed only inside a callback body, so it can be committed later if no
+    /// other overload resolves cleanly. See `commit_callback_body_only_candidate`.
+    pub(super) fn build_callback_body_only_candidate(
+        &self,
+        args: &[NodeIndex],
+        overload_diag: &crate::context::speculation::DiagnosticSnapshot,
+        candidate_snap: &crate::context::speculation::DiagnosticSnapshot,
+        arg_types: Vec<TypeId>,
+        return_type: TypeId,
+        selected_type_predicate: super::SelectedTypePredicate,
+    ) -> (
+        super::OverloadResolution,
+        crate::context::NodeTypeCache,
+        Vec<crate::diagnostics::Diagnostic>,
+    ) {
+        let candidate_end = self.ctx.snapshot_diagnostics();
+        let preserved_first_pass =
+            self.collect_non_callback_diagnostics_between(args, overload_diag, candidate_snap);
+        let candidate_diags: Vec<_> = self
+            .ctx
+            .diagnostics_between(candidate_snap, &candidate_end)
+            .to_vec();
+        let mut merged = self.preserved_speculative_call_diagnostics(overload_diag);
+        self.extend_unique_diagnostics(&mut merged, preserved_first_pass);
+        self.extend_unique_diagnostics(&mut merged, candidate_diags);
+        let resolution = super::OverloadResolution {
+            arg_types,
+            result: crate::query_boundaries::common::CallResult::Success(return_type),
+            selected_type_predicate,
+        };
+        (resolution, self.ctx.node_types.clone(), merged)
+    }
+
+    /// Commit the captured callback-body-only candidate: restore diagnostics to
+    /// the candidate's merged set (which retains the callback body errors) and
+    /// install its node types. tsc reports those body diagnostics against the
+    /// selected overload rather than silently recovering.
+    pub(super) fn commit_callback_body_only_candidate(
+        &mut self,
+        candidate: (
+            super::OverloadResolution,
+            crate::context::NodeTypeCache,
+            Vec<crate::diagnostics::Diagnostic>,
+        ),
+        overload_snap: &crate::context::speculation::FullSnapshot,
+        original_node_types: &mut crate::context::NodeTypeCache,
+    ) -> super::OverloadResolution {
+        let (resolution, sig_node_types, merged_diags) = candidate;
+        self.ctx
+            .rollback_and_replace_diagnostics(&overload_snap.diag, merged_diags);
+        self.ctx
+            .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+        self.ctx.node_types = std::mem::take(original_node_types);
+        self.ctx.node_types.merge_owned(sig_node_types);
+        resolution
+    }
 }

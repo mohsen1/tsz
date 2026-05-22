@@ -3,6 +3,7 @@
 //! Split from the parent `call_checker` module — pure code motion.
 
 mod contextual_retry;
+mod helpers;
 mod return_context;
 
 use crate::context::TypingRequest;
@@ -1529,38 +1530,21 @@ impl<'a> CheckerState<'a> {
                     {
                         all_arg_count_mismatches = false;
                         has_non_count_non_type_failure = true;
-                        // A non-generic overload that matched at the signature level has
-                        // concrete parameter types, so its callback body diagnostics are
-                        // real. Capture the candidate (keeping the last such overload,
-                        // mirroring tsc's choice of the final candidate for error
-                        // reporting) so we can commit to it if no other overload resolves
-                        // cleanly. Generic overloads are left to the instantiation
-                        // machinery, whose transient callback body errors must not leak.
+                        // A non-generic overload matched at the signature level, so its
+                        // callback body diagnostics are real. Keep the last such overload
+                        // (mirroring tsc's final-candidate choice) to commit if no other
+                        // overload resolves cleanly. Generic overloads are left to the
+                        // instantiation machinery, whose transient body errors must not leak.
                         if sig.type_params.is_empty() {
-                            let candidate_end = self.ctx.snapshot_diagnostics();
-                            let preserved_first_pass = self
-                                .collect_non_callback_diagnostics_between(
+                            callback_body_only_success =
+                                Some(self.build_callback_body_only_candidate(
                                     args,
                                     &overload_snap.diag,
                                     &candidate_snap,
-                                );
-                            let candidate_diags: Vec<_> = self
-                                .ctx
-                                .diagnostics_between(&candidate_snap, &candidate_end)
-                                .to_vec();
-                            let mut merged =
-                                self.preserved_speculative_call_diagnostics(&overload_snap.diag);
-                            self.extend_unique_diagnostics(&mut merged, preserved_first_pass);
-                            self.extend_unique_diagnostics(&mut merged, candidate_diags);
-                            callback_body_only_success = Some((
-                                OverloadResolution {
-                                    arg_types: sig_arg_types.clone(),
-                                    result: CallResult::Success(return_type),
-                                    selected_type_predicate: selected_type_predicate.clone(),
-                                },
-                                self.ctx.node_types.clone(),
-                                merged,
-                            ));
+                                    sig_arg_types.clone(),
+                                    return_type,
+                                    selected_type_predicate.clone(),
+                                ));
                         }
                         let nested_no_overload_diags =
                             self.callback_body_no_overload_diagnostics_since(args, &candidate_snap);
@@ -1869,20 +1853,15 @@ impl<'a> CheckerState<'a> {
         }
 
         // No overload resolved cleanly, but at least one matched at the signature
-        // level and failed only inside a callback body. tsc reports those body
-        // diagnostics against the selected overload rather than discarding them, so
-        // commit to that candidate and surface its diagnostics. Without this the call
-        // would silently recover (via `callback_body_failure_return`), hiding real
-        // errors such as `o?.a.b` continuation typing or property accesses that are
-        // only valid under a different overload's parameter type.
-        if let Some((resolution, sig_node_types, merged_diags)) = callback_body_only_success {
-            self.ctx
-                .rollback_and_replace_diagnostics(&overload_snap.diag, merged_diags);
-            self.ctx
-                .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
-            self.ctx.node_types = std::mem::take(&mut original_node_types);
-            self.ctx.node_types.merge_owned(sig_node_types);
-            return Some(resolution);
+        // level and failed only inside a callback body. Commit to it and surface its
+        // diagnostics instead of silently recovering (via `callback_body_failure_return`),
+        // which would hide real errors only visible under the resolved parameter type.
+        if let Some(candidate) = callback_body_only_success {
+            return Some(self.commit_callback_body_only_candidate(
+                candidate,
+                &overload_snap,
+                &mut original_node_types,
+            ));
         }
 
         // No overload matched: drop speculative diagnostics from overload argument
@@ -1972,40 +1951,6 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn signature_const_type_params_require_readonly_argument_context(
-        db: &dyn tsz_solver::construction::TypeDatabase,
-        type_params: &[tsz_solver::TypeParamInfo],
-    ) -> bool {
-        type_params.iter().any(|type_param| {
-            type_param.is_const
-                && !type_param.constraint.is_some_and(|constraint| {
-                    Self::constraint_allows_mutable_array_like(db, constraint)
-                })
-        })
-    }
-
-    fn diagnostics_for_overload_mismatch_argument_between(
-        &self,
-        args: &[NodeIndex],
-        index: usize,
-        from_snap: &crate::context::speculation::DiagnosticSnapshot,
-        to_snap: &crate::context::speculation::DiagnosticSnapshot,
-    ) -> Vec<crate::diagnostics::Diagnostic> {
-        let Some(&arg_idx) = args.get(index) else {
-            return Vec::new();
-        };
-        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
-            return Vec::new();
-        };
-
-        self.ctx
-            .diagnostics_between(from_snap, to_snap)
-            .iter()
-            .filter(|diag| diag.start >= arg_node.pos && diag.start < arg_node.end)
-            .cloned()
-            .collect()
-    }
-
     fn recheck_overload_args_after_mismatch_without_context(
         &mut self,
         args: &[NodeIndex],
@@ -2025,41 +1970,5 @@ impl<'a> CheckerState<'a> {
             self.invalidate_expression_for_contextual_retry(arg_idx);
             let _ = self.get_type_of_node_with_request(arg_idx, &TypingRequest::NONE);
         }
-    }
-
-    fn overload_string_argument_array_parameter_mismatch(
-        &mut self,
-        sig: &tsz_solver::CallSignature,
-        arg_types: &[TypeId],
-    ) -> Option<CallResult> {
-        arg_types
-            .iter()
-            .copied()
-            .enumerate()
-            .find_map(|(index, actual)| {
-                if actual != TypeId::STRING
-                    && !crate::query_boundaries::common::is_string_type(self.ctx.types, actual)
-                    && crate::query_boundaries::common::string_literal_value(self.ctx.types, actual)
-                        .is_none()
-                {
-                    return None;
-                }
-                let expected = sig
-                    .params
-                    .get(index)
-                    .map(|param| param.type_id)
-                    .or_else(|| {
-                        sig.params
-                            .last()
-                            .and_then(|param| param.rest.then_some(param.type_id))
-                    })?;
-                self.is_array_like_type(expected)
-                    .then_some(CallResult::ArgumentTypeMismatch {
-                        index,
-                        expected,
-                        actual,
-                        fallback_return: sig.return_type,
-                    })
-            })
     }
 }
