@@ -235,6 +235,30 @@ function m<T extends Ctor>(B: T) {
 }
 
 #[test]
+fn no_ts2545_when_base_instance_type_is_not_object_like() {
+    // tsc gates the TS2545 emission on `getBaseTypes(type)` being non-empty,
+    // which is false when the base constructor's return type is `never`,
+    // `void`, `null`, `undefined`, etc. In those cases tsc emits TS2509
+    // instead and skips the mixin-shape check. Mirror that here so the two
+    // diagnostics don't both fire on the same heritage clause.
+    for return_ty in ["never", "void", "undefined"] {
+        let source = format!(
+            r#"
+function m<T extends new () => {return_ty}>(B: T) {{
+    return class extends B {{}};
+}}
+"#
+        );
+        assert_eq!(
+            count_ts2545(&source),
+            0,
+            "TS2545 must be skipped when base ctor returns `{return_ty}`; got codes: {:?}",
+            codes(&source)
+        );
+    }
+}
+
+#[test]
 fn no_ts2545_when_constraint_has_no_construct_signatures() {
     // No construct sigs at all → rule does not apply; tsc reports TS2507 for
     // the missing constructor type, not TS2545.

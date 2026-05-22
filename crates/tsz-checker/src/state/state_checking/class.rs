@@ -2129,6 +2129,23 @@ impl<'a> CheckerState<'a> {
                 return;
             };
 
+            // Match tsc's gate: TS2545 is emitted from inside an
+            // `if (baseTypes.length) { addLazyDiagnostic(...) }` block in
+            // `checkClassLikeDeclaration`. When the base constructor's return
+            // type is not an object-like type (e.g. `new () => never`,
+            // `new () => void`), `getBaseTypes` produces an empty list and the
+            // whole block — including the mixin-shape check — is skipped, with
+            // TS2509 carrying the diagnostic instead. Mirror that here so the
+            // two diagnostics don't both fire on the same heritage clause.
+            if let Some(base_instance) = self.base_instance_type_from_expression(expr_idx, None)
+                && !crate::query_boundaries::class::is_valid_base_type(
+                    self.ctx.types,
+                    base_instance,
+                )
+            {
+                return;
+            }
+
             // Evaluate the constraint type (may be a Lazy type alias or Application)
             let evaluated = self.evaluate_type_for_assignability(constraint_type);
 
