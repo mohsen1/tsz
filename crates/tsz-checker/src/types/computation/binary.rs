@@ -1496,12 +1496,27 @@ impl<'a> CheckerState<'a> {
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
                 let left_is_nullish_chain_or_literal =
                     Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
-                let left_is_nullish_literal = self.is_literal_null_or_undefined_node(left_idx);
+                // Syntactic always-nullish detection: the left operand's
+                // runtime value is the literal `null` / `undefined` seen
+                // through any combination of parentheses, type assertions
+                // (`as T`, `<T>`, `satisfies T`), or non-null assertions
+                // (`!`). Assertions change the static type but cannot change
+                // the runtime always-nullish fact, so tsc emits TS2871 in
+                // these cases regardless of whether the asserted type still
+                // contains a non-nullish slice or has been widened to `any`
+                // / narrowed to `never`. The skip is a no-op for the bare
+                // `null` / `undefined` operand cases, so this single check
+                // also subsumes the historical bare-literal predicate.
+                let unwrapped_left_idx = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
+                let left_is_always_nullish_literal_through_assertions =
+                    self.is_literal_null_or_undefined_node(unwrapped_left_idx);
+
                 if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
                     use crate::diagnostics::diagnostic_codes;
-                    // tsc points the error at the left operand (the never-nullish expression),
-                    // skipping through any parentheses to reach the inner expression.
-                    // e.g., `(expr) ?? ""` → error anchored at `expr`, not `(expr)`.
+                    // TS2869: the left operand is never nullish, so the right
+                    // operand of `??` is unreachable. tsc anchors the error
+                    // at the left operand, skipping parentheses to the inner
+                    // expression (e.g., `(expr) ?? ""` → anchored at `expr`).
                     let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
                     self.error_at_node(
                         diag_idx,
@@ -1509,59 +1524,74 @@ impl<'a> CheckerState<'a> {
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
                     type_stack.push(left_type);
-                } else if non_nullish.is_none()
-                    && cause.is_some()
-                    && !left_is_top_type
-                    && (left_is_nullish_chain_or_literal || left_is_nullish_literal)
+                    continue;
+                }
+
+                if left_is_always_nullish_literal_through_assertions
+                    || (non_nullish.is_none()
+                        && cause.is_some()
+                        && !left_is_top_type
+                        && left_is_nullish_chain_or_literal)
                 {
-                    // TS2871: complementary to TS2869. When the left operand of
-                    // `??` is syntactically a nullish-coalescing chain or a
-                    // bare nullish literal and its evaluated type contains
-                    // only nullish constituents (split yields no non-nullish
-                    // part), tsc emits TS2871 — the left expression is
-                    // *always* nullish, so the `??` itself is redundant.
+                    // TS2871: the left operand of `??` is always nullish, so
+                    // the operator is redundant — its result is always the
+                    // right operand at runtime. Two paths feed this branch:
                     //
-                    // Same anchor strategy as TS2869: point at the left
-                    // operand, skipping through parentheses.
+                    //   (1) The evaluated type contains only nullish
+                    //       constituents and the syntactic form is a `??`
+                    //       chain or a bare null/undefined literal.
+                    //   (2) The runtime value is syntactically a `null` /
+                    //       `undefined` literal seen through any combination
+                    //       of parens, `as T` / `<T>` / `satisfies T`, and
+                    //       `!` (so the static type may have been widened
+                    //       away from nullish).
+                    //
+                    // Anchor at the underlying literal (path 2) when present,
+                    // otherwise at the parens-skipped left operand (path 1).
                     use crate::diagnostics::diagnostic_codes;
-                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
+                    let diag_idx = if left_is_always_nullish_literal_through_assertions {
+                        unwrapped_left_idx
+                    } else {
+                        self.ctx.arena.skip_parenthesized(left_idx)
+                    };
                     self.error_at_node(
                         diag_idx,
                         "This expression is always nullish.",
                         diagnostic_codes::THIS_EXPRESSION_IS_ALWAYS_NULLISH,
                     );
-                    // Result type is the right operand's type — the `??`
-                    // result equals `right_type` whenever the left is always
-                    // nullish, matching the `non_nullish.is_none()` branch in
-                    // the else arm below.
-                    type_stack.push(right_type);
-                } else {
-                    // tsc uses UnionReduction.Subtype for ?? result types,
-                    // which removes structural subtypes (e.g., never[] from
-                    // number[] | never[] → number[]). This matters when the
-                    // RHS is an empty array literal [] (always never[] in strict mode).
-                    let result = match non_nullish {
-                        None => right_type,
-                        Some(non_nullish) => {
-                            // Apply tsc's NonNullable<D> approximation: when D is an
-                            // unconstrained type parameter, `(D | undefined) ?? X`
-                            // yields `(D & {}) | X` rather than `D | X`.  This matches
-                            // what the solver does for `??` in BinaryOpEvaluator.
-                            let non_nullish = evaluator
-                                .apply_non_nullable_approximation(evaluated_left, non_nullish);
-                            if non_nullish == right_type
-                                || self.is_subtype_of(right_type, non_nullish)
-                            {
-                                non_nullish
-                            } else if self.is_subtype_of(non_nullish, right_type) {
-                                right_type
-                            } else {
-                                factory.union2(non_nullish, right_type)
-                            }
-                        }
-                    };
-                    type_stack.push(result);
+                    // Fall through to the shared result-type computation so
+                    // downstream typing matches tsc when the asserted type
+                    // still has a non-nullish slice (e.g.,
+                    // `(null as string | null) ?? "x"` produces `string`
+                    // via subtype reduction of `string | "x"`).
                 }
+
+                // tsc uses UnionReduction.Subtype for `??` result types,
+                // which removes structural subtypes (e.g., `never[]` from
+                // `number[] | never[]` → `number[]`). This matters when the
+                // RHS is an empty array literal `[]` (always `never[]` in
+                // strict mode).
+                let result = match non_nullish {
+                    None => right_type,
+                    Some(non_nullish) => {
+                        // Apply tsc's NonNullable<D> approximation: when D
+                        // is an unconstrained type parameter,
+                        // `(D | undefined) ?? X` yields `(D & {}) | X` rather
+                        // than `D | X`. This matches what the solver does
+                        // for `??` in `BinaryOpEvaluator`.
+                        let non_nullish =
+                            evaluator.apply_non_nullable_approximation(evaluated_left, non_nullish);
+                        if non_nullish == right_type || self.is_subtype_of(right_type, non_nullish)
+                        {
+                            non_nullish
+                        } else if self.is_subtype_of(non_nullish, right_type) {
+                            right_type
+                        } else {
+                            factory.union2(non_nullish, right_type)
+                        }
+                    }
+                };
+                type_stack.push(result);
                 continue;
             }
             // TS17006/TS17007: Certain expressions not allowed as left-hand side of `**`.
