@@ -1438,9 +1438,17 @@ impl<'a> NarrowingContext<'a> {
     }
 
     /// Unwrap `TypeData::Enum(D, inner)` so narrowing-to runs on the inner literal
-    /// union and rewraps the result with the same `DefId`, preserving nominal
-    /// enum identity. If the target is the same enum, its inner literal is used
-    /// as the effective target so narrowing stays within the enum domain.
+    /// union and rewraps the result with the appropriate enum nominal identity.
+    ///
+    /// Structural rule (matches tsc's `getBaseTypeOfEnumType` narrowing model):
+    /// a whole-enum value `Enum(parent_def, lit_union)` is treated, for control
+    /// flow, as the union of its member-typed values
+    /// `Enum(member_i_def, lit_i)`. When the target is the same nominal enum or
+    /// one of its members, narrowing runs on the inner literal union, and the
+    /// remaining literals are remapped back to the corresponding member-typed
+    /// values so equality narrowing yields `Enum(E.A_def, lit_A)` and
+    /// exclusion narrowing yields the union of the remaining member types.
+    ///
     /// Returns `None` for non-enum sources so callers fall through.
     fn narrow_enum_to_type(
         &self,
@@ -1450,10 +1458,11 @@ impl<'a> NarrowingContext<'a> {
     ) -> Option<TypeId> {
         let (enum_def, inner) = crate::visitor::enum_components(self.db, resolved_source)?;
 
-        // If target is the same enum, unwrap to narrow within the enum domain.
+        // Unwrap target when it lives in the same enum domain as the source
+        // (same nominal enum, or any registered member of the source enum).
         let effective_target = match crate::visitor::enum_components(self.db, target_type) {
             Some((target_def, target_inner))
-                if self.class_defs_equivalent_for_narrowing(enum_def, target_def) =>
+                if self.enum_def_in_source_domain(enum_def, target_def) =>
             {
                 target_inner
             }
@@ -1468,13 +1477,16 @@ impl<'a> NarrowingContext<'a> {
         if narrowed_inner == inner {
             return Some(original_source);
         }
-        Some(self.db.enum_type(enum_def, narrowed_inner))
+        Some(self.wrap_enum_narrowed(enum_def, narrowed_inner))
     }
 
     /// Unwrap `TypeData::Enum(D, inner)` so exclusion runs on the inner literal
-    /// union and rewraps the result with the same `DefId`, preserving nominal
-    /// enum identity. Excluded values of the same nominal enum are normalised
-    /// to their inner literal so identity-based union filtering can drop them.
+    /// union and rewraps the result with the appropriate enum nominal identity.
+    /// Excluded values of the same nominal enum or any of its registered
+    /// members are normalised to their inner literal so identity-based union
+    /// filtering can drop them. The result is remapped back to the union of
+    /// the remaining member-typed values, matching tsc's
+    /// `getBaseTypeOfEnumType` narrowing model.
     /// Returns `None` for non-enum sources so callers fall through.
     fn narrow_enum_excluding_types(
         &self,
@@ -1488,7 +1500,7 @@ impl<'a> NarrowingContext<'a> {
             .map(
                 |&excluded| match crate::visitor::enum_components(self.db, excluded) {
                     Some((excluded_def, excluded_inner))
-                        if self.class_defs_equivalent_for_narrowing(enum_def, excluded_def) =>
+                        if self.enum_def_in_source_domain(enum_def, excluded_def) =>
                     {
                         excluded_inner
                     }
@@ -1505,7 +1517,67 @@ impl<'a> NarrowingContext<'a> {
         if narrowed_inner == inner {
             return Some(source_type);
         }
-        Some(self.db.enum_type(enum_def, narrowed_inner))
+        Some(self.wrap_enum_narrowed(enum_def, narrowed_inner))
+    }
+
+    /// Whether `other_def` names the same nominal enum as `source_enum_def`,
+    /// or a registered member of it.
+    fn enum_def_in_source_domain(&self, source_enum_def: DefId, other_def: DefId) -> bool {
+        if self.class_defs_equivalent_for_narrowing(source_enum_def, other_def) {
+            return true;
+        }
+        let Some(resolver) = self.resolver else {
+            return false;
+        };
+        let Some(parent) = resolver.get_enum_parent_def_id(other_def) else {
+            return false;
+        };
+        self.class_defs_equivalent_for_narrowing(source_enum_def, parent)
+    }
+
+    /// Wrap a narrowed inner literal (or union of literals) back into the
+    /// appropriate enum nominal. When `parent_def` is a whole-enum with
+    /// registered members and every literal in `narrowed_inner` matches a
+    /// member's value, returns the union of `Enum(member_def_i, lit_i)`.
+    /// Otherwise falls back to wrapping `narrowed_inner` with `parent_def`.
+    fn wrap_enum_narrowed(&self, parent_def: DefId, narrowed_inner: TypeId) -> TypeId {
+        let fallback = || self.db.enum_type(parent_def, narrowed_inner);
+        let Some(resolver) = self.resolver else {
+            return fallback();
+        };
+        let member_defs = resolver.get_enum_member_def_ids(parent_def);
+        if member_defs.is_empty() {
+            // Either `parent_def` is itself a member (no children registered)
+            // or the resolver has no member list for this enum.
+            return fallback();
+        }
+
+        let lit_to_member: Vec<(TypeId, DefId)> = member_defs
+            .iter()
+            .filter_map(|&member_def| {
+                let member_type = resolver.resolve_lazy(member_def, self.db.as_type_database())?;
+                let (_, lit) = crate::visitor::enum_components(self.db, member_type)?;
+                Some((lit, member_def))
+            })
+            .collect();
+
+        let literals: Vec<TypeId> = match union_list_id(self.db, narrowed_inner) {
+            Some(union_id) => self.db.type_list(union_id).to_vec(),
+            None => vec![narrowed_inner],
+        };
+
+        let mut parts: Vec<TypeId> = Vec::with_capacity(literals.len());
+        for lit in literals {
+            let Some(&(_, member_def)) = lit_to_member.iter().find(|(l, _)| *l == lit) else {
+                // At least one literal does not correspond to a registered
+                // member (e.g., when the inner has been further narrowed to a
+                // subtype of a member's value). Preserve the parent's nominal.
+                return fallback();
+            };
+            parts.push(self.db.enum_type(member_def, lit));
+        }
+
+        union_or_single(self.db, parts)
     }
 
     /// Narrow to function types only.

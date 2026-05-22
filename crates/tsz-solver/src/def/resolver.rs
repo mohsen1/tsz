@@ -221,6 +221,16 @@ pub trait TypeResolver {
         None
     }
 
+    /// Get the registered member `DefIds` for a parent enum `DefId`.
+    ///
+    /// Returns the members in declaration order, or an empty `Vec` when the
+    /// resolver has no record of an enum with this parent `DefId`. Used by
+    /// control-flow narrowing to decompose `Enum(parent, lit_union)` into the
+    /// union of its member-typed values, matching tsc's narrowing model.
+    fn get_enum_member_def_ids(&self, _parent_def_id: DefId) -> Vec<DefId> {
+        Vec::new()
+    }
+
     /// Check if a `DefId` represents a user-defined enum (not an intrinsic type).
     fn is_user_enum_def(&self, _def_id: DefId) -> bool {
         false
@@ -382,6 +392,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
         (**self).get_enum_parent_def_id(member_def_id)
     }
 
+    fn get_enum_member_def_ids(&self, parent_def_id: DefId) -> Vec<DefId> {
+        (**self).get_enum_member_def_ids(parent_def_id)
+    }
+
     fn is_user_enum_def(&self, def_id: DefId) -> bool {
         (**self).is_user_enum_def(def_id)
     }
@@ -450,6 +464,12 @@ pub struct TypeEnvironment {
     enum_namespace_types: FxHashMap<u32, TypeId>,
     /// Maps enum member `DefIds` to their parent enum `DefId`.
     enum_parents: FxHashMap<u32, DefId>,
+    /// Reverse of `enum_parents`: parent enum `DefId` -> ordered list of member
+    /// `DefIds`. Iteration order follows declaration order via `Vec` push.
+    /// Used by control-flow narrowing to decompose a whole-enum source into
+    /// the union of its member-typed values (matching tsc's
+    /// `getBaseTypeOfEnumType` narrowing model).
+    enum_members: FxHashMap<u32, Vec<DefId>>,
     /// Maps class `DefIds` to their instance types.
     class_instance_types: FxHashMap<u32, TypeId>,
     /// Maps `IntrinsicKind` to all `DefIds` that correspond to that boxed type.
@@ -496,6 +516,7 @@ impl TypeEnvironment {
             enum_namespace_types: FxHashMap::default(),
             def_kinds: FxHashMap::default(),
             enum_parents: FxHashMap::default(),
+            enum_members: FxHashMap::default(),
             class_instance_types: FxHashMap::default(),
             boxed_def_ids: FxHashMap::default(),
             class_extends: FxHashMap::default(),
@@ -906,13 +927,35 @@ impl TypeEnvironment {
 
     /// Register an enum member's parent enum `DefId`.
     pub fn register_enum_parent(&mut self, member_def_id: DefId, parent_def_id: DefId) {
-        self.enum_parents.insert(member_def_id.0, parent_def_id);
+        // Only append to the reverse map on the first registration so repeated
+        // calls (the computed-symbol pass registers each member twice) do not
+        // duplicate members.
+        if self
+            .enum_parents
+            .insert(member_def_id.0, parent_def_id)
+            .is_none()
+        {
+            self.enum_members
+                .entry(parent_def_id.0)
+                .or_default()
+                .push(member_def_id);
+        }
         self.bump_generation();
     }
 
     /// Get the parent enum `DefId` for an enum member `DefId`.
     pub fn get_enum_parent(&self, member_def_id: DefId) -> Option<DefId> {
         self.enum_parents.get(&member_def_id.0).copied()
+    }
+
+    /// Get the registered member `DefIds` for a parent enum `DefId` (in
+    /// declaration order). Returns an empty slice when the enum has no
+    /// registered members.
+    pub fn get_enum_member_defs(&self, parent_def_id: DefId) -> &[DefId] {
+        self.enum_members
+            .get(&parent_def_id.0)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
     // =========================================================================
@@ -1106,6 +1149,10 @@ impl TypeResolver for TypeEnvironment {
 
     fn get_enum_parent_def_id(&self, member_def_id: DefId) -> Option<DefId> {
         Self::get_enum_parent(self, member_def_id)
+    }
+
+    fn get_enum_member_def_ids(&self, parent_def_id: DefId) -> Vec<DefId> {
+        Self::get_enum_member_defs(self, parent_def_id).to_vec()
     }
 
     fn is_enum_type(&self, type_id: TypeId, interner: &dyn TypeDatabase) -> bool {

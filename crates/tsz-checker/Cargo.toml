@@ -742,6 +742,10 @@ name = "enum_nominality_tests"
 path = "tests/enum_nominality_tests.rs"
 
 [[test]]
+name = "enum_equality_narrowing_tests"
+path = "tests/enum_equality_narrowing_tests.rs"
+
+[[test]]
 name = "ts2367_comparison_overlap_tests"
 path = "tests/ts2367_comparison_overlap_tests.rs"
 
