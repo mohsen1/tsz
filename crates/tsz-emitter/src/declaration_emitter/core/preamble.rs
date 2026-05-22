@@ -78,10 +78,21 @@ impl<'a> DeclarationEmitter<'a> {
                         let base = &normalized[..normalized.len() - 2];
                         normalized = format!("{base} />");
                     }
+                    normalized = Self::normalize_preserved_reference_path(&normalized);
                     self.write(&normalized);
                     self.write_line();
                 }
             }
         }
+    }
+
+    fn normalize_preserved_reference_path(directive: &str) -> String {
+        let Some(path_start) = directive.find("path=\"/.lib/") else {
+            return directive.to_string();
+        };
+        let value_start = path_start + "path=\"".len();
+        let mut normalized = directive.to_string();
+        normalized.replace_range(value_start..value_start + "/.lib/".len(), "../../.lib/");
+        normalized
     }
 }
