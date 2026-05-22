@@ -3510,6 +3510,11 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     }));
 
     // T extends `${infer R}` ? R : never, with T = `${string}`.
+    // `${string}` spans the full string domain and collapses to `string`, and
+    // tsc treats `string extends `${infer R}`` as the false branch (a bare
+    // primitive does not match a template pattern) → never. This mirrors
+    // `test_conditional_infer_template_literal_from_string_input`, since
+    // `${string}` and `string` are the same type.
     let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
     let cond = ConditionalType {
         check_type: t_param,
@@ -3522,12 +3527,13 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let template_string = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    assert_eq!(template_string, TypeId::STRING);
     subst.insert(t_name, template_string);
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -3806,8 +3812,11 @@ fn test_conditional_string_literal_still_matches_template_infer_pattern() {
     assert_eq!(result, interner.literal_string("hello"));
 }
 
-/// Template literal source (string-filled) against a template infer pattern — should yield string.
-/// Template literal source types continue to match template patterns correctly.
+/// A genuine (non-collapsing) template literal source matches a structurally
+/// aligned template infer pattern, capturing the `${string}` segment.
+/// `` `x${string}` extends `x${infer R}` ? R : never `` yields `string` in tsc.
+/// (A bare `` `${string}` `` collapses to `string`, which does NOT match a
+/// template infer pattern — covered by the `from_string_input` tests.)
 #[test]
 fn test_conditional_template_literal_source_still_matches_template_infer_pattern() {
     let interner = TypeInterner::new();
@@ -3820,8 +3829,15 @@ fn test_conditional_template_literal_source_still_matches_template_infer_pattern
         is_const: false,
     }));
 
-    let source_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
-    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let prefix = interner.intern_string("x");
+    let source_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(infer_r),
+    ]);
     let cond = ConditionalType {
         check_type: source_template,
         extends_type: extends_template,
@@ -42206,13 +42222,9 @@ fn test_template_literal_only_type_interpolation() {
 
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
 
-    // Verify it was created
-    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 1);
-    } else {
-        panic!("Expected template literal");
-    }
+    // A lone `${string}` spans the full string domain, so it collapses to
+    // `string` at construction (tsc's getTemplateLiteralType).
+    assert_eq!(template, TypeId::STRING);
 
     // keyof returns apparent keys of string (same as keyof string)
     let result = evaluate_keyof(&interner, template);
