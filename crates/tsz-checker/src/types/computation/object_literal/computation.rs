@@ -2055,6 +2055,11 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
+                    let (string_literal_name, single_quoted_name) =
+                        self.ctx.arena.string_property_name_flags(method.name);
+                    let is_string_named =
+                        string_literal_name || self.is_computed_string_property_name(method.name);
+                    let is_symbol_named = self.is_symbol_property_name(method.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: method_type,
@@ -2069,9 +2074,9 @@ impl<'a> CheckerState<'a> {
                         visibility: Visibility::Public,
                         parent_id: None,
                         declaration_order: order,
-                        is_string_named: false,
-                        is_symbol_named: false,
-                        single_quoted_name: false,
+                        is_string_named,
+                        is_symbol_named,
+                        single_quoted_name,
                     };
                     properties.insert(name_atom, prop_info.clone());
                     self.record_partial_object_literal_property(
@@ -2442,6 +2447,11 @@ impl<'a> CheckerState<'a> {
                         setter_names.insert(name_atom);
                     }
 
+                    let (accessor_string_literal_name, accessor_single_quoted_name) =
+                        self.ctx.arena.string_property_name_flags(accessor.name);
+                    let accessor_is_string_named = accessor_string_literal_name
+                        || self.is_computed_string_property_name(accessor.name);
+                    let accessor_is_symbol_named = self.is_symbol_property_name(accessor.name);
                     // Merge getter/setter into a single property with separate
                     // read (type_id) and write (write_type) types.
                     if let Some(existing) = properties.get(&name_atom) {
@@ -2465,9 +2475,10 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: existing_order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
+                            is_string_named: accessor_is_string_named || existing.is_string_named,
+                            is_symbol_named: accessor_is_symbol_named || existing.is_symbol_named,
+                            single_quoted_name: accessor_single_quoted_name
+                                || existing.single_quoted_name,
                         };
                         properties.insert(name_atom, prop_info.clone());
                         self.record_partial_object_literal_property(
@@ -2496,9 +2507,9 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: order,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
+                            is_string_named: accessor_is_string_named,
+                            is_symbol_named: accessor_is_symbol_named,
+                            single_quoted_name: accessor_single_quoted_name,
                         };
                         properties.insert(name_atom, prop_info.clone());
                         self.record_partial_object_literal_property(
