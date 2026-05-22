@@ -13,7 +13,14 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<tsz_solver::TypeId> {
         let heritage = heritage?;
         let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
-        self.get_node_type_or_names(&[expr_idx, type_idx])
+        if self.js_extends_entity_reference_has_any_annotation(expr_idx) {
+            return Some(tsz_solver::TypeId::ANY);
+        }
+        let inferred = self.get_node_type_or_names(&[expr_idx, type_idx]);
+        if inferred.is_none() && self.js_entity_extends_needs_synthetic_alias(type_idx) {
+            return Some(tsz_solver::TypeId::ANY);
+        }
+        inferred
     }
 
     pub(crate) fn retain_synthetic_class_extends_alias_dependencies_in_statements(
