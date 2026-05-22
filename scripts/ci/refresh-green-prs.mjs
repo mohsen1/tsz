@@ -343,7 +343,6 @@ function readPullRequests(repository, base, maxPrs) {
     [
       "autoMergeRequest",
       "baseRefName",
-      "baseRefOid",
       "headRefName",
       "headRefOid",
       "isCrossRepository",
@@ -368,7 +367,6 @@ function readPullRequest(repository, number) {
     [
       "autoMergeRequest",
       "baseRefName",
-      "baseRefOid",
       "body",
       "headRefName",
       "headRefOid",
@@ -380,6 +378,21 @@ function readPullRequest(repository, number) {
       "url",
     ].join(","),
   ]);
+}
+
+function readBranchOid(repository, branch) {
+  const branchState = runGhJson([
+    "api",
+    "-H",
+    "Accept: application/vnd.github+json",
+    `repos/${repository}/branches/${branch}`,
+    "--jq",
+    "{oid: .commit.sha}",
+  ]);
+  if (!branchState.oid) {
+    throw new Error(`could not resolve ${branch} for ${repository}`);
+  }
+  return branchState.oid;
 }
 
 function readCompare(repository, baseOid, headOid) {
@@ -512,6 +525,7 @@ export function selectSortedPullRequests(prs) {
 
 function refreshPullRequests(options) {
   const prs = readPullRequests(options.repository, options.base, options.maxPrs);
+  const currentBaseOid = readBranchOid(options.repository, options.base);
   const result = {
     base: options.base,
     dryRun: options.dryRun,
@@ -529,7 +543,7 @@ function refreshPullRequests(options) {
     let compare = null;
     const rollup = checkRollupState(hydrated.statusCheckRollup, options.requiredChecks);
     if (rollup.kind === "passed") {
-      compare = readCompare(options.repository, hydrated.baseRefOid, hydrated.headRefOid);
+      compare = readCompare(options.repository, currentBaseOid, hydrated.headRefOid);
     }
     const inFlightReason = autoMergeInFlightReason(hydrated, compare, options);
     if (inFlightReason) {
@@ -556,7 +570,10 @@ function refreshPullRequests(options) {
       continue;
     }
 
-    const candidate = candidateFromCompare(hydrated, readCompare(options.repository, hydrated.baseRefOid, hydrated.headRefOid));
+    const candidate = candidateFromCompare(
+      hydrated,
+      readCompare(options.repository, currentBaseOid, hydrated.headRefOid),
+    );
     if (!candidate.eligible) {
       if (options.verbose) result.verboseSkips.push({ number: pr.number, reason: candidate.reason, url: pr.url });
       continue;
