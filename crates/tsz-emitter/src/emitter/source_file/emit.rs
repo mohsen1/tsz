@@ -1483,6 +1483,7 @@ impl<'a> Printer<'a> {
 
         self.prepare_logical_assignment_value_temps(source_idx);
         self.prepare_object_rest_assignment_temps(source_idx);
+        self.preallocate_iterator_return_temps_for_statements(&source.statements.nodes);
 
         let mut hoisted_var_byte_offset = if is_file_module {
             self.writer.len()

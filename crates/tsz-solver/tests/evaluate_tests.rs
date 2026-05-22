@@ -3510,6 +3510,11 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     }));
 
     // T extends `${infer R}` ? R : never, with T = `${string}`.
+    // `${string}` spans the full string domain and collapses to `string`, and
+    // tsc treats `string extends `${infer R}`` as the false branch (a bare
+    // primitive does not match a template pattern) → never. This mirrors
+    // `test_conditional_infer_template_literal_from_string_input`, since
+    // `${string}` and `string` are the same type.
     let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
     let cond = ConditionalType {
         check_type: t_param,
@@ -3522,12 +3527,13 @@ fn test_conditional_infer_template_literal_from_template_string_input() {
     let cond_type = interner.conditional(cond);
     let mut subst = TypeSubstitution::new();
     let template_string = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    assert_eq!(template_string, TypeId::STRING);
     subst.insert(t_name, template_string);
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
     let result = evaluate_type(&interner, instantiated);
 
-    assert_eq!(result, TypeId::STRING);
+    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -3806,8 +3812,11 @@ fn test_conditional_string_literal_still_matches_template_infer_pattern() {
     assert_eq!(result, interner.literal_string("hello"));
 }
 
-/// Template literal source (string-filled) against a template infer pattern — should yield string.
-/// Template literal source types continue to match template patterns correctly.
+/// A genuine (non-collapsing) template literal source matches a structurally
+/// aligned template infer pattern, capturing the `${string}` segment.
+/// `` `x${string}` extends `x${infer R}` ? R : never `` yields `string` in tsc.
+/// (A bare `` `${string}` `` collapses to `string`, which does NOT match a
+/// template infer pattern — covered by the `from_string_input` tests.)
 #[test]
 fn test_conditional_template_literal_source_still_matches_template_infer_pattern() {
     let interner = TypeInterner::new();
@@ -3820,8 +3829,15 @@ fn test_conditional_template_literal_source_still_matches_template_infer_pattern
         is_const: false,
     }));
 
-    let source_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
-    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_r)]);
+    let prefix = interner.intern_string("x");
+    let source_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let extends_template = interner.template_literal(vec![
+        TemplateSpan::Text(prefix),
+        TemplateSpan::Type(infer_r),
+    ]);
     let cond = ConditionalType {
         check_type: source_template,
         extends_type: extends_template,
@@ -42206,13 +42222,9 @@ fn test_template_literal_only_type_interpolation() {
 
     let template = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
 
-    // Verify it was created
-    if let Some(TypeData::TemplateLiteral(spans)) = interner.lookup(template) {
-        let spans = interner.template_list(spans);
-        assert_eq!(spans.len(), 1);
-    } else {
-        panic!("Expected template literal");
-    }
+    // A lone `${string}` spans the full string domain, so it collapses to
+    // `string` at construction (tsc's getTemplateLiteralType).
+    assert_eq!(template, TypeId::STRING);
 
     // keyof returns apparent keys of string (same as keyof string)
     let result = evaluate_keyof(&interner, template);
@@ -43549,5 +43561,272 @@ fn test_distributive_conditional_renamed_param_evaluates_correctly() {
         matches!(interner.lookup(evaluated), Some(TypeData::Union(_))),
         "Expected union from distributive X extends X ? X : never with X='a'|'b', got: {:?}",
         interner.lookup(evaluated)
+    );
+}
+
+// --- Spreading a union of tuples into a tuple distributes (issue #9764) ---
+//
+// Structural rule: when a tuple type contains a spread (rest) element whose
+// operand is a union of array-like types, the tuple normalizer distributes
+// over the union — `[a, ...(X | Y), b]` becomes `[a, ...X, b] | [a, ...Y, b]`
+// — producing one concrete tuple per union member. Single (non-union) tuple
+// spreads already flatten; this extends that to union operands.
+
+fn fixed_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+fn rest_elem(type_id: TypeId) -> TupleElement {
+    TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+#[test]
+fn test_tuple_spread_union_distributes_with_trailing() {
+    // [0, ...([2] | [3, 4]), 1] -> [0, 2, 1] | [0, 3, 4, 1]
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3, l4) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+        interner.literal_number(4.0),
+    );
+
+    let t_a = interner.tuple(vec![fixed_elem(l2)]);
+    let t_b = interner.tuple(vec![fixed_elem(l3), fixed_elem(l4)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union), fixed_elem(l1)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(l2), fixed_elem(l1)]);
+    let exp_b = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(l3),
+        fixed_elem(l4),
+        fixed_elem(l1),
+    ]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0,2,1] | [0,3,4,1], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_union_distributes_no_trailing_keeps_literal() {
+    // [0, ...([2] | [3, 4])] -> [0, 2] | [0, 3, 4]; leading `0` stays literal.
+    let interner = TypeInterner::new();
+    let (l0, l2, l3, l4) = (
+        interner.literal_number(0.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+        interner.literal_number(4.0),
+    );
+
+    let t_a = interner.tuple(vec![fixed_elem(l2)]);
+    let t_b = interner.tuple(vec![fixed_elem(l3), fixed_elem(l4)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(l2)]);
+    let exp_b = interner.tuple(vec![fixed_elem(l0), fixed_elem(l3), fixed_elem(l4)]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0,2] | [0,3,4] with literal 0 preserved, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_single_tuple_still_flattens_control() {
+    // CONTROL: [0, ...[2, 3], 1] -> [0, 2, 3, 1] (single tuple, not a union).
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+    );
+
+    let inner = interner.tuple(vec![fixed_elem(l2), fixed_elem(l3)]);
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(inner), fixed_elem(l1)]);
+    let result = evaluate_type(&interner, src);
+
+    let expected = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(l2),
+        fixed_elem(l3),
+        fixed_elem(l1),
+    ]);
+    assert_eq!(
+        result,
+        expected,
+        "expected single tuple [0,2,3,1], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_union_member_with_rest_preserved() {
+    // [0, ...(["x"] | [number, ...string[]])] ->
+    //   [0, "x"] | [0, number, ...string[]]
+    // A union member that itself carries a rest keeps its rest after the
+    // spread distributes. (The leading element of the first member is a
+    // string literal so neither alternative is absorbed by the other.)
+    let interner = TypeInterner::new();
+    let l0 = interner.literal_number(0.0);
+    let lx = interner.literal_string("x");
+    let string_array = interner.array(TypeId::STRING);
+
+    let t_a = interner.tuple(vec![fixed_elem(lx)]);
+    let t_b = interner.tuple(vec![fixed_elem(TypeId::NUMBER), rest_elem(string_array)]);
+    let union = interner.union(vec![t_a, t_b]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    let exp_a = interner.tuple(vec![fixed_elem(l0), fixed_elem(lx)]);
+    let exp_b = interner.tuple(vec![
+        fixed_elem(l0),
+        fixed_elem(TypeId::NUMBER),
+        rest_elem(string_array),
+    ]);
+    let expected = interner.union(vec![exp_a, exp_b]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected [0, \"x\"] | [0, number, ...string[]], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_two_union_spreads_cartesian_product() {
+    // [...([0] | [1]), ...([2] | [3])] ->
+    //   [0, 2] | [0, 3] | [1, 2] | [1, 3]
+    let interner = TypeInterner::new();
+    let (l0, l1, l2, l3) = (
+        interner.literal_number(0.0),
+        interner.literal_number(1.0),
+        interner.literal_number(2.0),
+        interner.literal_number(3.0),
+    );
+
+    let u_left = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l0)]),
+        interner.tuple(vec![fixed_elem(l1)]),
+    ]);
+    let u_right = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l3)]),
+    ]);
+
+    let src = interner.tuple(vec![rest_elem(u_left), rest_elem(u_right)]);
+    let result = evaluate_type(&interner, src);
+
+    let expected = interner.union(vec![
+        interner.tuple(vec![fixed_elem(l0), fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l0), fixed_elem(l3)]),
+        interner.tuple(vec![fixed_elem(l1), fixed_elem(l2)]),
+        interner.tuple(vec![fixed_elem(l1), fixed_elem(l3)]),
+    ]);
+
+    assert_eq!(
+        result,
+        expected,
+        "expected cartesian [0,2]|[0,3]|[1,2]|[1,3], got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_array_union_is_not_distributed() {
+    // NEGATIVE/FALLBACK: [string, number, ...(string[] | boolean[])] is left
+    // undistributed (a single tuple). tsc keeps a union-of-arrays rest as one
+    // rest element — an unbounded rest already encodes the union without
+    // fanning out into a union of tuples. Distributing it (as an earlier
+    // iteration did) broke reverse-mapping inference through variadic tuples
+    // (TypeScript conformance `variadicTuples1.ts`).
+    let interner = TypeInterner::new();
+    let string_array = interner.array(TypeId::STRING);
+    let boolean_array = interner.array(TypeId::BOOLEAN);
+    let union = interner.union(vec![string_array, boolean_array]);
+
+    let src = interner.tuple(vec![
+        fixed_elem(TypeId::STRING),
+        fixed_elem(TypeId::NUMBER),
+        rest_elem(union),
+    ]);
+    let result = evaluate_type(&interner, src);
+
+    assert_eq!(
+        result,
+        src,
+        "array-union spread must stay undistributed, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "expected a single tuple, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_tuple_spread_generic_union_is_not_distributed() {
+    // NEGATIVE/FALLBACK: [0, ...(T | U)] with T, U generic type parameters is
+    // left undistributed (a single tuple), matching tsc, which keeps generic
+    // spreads lazy until instantiation. Only concrete array-like unions fan out.
+    let interner = TypeInterner::new();
+    let l0 = interner.literal_number(0.0);
+    let t_name = interner.intern_string("T");
+    let u_name = interner.intern_string("U");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: u_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let union = interner.union(vec![t_param, u_param]);
+
+    let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);
+    let result = evaluate_type(&interner, src);
+
+    assert_eq!(
+        result,
+        src,
+        "generic type-parameter union spread must stay undistributed, got {:?}",
+        interner.lookup(result)
+    );
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "expected a single tuple, got {:?}",
+        interner.lookup(result)
     );
 }
