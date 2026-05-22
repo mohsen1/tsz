@@ -1013,6 +1013,10 @@ impl<'a> CheckerState<'a> {
                 *target_constraint,
             ),
 
+            SubtypeFailureReason::AbstractConstructorAssignment => {
+                self.render_abstract_constructor_assignment(&rctx)
+            }
+
             _ => {
                 // At depth > 0 we are rendering a nested property/element
                 // failure. The outer anchor index no longer points at the
@@ -1146,6 +1150,46 @@ impl<'a> CheckerState<'a> {
                 code: diagnostic_codes::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE,
             });
         }
+        diag
+    }
+
+    /// Render the TS2322 + TS2517 elaboration chain emitted when an abstract
+    /// constructor type is assigned to a non-abstract constructor type.
+    ///
+    /// tsc emits, for `const c: new () => A = A` where `A` is abstract:
+    ///
+    /// ```text
+    /// error TS2322: Type 'typeof A' is not assignable to type 'new () => A'.
+    ///   Cannot assign an abstract constructor type to a non-abstract constructor type.
+    /// ```
+    ///
+    /// The relation decision is correct on its own; only this explanation
+    /// line was missing. The shape is independent of class/alias spelling:
+    /// any abstract construct-signature source against a concrete
+    /// construct-signature target produces it.
+    fn render_abstract_constructor_assignment(&mut self, ctx: &RenderContext) -> Diagnostic {
+        let (source_str, target_str) =
+            self.format_top_level_assignability_message_types_at(ctx.source, ctx.target, ctx.idx);
+        let message = format_message(
+            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+        let mut diag = Diagnostic::error(
+            ctx.file_name.clone(),
+            ctx.start,
+            ctx.length,
+            message,
+            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+        );
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: ctx.file_name.clone(),
+            start: ctx.start,
+            length: ctx.length,
+            message_text: diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE
+                .to_string(),
+            category: DiagnosticCategory::Message,
+            code: diagnostic_codes::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
+        });
         diag
     }
 
