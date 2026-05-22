@@ -1582,6 +1582,10 @@ name = "mixin_any_base_index_sig_tests"
 path = "tests/mixin_any_base_index_sig_tests.rs"
 
 [[test]]
+name = "ts2545_mixin_constructor_shape_tests"
+path = "tests/ts2545_mixin_constructor_shape_tests.rs"
+
+[[test]]
 name = "stage3_lib_namespace_resolution_tests"
 path = "tests/stage3_lib_namespace_resolution_tests.rs"
 

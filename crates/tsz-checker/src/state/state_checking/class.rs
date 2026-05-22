@@ -2138,20 +2138,10 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // Check if any construct signature with parameters has invalid mixin form.
-            // tsc skips signatures with 0 parameters (they are not problematic).
-            let has_invalid_sig = construct_sigs.iter().any(|sig| {
-                if sig.params.is_empty() {
-                    return false;
-                }
-                let valid = sig.params.len() == 1
-                    && sig.params[0].rest
-                    && !sig.params[0].optional
-                    && self.is_valid_mixin_rest_param_type(sig.params[0].type_id);
-                !valid
-            });
-
-            if has_invalid_sig {
+            if construct_sigs
+                .iter()
+                .any(|sig| !self.is_valid_mixin_construct_signature(sig))
+            {
                 self.error_at_node(
                     class_idx,
                     diagnostic_messages::A_MIXIN_CLASS_MUST_HAVE_A_CONSTRUCTOR_WITH_A_SINGLE_REST_PARAMETER_OF_TYPE_ANY,
@@ -2188,6 +2178,16 @@ impl<'a> CheckerState<'a> {
         }
 
         Vec::new()
+    }
+
+    /// Whether a construct signature is shape-compatible with the mixin-base
+    /// contract: exactly one rest parameter (not optional) whose type is `any`,
+    /// `any[]`, or `readonly any[]`.
+    fn is_valid_mixin_construct_signature(&self, sig: &tsz_solver::CallSignature) -> bool {
+        sig.params.len() == 1
+            && sig.params[0].rest
+            && !sig.params[0].optional
+            && self.is_valid_mixin_rest_param_type(sig.params[0].type_id)
     }
 
     /// Check if a rest parameter type is valid for a mixin constructor.
