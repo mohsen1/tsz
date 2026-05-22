@@ -1601,13 +1601,22 @@ impl<'a> TypeFormatter<'a> {
                     // Class constructor types (callables with construct signatures
                     // linked to a class symbol) should display as "typeof ClassName"
                     // to match tsc behavior. The class instance type displays as
-                    // just "ClassName".
-                    if !shape.construct_signatures.is_empty()
-                        && let Some(arena) = self.symbol_arena
+                    // just "ClassName". A value symbol that merges with a namespace
+                    // (`class C {} namespace C {}` / `function f() {} namespace f {}`)
+                    // also displays as "typeof Name": the namespace merge preserves
+                    // the value's symbol on the static/callable shape.
+                    if let Some(arena) = self.symbol_arena
                         && let Some(sym) = arena.get(sym_id)
-                        && sym.has_flags(tsz_binder::symbol_flags::CLASS)
                     {
-                        return format!("typeof {name}").into();
+                        use tsz_binder::symbol_flags;
+                        let is_class_static = !shape.construct_signatures.is_empty()
+                            && sym.has_flags(symbol_flags::CLASS);
+                        let is_namespace_merged_value = sym.has_any_flags(
+                            symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE,
+                        );
+                        if is_class_static || is_namespace_merged_value {
+                            return format!("typeof {name}").into();
+                        }
                     }
                     return name.into();
                 }
