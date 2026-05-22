@@ -426,6 +426,19 @@ impl<'a> CheckerState<'a> {
 
         self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
 
+        // A binding default's literal type is only preserved (under `const`) when
+        // the destructuring source is a tuple — i.e. a fresh array literal or a
+        // tuple-typed value, where the positional element literal is meaningful
+        // (`const [first = 0] = [10, 20]` → `0 | 10`). For non-tuple sources
+        // (arrays, or unions like `RegExpMatchArray | never[]`) the default
+        // widens as usual, matching tsc once the source element is taken into
+        // account.
+        let source_is_tuple = query::tuple_elements(
+            self.ctx.types,
+            query::unwrap_readonly_deep(self.ctx.types, parent_type),
+        )
+        .is_some();
+
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -497,8 +510,10 @@ impl<'a> CheckerState<'a> {
                 // type (`widenTypeInferredFromInitializer` skips the `Constant` case),
                 // so `const [first = 0] = [10, 20]` yields `0 | 10`, not `number`.
                 // `let`/`var`/parameter defaults widen, matching the standard path.
+                // Gated to tuple sources so non-tuple sources (e.g. a `number[]` or a
+                // `RegExpMatchArray | never[]` union) keep their widening behavior.
                 let prev_preserve = self.ctx.preserve_literal_types;
-                if self.binding_pattern_is_const_declaration(pattern_idx) {
+                if source_is_tuple && self.binding_pattern_is_const_declaration(pattern_idx) {
                     self.ctx.preserve_literal_types = true;
                 }
                 let init_type =
