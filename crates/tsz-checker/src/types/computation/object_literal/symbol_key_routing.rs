@@ -77,6 +77,23 @@ impl<'a> CheckerState<'a> {
     /// identifier expressions whose value declaration is a `const`. That
     /// is precisely the case where tsc emits a `[k: symbol]: V` index
     /// signature instead of a named member.
+    /// Compute the `(is_string_named, is_symbol_named, single_quoted_name)`
+    /// flags that the synthesized `PropertyInfo` for an object-literal member
+    /// must carry. Used by every member form (property assignment, method
+    /// shorthand, getter, setter) so flags reflect the name-node shape
+    /// regardless of declaration syntax (issue #9763).
+    pub(super) fn object_literal_member_naming_flags(
+        &mut self,
+        name_idx: NodeIndex,
+    ) -> (bool, bool, bool) {
+        let (string_literal_name, single_quoted_name) =
+            self.ctx.arena.string_property_name_flags(name_idx);
+        let is_string_named =
+            string_literal_name || self.is_computed_string_property_name(name_idx);
+        let is_symbol_named = self.is_symbol_property_name(name_idx);
+        (is_string_named, is_symbol_named, single_quoted_name)
+    }
+
     pub(super) fn object_literal_computed_key_is_wide_symbol(
         &mut self,
         name_idx: NodeIndex,

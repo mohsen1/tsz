@@ -1245,10 +1245,8 @@ impl<'a> CheckerState<'a> {
                     // Determine if this property was declared with a string key
                     // that looks numeric (e.g. "404" vs 404). This affects DTS
                     // emit quoting: `"404": ...` vs `404: ...`.
-                    let (string_literal_name, single_quoted_name) =
-                        self.ctx.arena.string_property_name_flags(prop.name);
-                    let is_string_named =
-                        string_literal_name || self.is_computed_string_property_name(prop.name);
+                    let (is_string_named, is_symbol_named, single_quoted_name) =
+                        self.object_literal_member_naming_flags(prop.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: value_type,
@@ -1261,7 +1259,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: None,
                         declaration_order: order,
                         is_string_named,
-                        is_symbol_named: self.is_symbol_property_name(prop.name),
+                        is_symbol_named,
                         single_quoted_name,
                     };
                     properties.insert(name_atom, prop_info.clone());
@@ -2055,11 +2053,8 @@ impl<'a> CheckerState<'a> {
 
                     let order = prop_order;
                     prop_order += 1;
-                    let (string_literal_name, single_quoted_name) =
-                        self.ctx.arena.string_property_name_flags(method.name);
-                    let is_string_named =
-                        string_literal_name || self.is_computed_string_property_name(method.name);
-                    let is_symbol_named = self.is_symbol_property_name(method.name);
+                    let (is_string_named, is_symbol_named, single_quoted_name) =
+                        self.object_literal_member_naming_flags(method.name);
                     let prop_info = PropertyInfo {
                         name: name_atom,
                         type_id: method_type,
@@ -2447,11 +2442,8 @@ impl<'a> CheckerState<'a> {
                         setter_names.insert(name_atom);
                     }
 
-                    let (accessor_string_literal_name, accessor_single_quoted_name) =
-                        self.ctx.arena.string_property_name_flags(accessor.name);
-                    let accessor_is_string_named = accessor_string_literal_name
-                        || self.is_computed_string_property_name(accessor.name);
-                    let accessor_is_symbol_named = self.is_symbol_property_name(accessor.name);
+                    let (acc_str_named, acc_sym_named, acc_single_quoted) =
+                        self.object_literal_member_naming_flags(accessor.name);
                     // Merge getter/setter into a single property with separate
                     // read (type_id) and write (write_type) types.
                     if let Some(existing) = properties.get(&name_atom) {
@@ -2475,10 +2467,9 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: existing_order,
-                            is_string_named: accessor_is_string_named || existing.is_string_named,
-                            is_symbol_named: accessor_is_symbol_named || existing.is_symbol_named,
-                            single_quoted_name: accessor_single_quoted_name
-                                || existing.single_quoted_name,
+                            is_string_named: acc_str_named || existing.is_string_named,
+                            is_symbol_named: acc_sym_named || existing.is_symbol_named,
+                            single_quoted_name: acc_single_quoted || existing.single_quoted_name,
                         };
                         properties.insert(name_atom, prop_info.clone());
                         self.record_partial_object_literal_property(
@@ -2507,9 +2498,9 @@ impl<'a> CheckerState<'a> {
                             visibility: Visibility::Public,
                             parent_id: None,
                             declaration_order: order,
-                            is_string_named: accessor_is_string_named,
-                            is_symbol_named: accessor_is_symbol_named,
-                            single_quoted_name: accessor_single_quoted_name,
+                            is_string_named: acc_str_named,
+                            is_symbol_named: acc_sym_named,
+                            single_quoted_name: acc_single_quoted,
                         };
                         properties.insert(name_atom, prop_info.clone());
                         self.record_partial_object_literal_property(
