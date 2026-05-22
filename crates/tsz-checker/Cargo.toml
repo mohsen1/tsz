@@ -742,6 +742,10 @@ name = "enum_merge_tests"
 path = "tests/enum_merge_tests.rs"
 
 [[test]]
+name = "const_enum_merge_ts2567_tests"
+path = "tests/const_enum_merge_ts2567_tests.rs"
+
+[[test]]
 name = "ts2450_const_enum_tests"
 path = "tests/ts2450_const_enum_tests.rs"
 
