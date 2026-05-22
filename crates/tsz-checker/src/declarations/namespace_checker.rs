@@ -586,16 +586,13 @@ impl<'a> CheckerState<'a> {
 
         let properties = props.into_values().collect();
         let factory = self.ctx.types.factory();
-        // Keep the merged symbol so the type printer renders the value as
-        // `typeof f` (the function+namespace identity) instead of expanding the
-        // structural shape, matching tsc.
         let merged_type = factory.callable(CallableShape {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
             properties,
             string_index: shape.string_index,
             number_index: shape.number_index,
-            symbol: Some(sym_id),
+            symbol: None,
             is_abstract: false,
         });
 

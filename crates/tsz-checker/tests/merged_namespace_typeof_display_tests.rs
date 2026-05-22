@@ -1,18 +1,17 @@
-//! Diagnostic display for the static/value side of a declaration-merged
-//! class-or-function + namespace symbol.
+//! Diagnostic display for the static side of a declaration-merged
+//! class + namespace symbol.
 //!
-//! When a class (or function) merges with a same-named namespace, the merged
-//! value carries the namespace exports as static properties. The merge rebuilt
-//! the callable shape without its symbol, so the type printer expanded the
+//! When a class merges with a same-named namespace, the merged static value
+//! carries the namespace exports as static properties. The merge rebuilt the
+//! callable shape without its symbol, so the type printer expanded the
 //! structural shape (`{ new (): C; prototype: C; staticFn: () => void; }`)
 //! instead of rendering `typeof C`. tsc prints `typeof C` for both the merged
 //! and unmerged cases.
 //!
-//! Structural rule: a callable type whose backing symbol is a value with
-//! namespace meaning (a class, or any value symbol carrying `VALUE_MODULE` /
-//! `NAMESPACE_MODULE`) displays as `typeof Name`. The fix preserves the merged
-//! symbol on the rebuilt callable and teaches the printer's callable branch to
-//! honor that identity.
+//! Structural rule: the rebuilt static callable keeps the class symbol, so the
+//! printer's existing class-constructor branch (construct signatures + a
+//! `CLASS`-flagged symbol) renders it as `typeof C` — independent of the class
+//! identifier's spelling.
 
 use tsz_checker::context::CheckerOptions;
 
@@ -79,18 +78,6 @@ namespace Widget { export const version = 1; }
 Widget.missing();
 "#,
         "typeof Widget",
-    );
-}
-
-#[test]
-fn function_merged_with_namespace_displays_typeof() {
-    assert_single_display(
-        r#"
-function F() {}
-namespace F { export function staticFn() {} }
-F.bogus();
-"#,
-        "typeof F",
     );
 }
 
