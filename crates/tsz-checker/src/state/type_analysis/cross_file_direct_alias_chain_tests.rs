@@ -245,6 +245,40 @@ fn direct_source_file_type_alias_lowers_renamed_local_generic_alias_application(
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_concrete_generic_alias_with_sibling_leaf() {
+    with_two_file_state(
+        "type Leaf = string;\ntype Wrap<T> = T | Leaf;\nexport type Concrete = Wrap<number>;",
+        "import { Concrete } from './target';",
+        |state, target_binder| {
+            let concrete_sym = target_binder.file_locals.get("Concrete").expect("Concrete");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(concrete_sym, Some(1), true)
+                .expect("concrete generic aliases may reference safe sibling leaves");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Concrete should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_concrete_generic_alias_chain() {
+    with_two_file_state(
+        "type Drop<X> = X extends null ? never : X;\ntype Select<T, K> = Drop<K> | T;\nexport type Result = Select<boolean, null>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("concrete generic alias chains through sibling aliases should lower");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Result should be non-generic");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_generic_body_with_local_alias_application() {
     with_two_file_state(
         "type Box<X> = X | null;\nexport type Result<T> = Box<T>;",
@@ -291,6 +325,23 @@ fn direct_source_file_type_alias_lowers_renamed_generic_body_with_non_generic_lo
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert_eq!(params.len(), 1, "Output should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_concrete_generic_alias_cycle() {
+    with_two_file_state(
+        "type Loop<T> = Loop<T> | T;\nexport type Concrete = Loop<string>;",
+        "import { Concrete } from './target';",
+        |state, target_binder| {
+            let concrete_sym = target_binder.file_locals.get("Concrete").expect("Concrete");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(concrete_sym, Some(1), true)
+                    .is_none(),
+                "recursive concrete generic aliases must stay on the child-checker path",
+            );
         },
     );
 }

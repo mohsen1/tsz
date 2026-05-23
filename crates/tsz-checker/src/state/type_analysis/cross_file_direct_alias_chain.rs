@@ -320,11 +320,20 @@ impl<'a> CheckerState<'a> {
                         arena,
                         type_alias.type_node,
                         syntax_kind_ext::TYPE_QUERY,
-                    ) || !Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        type_alias.type_node,
-                        &target_param_names,
-                    ) {
+                    ) || !seen.push(sym_id)
+                    {
+                        return false;
+                    }
+                    let result =
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            arena,
+                            binder,
+                            type_alias.type_node,
+                            &target_param_names,
+                            seen,
+                        );
+                    seen.pop(sym_id);
+                    if !result {
                         return false;
                     }
                     return true;
