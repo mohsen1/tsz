@@ -493,6 +493,15 @@ pub struct CheckerContext<'a> {
     /// (e.g., `@typedef {... | Json[]} Json`).
     pub jsdoc_typedef_resolving: RefCell<rustc_hash::FxHashSet<String>>,
 
+    /// Recursion guard for *generic* JSDoc `@typedef` resolution, mapping the
+    /// typedef name currently being expanded to the `DefId` of its lazy alias.
+    /// A self-recursive generic application such as `@typedef {{ next: Box<T> |
+    /// null }} Box` must resolve the inner `Box<T>` to a deferred
+    /// `Application(Lazy(DefId), args)` instead of eagerly re-expanding the body,
+    /// which would otherwise recurse until the stack overflows. The solver then
+    /// resolves the alias coinductively, keyed by `(DefId, type args)`.
+    pub jsdoc_generic_typedef_resolving: RefCell<rustc_hash::FxHashMap<String, DefId>>,
+
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     /// Prevents re-traversing the flow graph for the same symbol/flow combination.
