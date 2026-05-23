@@ -54,6 +54,11 @@ pub struct AstToIr<'a> {
     /// position. Used when converting statements inside a method/accessor body
     /// so comments after the body closing brace stay on the descriptor.
     trailing_comment_limit: Cell<Option<u32>>,
+    /// Outer block-scope rename map: original name → emitted name for
+    /// let/const variables in enclosing scopes that were renamed during ES5
+    /// lowering (e.g. `let x` → `var x_1` when shadowing an outer `x`).
+    /// References inside class bodies must use the renamed form.
+    outer_rename_map: rustc_hash::FxHashMap<String, String>,
 }
 
 impl<'a> AstToIr<'a> {
@@ -75,7 +80,15 @@ impl<'a> AstToIr<'a> {
             module_kind: ModuleKind::None,
             emit_await_as_yield: false,
             trailing_comment_limit: Cell::new(None),
+            outer_rename_map: rustc_hash::FxHashMap::default(),
         }
+    }
+
+    /// Set the outer rename map: original → emitted name for block-scoped
+    /// variables in enclosing scopes renamed during ES5 lowering.
+    pub fn with_outer_rename_map(mut self, map: rustc_hash::FxHashMap<String, String>) -> Self {
+        self.outer_rename_map = map;
+        self
     }
 
     /// Set whether we're inside a derived class (for super lowering)
@@ -1231,7 +1244,12 @@ impl<'a> AstToIr<'a> {
             {
                 return IRNode::Identifier(replacement.clone().into());
             }
-            IRNode::Identifier(ident.escaped_text.clone().into())
+            let escaped = ident.escaped_text.as_ref();
+            let emitted = self
+                .outer_rename_map
+                .get(escaped)
+                .map_or(escaped, String::as_str);
+            IRNode::Identifier(emitted.to_string().into())
         } else {
             IRNode::ASTRef(idx)
         }

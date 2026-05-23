@@ -353,6 +353,44 @@ export = Foo;
 }
 
 #[test]
+fn namespace_local_var_shadows_module_and_namespace_export_rewrites() {
+    let source = r#"export const Something = 2;
+export namespace A {
+    export namespace B {
+        const Something = require("fs").Something;
+        const thing = new Something();
+        export { thing };
+    }
+}
+"#;
+
+    for target in [ScriptTarget::ES2015, ScriptTarget::ES5] {
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            module: ModuleKind::CommonJS,
+            target,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_target_es5(ctx.target_es5);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("new Something()"),
+            "Namespace-local variable declarations should shadow same-named module and namespace exports for target {target:?}.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("new exports.Something()") && !output.contains("new B.Something()"),
+            "Local constructor references must not be rewritten through export objects for target {target:?}.\nOutput:\n{output}"
+        );
+    }
+}
+
+#[test]
 fn for_of_assignment_object_rest_uses_iteration_temp() {
     let source = r#"let array: { x: number, y: string }[];
 for (let { x, ...restOf } of array) {
@@ -1850,6 +1888,38 @@ fn decorated_commonjs_exported_class_static_self_reference_uses_alias() {
     assert!(
         output.contains("exports.Testing123 = Testing123 = Testing123_1 = __decorate(["),
         "The decorator reassignment should preserve the alias in the CommonJS export chain.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_decorated_commonjs_class_namespace_merge_reuses_class_binding() {
+    let source = "declare var deco: any;\n@deco\nexport class Widget {}\nexport namespace Widget {\n  export const x = 1;\n}\nWidget.x;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.Widget = Widget;"),
+        "CommonJS decorated class export should create the namespace merge binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nvar Widget;\n"),
+        "Merged namespace should reuse the decorated class declaration binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(function (Widget) {\n    Widget.x = 1;\n})(Widget || (exports.Widget = Widget = {}));"
+        ),
+        "Merged namespace IIFE should fold the CommonJS export into the existing class binding.\nOutput:\n{output}"
     );
 }
 
