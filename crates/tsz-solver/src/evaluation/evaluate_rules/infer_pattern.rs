@@ -391,10 +391,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return;
         }
         match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) => {
-                if contravariant {
-                    out.insert(info.name);
-                }
+            Some(TypeData::Infer(info)) if contravariant => {
+                out.insert(info.name);
             }
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 for &m in self.interner().type_list(members).iter() {
