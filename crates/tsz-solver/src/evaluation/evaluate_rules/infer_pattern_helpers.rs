@@ -2678,6 +2678,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Capture value for a bare single-placeholder `` `${infer V}` `` pattern
+    /// matched against a template-literal `source`.
+    ///
+    /// tsc captures the whole source type (`getStringLikeTypeForType` of the
+    /// placeholder) rather than widening to `string`: inferring `` `${infer V}` ``
+    /// from `` `${number}` `` yields `` `${number}` ``, not `string`.
+    ///
+    /// When the infer variable carries an `extends` constraint, this mirrors
+    /// tsc's `getInferredType` fallback: if the captured template type isn't
+    /// assignable to the constraint, fall back to the constraint itself, but
+    /// only when the source is assignable to the constraint's string form
+    /// (`` `${C}` ``) — i.e. when the conditional's post-inference `extends`
+    /// re-check would still succeed. Otherwise the match fails and the
+    /// conditional takes its false branch.
+    fn single_placeholder_template_capture(
+        &self,
+        source: TypeId,
+        info: &TypeParamInfo,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> Option<TypeId> {
+        let Some(constraint) = info.constraint else {
+            return Some(source);
+        };
+        if checker.is_subtype_of(source, constraint) {
+            return Some(source);
+        }
+        let constraint_string_form = self
+            .interner()
+            .template_literal(vec![TemplateSpan::Type(constraint)]);
+        checker
+            .is_subtype_of(source, constraint_string_form)
+            .then_some(constraint)
+    }
+
     /// Match template literal spans against a pattern.
     pub(crate) fn match_template_literal_spans(
         &self,
@@ -2691,13 +2725,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             && let TemplateSpan::Type(type_id) = pattern_spans[0]
         {
             if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                let inferred = if source_spans
-                    .iter()
-                    .all(|span| matches!(span, TemplateSpan::Type(_)))
-                {
-                    TypeId::STRING
-                } else {
-                    source
+                let Some(inferred) =
+                    self.single_placeholder_template_capture(source, &info, checker)
+                else {
+                    return false;
                 };
                 return self.bind_infer(&info, inferred, bindings, checker);
             }
