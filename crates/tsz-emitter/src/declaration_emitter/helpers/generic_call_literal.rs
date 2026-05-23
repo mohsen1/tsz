@@ -26,6 +26,10 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
             })
+            .map(|type_text| {
+                self.call_expression_correlated_alias_return_text(expr_idx, &type_text)
+                    .unwrap_or(type_text)
+            })
             .map(Self::normalize_constructor_arrow_return_object_text)
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(expr_idx, &type_text)
@@ -291,11 +295,12 @@ impl<'a> DeclarationEmitter<'a> {
             == Some(target_name)
     }
 
-    fn simple_type_node_name_from_arena(
+    pub(in crate::declaration_emitter) fn simple_type_node_name_from_arena(
         &self,
         arena: &NodeArena,
-        type_idx: NodeIndex,
+        mut type_idx: NodeIndex,
     ) -> Option<String> {
+        type_idx = arena.skip_parenthesized(type_idx);
         let type_node = arena.get(type_idx)?;
         if type_node.kind == SyntaxKind::Identifier as u16 {
             return self.identifier_text_from_arena(arena, type_idx);

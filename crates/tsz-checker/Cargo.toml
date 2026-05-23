@@ -54,6 +54,10 @@ name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 
 [[test]]
+name = "ts2513_abstract_super_access_tests"
+path = "tests/ts2513_abstract_super_access_tests.rs"
+
+[[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
@@ -688,6 +692,10 @@ path = "tests/program_context_tests.rs"
 [[test]]
 name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
+
+[[test]]
+name = "overload_inference_literal_preservation_tests"
+path = "tests/overload_inference_literal_preservation_tests.rs"
 
 [[test]]
 name = "issue_3768_generic_callback_outer_inference_tests"
