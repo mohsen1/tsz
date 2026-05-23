@@ -26,6 +26,7 @@ pub(crate) mod dispatch;
 pub(crate) mod environment;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
+pub(crate) mod function_returns;
 pub(crate) mod index_signature;
 pub(crate) mod inference;
 pub(crate) mod intersection_display;

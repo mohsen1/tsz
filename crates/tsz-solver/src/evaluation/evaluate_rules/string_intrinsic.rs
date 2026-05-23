@@ -48,6 +48,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner().union(transformed)
             }
 
+            // `never` is the empty union. String mappings distribute over their
+            // union argument (tsc maps `Union | Never` member-wise), and mapping
+            // zero members yields zero members, so `Uppercase<never>` = `never`.
+            // This is the empty-union edge of the distribution handled above; it
+            // cannot arrive as a `Union` member because `never` is absorbed out
+            // of non-empty unions, so it needs its own arm.
+            TypeData::Intrinsic(IntrinsicKind::Never) => TypeId::NEVER,
+
+            // `any` is not transformable, not generic, and not a pattern-literal
+            // placeholder, so tsc's `getStringMappingType` returns the argument
+            // unchanged: `Uppercase<any>` = `any`. Falling through to the error
+            // arm below would otherwise turn this into `error`.
+            TypeData::Intrinsic(IntrinsicKind::Any) => evaluated_arg,
+
             // String literal types - apply the transformation
             TypeData::Literal(LiteralValue::String(atom)) => {
                 let s = self.interner().resolve_atom_ref(atom);
