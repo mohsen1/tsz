@@ -91,6 +91,12 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        // In object-literal recovery, invalid `#name` keys print as a missing
+        // property name while preserving the following punctuation/value.
+        if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            return;
+        }
+
         if let Some(ident) = self.arena.get_identifier(node) {
             let emit_text = ident
                 .original_text
