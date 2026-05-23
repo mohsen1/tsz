@@ -50,6 +50,7 @@ mapped_eval_set = { lifetime = "FileLocalReset", capability = "RelationSessionSt
 type_resolution_visiting = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 pruning_union_members = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 jsdoc_typedef_resolving = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+jsdoc_generic_typedef_resolving = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
 flow_analysis_cache = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
 flow_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }
 flow_in_worklist = { lifetime = "WorkerReusable", capability = "FlowSessionState", reason = "scratch allocation that can be cleared and reused by one worker between file sessions" }

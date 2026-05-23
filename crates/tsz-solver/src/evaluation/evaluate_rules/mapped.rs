@@ -437,9 +437,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate_mapped_array(mapped, element_type);
                     }
 
-                    // Tuple type: map each element
+                    // Tuple type: map each element. Source is mutable, so the
+                    // result is readonly only if the modifier adds `+readonly`.
                     Some(TypeData::Tuple(tuple_id)) => {
-                        return self.evaluate_mapped_tuple(mapped, tuple_id);
+                        return self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, false);
+                    }
+
+                    // `readonly [a, b]`: map each element and preserve readonly
+                    // unless the modifier strips it (`-readonly`).
+                    Some(TypeData::ReadonlyType(inner)) => {
+                        if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
+                            return self
+                                .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, true);
+                        }
                     }
 
                     // ReadonlyArray: map the element type and preserve readonly
@@ -1171,7 +1181,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 tracing::trace!(
                     "evaluate_mapped: tuple-constrained type parameter → producing tuple"
                 );
-                Some(self.evaluate_mapped_tuple(mapped, tuple_id))
+                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, false))
             }
             // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
             Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {
@@ -1179,14 +1189,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     tracing::trace!(
                         "evaluate_mapped: readonly-tuple-constrained type parameter → producing readonly tuple"
                     );
-                    let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
-                    let final_readonly =
-                        !matches!(mapped.readonly_modifier, Some(MappedModifier::Remove));
-                    if final_readonly {
-                        Some(self.interner().readonly_type(mapped_tuple))
-                    } else {
-                        Some(mapped_tuple)
-                    }
+                    Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, true))
                 }
                 Some(TypeData::Array(element_type)) => {
                     tracing::trace!(
@@ -2010,6 +2013,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Evaluate a homomorphic mapped type over a Tuple type, applying the
+    /// mapped type's `readonly` modifier at the tuple level.
+    ///
+    /// A tuple's readonly-ness is a property of the whole tuple (via the
+    /// `ReadonlyType` wrapper), not of individual elements, so the modifier is
+    /// resolved here with the standard homomorphic rule:
+    /// `+readonly` => readonly, `-readonly` => mutable, none => preserve the
+    /// source's readonly-ness (`source_readonly`). This mirrors
+    /// [`Self::evaluate_mapped_array_with_readonly`].
+    fn evaluate_mapped_tuple_with_readonly(
+        &mut self,
+        mapped: &MappedType,
+        tuple_id: TupleListId,
+        source_readonly: bool,
+    ) -> TypeId {
+        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
+        let final_readonly = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => source_readonly,
+        };
+        if final_readonly {
+            self.interner().readonly_type(mapped_tuple)
+        } else {
+            mapped_tuple
+        }
+    }
+
     /// Evaluate a homomorphic mapped type over a Tuple type.
     ///
     /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
@@ -2017,6 +2048,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///
     /// We instantiate the template with `K = 0, 1, 2...` for each tuple element.
     /// This preserves tuple structure including optional and rest elements.
+    /// The result is always a mutable tuple; the `readonly` modifier is applied
+    /// by [`Self::evaluate_mapped_tuple_with_readonly`] at the tuple level.
     fn evaluate_mapped_tuple(&mut self, mapped: &MappedType, tuple_id: TupleListId) -> TypeId {
         use crate::types::TupleElement;
 
@@ -2076,17 +2109,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let mapped_type =
                 self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
 
-            // Get the modifiers for this element
-            // Note: readonly is currently unused for tuple elements, but we preserve the logic
-            // in case TypeScript adds readonly tuple element support in the future
-            // CRITICAL: Handle optional and readonly modifiers independently
+            // Per-element readonly is not representable on a `TupleElement`; the
+            // mapped type's readonly modifier is applied at the tuple level by
+            // `evaluate_mapped_tuple_with_readonly`.
             let optional = match mapped.optional_modifier {
                 Some(MappedModifier::Add) => true,
                 Some(MappedModifier::Remove) => false,
                 None => elem.optional, // Preserve original optional
             };
-            // Note: readonly modifier is intentionally ignored for tuple elements,
-            // as TypeScript doesn't support readonly on individual tuple elements.
 
             mapped_elements.push(TupleElement {
                 type_id: mapped_type,

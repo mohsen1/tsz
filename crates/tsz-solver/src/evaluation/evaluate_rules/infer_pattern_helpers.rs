@@ -13,7 +13,8 @@ use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
     CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ObjectShapeId,
-    ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+    ParamInfo, PropertyInfo, TemplateSpan, TupleElement, TypeData, TypeId, TypeListId,
+    TypeParamInfo,
 };
 use crate::utils;
 use crate::visitor::array_element_type;
@@ -1629,6 +1630,66 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Match each pattern property against the corresponding source property,
+    /// extracting infer bindings with variance-aware merging.
+    ///
+    /// Each property is matched against a fresh copy of the incoming bindings so
+    /// that the order of properties does not affect the result, then its
+    /// candidates are merged via [`Self::merge_infer_candidates`]. When the same
+    /// `infer` name appears in both a covariant property slot and a contravariant
+    /// one (e.g. `{ v: infer U; f: (x: infer U) => void }`), the candidates are
+    /// intersected rather than failing the match through `bind_infer`'s
+    /// equality requirement — matching tsc, which infers `string & number` here.
+    fn match_infer_object_properties(
+        &self,
+        source_props: &[PropertyInfo],
+        pattern_props: &[PropertyInfo],
+        pattern: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let contravariant_infers = self.collect_contravariant_infer_names(pattern);
+        let base = bindings.clone();
+        let mut merged = base.clone();
+        for pattern_prop in pattern_props {
+            let source_prop = source_props
+                .iter()
+                .find(|prop| prop.name == pattern_prop.name);
+            let source_type = match source_prop {
+                Some(source_prop) => {
+                    if self.type_contains_infer(pattern_prop.type_id) {
+                        source_prop.type_id
+                    } else {
+                        self.optional_property_type(source_prop)
+                    }
+                }
+                None => {
+                    if !pattern_prop.optional {
+                        return false;
+                    }
+                    if !self.type_contains_infer(pattern_prop.type_id) {
+                        continue;
+                    }
+                    TypeId::UNDEFINED
+                }
+            };
+            let mut local = base.clone();
+            let mut local_visited = FxHashSet::default();
+            if !self.match_infer_pattern(
+                source_type,
+                pattern_prop.type_id,
+                &mut local,
+                &mut local_visited,
+                checker,
+            ) {
+                return false;
+            }
+            self.merge_infer_candidates(&base, &mut merged, local, &contravariant_infers);
+        }
+        *bindings = merged;
+        true
+    }
+
     /// Helper for matching object type patterns.
     pub(crate) fn match_infer_object_pattern(
         &self,
@@ -1646,42 +1707,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 let initial_binding_len = bindings.len();
                 let source_shape = self.interner().object_shape(source_shape_id);
                 let pattern_shape = self.interner().object_shape(pattern_shape_id);
-                for pattern_prop in &pattern_shape.properties {
-                    let source_prop = source_shape
-                        .properties
-                        .iter()
-                        .find(|prop| prop.name == pattern_prop.name);
-                    let Some(source_prop) = source_prop else {
-                        if pattern_prop.optional {
-                            if self.type_contains_infer(pattern_prop.type_id)
-                                && !self.match_infer_pattern(
-                                    TypeId::UNDEFINED,
-                                    pattern_prop.type_id,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                )
-                            {
-                                return false;
-                            }
-                            continue;
-                        }
-                        return false;
-                    };
-                    let source_type = if self.type_contains_infer(pattern_prop.type_id) {
-                        source_prop.type_id
-                    } else {
-                        self.optional_property_type(source_prop)
-                    };
-                    if !self.match_infer_pattern(
-                        source_type,
-                        pattern_prop.type_id,
-                        bindings,
-                        visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
+                if !self.match_infer_object_properties(
+                    &source_shape.properties,
+                    &pattern_shape.properties,
+                    pattern,
+                    bindings,
+                    checker,
+                ) {
+                    return false;
                 }
                 if bindings.len() == initial_binding_len
                     && self.type_contains_infer(pattern)
@@ -2002,42 +2035,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 TypeData::Object(source_shape_id) | TypeData::ObjectWithIndex(source_shape_id),
             ) => {
                 let source_shape = self.interner().object_shape(source_shape_id);
-                for pattern_prop in &pattern_shape.properties {
-                    let source_prop = source_shape
-                        .properties
-                        .iter()
-                        .find(|prop| prop.name == pattern_prop.name);
-                    let Some(source_prop) = source_prop else {
-                        if pattern_prop.optional {
-                            if self.type_contains_infer(pattern_prop.type_id)
-                                && !self.match_infer_pattern(
-                                    TypeId::UNDEFINED,
-                                    pattern_prop.type_id,
-                                    bindings,
-                                    visited,
-                                    checker,
-                                )
-                            {
-                                return false;
-                            }
-                            continue;
-                        }
-                        return false;
-                    };
-                    let source_type = if self.type_contains_infer(pattern_prop.type_id) {
-                        source_prop.type_id
-                    } else {
-                        self.optional_property_type(source_prop)
-                    };
-                    if !self.match_infer_pattern(
-                        source_type,
-                        pattern_prop.type_id,
-                        bindings,
-                        visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
+                if !self.match_infer_object_properties(
+                    &source_shape.properties,
+                    &pattern_shape.properties,
+                    pattern,
+                    bindings,
+                    checker,
+                ) {
+                    return false;
                 }
 
                 if let Some(pattern_index) = &pattern_shape.string_index {
