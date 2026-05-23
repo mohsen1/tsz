@@ -143,6 +143,40 @@ fn direct_source_file_type_alias_lowers_wrapped_composite_local_refs() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_type_operator_over_local_alias_chain() {
+    with_two_file_state(
+        "type Leaf = string;\ntype Local = Leaf;\nexport type Keys = keyof Local;",
+        "import { Keys } from './target';",
+        |state, target_binder| {
+            let keys_sym = target_binder.file_locals.get("Keys").expect("Keys");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keys_sym, Some(1), true)
+                .expect("keyof over a safe local alias chain should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Keys should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_indexed_access_over_local_alias_chain() {
+    with_two_file_state(
+        "type ObjectAlias = [number];\ntype KeyAlias = 0;\nexport type Picked = ObjectAlias[KeyAlias];",
+        "import { Picked } from './target';",
+        |state, target_binder| {
+            let picked_sym = target_binder.file_locals.get("Picked").expect("Picked");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(picked_sym, Some(1), true)
+                .expect("indexed access over safe local alias operands should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert!(params.is_empty(), "Picked should be non-generic");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_composite_with_flow_sensitive_local_ref() {
     with_two_file_state(
         "const value = 1;\ntype Flow = typeof value;\nexport type Alias = Flow | string;",
@@ -154,6 +188,23 @@ fn direct_source_file_type_alias_rejects_composite_with_flow_sensitive_local_ref
                     .direct_source_file_type_alias_result(alias_sym, Some(1), true)
                     .is_none(),
                 "composites with flow-sensitive local refs must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_indexed_access_with_flow_sensitive_operand() {
+    with_two_file_state(
+        "const key = 0;\ntype Keys = typeof key;\ntype Shape = [number];\nexport type Picked = Shape[Keys];",
+        "import { Picked } from './target';",
+        |state, target_binder| {
+            let picked_sym = target_binder.file_locals.get("Picked").expect("Picked");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(picked_sym, Some(1), true)
+                    .is_none(),
+                "indexed access with a flow-sensitive local operand must stay on the child-checker path",
             );
         },
     );
