@@ -397,6 +397,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/as_const_nested_literal_display_tests.rs"]
+mod as_const_nested_literal_display_tests;
+#[cfg(test)]
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
