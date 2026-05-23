@@ -869,6 +869,7 @@ impl<'a> Printer<'a> {
             .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         es5_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+        es5_emitter.set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
@@ -1169,6 +1170,7 @@ impl<'a> Printer<'a> {
                 ) {
                     self.write(&output);
                     self.skip_comments_for_erased_node(node);
+                    self.track_decorated_class_namespace_binding(node);
                     return;
                 }
             }
@@ -1224,6 +1226,19 @@ impl<'a> Printer<'a> {
         // Skip comments within the class range - the TC39 decorator emitter
         // handles them separately.
         self.skip_comments_for_erased_node(node);
+        self.track_decorated_class_namespace_binding(node);
+    }
+
+    fn track_decorated_class_namespace_binding(&mut self, node: &tsz_parser::parser::node::Node) {
+        if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+            return;
+        }
+        if let Some(class) = self.arena.get_class(node) {
+            let class_name = self.get_identifier_text_idx(class.name);
+            if !class_name.is_empty() {
+                self.declared_namespace_names.insert(class_name);
+            }
+        }
     }
 
     pub(in crate::emitter) fn seed_tc39_decorator_function_bodies(

@@ -1286,6 +1286,10 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         let alias = get_identifier_text(self.arena, import.import_clause)?;
+        if !self.import_equals_alias_is_referenced_after_node(import_idx, import) {
+            return None;
+        }
+
         let target_expr = AstToIr::new(self.arena).convert_expression(import.module_specifier);
         let is_exported = self
             .arena
@@ -1345,6 +1349,96 @@ impl<'a> NamespaceES5Transformer<'a> {
         }
 
         entity_path_has_runtime_value(self.arena, &target_parts).unwrap_or(true)
+    }
+
+    fn import_equals_alias_is_referenced_after_node(
+        &self,
+        import_idx: NodeIndex,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> bool {
+        let Some(alias) = get_identifier_text(self.arena, import.import_clause) else {
+            return true;
+        };
+        let Some(source_text) = self.source_text else {
+            return true;
+        };
+        let Some(import_node) = self.arena.get(import_idx) else {
+            return true;
+        };
+        let full_haystack = self.source_after_import_equals(import_node, import);
+        let haystack = if let Some(scope_end) = self.namespace_import_scope_end(import_idx) {
+            let full_start_in_source = source_text.len().saturating_sub(full_haystack.len());
+            let scope_end = scope_end as usize;
+            if scope_end <= full_start_in_source {
+                ""
+            } else {
+                let end_in_full = scope_end - full_start_in_source;
+                &full_haystack[..end_in_full.min(full_haystack.len())]
+            }
+        } else {
+            full_haystack
+        };
+        let stripped = crate::import_usage::strip_type_only_content(haystack);
+        crate::import_usage::contains_identifier_occurrence_before_shadow(&stripped, &alias)
+    }
+
+    fn source_after_import_equals(
+        &self,
+        import_node: &Node,
+        import: &tsz_parser::parser::node::ImportDeclData,
+    ) -> &'a str {
+        let Some(source_text) = self.source_text else {
+            return "";
+        };
+        let mut start = self
+            .arena
+            .get(import.module_specifier)
+            .map_or(import_node.end as usize, |module_node| {
+                module_node.end as usize
+            });
+        start = start.min(source_text.len());
+        let bytes = source_text.as_bytes();
+        while start < bytes.len() {
+            match bytes[start] {
+                b'\n' => {
+                    start += 1;
+                    break;
+                }
+                b'\r' => {
+                    start += 1;
+                    if start < bytes.len() && bytes[start] == b'\n' {
+                        start += 1;
+                    }
+                    break;
+                }
+                _ => start += 1,
+            }
+        }
+        &source_text[start..]
+    }
+
+    fn namespace_import_scope_end(&self, import_idx: NodeIndex) -> Option<u32> {
+        let block_idx = self.containing_module_block(import_idx)?;
+        let block_node = self.arena.get(block_idx)?;
+        let block = self.arena.get_module_block(block_node)?;
+        let statements = block.statements.as_ref()?;
+        let last_stmt = statements
+            .nodes
+            .last()
+            .and_then(|last_idx| self.arena.get(*last_idx))?;
+        Some(self.find_code_end_of_erased_stmt(last_stmt.pos, last_stmt.end))
+    }
+
+    fn containing_module_block(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = self.arena.parent_of(node_idx).unwrap_or(NodeIndex::NONE);
+        while current != NodeIndex::NONE {
+            let node = self.arena.get(current)?;
+            if node.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(current);
+            }
+            current = self.arena.parent_of(current).unwrap_or(NodeIndex::NONE);
+        }
+        None
     }
 
     fn containing_namespace_parts(&self, node_idx: NodeIndex) -> Vec<String> {

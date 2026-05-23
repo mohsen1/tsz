@@ -361,60 +361,98 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Collect the names of `infer` type variables that appear in contravariant
-    /// positions (function/callable parameter types) within `pattern`.
+    /// Collect the names of `infer` type variables that appear in any
+    /// contravariant position within `pattern`.
     ///
-    /// Used when matching a union source against a pattern: infer variables in
-    /// covariant positions merge via union, contravariant via intersection.
-    fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
+    /// A position is contravariant when it is reached through an odd number of
+    /// function/callable parameter positions (parameters flip variance, return
+    /// types and object/array/tuple members preserve it). When the same `infer`
+    /// name receives candidates from structurally separate positions, names in
+    /// this set merge their candidates via intersection; all others via union.
+    /// This mirrors tsc's `inferTypes`, where a type variable with any
+    /// contravariant occurrence produces an intersection of its candidates.
+    pub(crate) fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
         let mut result = FxHashSet::default();
-        self.collect_infer_names_in_params(pattern, &mut result);
+        let mut visited = FxHashSet::default();
+        self.collect_variance_infer_names(pattern, false, &mut result, &mut visited);
         result
     }
 
-    /// Recursively find `Infer` nodes inside function/callable parameter types.
-    fn collect_infer_names_in_params(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
-        match self.interner().lookup(ty) {
-            Some(TypeData::Function(fn_id)) => {
-                let shape = self.interner().function_shape(fn_id);
-                for param in &shape.params {
-                    self.collect_all_infer_names(param.type_id, out);
-                }
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                let shape = self.interner().callable_shape(callable_id);
-                for sig in &shape.call_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
-                    }
-                }
-                for sig in &shape.construct_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
-                    }
-                }
-            }
-            _ => {}
+    /// Walk `ty`, tracking whether the current position is contravariant, and
+    /// record the names of `infer` variables found in a contravariant position.
+    fn collect_variance_infer_names(
+        &self,
+        ty: TypeId,
+        contravariant: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
+        if ty.is_intrinsic() || !visited.insert((ty, contravariant)) {
+            return;
         }
-    }
-
-    /// Collect all `Infer` names reachable from `ty` (any variance).
-    fn collect_all_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
         match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) => {
+            Some(TypeData::Infer(info)) if contravariant => {
                 out.insert(info.name);
             }
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 for &m in self.interner().type_list(members).iter() {
-                    self.collect_all_infer_names(m, out);
+                    self.collect_variance_infer_names(m, contravariant, out, visited);
                 }
             }
             Some(TypeData::Array(elem)) => {
-                self.collect_all_infer_names(elem, out);
+                self.collect_variance_infer_names(elem, contravariant, out, visited);
+            }
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.collect_variance_infer_names(inner, contravariant, out, visited);
             }
             Some(TypeData::Tuple(elements)) => {
                 for elem in self.interner().tuple_list(elements).iter() {
-                    self.collect_all_infer_names(elem.type_id, out);
+                    self.collect_variance_infer_names(elem.type_id, contravariant, out, visited);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
+                }
+                for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    self.collect_variance_infer_names(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+            }
+            Some(TypeData::Function(fn_id)) => {
+                let shape = self.interner().function_shape(fn_id);
+                for param in &shape.params {
+                    self.collect_variance_infer_names(param.type_id, !contravariant, out, visited);
+                }
+                self.collect_variance_infer_names(shape.return_type, contravariant, out, visited);
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner().callable_shape(callable_id);
+                for sig in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    for param in &sig.params {
+                        self.collect_variance_infer_names(
+                            param.type_id,
+                            !contravariant,
+                            out,
+                            visited,
+                        );
+                    }
+                    self.collect_variance_infer_names(sig.return_type, contravariant, out, visited);
+                }
+                for prop in &shape.properties {
+                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
                 }
             }
             _ => {}
@@ -889,6 +927,42 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true
     }
 
+    /// Merge the candidate bindings produced by one structural position
+    /// (`local`) into the accumulator (`merged`), relative to the pre-existing
+    /// bindings (`base`).
+    ///
+    /// Names already present in `base` are left untouched (they were resolved by
+    /// an outer context). For a name that gains a second, distinct candidate, the
+    /// merge intersects when the name occurs in any contravariant position of the
+    /// surrounding pattern (`contravariant_infers`) and unions otherwise.
+    pub(crate) fn merge_infer_candidates(
+        &self,
+        base: &FxHashMap<Atom, TypeId>,
+        merged: &mut FxHashMap<Atom, TypeId>,
+        local: FxHashMap<Atom, TypeId>,
+        contravariant_infers: &FxHashSet<Atom>,
+    ) {
+        for (name, ty) in local {
+            if base.contains_key(&name) {
+                continue;
+            }
+            match merged.get_mut(&name) {
+                Some(existing) => {
+                    if *existing != ty {
+                        *existing = if contravariant_infers.contains(&name) {
+                            self.interner().intersection2(*existing, ty)
+                        } else {
+                            self.interner().union2(*existing, ty)
+                        };
+                    }
+                }
+                None => {
+                    merged.insert(name, ty);
+                }
+            }
+        }
+    }
+
     /// Match tuple elements against a pattern, extracting infer bindings.
     pub(crate) fn match_tuple_elements(
         &self,
@@ -1265,24 +1339,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
                     return false;
                 }
-
-                for (name, ty) in local {
-                    if base.contains_key(&name) {
-                        continue;
-                    }
-
-                    if let Some(existing) = merged.get_mut(&name) {
-                        if *existing != ty {
-                            if contravariant_infers.contains(&name) {
-                                *existing = self.interner().intersection2(*existing, ty);
-                            } else {
-                                *existing = self.interner().union2(*existing, ty);
-                            }
-                        }
-                    } else {
-                        merged.insert(name, ty);
-                    }
-                }
+                self.merge_infer_candidates(&base, &mut merged, local, &contravariant_infers);
             }
 
             *bindings = merged;

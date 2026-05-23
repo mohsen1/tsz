@@ -1568,6 +1568,103 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
     assert_eq!(result, expected);
 }
 
+/// Evaluate a `T extends` template-literal conditional with a single bare
+/// `infer` placeholder and a `"no"` false branch, returning the inferred result.
+///
+/// Models issue #9719: inferring a single-placeholder template pattern from a
+/// single-placeholder template source (the number/bigint placeholder forms)
+/// must capture the source template type, not widen the placeholder to
+/// `string`. The infer variable name and constraint are parameterized so the
+/// test proves the structural rule rather than a single spelling.
+fn eval_single_placeholder_infer(
+    interner: &TypeInterner,
+    infer_var: &str,
+    constraint: Option<TypeId>,
+    source: TypeId,
+) -> TypeId {
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string(infer_var);
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint,
+        default: None,
+        is_const: false,
+    }));
+
+    // `${infer V}` — single bare placeholder, no surrounding literal text.
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_v)]);
+    let no_match = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_v,
+        false_type: no_match,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let instantiated = instantiate_type(interner, cond_type, &subst);
+    evaluate_type(interner, instantiated)
+}
+
+#[test]
+fn test_single_placeholder_infer_captures_number_template() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    // `${number}` extends `${infer V}` ? V : "no"  →  V = `${number}` (not string).
+    let result = eval_single_placeholder_infer(&interner, "V", None, number_template);
+    assert_eq!(result, number_template);
+    assert_ne!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_single_placeholder_infer_captures_bigint_template_renamed_var() {
+    let interner = TypeInterner::new();
+    let bigint_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+
+    // Renamed infer variable proves the rule is structural, not name-keyed.
+    let result = eval_single_placeholder_infer(&interner, "Captured", None, bigint_template);
+    assert_eq!(result, bigint_template);
+}
+
+#[test]
+fn test_single_placeholder_infer_extends_number_falls_back_to_constraint() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    // `${number}` extends `${infer V extends number}` ? V : "no"  →  V = number.
+    // The captured `${number}` is not assignable to `number`, so tsc's
+    // getInferredType fallback yields the constraint; the conditional matches
+    // because `${number}` is assignable to the constraint's string form.
+    let result =
+        eval_single_placeholder_infer(&interner, "V", Some(TypeId::NUMBER), number_template);
+    assert_eq!(result, TypeId::NUMBER);
+}
+
+#[test]
+fn test_single_placeholder_infer_extends_boolean_takes_false_branch() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let no_match = interner.literal_string("no");
+
+    // `${number}` extends `${infer V extends boolean}` ? V : "no"  →  "no".
+    // `${number}` is not assignable to `${boolean}` (= "true" | "false"), so the
+    // constraint fallback does not apply and the false branch is taken.
+    let result =
+        eval_single_placeholder_infer(&interner, "V", Some(TypeId::BOOLEAN), number_template);
+    assert_eq!(result, no_match);
+}
+
 #[test]
 fn test_conditional_infer_template_literal_non_distributive_union_input() {
     let interner = TypeInterner::new();

@@ -724,6 +724,37 @@ fn test_exported_namespace_import_equals_annotation_preserves_alias() {
 }
 
 #[test]
+fn test_import_equals_new_expression_inferred_types_preserve_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+    export namespace Root {
+        export class Box {}
+    }
+
+    import LocalRoot = Root;
+    export var instanceValue = new LocalRoot.Box();
+
+    export namespace Outer {
+        export namespace Inner {
+            export class Item {}
+        }
+        import Renamed = Inner;
+        export var itemInstance = new Renamed.Item();
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare var instanceValue: LocalRoot.Box;"),
+        "Expected new expression to preserve import-equals alias: {output}"
+    );
+    assert!(
+        output.contains("var itemInstance: Renamed.Item;"),
+        "Expected namespace-local new expression to preserve renamed alias: {output}"
+    );
+}
+
+#[test]
 fn test_duplicate_namespace_import_equals_annotations_preserve_distinct_aliases() {
     let output = emit_dts_with_usage_analysis(
         r#"
@@ -2003,6 +2034,8 @@ const zero = 0 || "";
 const one = 1 || "";
 const zeroBig = 0n || "";
 const oneBig = 1n || "";
+const falsyUnion = (0 as 0 | false) || "fallback";
+const nullishFalsy = (null as null | undefined | "") || "fallback";
 "#,
     );
 
@@ -2021,6 +2054,14 @@ const oneBig = 1n || "";
     assert!(
         output.contains("declare const oneBig: 1n;"),
         "Expected non-zero bigint left operand to omit unreachable fallback: {output}"
+    );
+    assert!(
+        output.contains("declare const falsyUnion: \"fallback\";"),
+        "Expected all-falsy unions to expose the fallback literal: {output}"
+    );
+    assert!(
+        output.contains("declare const nullishFalsy: \"fallback\";"),
+        "Expected nullish/falsy unions to expose the fallback literal: {output}"
     );
 }
 

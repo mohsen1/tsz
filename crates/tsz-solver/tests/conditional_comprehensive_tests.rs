@@ -3086,6 +3086,185 @@ fn test_colocated_infer_three_function_params_intersect_renamed() {
     assert_eq!(result, expected);
 }
 
+// =============================================================================
+// Cross-position infer variance (#9700). A single `infer` name appearing in
+// both a covariant slot (object property) and a contravariant slot (function
+// parameter) must intersect its candidates, matching tsc's `inferTypes`:
+// when a type variable has any contravariant occurrence its candidates are
+// intersected, otherwise they are unioned.
+// =============================================================================
+
+fn make_obj(interner: &TypeInterner, props: &[(&str, TypeId)]) -> TypeId {
+    let props = props
+        .iter()
+        .map(|(name, ty)| PropertyInfo::new(interner.intern_string(name), *ty))
+        .collect();
+    interner.object(props)
+}
+
+/// `{ v: string; f: (x: number) => void }` extends
+/// `{ v: infer U; f: (x: infer U) => void } ? U : never`.
+/// `U` is covariant in `v` and contravariant in `f`'s parameter, so the
+/// candidates intersect: `U = string & number`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_intersects() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("v", infer_u),
+            ("f", make_void_fn(&interner, &[("x", infer_u)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("v", TypeId::STRING),
+            ("f", make_void_fn(&interner, &[("x", TypeId::NUMBER)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        interner.intersection2(TypeId::STRING, TypeId::NUMBER)
+    );
+}
+
+/// Same rule, renamed type variable and renamed properties — proves the fix is
+/// structural and not keyed on `U`/`v`/`f`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_intersects_renamed() {
+    let interner = TypeInterner::new();
+    let infer_q = make_infer(&interner, "Q");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("a", infer_q),
+            ("g", make_void_fn(&interner, &[("p", infer_q)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("a", TypeId::STRING),
+            ("g", make_void_fn(&interner, &[("p", TypeId::NUMBER)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_q,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        interner.intersection2(TypeId::STRING, TypeId::NUMBER)
+    );
+}
+
+/// Same shape but with matching candidates: covariant `string` and contravariant
+/// `string` intersect to `string` — no spurious narrowing to `never`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_same_candidate() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("v", infer_u),
+            ("f", make_void_fn(&interner, &[("x", infer_u)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("v", TypeId::STRING),
+            ("f", make_void_fn(&interner, &[("x", TypeId::STRING)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Pure-covariant control: two property slots with no contravariant occurrence
+/// must still union (not intersect).
+#[test]
+fn test_infer_two_covariant_props_still_union() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(&interner, &[("v", infer_u), ("w", infer_u)]);
+    let check_obj = make_obj(&interner, &[("v", TypeId::STRING), ("w", TypeId::NUMBER)]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
+/// A return-position `infer` stays covariant even when the same object also has
+/// a contravariant parameter occurrence for a *different* variable: `R` (return)
+/// unions, `A` (parameter) is unaffected here. Confirms variance is tracked
+/// per-name and that return positions do not flip.
+#[test]
+fn test_infer_return_position_is_covariant() {
+    let interner = TypeInterner::new();
+    let infer_r = make_infer(&interner, "R");
+
+    // { g: () => infer R; h: () => infer R }
+    let g_fn = interner.function(crate::types::FunctionShape::new(Vec::new(), infer_r));
+    let h_fn = interner.function(crate::types::FunctionShape::new(Vec::new(), infer_r));
+    let extends_obj = make_obj(&interner, &[("g", g_fn), ("h", h_fn)]);
+
+    let check_g = interner.function(crate::types::FunctionShape::new(Vec::new(), TypeId::STRING));
+    let check_h = interner.function(crate::types::FunctionShape::new(Vec::new(), TypeId::NUMBER));
+    let check_obj = make_obj(&interner, &[("g", check_g), ("h", check_h)]);
+
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
 #[test]
 fn function_intrinsic_extends_callable_in_conditional_types() {
     use crate::types::{FunctionShape, ParamInfo};
