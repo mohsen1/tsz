@@ -13,14 +13,17 @@ pub(super) fn string_index_signature_applies<R: TypeResolver>(
         // A plain `string` index signature covers every property access whose
         // key coerces to a string. Numbers (and numeric literals) coerce to
         // string keys, so they match a `string` index signature exactly like
-        // `D[number]`, `D["x"]`, and `D[string]` do.
+        // `D[number]`, `D["x"]`, and `D[string]` do. Kept structural (no
+        // subtype query) because this runs on the indexed-access hot path.
         return index_type == TypeId::STRING
+            || index_type == TypeId::NUMBER
             || matches!(
                 evaluator.interner().lookup(index_type),
-                Some(TypeData::Literal(LiteralValue::String(_)))
+                Some(TypeData::Literal(
+                    LiteralValue::String(_) | LiteralValue::Number(_)
+                ))
             )
-            || is_string_like_index(evaluator, index_type)
-            || is_numeric_like_index(evaluator, index_type);
+            || is_string_like_index(evaluator, index_type);
     }
 
     if index_type == TypeId::STRING
@@ -52,28 +55,6 @@ fn is_string_like_index<R: TypeResolver>(
             .any(|&member| is_string_like_intersection_member(evaluator, member)),
         _ => false,
     }
-}
-
-fn is_numeric_like_index<R: TypeResolver>(
-    evaluator: &TypeEvaluator<'_, R>,
-    index_type: TypeId,
-) -> bool {
-    if index_type == TypeId::NUMBER {
-        return true;
-    }
-    if index_type.is_intrinsic() {
-        return false;
-    }
-    if matches!(
-        evaluator.interner().lookup(index_type),
-        Some(TypeData::Literal(LiteralValue::Number(_)))
-    ) {
-        return true;
-    }
-    // Numeric enum members and other types assignable to `number` also coerce
-    // to string keys, so they match a `string` index signature.
-    let mut checker = SubtypeChecker::with_resolver(evaluator.interner(), evaluator.resolver());
-    checker.is_subtype_of(index_type, TypeId::NUMBER)
 }
 
 fn is_string_like_intersection_member<R: TypeResolver>(
