@@ -483,7 +483,18 @@ impl<'a> Printer<'a> {
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
                 if let Some(body_node) = self.arena.get(module.body) {
-                    self.namespace_scope_end = body_node.end;
+                    let block_scope_end = self
+                        .arena
+                        .get_module_block(body_node)
+                        .and_then(|block| block.statements.as_ref())
+                        .and_then(|statements| statements.nodes.last())
+                        .and_then(|last_stmt_idx| self.arena.get(*last_stmt_idx))
+                        .map(|last_stmt| {
+                            self.find_token_end_before_trivia(last_stmt.pos, last_stmt.end)
+                        });
+                    self.namespace_scope_end = block_scope_end.unwrap_or_else(|| {
+                        self.find_token_end_before_trivia(body_node.pos, body_node.end)
+                    });
                 }
                 let prev_parent_ns = self.parent_namespace_name.clone();
                 self.parent_namespace_name = parent_name

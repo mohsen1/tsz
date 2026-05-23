@@ -439,6 +439,9 @@ mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
+#[path = "tests/conditional_never_param_inference_tests.rs"]
+mod conditional_never_param_inference_tests;
+#[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
 #[cfg(test)]
