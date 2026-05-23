@@ -238,7 +238,10 @@ impl<'a> Printer<'a> {
             };
             self.skip_comments_in_range(tp_skip_start, open_paren_pos);
         }
-        if needs_async_generator_lowering {
+        let async_method_params_need_forwarding = needs_async_lowering
+            && !self.ctx.target_es5
+            && self.async_params_need_generator_forwarding(&method.parameters.nodes);
+        if needs_async_generator_lowering || async_method_params_need_forwarding {
             self.push_temp_scope();
         }
         self.write("(");
@@ -253,8 +256,8 @@ impl<'a> Printer<'a> {
         } else {
             node.end
         };
-        if needs_async_generator_lowering
-            && self.async_generator_params_need_forwarding(&method.parameters.nodes)
+        if (needs_async_generator_lowering || async_method_params_need_forwarding)
+            && self.async_params_need_generator_forwarding(&method.parameters.nodes)
         {
             self.emit_async_outer_parameter_placeholders(&method.parameters.nodes);
         } else {
@@ -284,6 +287,9 @@ impl<'a> Printer<'a> {
             self.pop_temp_scope();
         } else if needs_async_lowering {
             self.emit_method_async_lowered_body(method.body, &method.parameters.nodes);
+            if async_method_params_need_forwarding {
+                self.pop_temp_scope();
+            }
         } else {
             self.write(" ");
             let lowered_async_arrow_super_capture = if self.ctx.needs_async_lowering {
@@ -415,11 +421,8 @@ impl<'a> Printer<'a> {
 
     /// Emit async method body lowered to __awaiter + function* for ES2015 target
     fn emit_method_async_lowered_body(&mut self, body: NodeIndex, params: &[NodeIndex]) {
-        let params_have_top_level_await = params
-            .iter()
-            .copied()
-            .any(|p| self.param_initializer_has_top_level_await(p));
-        let move_params_to_generator = params_have_top_level_await;
+        let move_params_to_generator =
+            !self.ctx.target_es5 && self.async_params_need_generator_forwarding(params);
 
         let body_is_empty_single_line = self
             .arena
@@ -1875,6 +1878,48 @@ mod tests {
         assert!(
             output.contains("var o = { \"constructor\"() { } };"),
             "Object-literal quoted constructor methods should remain quoted methods.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn es2015_async_method_forwards_destructured_and_defaulted_params_to_generator() {
+        let source = r#"class X {
+    async destructured({ reason, code }) { }
+    async nested({ suberr: { reason } }) { }
+    async defaulted(value = 1) { }
+    async plain(value) { }
+}"#;
+        let output = emit_ts_with_options(
+            source,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            output.contains(
+                "destructured(_a) {\n        return __awaiter(this, arguments, void 0, function* ({ reason, code }) { });"
+            ),
+            "Async methods with binding-pattern parameters should forward outer arguments into the generator.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(
+                "nested(_a) {\n        return __awaiter(this, arguments, void 0, function* ({ suberr: { reason } }) { });"
+            ),
+            "Forwarding should apply structurally to nested binding patterns too.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(
+                "defaulted() {\n        return __awaiter(this, arguments, void 0, function* (value = 1) { });"
+            ),
+            "Async methods with default parameters should move the default into the generator.\nOutput: {output}"
+        );
+        assert!(
+            output.contains(
+                "plain(value) {\n        return __awaiter(this, void 0, void 0, function* () { });"
+            ),
+            "Async methods with simple parameters should keep the outer parameter list and avoid forwarding arguments.\nOutput: {output}"
         );
     }
 
