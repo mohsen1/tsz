@@ -737,3 +737,155 @@ fn infer_type_parameter_span_varies_names() {
         "Result",
     );
 }
+
+/// A bare (unparenthesized) `infer X` tuple element must not absorb a trailing
+/// `?` optional marker. tsc parses the `infer` type directly and bypasses
+/// postfix parsing, so the `?` is read as a missing `,` (TS1005) followed by a
+/// missing element type (TS1110). Only `(infer X)?` is a valid optional element.
+fn assert_bare_infer_postfix_rejected(source: &str, marker: char) {
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let marker_pos = source.find(marker).expect("expected postfix marker") as u32;
+
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1005 && d.start == marker_pos && d.message == "',' expected."),
+        "expected TS1005 ',' expected at the stray `{marker}` for `{source}`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1110 && d.start == marker_pos + 1),
+        "expected TS1110 'Type expected.' after the stray `{marker}` for `{source}`, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn bare_infer_optional_tuple_element_rejected() {
+    assert_bare_infer_postfix_rejected("type A<T> = T extends [infer X?] ? X : never;", '?');
+}
+
+#[test]
+fn bare_infer_optional_tuple_element_rejected_renamed_var() {
+    // The rule is structural: it must fire regardless of the inferred name.
+    assert_bare_infer_postfix_rejected(
+        "type A<T> = T extends [infer Result?] ? Result : never;",
+        '?',
+    );
+}
+
+#[test]
+fn bare_infer_optional_second_tuple_element_rejected() {
+    assert_bare_infer_postfix_rejected(
+        "type A<T> = T extends [infer A, infer B?] ? A : never;",
+        '?',
+    );
+}
+
+#[test]
+fn bare_infer_nonnull_tuple_element_rejected() {
+    // The `!` postfix marker is bypassed for bare `infer` exactly like `?`.
+    assert_bare_infer_postfix_rejected("type A<T> = T extends [infer X!] ? X : never;", '!');
+}
+
+#[test]
+fn bare_infer_optional_rest_tuple_element_rejected() {
+    // `...infer R` is still a bare `infer` type, so `[...infer R?]` is the same
+    // stray-marker error, not a rest-optional marker.
+    assert_bare_infer_postfix_rejected("type A<T> = T extends [...infer R?] ? R : never;", '?');
+}
+
+#[test]
+fn bare_infer_optional_named_tuple_member_rejected() {
+    // A labeled member type `x: infer X` is still a bare `infer`, so `[x: infer X?]`
+    // is the same stray-marker error.
+    assert_bare_infer_postfix_rejected("type A<T> = T extends [x: infer X?] ? X : never;", '?');
+}
+
+#[test]
+fn bare_infer_named_tuple_member_without_marker_accepted() {
+    // Control: `[x: infer X]` (no stray marker) must keep parsing cleanly.
+    let (parser, _root) = parse_source("type A<T> = T extends [x: infer X] ? X : never;");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn bare_infer_optional_marker_before_comma_reports_only_missing_comma() {
+    // When another element follows the stray `?`, tsc reports only the missing
+    // `,` (TS1005) and continues — no spurious `Type expected` (TS1110).
+    let source = "type A<T> = T extends [infer X?, number] ? X : never;";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    let marker_pos = source.find('?').expect("expected `?`") as u32;
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == 1005 && d.start == marker_pos && d.message == "',' expected."),
+        "expected TS1005 at the stray `?`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1110),
+        "a following element must suppress TS1110, got {diagnostics:?}"
+    );
+}
+
+#[test]
+fn parenthesized_infer_optional_tuple_element_accepted() {
+    // `(infer X)?` is the valid optional form and must parse without errors.
+    let (parser, _root) = parse_source("type A<T> = T extends [(infer X)?] ? X : never;");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn non_infer_optional_tuple_element_still_accepted() {
+    // Control: an ordinary optional element must keep working.
+    let (parser, _root) = parse_source("type A<T> = T extends [string, number?] ? string : never;");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn bare_infer_in_conditional_still_parses() {
+    // Control: the `?` of an enclosing conditional type must not be mistaken for
+    // a postfix marker on the `infer` type.
+    let (parser, _root) = parse_source("type A<T> = T extends infer X ? X : never;");
+    assert_eq!(
+        parser.get_diagnostics().len(),
+        0,
+        "expected no diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn infer_with_constraint_postfix_attaches_to_constraint() {
+    // `[infer A extends string?]`: the `?` is the constraint's nullable marker
+    // (TS17019), not a tuple-level optional — mirroring tsc, which parses the
+    // constraint as a full type.
+    let source = "type A<T> = T extends [infer A extends string?] ? A : never;";
+    let (parser, _root) = parse_source(source);
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics.iter().any(|d| d.code == 17019),
+        "expected TS17019 on the constraint's postfix `?` for `{source}`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().all(|d| d.code != 1005 && d.code != 1110),
+        "constraint postfix must not be reported as a missing comma/type, got {diagnostics:?}"
+    );
+}

@@ -397,6 +397,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/as_const_nested_literal_display_tests.rs"]
+mod as_const_nested_literal_display_tests;
+#[cfg(test)]
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
@@ -435,6 +438,9 @@ mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
+#[cfg(test)]
+#[path = "tests/conditional_never_param_inference_tests.rs"]
+mod conditional_never_param_inference_tests;
 #[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
@@ -483,6 +489,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
+#[cfg(test)]
+#[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
+mod generic_callback_sibling_arg_inference_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
@@ -538,6 +547,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
@@ -567,6 +579,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "../tests/keyof_function_type_is_never_tests.rs"]
+mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
@@ -609,6 +624,9 @@ mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_discriminant_narrowing_tests.rs"]
+mod object_spread_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
