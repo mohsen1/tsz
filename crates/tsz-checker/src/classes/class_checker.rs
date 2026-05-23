@@ -2043,6 +2043,10 @@ impl<'a> CheckerState<'a> {
                 && !base_info.from_interface
                 && !accessor_mismatch_reported.contains(&member_name)
             {
+                // Note: do NOT `continue` after emitting TS2610/TS2611 — tsc treats the
+                // property/accessor kind mismatch and the override type-incompatibility
+                // (TS2416) as independent diagnostics, so the assignability gate below must
+                // still run when the overriding type is not assignable to the base type.
                 if !is_accessor && base_info.is_accessor {
                     // TS2610: derived property overrides base accessor
                     accessor_mismatch_reported.insert(member_name.clone());
@@ -2053,9 +2057,7 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::IS_DEFINED_AS_AN_ACCESSOR_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_INSTANCE_PROP,
                     );
-                    continue;
-                }
-                if is_accessor && !base_info.is_accessor {
+                } else if is_accessor && !base_info.is_accessor {
                     // TS2611: derived accessor overrides base property
                     accessor_mismatch_reported.insert(member_name.clone());
                     self.error_at_node(
@@ -2065,7 +2067,6 @@ impl<'a> CheckerState<'a> {
                         ),
                         diagnostic_codes::IS_DEFINED_AS_A_PROPERTY_IN_CLASS_BUT_IS_OVERRIDDEN_HERE_IN_AS_AN_ACCESSOR,
                     );
-                    continue;
                 }
             }
 
