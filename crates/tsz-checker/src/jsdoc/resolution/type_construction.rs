@@ -761,7 +761,7 @@ impl<'a> CheckerState<'a> {
     /// Register a display def `BaseName<Arg1, Arg2, ...>` for an instantiated
     /// generic JSDoc type reference so diagnostics preserve the original
     /// alias plus the supplied type arguments.
-    fn register_jsdoc_generic_display_name(
+    pub(in crate::jsdoc::resolution) fn register_jsdoc_generic_display_name(
         &mut self,
         base_name: &str,
         type_args: &[TypeId],
@@ -1609,7 +1609,7 @@ impl<'a> CheckerState<'a> {
     /// generic-typedef re-entrancy guard, so that a self-recursive generic
     /// application inside the body defers to `Application(Lazy(DefId), args)`
     /// instead of re-expanding the body until the stack overflows.
-    fn type_from_jsdoc_typedef_inner(
+    pub(in crate::jsdoc::resolution) fn type_from_jsdoc_typedef_inner(
         &mut self,
         info: JsdocTypedefInfo,
         recursive_alias_name: Option<&str>,
@@ -1689,38 +1689,6 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         Some((result.unwrap_or(TypeId::ANY), type_param_infos))
-    }
-
-    /// Find or register the lazy alias `DefId` for a generic JSDoc `@typedef`.
-    ///
-    /// Deduplicated by `(file, name, type parameters)` so repeated references
-    /// to the same alias in a file share one stable `DefId` (preserving type
-    /// identity), while a same-named generic typedef in a *different* file gets
-    /// its own `DefId` and is never collapsed onto another file's alias. The
-    /// body is filled in later via `set_body` once it has been constructed.
-    fn ensure_recursive_jsdoc_typedef_def(
-        &mut self,
-        name: &str,
-        type_params: &[tsz_solver::TypeParamInfo],
-    ) -> tsz_solver::def::DefId {
-        use tsz_solver::def::{DefKind, DefinitionInfo};
-
-        let file_id = self.ctx.current_file_idx as u32;
-        let atom_name = self.ctx.types.intern_string(name);
-        if let Some(candidates) = self.ctx.definition_store.find_defs_by_name(atom_name) {
-            for def_id in candidates {
-                if let Some(def) = self.ctx.definition_store.get(def_id)
-                    && matches!(def.kind, DefKind::TypeAlias)
-                    && def.file_id == Some(file_id)
-                    && def.type_params.as_slice() == type_params
-                {
-                    return def_id;
-                }
-            }
-        }
-        let mut info = DefinitionInfo::type_alias(atom_name, type_params.to_vec(), TypeId::ERROR);
-        info.file_id = Some(file_id);
-        self.ctx.definition_store.register(info)
     }
 
     fn type_from_jsdoc_callback(&mut self, cb: JsdocCallbackInfo) -> Option<TypeId> {
@@ -1933,68 +1901,10 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn resolve_jsdoc_generic_typedef_type(
-        &mut self,
-        base_name: &str,
-        type_args: &[TypeId],
-    ) -> Option<TypeId> {
-        use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
-
-        // Re-entrancy: if we are already expanding this generic typedef's body,
-        // a self-recursive application like `Box<T>` inside `Box`'s own
-        // definition must defer to the alias's lazy `DefId` rather than
-        // re-expand the body (which would recurse until stack overflow). The
-        // solver then resolves the application coinductively.
-        let in_progress_def = self
-            .ctx
-            .jsdoc_generic_typedef_resolving
-            .borrow()
-            .get(base_name)
-            .copied();
-        if let Some(def_id) = in_progress_def {
-            let base = self.ctx.types.factory().lazy(def_id);
-            if type_args.is_empty() {
-                return Some(base);
-            }
-            let app = self
-                .ctx
-                .types
-                .factory()
-                .application(base, type_args.to_vec());
-            self.register_jsdoc_generic_display_name(base_name, type_args, app);
-            return Some(app);
-        }
-
-        let source_file = self.ctx.arena.source_files.first()?;
-        let mut best_def = None;
-        for comment in &source_file.comments {
-            if !is_jsdoc_comment(comment, &source_file.text) {
-                continue;
-            }
-            let content = get_jsdoc_content(comment, &source_file.text);
-            for (name, typedef_info) in Self::parse_jsdoc_typedefs(&content) {
-                if name == base_name {
-                    best_def = Some(typedef_info);
-                }
-            }
-        }
-
-        let (body_type, type_params) =
-            self.type_from_jsdoc_typedef_inner(best_def?, Some(base_name))?;
-        if type_args.is_empty() {
-            return Some(body_type);
-        }
-        if type_params.is_empty() {
-            return None;
-        }
-
-        use crate::query_boundaries::common::instantiate_generic;
-        let instantiated = instantiate_generic(self.ctx.types, body_type, &type_params, type_args);
-        self.register_jsdoc_generic_display_name(base_name, type_args, instantiated);
-        Some(instantiated)
-    }
     // NOTE: jsdoc_has_readonly_tag, jsdoc_access_level, find_orphaned_extends_tags_for_statements,
     // is_in_different_function_scope, find_function_body_end are in lookup.rs
+    // NOTE: resolve_jsdoc_generic_typedef_type + ensure_recursive_jsdoc_typedef_def
+    // live in generic_typedef.rs.
 }
 
 #[cfg(test)]
