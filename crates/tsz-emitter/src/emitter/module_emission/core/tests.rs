@@ -10,6 +10,59 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 }
 
 #[test]
+fn commonjs_unused_classic_jsx_factory_name_elides_namespace_import_without_jsx() {
+    let source = r#"import * as React from "react";
+export var x = 1;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("require(\"react\")") && !output.contains("__importStar"),
+        "Unused namespace import named like a JSX factory should be elided when the file has no JSX.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.x = 1;"),
+        "The exported value should still emit normally.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_classic_jsx_factory_namespace_import_survives_with_jsx() {
+    let source = r#"import * as React from "react";
+export const x = <div />;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("require(\"react\")") && output.contains("React.createElement"),
+        "Namespace import used as the implicit JSX factory must be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esmodule_es5_default_class_exports_after_iife() {
     let source = r#"export default class A {
     method() { return 1; }
