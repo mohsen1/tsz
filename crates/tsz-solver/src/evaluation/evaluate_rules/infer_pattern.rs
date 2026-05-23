@@ -473,9 +473,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
     ) {
         let mut names = FxHashSet::default();
-        self.collect_all_infer_names(pattern, &mut names);
+        self.collect_pattern_infer_names(pattern, &mut names);
         for name in names {
             bindings.entry(name).or_insert(default_ty);
+        }
+    }
+
+    /// Collect the names of every `infer` variable reachable in `pattern`,
+    /// regardless of variance. `collect_variance_infer_names` only records
+    /// contravariant-position names, so it cannot be reused here: defaulting
+    /// unmatched parameter slots must cover every `infer` slot in the pattern.
+    fn collect_pattern_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
+        match self.interner().lookup(ty) {
+            Some(TypeData::Infer(info)) => {
+                out.insert(info.name);
+            }
+            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+                for &m in self.interner().type_list(members).iter() {
+                    self.collect_pattern_infer_names(m, out);
+                }
+            }
+            Some(TypeData::Array(elem)) => {
+                self.collect_pattern_infer_names(elem, out);
+            }
+            Some(TypeData::Tuple(elements)) => {
+                for elem in self.interner().tuple_list(elements).iter() {
+                    self.collect_pattern_infer_names(elem.type_id, out);
+                }
+            }
+            _ => {}
         }
     }
 
