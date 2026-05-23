@@ -2576,6 +2576,13 @@ impl<'a> CheckerState<'a> {
                         .get(i)
                         .copied()
                         .flatten()
+                        // A `never` contextual type is uninformative: it only
+                        // arises when the instantiated parameter reduced to `never`
+                        // (a forbidden argument). Using it to re-type the argument
+                        // would spuriously widen a literal (`'a'` -> `string`) and
+                        // mask the TS2345 the first resolve already found. Fall back
+                        // to the base contextual type instead.
+                        .filter(|&t| t != TypeId::NEVER)
                         .or_else(|| base_contextual_param_types.get(i).copied().flatten())
                 },
                 check_excess_properties,

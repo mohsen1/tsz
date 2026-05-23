@@ -1580,4 +1580,58 @@ mod tests {
             "ES5 recovery shorthand must not keep invalid assignment syntax.\nOutput:\n{output}"
         );
     }
+
+    #[test]
+    fn object_literal_private_identifier_property_key_recovers_as_missing_name() {
+        let source = "var h = {\n    #secret: 3\n};\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("    : 3"),
+            "Invalid private object-literal keys should print the missing-name recovery slot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("#secret"),
+            "Invalid private object-literal keys should not survive as property names.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es5_object_literal_private_identifier_property_key_recovers_as_missing_name() {
+        let source = "var h = {\n    #renamed: 3\n};\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES5,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("    : 3"),
+            "ES5 invalid private object-literal keys should print the same missing-name recovery slot.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("#renamed"),
+            "Recovery should be independent of the private identifier spelling.\nOutput:\n{output}"
+        );
+    }
 }

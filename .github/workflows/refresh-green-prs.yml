@@ -22,9 +22,8 @@ on:
         default: false
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
+  pull-requests: read
   checks: read
   statuses: read
 
@@ -44,7 +43,10 @@ jobs:
 
       - name: Refresh one stale green PR
         env:
-          GH_TOKEN: ${{ github.token }}
+          # Apply mode needs a real automation token so the branch update emits
+          # a pull_request synchronize event and the PR's required checks run.
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
+          HAS_AUTOMATION_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN != '' }}
           DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
           MAX_PRS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_prs || 200 }}
           VERBOSE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose || false }}
@@ -54,6 +56,11 @@ jobs:
           set -euo pipefail
 
           dry_run="${DRY_RUN_INPUT}"
+          if [[ "${dry_run}" != "true" && "${HAS_AUTOMATION_TOKEN}" != "true" ]]; then
+            echo "::warning::TSZ_PR_AUTOMATION_TOKEN is not configured; forcing dry-run because GITHUB_TOKEN branch updates do not trigger pull_request CI."
+            dry_run=true
+          fi
+
           args=(
             --repository "${REPOSITORY}"
             --base main
