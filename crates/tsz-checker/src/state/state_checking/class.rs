@@ -2840,7 +2840,11 @@ class B extends A {}
             !codes.contains(&2654),
             "Abstract get/set pair must not be counted as two members (TS2654), got: {codes:?}"
         );
-        let msg = &diags.iter().find(|d| d.code == 2515).unwrap().message_text;
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2515)
+            .expect("expected a TS2515 diagnostic")
+            .message_text;
         assert!(
             !msg.contains("'x', 'x'") && !msg.contains("x, x"),
             "TS2515 message must name member 'x' once, got: {msg}"
@@ -2862,7 +2866,11 @@ class Square extends Shape {}
             codes.contains(&2515) && !codes.contains(&2654),
             "Renamed abstract get/set pair must emit singular TS2515, got: {codes:?}"
         );
-        let msg = &diags.iter().find(|d| d.code == 2515).unwrap().message_text;
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2515)
+            .expect("expected a TS2515 diagnostic")
+            .message_text;
         assert!(
             !msg.contains("'area', 'area'") && !msg.contains("area, area"),
             "TS2515 message must name member 'area' once, got: {msg}"
@@ -2921,7 +2929,11 @@ class B extends A {}
             codes.contains(&2654) && !codes.contains(&2515),
             "Two distinct missing abstract members must emit TS2654, got: {codes:?}"
         );
-        let msg = &diags.iter().find(|d| d.code == 2654).unwrap().message_text;
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2654)
+            .expect("expected a TS2654 diagnostic")
+            .message_text;
         assert!(
             msg.contains("'a'") && msg.contains("'b'"),
             "TS2654 must list both 'a' and 'b', got: {msg}"
