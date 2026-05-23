@@ -2018,6 +2018,61 @@ export const ExampleFunctionalComponent = ({ "data-testid": dataTestId, [dynProp
 }
 
 #[test]
+fn test_js_default_exported_arrow_component_emits_function_namespace_members() {
+    let source = r#"
+/// <reference path="/.lib/react16.d.ts" preserve="true" />
+import PropTypes from "prop-types";
+
+const Widget = ({
+}) => {
+    return <div />;
+};
+
+Widget.propTypes = {
+    count: PropTypes.number,
+};
+
+Widget.defaultProps = {
+    tabs: undefined,
+};
+
+export default Widget;
+"#;
+    let mut parser = ParserState::new("test.jsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.jsx".to_string());
+    let output = emitter.emit(root);
+
+    assert!(
+        output.contains("/// <reference path=\"../../.lib/react16.d.ts\" preserve=\"true\" />"),
+        "Expected preserved harness .lib references to be relativized for declaration emit: {output}"
+    );
+    assert!(
+        output.contains("export default Widget;\ndeclare function Widget({}: {}): JSX.Element;"),
+        "Expected default-exported JS arrow component to emit as a function declaration: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare namespace Widget {\n    namespace propTypes {\n        let count: PropTypes.Requireable<number>;\n    }\n    namespace defaultProps {\n        let tabs: undefined;\n    }\n}"
+        ),
+        "Expected component static object assignments to emit as nested namespaces: {output}"
+    );
+    assert!(
+        output.contains("import PropTypes from \"prop-types\";"),
+        "Expected PropTypes import to be preserved when propTypes validators are emitted: {output}"
+    );
+}
+
+#[test]
 fn test_js_exported_computed_param_key_does_not_emit_synthetic_duplicate() {
     let output = emit_js_dts_with_usage_analysis(
         "export const key = \"x\";\nexport const f = ({ [key]: value }) => value;\n",
@@ -2411,6 +2466,77 @@ export const x = 1;
     assert!(
         !output.contains("\ntype Value = string | number;"),
         "Did not expect ES module typedef to be consumed early as a local alias: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_named_object_export_emits_typedef_aliases_first() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {'alpha'|'beta'} GroupIds */
+
+/**
+ * @typedef Group
+ * @property {GroupIds} id
+ * @property {string[]} names
+ */
+
+/** @type {{[P in GroupIds]: {id: P, label: string}}} */
+const groups = {
+    alpha: { id: 'alpha', label: 'Alpha' },
+    beta: { id: 'beta', label: 'Beta' },
+};
+
+/** @type {Object<string, Group>} */
+const nameToGroup = {};
+
+module.exports = { groups, nameToGroup };
+"#,
+    );
+
+    let ids_pos = output
+        .find("export type GroupIds = \"alpha\" | \"beta\";")
+        .expect("Expected exported GroupIds alias");
+    let group_pos = output
+        .find("export type Group = {")
+        .expect("Expected exported Group alias");
+    let groups_pos = output
+        .find("export const groups: { [P in GroupIds]: {\n    id: P;\n    label: string;\n}; };")
+        .expect("Expected mapped JSDoc object type to match tsc shape");
+    let map_pos = output
+        .find("export const nameToGroup: {\n    [x: string]: Group;\n};")
+        .expect("Expected exported Object<string, Group> index signature");
+
+    assert!(
+        ids_pos < group_pos && group_pos < groups_pos && groups_pos < map_pos,
+        "Expected exported typedef aliases before CommonJS named values: {output}"
+    );
+    assert!(
+        output.contains("/** @typedef {'alpha'|'beta'} GroupIds */"),
+        "Expected source typedef comments to remain attached to the original JS declarations: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_property_export_emits_typedef_aliases_first() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {string | number} Token */
+const value = "x";
+exports.value = value;
+"#,
+    );
+
+    let alias_pos = output
+        .find("export type Token = string | number;")
+        .expect("Expected CommonJS named export file to export the typedef alias");
+    let value_pos = output
+        .find("export const value: \"x\";")
+        .expect("Expected named CommonJS value export");
+
+    assert!(
+        alias_pos < value_pos,
+        "Expected typedef alias before direct CommonJS named export: {output}"
     );
 }
 
@@ -5842,6 +5968,10 @@ module.exports.Sub = class {
         !output.contains("export class Sub"),
         "Did not expect the secondary class assignment to also emit as a named export: {output}"
     );
+    assert!(
+        output.contains("instance: import(\".\");"),
+        "Expected `new module.exports()` instance fields to use the module self-import surface: {output}"
+    );
 }
 
 #[test]
@@ -6367,8 +6497,8 @@ export class Box {
     );
 
     assert!(
-        output.contains("export class Box {"),
-        "Expected the JS class declaration to be preserved: {output}"
+        output.contains("export class Box<T> {"),
+        "Expected JSDoc class templates to surface in declaration emit: {output}"
     );
     assert!(
         output.contains("static readonly kind: string;"),
@@ -6402,6 +6532,173 @@ export class Factory {
     assert!(
         output.contains("static create<T>(value: T): T;"),
         "Expected JSDoc method templates on JS classes to surface in declaration emit: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_template_parameters_drive_new_expression_return() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/**
+ * @template Item, Meta
+ */
+export class Store {
+    /**
+     * @param {Item} item
+     * @param {Meta} meta
+     */
+    constructor(item, meta) {}
+
+    /**
+     * @template Value, Label
+     * @param {Value} value
+     * @param {Label} label
+     */
+    static make(value, label) { return new Store(value, label); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Store<Item, Meta> {"),
+        "Expected class-level JSDoc templates to emit as type parameters: {output}"
+    );
+    assert!(
+        output.contains(
+            "static make<Value, Label>(value: Value, label: Label): Store<Value, Label>;"
+        ),
+        "Expected constructor parameter JSDoc to infer returned class type arguments: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_jsdoc_extends_preserves_type_arguments() {
+    let output = emit_js_dts(
+        r#"
+/**
+ * @template Payload
+ */
+export class Base {
+    /** @param {Payload} value */
+    constructor(value) { this.value = value; }
+}
+
+/**
+ * @template Entry
+ * @extends {Base<Entry>}
+ */
+export class Derived extends Base {
+    /** @param {Entry} value */
+    constructor(value) { super(value); }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("export class Derived<Entry> extends Base<Entry> {"),
+        "Expected JSDoc @extends type arguments to be preserved in class heritage: {output}"
+    );
+}
+
+#[test]
+fn test_js_local_class_named_exports_emit_at_export_surface() {
+    let output = emit_js_dts(
+        r#"
+export class Before {}
+class Plain {}
+export { Plain };
+class Hidden {}
+export { Hidden as Public };
+export class After {}
+"#,
+    );
+
+    let before_pos = output
+        .find("export class Before")
+        .expect("Expected exported class before local export-list classes");
+    let after_pos = output
+        .find("export class After")
+        .expect("Expected later exported class to stay in source order");
+    let plain_pos = output
+        .find("export class Plain")
+        .expect("Expected plain local class export to emit at final export surface");
+    let hidden_pos = output
+        .find("declare class Hidden")
+        .expect("Expected aliased local class export dependency");
+    let alias_pos = output
+        .find("export { Hidden as Public };")
+        .expect("Expected aliased local class export line");
+
+    assert!(
+        before_pos < after_pos
+            && after_pos < plain_pos
+            && plain_pos < hidden_pos
+            && hidden_pos < alias_pos,
+        "Expected local class export-list declarations to be scheduled with final export surface: {output}"
+    );
+    assert!(
+        !output.contains("export { Plain };"),
+        "Expected plain local class export list to fold into class declaration: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_extending_any_value_uses_synthetic_base_alias() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+var base = /** @type {*} */(null);
+export class Derived extends base {}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const Derived_base: any;"),
+        "Expected any-valued JS base expression to get a synthetic class extends alias: {output}"
+    );
+    assert!(
+        output.contains("export class Derived extends Derived_base {"),
+        "Expected class to extend the synthetic base alias instead of raw value name: {output}"
+    );
+    assert!(
+        output.contains("[x: string]: any;"),
+        "Expected any base alias to contribute tsc's broad instance index signature: {output}"
+    );
+    assert!(
+        !output.contains("extends base"),
+        "Did not expect raw JS value base to leak into declaration heritage: {output}"
+    );
+    assert!(
+        !output.contains("declare const base:"),
+        "Expected the synthetic base alias to replace the private raw base dependency: {output}"
+    );
+}
+
+#[test]
+fn test_js_class_extending_lib_constructor_keeps_nameable_heritage() {
+    let output = emit_js_dts_with_usage_analysis_and_lib(
+        r#"
+export class FancyError extends Error {
+    constructor(status) {
+        super(String(status));
+    }
+}
+"#,
+        r#"
+interface Error {}
+interface ErrorConstructor {
+    new(message?: string): Error;
+}
+declare var Error: ErrorConstructor;
+"#,
+    );
+
+    assert!(
+        output.contains("export class FancyError extends Error {"),
+        "Expected lib constructor heritage to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("FancyError_base"),
+        "Did not expect a synthetic base alias for lib constructors: {output}"
     );
 }
 
@@ -8997,5 +9294,90 @@ const propValue = c.prop;
     assert!(
         output.contains("declare const propValue: number;"),
         "Expected property access to recover the paired setter type: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_redirected_builtin_lookup_names_normalize_in_js_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {String} */ const text = "";
+/** @type {Number} */ const count = 0;
+/** @type {Boolean} */ const flag = true;
+/** @type {Void} */ const nothing = undefined;
+/** @type {Undefined} */ const absent = undefined;
+/** @type {Null} */ const empty = null;
+/** @type {function} */ const callback = () => void 0;
+/** @type {array} */ const values = [];
+/** @type {promise} */ const ready = Promise.resolve(0);
+"#,
+    );
+
+    for expected in [
+        "declare const text: string;",
+        "declare const count: number;",
+        "declare const flag: boolean;",
+        "declare const nothing: void;",
+        "declare const absent: undefined;",
+        "declare const empty: null;",
+        "declare const callback: Function;",
+        "declare const values: any[];",
+        "declare const ready: Promise<any>;",
+    ] {
+        assert!(
+            output.contains(expected),
+            "Expected redirected JSDoc lookup `{expected}` in output: {output}"
+        );
+    }
+}
+
+#[test]
+fn test_jsdoc_unrecognized_lookup_names_remain_unresolved_in_js_declarations() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {bool} */ const maybe = true;
+/** @type {integer} */ const count = 1;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const maybe: bool;"),
+        "Expected unrecognized JSDoc lookup `bool` to remain unresolved: {output}"
+    );
+    assert!(
+        output.contains("declare const count: integer;"),
+        "Expected unrecognized JSDoc lookup `integer` to remain unresolved: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_object_index_type_prevents_namespace_object_emit() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {Object<string, string>} */ const labels = {x: "x"};
+"#,
+    );
+
+    assert!(
+        output.contains("declare const labels: {\n    [x: string]: string;\n};"),
+        "Expected Object<K,V> JSDoc to emit an index-signature const declaration: {output}"
+    );
+    assert!(
+        !output.contains("declare namespace labels"),
+        "Did not expect an explicit JSDoc object type to be emitted as a namespace object: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_redirected_event_const_undefined_includes_undefined() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+/** @type {event} */ const evt = undefined;
+"#,
+    );
+
+    assert!(
+        output.contains("declare const evt: Event | undefined;"),
+        "Expected redirected `event` lookup with undefined initializer to preserve undefined: {output}"
     );
 }
