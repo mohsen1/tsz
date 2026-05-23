@@ -365,6 +365,23 @@ impl BlockScopeState {
         None
     }
 
+    /// Return the active rename mapping (original → emitted) for all block-scoped
+    /// variables in the current scope stack that were renamed during ES5 lowering.
+    /// Entries where `original == emitted` are excluded (no rename occurred).
+    /// Innermost scope wins when the same original name appears in multiple scopes.
+    pub fn visible_outer_rename_map(&self) -> FxHashMap<String, String> {
+        let mut map = FxHashMap::default();
+        // Iterate outermost→innermost so innermost overwrites outer for same name.
+        for scope in &self.scope_stack {
+            for (original, emitted) in scope {
+                if original != emitted {
+                    map.insert(original.clone(), emitted.clone());
+                }
+            }
+        }
+        map
+    }
+
     /// Return source names currently visible to nested ES5 class emitters.
     pub fn visible_original_names(&self) -> Vec<String> {
         let mut names = FxHashSet::default();

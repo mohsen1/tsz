@@ -118,6 +118,28 @@ assert.equal(
 );
 assert.equal(
   autoMergeInFlightReason(
+    pr({
+      autoMergeRequest: { mergeMethod: "SQUASH" },
+      statusCheckRollup: [check({ name: "GitGuardian Security Checks" })],
+    }),
+    { ahead_by: 2, behind_by: 0 },
+    { base: "main" },
+  ),
+  "required checks are not reported yet for the current auto-merge head",
+);
+assert.equal(
+  autoMergeInFlightReason(
+    pr({
+      autoMergeRequest: { mergeMethod: "SQUASH" },
+      statusCheckRollup: [check({ name: "GitGuardian Security Checks" })],
+    }),
+    { ahead_by: 2, behind_by: 1 },
+    { base: "main" },
+  ),
+  null,
+);
+assert.equal(
+  autoMergeInFlightReason(
     pr({ autoMergeRequest: { mergeMethod: "SQUASH" } }),
     { ahead_by: 2, behind_by: 1 },
     { base: "main" },
@@ -141,7 +163,7 @@ const report = formatResultReport({
   verboseSkips: [],
 });
 assert.match(report, /armed auto-merge/);
-assert.match(report, /dispatched CI/);
+assert.doesNotMatch(report, /dispatch/);
 assert.match(report, /aaaaaaaaaaaa/);
 assert.match(report, /bbbbbbbbbbbb/);
 

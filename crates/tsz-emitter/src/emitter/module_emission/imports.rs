@@ -568,126 +568,7 @@ impl<'a> Printer<'a> {
         // value usage. This matches tsc which erases namespace import aliases
         // when the alias is only referenced in type positions.
         let stripped = crate::import_usage::strip_type_only_content(haystack);
-        Self::contains_alias_value_reference_before_shadow(&stripped, &name)
-    }
-
-    fn contains_alias_value_reference_before_shadow(haystack: &str, ident: &str) -> bool {
-        if ident.is_empty() {
-            return false;
-        }
-
-        let mut search_from = 0usize;
-        while let Some(rel) = haystack[search_from..].find(ident) {
-            let pos = search_from + rel;
-            if Self::is_standalone_identifier_at(haystack, ident, pos) {
-                if Self::identifier_occurrence_is_binding(haystack, pos) {
-                    // A second `import <ident> = ...` re-declares the same
-                    // alias; it doesn't shadow the original import — both
-                    // refer to the same name. tsc treats this as a duplicate
-                    // diagnostic but still emits the first value-bearing
-                    // import. Skip past this binding and keep searching for a
-                    // genuine value reference (e.g., `<ident>.foo`).
-                    if Self::binding_is_import_redeclaration(haystack, pos) {
-                        search_from = pos + ident.len();
-                        continue;
-                    }
-                    return false;
-                }
-                return true;
-            }
-            search_from = pos + ident.len();
-        }
-        false
-    }
-
-    fn binding_is_import_redeclaration(haystack: &str, pos: usize) -> bool {
-        let bytes = haystack.as_bytes();
-        let mut p = pos;
-        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
-            p -= 1;
-        }
-        let preceding = &haystack[..p];
-        if !preceding.ends_with("import") {
-            return false;
-        }
-        let start = p - "import".len();
-        let before_keyword_ok = start == 0
-            || haystack[..start]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
-        if !before_keyword_ok {
-            return false;
-        }
-
-        let mut after = pos;
-        while after < bytes.len()
-            && (bytes[after] == b'_'
-                || bytes[after] == b'$'
-                || bytes[after].is_ascii_alphanumeric())
-        {
-            after += 1;
-        }
-        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
-            after += 1;
-        }
-        bytes.get(after) == Some(&b'=')
-    }
-
-    fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
-        let before_ok = if pos == 0 {
-            true
-        } else {
-            haystack[..pos].chars().next_back().is_none_or(|ch| {
-                !(ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
-            })
-        };
-        let after_idx = pos + ident.len();
-        let after_ok = if after_idx >= haystack.len() {
-            true
-        } else {
-            haystack[after_idx..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-        };
-        before_ok && after_ok
-    }
-
-    fn identifier_occurrence_is_binding(haystack: &str, pos: usize) -> bool {
-        let bytes = haystack.as_bytes();
-        let mut p = pos;
-        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
-            p -= 1;
-        }
-
-        let preceding = &haystack[..p];
-        for keyword in [
-            "var",
-            "let",
-            "const",
-            "function",
-            "class",
-            "enum",
-            "namespace",
-            "module",
-            "import",
-        ] {
-            if !preceding.ends_with(keyword) {
-                continue;
-            }
-            let start = p - keyword.len();
-            let before_keyword_ok = start == 0
-                || haystack[..start]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
-            if before_keyword_ok {
-                return true;
-            }
-        }
-
-        false
+        crate::import_usage::contains_identifier_occurrence_before_shadow(&stripped, &name)
     }
 
     /// Get the source text after an import node (skipping to the next line).
@@ -1862,17 +1743,19 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Printer;
-
     #[test]
     fn import_alias_redeclaration_requires_import_equals() {
-        assert!(Printer::contains_alias_value_reference_before_shadow(
-            "import M = Z.I;\nM.bar();",
-            "M",
-        ));
-        assert!(!Printer::contains_alias_value_reference_before_shadow(
-            "import M from \"pkg\";\nM.bar();",
-            "M",
-        ));
+        assert!(
+            crate::import_usage::contains_identifier_occurrence_before_shadow(
+                "import M = Z.I;\nM.bar();",
+                "M",
+            )
+        );
+        assert!(
+            !crate::import_usage::contains_identifier_occurrence_before_shadow(
+                "import M from \"pkg\";\nM.bar();",
+                "M",
+            )
+        );
     }
 }
