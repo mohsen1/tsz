@@ -1854,6 +1854,38 @@ fn decorated_commonjs_exported_class_static_self_reference_uses_alias() {
 }
 
 #[test]
+fn tc39_decorated_commonjs_class_namespace_merge_reuses_class_binding() {
+    let source = "declare var deco: any;\n@deco\nexport class Widget {}\nexport namespace Widget {\n  export const x = 1;\n}\nWidget.x;\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2022,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.Widget = Widget;"),
+        "CommonJS decorated class export should create the namespace merge binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\nvar Widget;\n"),
+        "Merged namespace should reuse the decorated class declaration binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(function (Widget) {\n    Widget.x = 1;\n})(Widget || (exports.Widget = Widget = {}));"
+        ),
+        "Merged namespace IIFE should fold the CommonJS export into the existing class binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn cjs_deferred_enum_export_folds_into_iife_tail() {
     let source = r#"class C {}
 enum E {
