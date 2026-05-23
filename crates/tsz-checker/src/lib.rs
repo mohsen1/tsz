@@ -100,6 +100,9 @@ mod assertion_overlap_keyof_primitive_tests;
 #[path = "../tests/assertion_overlap_object_primitive_tests.rs"]
 mod assertion_overlap_object_primitive_tests;
 #[cfg(test)]
+#[path = "../tests/assertion_overlap_template_literal_tests.rs"]
+mod assertion_overlap_template_literal_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
@@ -480,6 +483,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
+#[cfg(test)]
+#[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
+mod generic_callback_sibling_arg_inference_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
