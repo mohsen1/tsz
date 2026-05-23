@@ -142,6 +142,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.block_scope_reserved_names.dedup();
     }
 
+    pub fn set_outer_rename_map(&mut self, map: rustc_hash::FxHashMap<String, String>) {
+        self.transformer.set_outer_rename_map(map);
+    }
+
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
         self.transformer.set_module_kind(options.module);
         self.transformer

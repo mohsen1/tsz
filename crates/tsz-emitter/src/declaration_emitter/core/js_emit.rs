@@ -802,6 +802,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
             return;
         };
+        let require_alias_import = self
+            .js_require_alias_property_access_parts(initializer)
+            .map(|(local_name, _, module_name)| (local_name, module_name));
 
         self.write_indent();
         self.write("declare ");
@@ -817,6 +820,9 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&export_name);
         self.write(";");
         self.write_line();
+        if let Some((local_name, module_name)) = require_alias_import {
+            self.emit_js_bare_require_alias_import(&local_name, &module_name);
+        }
         self.emitted_scope_marker = true;
         self.emitted_module_indicator = true;
     }
@@ -3476,6 +3482,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
             _ => {}
+        }
+
+        if let Some(type_text) = self.js_require_alias_property_access_typeof_text(initializer) {
+            return Some(type_text);
         }
 
         if let Some(type_id) = self.get_node_type_or_names(&[initializer])
