@@ -1601,7 +1601,9 @@ impl<'a> TypeFormatter<'a> {
                     // Class constructor types (callables with construct signatures
                     // linked to a class symbol) should display as "typeof ClassName"
                     // to match tsc behavior. The class instance type displays as
-                    // just "ClassName".
+                    // just "ClassName". A class merged with a same-named namespace
+                    // keeps its class symbol on the rebuilt static shape, so this
+                    // branch renders the merged static side as "typeof C" too.
                     if !shape.construct_signatures.is_empty()
                         && let Some(arena) = self.symbol_arena
                         && let Some(sym) = arena.get(sym_id)

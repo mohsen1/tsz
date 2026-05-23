@@ -8,7 +8,10 @@
 use super::*;
 use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
-use crate::types::{CallableShape, IndexSignature, ObjectFlags, ObjectShape, TypeData};
+use crate::types::{
+    CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
+    ParamInfo, TypeData,
+};
 
 /// Helper to check if a type is a union containing specific literals
 fn union_contains_literals(interner: &TypeInterner, type_id: TypeId, expected: &[&str]) -> bool {
@@ -784,5 +787,156 @@ fn test_index_access_callable_number_intrinsic() {
     assert_eq!(
         result, num_value,
         "(typeof B)[number] should resolve to 42 | 233 via number index"
+    );
+}
+
+// =============================================================================
+// keyof on Bare Function / Constructor Types (issue #9721)
+//
+// `keyof` of a type whose only structure is signature(s) and no own properties
+// or index signatures is `never` in tsc.  Bare function types (`() => T`) lower
+// to `TypeData::Function`; bare constructor types (`new () => T`) lower to a
+// `TypeData::Callable` with only construct signatures.  Both must collapse to
+// `never` so `[K] extends [never]` / `Equal<K, never>` matches tsc.
+// =============================================================================
+
+#[test]
+fn test_keyof_bare_function_type_is_never() {
+    let interner = TypeInterner::new();
+    // Simulates: type Fn = () => void
+    let func = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+
+    let result = evaluate_type(&interner, interner.keyof(func));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "keyof (() => void) should be never, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_keyof_function_with_params_is_never() {
+    let interner = TypeInterner::new();
+    // Simulates: type Fn = (x: number, y: string) => boolean
+    let func = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo {
+                name: Some(interner.intern_string("x")),
+                type_id: TypeId::NUMBER,
+                optional: false,
+                rest: false,
+            },
+            ParamInfo {
+                name: Some(interner.intern_string("y")),
+                type_id: TypeId::STRING,
+                optional: false,
+                rest: false,
+            },
+        ],
+        TypeId::BOOLEAN,
+    ));
+
+    let result = evaluate_type(&interner, interner.keyof(func));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "keyof a function with params should still be never"
+    );
+}
+
+#[test]
+fn test_keyof_constructor_only_callable_is_never() {
+    // Positive control from the issue's boundary table: `new () => object`
+    // already collapses to never via the Callable arm; pin it down so a future
+    // refactor of either path keeps the two behaviors symmetric.
+    let interner = TypeInterner::new();
+    let ctor = interner.callable(CallableShape {
+        construct_signatures: vec![CallSignature::new(Vec::new(), TypeId::OBJECT)],
+        ..CallableShape::default()
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(ctor));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "keyof (new () => object) should be never"
+    );
+}
+
+#[test]
+fn test_keyof_call_only_callable_is_never() {
+    // A `Callable` with one call signature and no properties / indices arises
+    // for overloaded function types in a type literal.  Same key space as a
+    // bare function type, so keyof must be never.
+    let interner = TypeInterner::new();
+    let call_only = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(Vec::new(), TypeId::VOID)],
+        ..CallableShape::default()
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(call_only));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "keyof a call-signature-only Callable should be never"
+    );
+}
+
+#[test]
+fn test_keyof_callable_with_properties_unchanged_by_function_fix() {
+    // Negative control: a callable that *does* have properties still returns
+    // the property keys (the fix must not over-reach into Callable).
+    let interner = TypeInterner::new();
+    let callable = interner.callable(CallableShape {
+        call_signatures: vec![CallSignature::new(Vec::new(), TypeId::VOID)],
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("prop"),
+            TypeId::NUMBER,
+        )],
+        ..CallableShape::default()
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(callable));
+    let expected_prop = interner.literal_string("prop");
+    assert_eq!(
+        result, expected_prop,
+        "keyof {{ (): void; prop: number }} should be \"prop\""
+    );
+}
+
+#[test]
+fn test_keyof_function_extends_never_is_true_branch() {
+    use crate::types::{ConditionalType, TupleElement};
+    // The whole point of the fix: the conditional `[keyof Fn] extends [never]`
+    // must take the true branch.  Build the conditional in the solver, evaluate
+    // it, and confirm we land on the true branch (modelled here by `TypeId::STRING`).
+    let interner = TypeInterner::new();
+    let func = interner.function(FunctionShape::new(Vec::new(), TypeId::VOID));
+    let keyof_fn = interner.keyof(func);
+
+    let wrap = |id| TupleElement {
+        type_id: id,
+        name: None,
+        optional: false,
+        rest: false,
+    };
+    let check = interner.tuple(vec![wrap(keyof_fn)]);
+    let extends = interner.tuple(vec![wrap(TypeId::NEVER)]);
+    let conditional = interner.conditional(ConditionalType {
+        check_type: check,
+        extends_type: extends,
+        true_type: TypeId::STRING,
+        false_type: TypeId::NUMBER,
+        is_distributive: false,
+    });
+
+    let result = evaluate_type(&interner, conditional);
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "[keyof Fn] extends [never] should pick the true branch (string), \
+         got {:?}",
+        interner.lookup(result)
     );
 }
