@@ -6,7 +6,83 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+struct CorrelatedAliasShape {
+    mapped_param_name: String,
+    discriminant_property_name: String,
+    callback_property_name: String,
+    callback_parameter_name: String,
+    callback_map_type_name: String,
+    callback_return_type_text: String,
+    member_indices: Vec<NodeIndex>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn correlated_alias_shape_detects_renamed_discriminant_and_callback() {
+        let mut parser = ParserState::new(
+            "shape.ts".to_string(),
+            r#"
+interface Registry {
+    alpha: AlphaEvent;
+}
+interface AlphaEvent {
+    alpha: true;
+}
+type Entry<Key extends keyof Registry> = { [Choice in Key]: {
+    readonly kind: Choice;
+    readonly enabled?: boolean;
+    readonly handler: (payload: Registry[Choice]) => void;
+}}[Key];
+"#
+            .to_string(),
+        );
+        parser.parse_source_file();
+        let arena = parser.get_arena();
+        let emitter = DeclarationEmitter::new(arena);
+        let alias_type_node = emitter
+            .find_type_alias_type_node_in_arena(arena, "Entry")
+            .expect("alias type node");
+        let shape = emitter
+            .correlated_alias_shape(arena, alias_type_node)
+            .expect("correlated alias shape");
+
+        assert_eq!(shape.mapped_param_name, "Choice");
+        assert_eq!(shape.discriminant_property_name, "kind");
+        assert_eq!(shape.callback_property_name, "handler");
+        assert_eq!(shape.callback_parameter_name, "payload");
+        assert_eq!(shape.callback_map_type_name, "Registry");
+        assert_eq!(shape.callback_return_type_text, "void");
+        assert_eq!(
+            emitter
+                .interface_member_type_text_from_arena(arena, "Registry", "alpha")
+                .as_deref(),
+            Some("AlphaEvent")
+        );
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn call_expression_correlated_alias_return_text(
+        &self,
+        expr_idx: NodeIndex,
+        type_text: &str,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(call.expression)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, _decl_idx| {
+            self.event_like_correlated_alias_return_text(source_arena, type_text, call)
+        })
+    }
+
     pub(in crate::declaration_emitter) fn event_like_correlated_alias_return_text(
         &self,
         source_arena: &NodeArena,
@@ -15,24 +91,37 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let (alias_name, name_type) = Self::single_string_literal_alias_application(type_text)?;
         let alias_type_node = self.find_type_alias_type_node_in_arena(source_arena, alias_name)?;
-        let alias_text = self
-            .source_slice_from_arena(source_arena, alias_type_node)
-            .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias_type_node))?;
-        if !alias_text.contains("readonly name:")
-            || !alias_text.contains("readonly callback:")
-            || !alias_text.contains("DocumentEventMap")
-        {
-            return None;
-        }
+        let shape = self.correlated_alias_shape(source_arena, alias_type_node)?;
         let callback_param_type = self
-            .call_object_callback_parameter_type_text(call)
+            .call_object_function_property_first_parameter_type_text(
+                call,
+                &shape.callback_property_name,
+            )
             .or_else(|| {
                 let event_name = name_type.trim_matches('"');
-                self.global_interface_member_type_text("DocumentEventMap", event_name)
+                self.interface_member_type_text_from_arena(
+                    source_arena,
+                    &shape.callback_map_type_name,
+                    event_name,
+                )
+                .or_else(|| {
+                    self.global_interface_member_type_text(
+                        &shape.callback_map_type_name,
+                        event_name,
+                    )
+                })
             })?;
-        Some(format!(
-            "{{\n    readonly name: {name_type};\n    readonly once?: boolean;\n    readonly callback: (ev: {callback_param_type}) => void;\n}}"
-        ))
+        let mut members = Vec::new();
+        for &member_idx in &shape.member_indices {
+            members.push(self.format_correlated_alias_member(
+                source_arena,
+                member_idx,
+                &shape,
+                name_type,
+                &callback_param_type,
+            )?);
+        }
+        Some(format!("{{\n{}\n}}", members.join("\n")))
     }
 
     pub(in crate::declaration_emitter) fn single_string_literal_alias_application(
@@ -54,9 +143,10 @@ impl<'a> DeclarationEmitter<'a> {
         Some((alias_name, arg))
     }
 
-    pub(in crate::declaration_emitter) fn call_object_callback_parameter_type_text(
+    pub(in crate::declaration_emitter) fn call_object_function_property_first_parameter_type_text(
         &self,
         call: &tsz_parser::parser::node::CallExprData,
+        property_name: &str,
     ) -> Option<String> {
         let args = call.arguments.as_ref()?;
         let object_idx = *args.nodes.first()?;
@@ -68,7 +158,7 @@ impl<'a> DeclarationEmitter<'a> {
         for &member_idx in &object.elements.nodes {
             let member_node = self.arena.get(member_idx)?;
             let name_idx = self.object_literal_member_name_idx(member_node)?;
-            if self.object_literal_member_name_text(name_idx)? != "callback" {
+            if self.object_literal_member_name_text(name_idx)?.as_str() != property_name {
                 continue;
             }
             let initializer = self.object_literal_member_initializer(member_node)?;
@@ -87,6 +177,210 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(self.print_type_id_for_inferred_declaration(type_id));
         }
         None
+    }
+
+    fn correlated_alias_shape(
+        &self,
+        source_arena: &NodeArena,
+        alias_type_node: NodeIndex,
+    ) -> Option<CorrelatedAliasShape> {
+        let alias_type_node = source_arena.skip_parenthesized(alias_type_node);
+        let alias_node = source_arena.get(alias_type_node)?;
+        let indexed = source_arena.get_indexed_access_type(alias_node)?;
+        let indexed_name =
+            self.simple_type_node_name_from_arena(source_arena, indexed.index_type)?;
+        let mapped_node = source_arena.get(source_arena.skip_parenthesized(indexed.object_type))?;
+        let mapped = source_arena.get_mapped_type(mapped_node)?;
+        let type_param_node = source_arena.get(mapped.type_parameter)?;
+        let type_param = source_arena.get_type_parameter(type_param_node)?;
+        let mapped_param_name = self.identifier_text_from_arena(source_arena, type_param.name)?;
+        if self
+            .simple_type_node_name_from_arena(source_arena, type_param.constraint)
+            .as_deref()
+            != Some(indexed_name.as_str())
+        {
+            return None;
+        }
+
+        let value_node_idx = source_arena.skip_parenthesized(mapped.type_node);
+        let value_node = source_arena.get(value_node_idx)?;
+        let type_literal = source_arena.get_type_literal(value_node)?;
+        let mut discriminant_property_name = None;
+        let mut callback_property_name = None;
+        let mut callback_parameter_name = None;
+        let mut callback_map_type_name = None;
+        let mut callback_return_type_text = None;
+
+        for &member_idx in &type_literal.members.nodes {
+            let Some(member_node) = source_arena.get(member_idx) else {
+                continue;
+            };
+            let Some(member) = source_arena.get_signature(member_node) else {
+                continue;
+            };
+            let Some(member_name) = self.property_name_text_from_arena(source_arena, member.name)
+            else {
+                continue;
+            };
+            if self.type_node_is_name_from_arena(
+                source_arena,
+                member.type_annotation,
+                &mapped_param_name,
+            ) {
+                discriminant_property_name = Some(member_name.clone());
+            }
+            if let Some((param_name, map_type_name, return_type_text)) = self
+                .correlated_alias_callback_function_parts(
+                    source_arena,
+                    member.type_annotation,
+                    &mapped_param_name,
+                )
+            {
+                callback_property_name = Some(member_name);
+                callback_parameter_name = Some(param_name);
+                callback_map_type_name = Some(map_type_name);
+                callback_return_type_text = Some(return_type_text);
+            }
+        }
+
+        Some(CorrelatedAliasShape {
+            mapped_param_name,
+            discriminant_property_name: discriminant_property_name?,
+            callback_property_name: callback_property_name?,
+            callback_parameter_name: callback_parameter_name?,
+            callback_map_type_name: callback_map_type_name?,
+            callback_return_type_text: callback_return_type_text?,
+            member_indices: type_literal.members.nodes.clone(),
+        })
+    }
+
+    fn interface_member_type_text_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        interface_name: &str,
+        member_name: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            let Some(interface) = source_arena.get_interface(stmt_node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(source_arena, interface.name)
+                .as_deref()
+                != Some(interface_name)
+            {
+                continue;
+            }
+            for &member_idx in &interface.members.nodes {
+                let member_node = source_arena.get(member_idx)?;
+                let Some(member) = source_arena.get_signature(member_node) else {
+                    continue;
+                };
+                if self
+                    .property_name_text_from_arena(source_arena, member.name)
+                    .as_deref()
+                    != Some(member_name)
+                {
+                    continue;
+                }
+                return self
+                    .source_slice_from_arena(source_arena, member.type_annotation)
+                    .or_else(|| {
+                        self.emit_type_node_text_from_arena(source_arena, member.type_annotation)
+                    });
+            }
+        }
+        None
+    }
+
+    fn correlated_alias_callback_function_parts(
+        &self,
+        source_arena: &NodeArena,
+        type_node_idx: NodeIndex,
+        mapped_param_name: &str,
+    ) -> Option<(String, String, String)> {
+        let type_node = source_arena.get(source_arena.skip_parenthesized(type_node_idx))?;
+        let function = source_arena.get_function_type(type_node)?;
+        let param_idx = *function.parameters.nodes.first()?;
+        let param_node = source_arena.get(param_idx)?;
+        let param = source_arena.get_parameter(param_node)?;
+        let param_name = self.identifier_text_from_arena(source_arena, param.name)?;
+        let param_type_node =
+            source_arena.get(source_arena.skip_parenthesized(param.type_annotation))?;
+        let indexed = source_arena.get_indexed_access_type(param_type_node)?;
+        if !self.type_node_is_name_from_arena(source_arena, indexed.index_type, mapped_param_name) {
+            return None;
+        }
+        let map_type_name =
+            self.simple_type_node_name_from_arena(source_arena, indexed.object_type)?;
+        let return_type_text = self
+            .source_slice_from_arena(source_arena, function.type_annotation)
+            .or_else(|| {
+                self.emit_type_node_text_from_arena(source_arena, function.type_annotation)
+            })?;
+        Some((param_name, map_type_name, return_type_text))
+    }
+
+    fn format_correlated_alias_member(
+        &self,
+        source_arena: &NodeArena,
+        member_idx: NodeIndex,
+        shape: &CorrelatedAliasShape,
+        discriminant_type_text: &str,
+        callback_parameter_type_text: &str,
+    ) -> Option<String> {
+        let member_node = source_arena.get(member_idx)?;
+        let member = source_arena.get_signature(member_node)?;
+        let member_name = self.property_name_text_from_arena(source_arena, member.name)?;
+        let rendered_name = if Self::is_simple_identifier_text(&member_name) {
+            member_name.clone()
+        } else {
+            format!("{member_name:?}")
+        };
+        let readonly = source_arena
+            .has_modifier(&member.modifiers, SyntaxKind::ReadonlyKeyword)
+            .then_some("readonly ")
+            .unwrap_or("");
+        let optional = member.question_token.then_some("?").unwrap_or("");
+        let type_text = if member_name == shape.discriminant_property_name {
+            discriminant_type_text.to_string()
+        } else if member_name == shape.callback_property_name {
+            format!(
+                "({}: {}) => {}",
+                shape.callback_parameter_name,
+                callback_parameter_type_text,
+                shape.callback_return_type_text
+            )
+        } else {
+            let source_type = self
+                .source_slice_from_arena(source_arena, member.type_annotation)
+                .or_else(|| {
+                    self.emit_type_node_text_from_arena(source_arena, member.type_annotation)
+                })?;
+            Self::replace_whole_words_in_text(
+                &source_type,
+                &[(
+                    shape.mapped_param_name.clone(),
+                    discriminant_type_text.to_string(),
+                )],
+            )
+        };
+        Some(format!(
+            "    {readonly}{rendered_name}{optional}: {type_text};"
+        ))
+    }
+
+    fn type_node_is_name_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        self.simple_type_node_name_from_arena(source_arena, type_node_idx)
+            .as_deref()
+            == Some(name)
     }
 
     pub(in crate::declaration_emitter) fn expand_tuple_item_lookup_mapped_type_text(
@@ -417,6 +711,7 @@ impl<'a> DeclarationEmitter<'a> {
             };
             if let Some((param_name, value_text)) = self
                 .infer_single_alias_discriminant_substitution(
+                    source_arena,
                     param_type_text.trim(),
                     arg_idx,
                     type_param_names,
@@ -570,20 +865,26 @@ impl<'a> DeclarationEmitter<'a> {
 
     pub(in crate::declaration_emitter) fn infer_single_alias_discriminant_substitution(
         &self,
+        source_arena: &NodeArena,
         param_type_text: &str,
         arg_idx: NodeIndex,
         type_param_names: &[String],
     ) -> Option<(String, String)> {
-        let param_name =
+        let (alias_name, param_name) =
             Self::single_type_parameter_alias_argument(param_type_text, type_param_names)?;
-        let value_text = self.object_literal_property_literal_type_text(arg_idx, "name")?;
+        let alias_type_node = self.find_type_alias_type_node_in_arena(source_arena, alias_name)?;
+        let shape = self.correlated_alias_shape(source_arena, alias_type_node)?;
+        let value_text = self.object_literal_property_literal_type_text(
+            arg_idx,
+            &shape.discriminant_property_name,
+        )?;
         Some((param_name.to_string(), value_text))
     }
 
     pub(in crate::declaration_emitter) fn single_type_parameter_alias_argument<'b>(
         type_text: &'b str,
         type_param_names: &'b [String],
-    ) -> Option<&'b str> {
+    ) -> Option<(&'b str, &'b str)> {
         let trimmed = type_text.trim();
         let open = trimmed.find('<')?;
         let alias_name = trimmed.get(..open)?.trim();
@@ -598,7 +899,7 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_names
             .iter()
             .find(|name| name.as_str() == inner)
-            .map(String::as_str)
+            .map(|name| (alias_name, name.as_str()))
     }
 
     pub(in crate::declaration_emitter) fn object_literal_property_literal_type_text(
