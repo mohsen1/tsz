@@ -279,15 +279,11 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         {
             return param_type;
         }
-        let normalized = self.normalize_inferred_placeholder_type(param_type, infer_subst);
-        let is_application = matches!(
-            self.interner.lookup(normalized),
-            Some(TypeData::Application(_))
-        );
-        let has_free_type_params = crate::visitor::contains_free_type_parameters(
-            self.interner.as_type_database(),
-            normalized,
-        );
+        let normalized = if infer_subst.is_empty() {
+            param_type
+        } else {
+            self.normalize_inferred_placeholder_type(param_type, infer_subst)
+        };
         // A conditional / `Exclude` (alias application of a conditional) parameter
         // type whose free type parameters are all fixed is fully concrete and must
         // be reduced (e.g. to `never`) before the argument check, so a forbidden
@@ -295,34 +291,43 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         // checker's evaluator so that `extends` operands and alias applications
         // referencing named types (`keyof R`, `Exclude<K, 'a'>`, interface refs)
         // resolve through the type environment — the interner alone cannot resolve
-        // `Lazy(DefId)` references.
-        if !has_free_type_params && (is_application || self.type_contains_conditional(normalized)) {
+        // `Lazy(DefId)` references. Restricting this to the conditional family
+        // keeps every other parameter shape on its prior reduction path.
+        if self.type_reduces_via_conditional(normalized)
+            && !crate::visitor::contains_free_type_parameters(
+                self.interner.as_type_database(),
+                normalized,
+            )
+        {
             return self.checker.evaluate_type(normalized);
         }
-        // Application still carrying free type parameters: preserve the prior
-        // interner-side reduction (deferred conditionals are kept deferred).
-        if is_application {
+        // Pre-existing behavior: top-level applications (e.g. `Promise<T>`) are
+        // reduced through the interner once a substitution has been applied.
+        if !infer_subst.is_empty()
+            && matches!(
+                self.interner.lookup(normalized),
+                Some(TypeData::Application(_))
+            )
+        {
             return self.interner.evaluate_type(normalized);
         }
         normalized
     }
 
     /// Whether a fresh literal inferred for `tp_name` should be preserved (not
-    /// widened to its primitive), mirroring tsc's `inference.topLevel` /
-    /// `widenLiteralTypes` gate in `getCovariantInference`.
+    /// widened to its primitive) so a conditional / `Exclude` parameter
+    /// referencing it can reduce to `never` (issue #9652).
     ///
-    /// tsc preserves the literal only when the type parameter is inferred purely
-    /// from top-level positions and occurs at the top level of the return type.
-    /// For example `<T>(x: T): T` with `id('a')` keeps `T = 'a'`,
-    /// `<T>(x: T extends 'a' ? never : T): T` keeps `T = 'a'` (conditional
-    /// branches count as top level), and `<T>(x: T, y: T): T` with `f(1, 2)`
-    /// keeps `T = 1 | 2`.
-    ///
-    /// It widens when the parameter is inferred from a nested position — a
-    /// callback return (`() => T`), an array element (`T[]`), an object property,
-    /// etc. — or when it is not at the return type's top level. For example
-    /// `<U>(fn: () => U, init: U): U` widens `U` to `number`, and
-    /// `<T>(x: T): T[]` widens `T` to its primitive.
+    /// This is a deliberately narrow stopgap, not the full tsc `widenLiteralTypes`
+    /// / `inference.topLevel` model. tsc's `topLevel` is a *runtime* property of
+    /// where each inference candidate came from (cleared by callback-return,
+    /// array-element, intersection-member, … contributions), which a static
+    /// signature inspection cannot reproduce faithfully. To avoid changing
+    /// inference for unrelated shapes — and regressing conformance — preservation
+    /// is restricted to the case the bug needs: the type parameter is at the top
+    /// level of the return type and flows into a conditional / `Exclude`
+    /// parameter that can reduce to `never`. Every other shape keeps its prior
+    /// (widening) behavior. Generalizing to tsc's full model is a follow-up.
     pub(super) fn type_param_preserves_inferred_literal(
         &mut self,
         func: &FunctionShape,
@@ -332,17 +337,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             return false;
         }
         let param_types: Vec<TypeId> = func.params.iter().map(|p| p.type_id).collect();
-        for param_type in param_types {
-            if crate::visitor::contains_type_parameter_named(
+        param_types.iter().any(|&param_type| {
+            crate::visitor::contains_type_parameter_named(
                 self.interner.as_type_database(),
                 param_type,
                 tp_name,
-            ) && !self.type_param_at_top_level_through_aliases(param_type, tp_name)
-            {
-                return false;
-            }
+            ) && self.type_reduces_via_conditional(param_type)
+        })
+    }
+
+    /// Whether `ty` is — or, for a top-level alias application such as
+    /// `Exclude<K, 'a'>`, expands to — a type that contains a conditional. These
+    /// are the parameter shapes that can reduce to `never` once their type
+    /// arguments are fixed.
+    fn type_reduces_via_conditional(&mut self, ty: TypeId) -> bool {
+        if self.type_contains_conditional(ty) {
+            return true;
         }
-        true
+        if matches!(self.interner.lookup(ty), Some(TypeData::Application(_)))
+            && let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            return self.type_contains_conditional(expanded);
+        }
+        false
     }
 
     /// Like `is_type_parameter_at_top_level`, but expands a top-level alias
