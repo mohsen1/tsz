@@ -2052,23 +2052,67 @@ impl<'a> CheckerState<'a> {
         declarations: &[(NodeIndex, u32)],
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use rustc_hash::FxHashMap;
+        use rustc_hash::{FxHashMap, FxHashSet};
 
-        let enum_declarations: Vec<NodeIndex> = declarations
+        // Enum declarations of this symbol, paired with their const-ness, in
+        // source (binding) order. Order matters: tsc's binder keeps the first
+        // declaration's const-ness as the merged symbol's kind and splits every
+        // later declaration that disagrees into its own symbol.
+        let mut enum_declarations: Vec<(NodeIndex, bool)> = declarations
             .iter()
             .filter(|&(_decl_idx, flags)| (flags & symbol_flags::ENUM) != 0)
-            .map(|(decl_idx, _flags)| *decl_idx)
+            .map(|&(decl_idx, flags)| (decl_idx, (flags & symbol_flags::CONST_ENUM) != 0))
             .collect();
 
         if enum_declarations.len() <= 1 {
             return;
         }
 
+        enum_declarations
+            .sort_by_key(|&(decl_idx, _)| self.ctx.arena.get(decl_idx).map_or(0, |node| node.pos));
+
+        // TS2567: a `const enum` and a non-const `enum` of the same name cannot
+        // merge. The merged symbol takes the first declaration's const-ness (the
+        // "primary" group); any later declaration whose const-ness differs is
+        // reported together with every primary declaration bound before it
+        // (matching tsc's binder, which splits the conflicting declaration into a
+        // fresh symbol at the point of conflict). Only the primary group actually
+        // merges, so the initializer / member-duplicate checks below run over it
+        // rather than over the split-off declarations.
+        let primary_is_const = enum_declarations[0].1;
+        let mut primary_group: Vec<NodeIndex> = Vec::new();
+        let mut reported: FxHashSet<NodeIndex> = FxHashSet::default();
+        for &(decl_idx, is_const) in &enum_declarations {
+            if is_const == primary_is_const {
+                primary_group.push(decl_idx);
+                continue;
+            }
+            // const-ness conflict: report it together with every primary
+            // declaration bound before it (output diagnostics are sorted by
+            // position, so emission order here is irrelevant).
+            for &target in primary_group.iter().chain(std::iter::once(&decl_idx)) {
+                if reported.insert(target)
+                    && let Some(name_idx) = self
+                        .ctx
+                        .arena
+                        .get(target)
+                        .and_then(|node| self.ctx.arena.get_enum(node))
+                        .map(|enum_decl| enum_decl.name)
+                {
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                        &[],
+                    );
+                }
+            }
+        }
+
         let mut first_member_without_initializer = Vec::new();
         let mut first_member_by_name: FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
             FxHashMap::default();
 
-        for &enum_decl_idx in &enum_declarations {
+        for &enum_decl_idx in &primary_group {
             let Some(enum_decl_node) = self.ctx.arena.get(enum_decl_idx) else {
                 continue;
             };
