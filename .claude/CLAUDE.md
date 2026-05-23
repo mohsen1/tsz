@@ -160,7 +160,8 @@
 - Tracks diagnostics and source locations.
 - Maintains node/symbol/flow/diagnostic caches and recursion guards.
 - Must not own algorithmic type caches or type-shape traversal logic.
-- Checker files should stay under ~2000 LOC.
+- Checker files follow the repository-wide hard file-size rule in §19: split
+  orchestration by concern before a file reaches 2000 lines.
 
 ## 13) Emitter Contracts
 - Prints/transforms output from checked structures.
@@ -202,10 +203,18 @@ For each change ask:
 - Keep modules aligned with pipeline ownership (`scanner`, `parser`, `binder`, `solver`, `checker`, `emitter`, `transforms`).
 - Prefer dedicated files per major checker/solver concern.
 - Avoid growth of monolith modules; split before crossing maintainability threshold.
+- Hard limit: no hand-authored source, test, script, or generated-code shard may
+  exceed 2000 physical lines. There are no file-size ratchet exceptions. If a
+  generated artifact would exceed the limit, update the generator so it emits
+  smaller shards. If a checked-in asset must remain large for external
+  compatibility, treat it as data and document why it is not executable source
+  in the owning PR.
+- Do not add new local allowlists, baseline files, ignored tests, or
+  per-file ceilings for oversized code. The right fix is to split the file.
 
 ## 19.5) Testing and CI
 - **Never run full conformance, fourslash, or emit suites locally.** Those are
-  CI's job. Local pre-commit is formatting-only.
+  CI's job. Local pre-commit stays cheap and should only run fast guardrails.
 - Prefer **not** having the full TypeScript submodule checked out locally
   unless you actually need its sources for a specific investigation. CI has it.
 - Run local commands only when they answer a specific debugging question or

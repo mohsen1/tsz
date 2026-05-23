@@ -58,9 +58,13 @@ impl<'a> Printer<'a> {
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_transforms(self.transforms.clone());
-            es5_emitter.set_block_scope_shadowed_names(
-                self.ctx.block_scope_state.visible_original_names(),
-            );
+            // Do NOT seed the namespace emitter with outer visible_original_names() as
+            // block_scope_shadowed_names. The namespace IIFE creates an independent function
+            // scope; outer module-scope `var` names are naturally isolated by function
+            // scoping and do not need to appear in the shadow set. The correct shadowed
+            // names (references at function scope outside blocks inside the namespace body)
+            // are collected per-namespace by configure_ir_printer_scope via
+            // collect_namespace_block_scope_shadowed_names.
             es5_emitter.set_block_scope_reserved_names(
                 self.ctx.block_scope_state.visible_reserved_names(),
             );
@@ -112,9 +116,12 @@ impl<'a> Printer<'a> {
             } else {
                 es5_emitter.emit_namespace(idx)
             };
-            self.ctx
-                .block_scope_state
-                .reserve_names(es5_emitter.block_scope_reserved_names());
+            // Do NOT propagate namespace-internal block-scope reserved names back
+            // to the outer scope state. The namespace IIFE creates an independent
+            // function scope in ES5, so suffix renames inside it (e.g. `y_2` from
+            // `let [y] = ...` in N's body) are invisible to sibling namespaces.
+            // Syncing them back would cause sibling-namespace `let y` bindings to
+            // receive avoidable suffixes like `y_3` even when `y` is not in scope.
 
             // Write the namespace output line by line, letting the writer handle indentation.
             // IRPrinter generates relative indentation (nested constructs indented relative
@@ -476,7 +483,18 @@ impl<'a> Printer<'a> {
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
                 if let Some(body_node) = self.arena.get(module.body) {
-                    self.namespace_scope_end = body_node.end;
+                    let block_scope_end = self
+                        .arena
+                        .get_module_block(body_node)
+                        .and_then(|block| block.statements.as_ref())
+                        .and_then(|statements| statements.nodes.last())
+                        .and_then(|last_stmt_idx| self.arena.get(*last_stmt_idx))
+                        .map(|last_stmt| {
+                            self.find_token_end_before_trivia(last_stmt.pos, last_stmt.end)
+                        });
+                    self.namespace_scope_end = block_scope_end.unwrap_or_else(|| {
+                        self.find_token_end_before_trivia(body_node.pos, body_node.end)
+                    });
                 }
                 let prev_parent_ns = self.parent_namespace_name.clone();
                 self.parent_namespace_name = parent_name
@@ -1284,6 +1302,60 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn collect_namespace_non_exported_local_var_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            if self.statement_has_export_modifier(stmt_node) {
+                continue;
+            }
+            let Some(var_data) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_data.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut binding_names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut binding_names);
+                    names.extend(binding_names);
+                }
+            }
+        }
+        names
+    }
+
+    pub(in crate::emitter) fn is_shadowed_by_namespace_local_var(&self, name: &str) -> bool {
+        self.namespace_local_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn collect_namespace_local_module_names(
         &self,
         body_node: &tsz_parser::parser::node::Node,
@@ -1738,6 +1810,8 @@ impl<'a> Printer<'a> {
             }
             // Remove locally-declared non-exported names — they shadow prior exports
             let local_names = self.collect_namespace_local_var_names(body_node);
+            let local_var_shadow_names =
+                self.collect_namespace_non_exported_local_var_names(body_node);
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
@@ -1751,6 +1825,8 @@ impl<'a> Printer<'a> {
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
             self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
+            self.namespace_local_var_shadow_stack
+                .push(local_var_shadow_names);
             let (destructuring_export_temps, destructuring_export_temp_names) =
                 self.reserve_namespace_destructuring_export_temps(module);
 
@@ -2263,6 +2339,7 @@ impl<'a> Printer<'a> {
             }
 
             // Restore previous exported names
+            self.namespace_local_var_shadow_stack.pop();
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
             self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;

@@ -320,11 +320,20 @@ impl<'a> CheckerState<'a> {
                         arena,
                         type_alias.type_node,
                         syntax_kind_ext::TYPE_QUERY,
-                    ) || !Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        type_alias.type_node,
-                        &target_param_names,
-                    ) {
+                    ) || !seen.push(sym_id)
+                    {
+                        return false;
+                    }
+                    let result =
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            arena,
+                            binder,
+                            type_alias.type_node,
+                            &target_param_names,
+                            seen,
+                        );
+                    seen.pop(sym_id);
+                    if !result {
                         return false;
                     }
                     return true;
@@ -386,6 +395,31 @@ impl<'a> CheckerState<'a> {
                         arena,
                         binder,
                         wrapped.type_node,
+                        seen,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        operator.type_node,
+                        seen,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                arena.get_indexed_access_type(node).is_some_and(|indexed| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        indexed.object_type,
+                        seen,
+                    ) && Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        indexed.index_type,
                         seen,
                     )
                 })
