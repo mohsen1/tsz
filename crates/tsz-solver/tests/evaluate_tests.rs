@@ -34245,11 +34245,14 @@ fn test_string_intrinsic_over_never_is_never() {
 }
 
 #[test]
-fn test_string_intrinsic_over_any_is_any() {
+fn test_string_intrinsic_over_any_stays_deferred() {
     use crate::StringIntrinsicKind;
+    use crate::types::TypeData;
 
-    // `any` is not transformable / generic / a placeholder, so tsc returns the
-    // argument unchanged: Uppercase<any> = any (not `error`).
+    // tsc keeps `Uppercase<any>` a *deferred* string-mapping type rather than
+    // collapsing it to `any`: the case constraint still applies at assignment
+    // time (`const x: Uppercase<any> = "x"` is an error). Collapsing to `any`
+    // here would silence that constraint (a soundness false negative). See #9668.
     let interner = TypeInterner::new();
     for kind in [
         StringIntrinsicKind::Uppercase,
@@ -34259,10 +34262,18 @@ fn test_string_intrinsic_over_any_is_any() {
     ] {
         let intrinsic = interner.string_intrinsic(kind, TypeId::ANY);
         let result = evaluate_type(&interner, intrinsic);
-        assert_eq!(
+        assert_ne!(
             result,
             TypeId::ANY,
-            "string mapping {kind:?} over any should evaluate to any"
+            "string mapping {kind:?} over any must not collapse to any"
+        );
+        assert!(
+            matches!(
+                interner.lookup(result),
+                Some(TypeData::StringIntrinsic { .. })
+            ),
+            "string mapping {kind:?} over any should stay a StringIntrinsic, got {:?}",
+            interner.lookup(result)
         );
     }
 }
