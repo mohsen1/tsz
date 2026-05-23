@@ -192,28 +192,15 @@ impl<'a> CheckerState<'a> {
         let in_static_context = self.is_in_static_class_member_context(error_node);
 
         // An abstract member has no base implementation to dispatch to, so
-        // referencing it through `super.` is an error (TS2513). tsc decides this
-        // in checkPropertyAccessibility from the resolved member's modifier flags
-        // and gives it priority over the field-via-super (TS2855) diagnostic. The
-        // base member is resolved by walking the super receiver's class chain, so
-        // a concrete override in a nearer base correctly suppresses it. Non-method
-        // members keep the legacy ES5 path (TS2340) where `super` is more limited.
-        if self.is_super_expression(object_expr)
-            && let Some((decl_class_idx, member_display, is_method)) =
-                self.abstract_super_member(class_idx, property_name, is_static)
-            && (is_method || !self.ctx.compiler_options.target.is_es5())
-        {
-            use crate::diagnostics::format_message;
-            let class_name = self.get_class_name_with_type_params_from_decl(decl_class_idx);
-            let message = format_message(
-                diagnostic_messages::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
-                &[&member_display, &class_name],
-            );
-            self.error_at_node(
-                error_node,
-                &message,
-                diagnostic_codes::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
-            );
+        // referencing it through `super.` is an error (TS2513), which tsc gives
+        // priority over the field-via-super (TS2855) diagnostic below.
+        if self.report_abstract_member_via_super(
+            object_expr,
+            property_name,
+            error_node,
+            class_idx,
+            is_static,
+        ) {
             return false;
         }
 

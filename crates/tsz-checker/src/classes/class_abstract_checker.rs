@@ -764,6 +764,45 @@ impl<'a> CheckerState<'a> {
     /// member: a concrete override in a closer base shadows an abstract
     /// ancestor declaration (`super.m` then dispatches to the concrete one).
     ///
+    /// Emit TS2513 when a `super.member` access resolves to an abstract base
+    /// member. tsc decides this in `checkPropertyAccessibility` from the resolved
+    /// member's modifier flags and gives it priority over the field-via-super
+    /// (TS2855) diagnostic. Non-method members keep the legacy ES5 TS2340 path
+    /// where `super` is more limited. Returns `true` (access denied, diagnostic
+    /// emitted) so the caller can stop further accessibility checks.
+    pub(crate) fn report_abstract_member_via_super(
+        &mut self,
+        object_expr: NodeIndex,
+        property_name: &str,
+        error_node: NodeIndex,
+        class_idx: NodeIndex,
+        is_static: bool,
+    ) -> bool {
+        if !self.is_super_expression(object_expr) {
+            return false;
+        }
+        let Some((decl_class_idx, member_display, is_method)) =
+            self.abstract_super_member(class_idx, property_name, is_static)
+        else {
+            return false;
+        };
+        if !is_method && self.ctx.compiler_options.target.is_es5() {
+            return false;
+        }
+        use crate::diagnostics::{diagnostic_messages, format_message};
+        let class_name = self.get_class_name_with_type_params_from_decl(decl_class_idx);
+        let message = format_message(
+            diagnostic_messages::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
+            &[&member_display, &class_name],
+        );
+        self.error_at_node(
+            error_node,
+            &message,
+            diagnostic_codes::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
+        );
+        true
+    }
+
     /// `base_class_idx` is the class the `super` receiver resolves to (the
     /// direct base of the enclosing class). Returns the declaring class index,
     /// the member display name, and whether the member is a plain method (vs an
