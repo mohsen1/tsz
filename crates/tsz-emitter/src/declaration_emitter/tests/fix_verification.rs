@@ -1679,6 +1679,56 @@ export const updateIfChanged = <T>(t: T) => {
 }
 
 #[test]
+fn fix_correlated_alias_call_expands_renamed_discriminant_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+interface Registry {
+    alpha: AlphaEvent;
+    beta: BetaEvent;
+}
+interface AlphaEvent {
+    alpha: true;
+}
+interface BetaEvent {
+    beta: true;
+}
+type Entry<Key extends keyof Registry> = { [Choice in Key]: {
+    readonly kind: Choice;
+    readonly enabled?: boolean;
+    readonly handler: (payload: Registry[Choice]) => void;
+}}[Key];
+
+function makeEntry<Key extends keyof Registry>({ kind, enabled = true, handler }: Entry<Key>): Entry<Key> {
+    return { kind, enabled, handler };
+}
+
+const alphaEntry = makeEntry({
+    kind: "alpha",
+    handler: payload => {
+        payload.alpha;
+    },
+});
+"#,
+    );
+
+    for expected in [
+        r#"declare const alphaEntry: {"#,
+        r#"    readonly kind: "alpha";"#,
+        r#"    readonly enabled?: boolean;"#,
+        r#"    readonly handler: (payload: AlphaEvent) => void;"#,
+    ] {
+        assert!(
+            output.contains(expected),
+            "expected correlated alias call surface to include `{expected}`: {output}"
+        );
+    }
+    assert!(
+        !output.contains(r#"declare const alphaEntry: Entry<"alpha">;"#),
+        "correlated alias call should expand the concrete surface instead of re-emitting the alias application: {output}"
+    );
+}
+
+#[test]
 fn fix_local_overloaded_call_uses_matching_literal_signature_return() {
     let output = emit_dts_with_usage_analysis(
         r#"
