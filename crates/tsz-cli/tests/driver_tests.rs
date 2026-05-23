@@ -7198,6 +7198,18 @@ export const c = func();
         !dts.contains("c: CustomHtmlRepresentationThing"),
         "Expected no unbound local name from reexporter scope: {dts}"
     );
+
+    let reexporter_dts =
+        std::fs::read_to_string(base.join("dist/reexporter.d.ts")).expect("read reexporter.d.ts");
+    assert!(
+        reexporter_dts.contains(r#"import { CustomHtmlRepresentationThing } from "./foo.html";"#),
+        "Expected source-file import to stay when inferred return uses the imported type: {reexporter_dts}"
+    );
+    assert!(
+        reexporter_dts
+            .contains(r#"export declare function func(): CustomHtmlRepresentationThing;"#),
+        "Expected inferred return in the importing file to use the local imported name: {reexporter_dts}"
+    );
 }
 
 #[test]

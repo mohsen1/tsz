@@ -224,7 +224,10 @@ impl<'a> DeclarationEmitter<'a> {
         let text = self.restore_mapped_return_type_param_constraints(func, &text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
-        self.expand_mapped_alias_index_conditional_text(self.arena, &text)
+        let text = self
+            .expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text);
+        self.rewrite_current_source_named_import_type_text(&text)
             .unwrap_or(text)
     }
 
