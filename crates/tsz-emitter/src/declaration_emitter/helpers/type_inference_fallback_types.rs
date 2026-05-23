@@ -952,7 +952,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| Some(self.print_type_id(method_type_id)))
     }
 
-    fn enclosing_method_for_node(
+    pub(in crate::declaration_emitter) fn enclosing_method_for_node(
         &self,
         node_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::MethodDeclData> {
