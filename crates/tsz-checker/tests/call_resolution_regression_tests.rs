@@ -2913,3 +2913,156 @@ const b: number = f(42);
         "Plain overload selection must remain unaffected by the callback fix"
     );
 }
+
+// ---------------------------------------------------------------------------
+// No-overload-match recovery result type (issue #9669).
+//
+// Structural rule: when a call matches no overload signature, the call
+// expression's result type is the intersection of every candidate signature's
+// return type (tsc's `createUnionOfSignaturesForOverloadFailure`). Disjoint
+// primitive returns (`string` & `number`) collapse to `never`, which is
+// assignable to any annotation and so suppresses spurious downstream cascades
+// (the call already reported TS2769); structurally compatible object returns
+// merge (`{ a }` & `{ b }`) so member access still resolves; uniform returns
+// survive intact. Only TS2769 should fire for a hard no-match — no cascade.
+// ---------------------------------------------------------------------------
+
+/// Reported repro: failed overloaded call assigned to an incompatible type
+/// must emit only TS2769, not a spurious TS2322 cascade.
+#[test]
+fn no_overload_match_assignment_no_cascade_ts2322() {
+    let source = r#"
+declare function f(x: number): string;
+declare function f(x: string): number;
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "no spurious TS2322 cascade on failed overload assignment; got {codes:?}"
+    );
+}
+
+/// Same rule via a function-type intersection (different surface, same
+/// overload mechanism).
+#[test]
+fn no_overload_match_intersection_callable_no_cascade_ts2322() {
+    let source = r#"
+type F = ((x: number) => string) & ((x: string) => number);
+declare const f: F;
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "no spurious TS2322 on failed intersection-callable assignment; got {codes:?}"
+    );
+}
+
+/// Failed overload result used as an argument: no TS2345 cascade either.
+#[test]
+fn no_overload_match_argument_position_no_cascade_ts2345() {
+    let source = r#"
+declare function f(x: number): string;
+declare function f(x: string): number;
+declare function sink(x: 99): void;
+sink(f(true));
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2345),
+        "no spurious TS2345 cascade on failed overload used as argument; got {codes:?}"
+    );
+}
+
+/// Renamed function/parameters — the rule is structural, not keyed on spelling.
+#[test]
+fn no_overload_match_renamed_no_cascade_ts2322() {
+    let source = r#"
+declare function ZZ(qqq: number): string;
+declare function ZZ(qqq: string): number;
+const result: string = ZZ(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "renamed overload should behave identically; got {codes:?}"
+    );
+}
+
+/// Compatible object returns merge into `{ a } & { b }`: both members exist on
+/// the recovery type, so member access must NOT report TS2339.
+#[test]
+fn no_overload_match_object_returns_merge_members_resolve() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { b: string };
+f(true).a;
+f(true).b;
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2339),
+        "members of intersected object returns must resolve; got {codes:?}"
+    );
+}
+
+/// A property that is absent from the intersection still reports TS2339 — the
+/// recovery type is not blanket-`any`/error that silences everything.
+#[test]
+fn no_overload_match_object_returns_missing_member_reports_ts2339() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { b: string };
+f(true).nope;
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        codes.contains(&2339),
+        "absent property on intersected returns must still report TS2339; got {codes:?}"
+    );
+}
+
+/// Uniform candidate returns survive: `{ a: number }` & `{ a: number }`
+/// dedups to `{ a: number }`, so assigning to an incompatible type still
+/// reports TS2322 (matching tsc — the suppression is intersection-driven, not
+/// a blanket no-match suppression).
+#[test]
+fn no_overload_match_uniform_returns_preserve_shape_and_cascade() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { a: number };
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        codes.contains(&2322),
+        "uniform object recovery type must still cascade TS2322; got {codes:?}"
+    );
+}
+
+/// Negative control: a SUCCESSFUL overloaded call assigned to an incompatible
+/// type must still emit TS2322 — the suppression is only for hard no-matches.
+#[test]
+fn successful_overload_call_still_cascades_ts2322() {
+    let source = r#"
+declare function g(x: number): string;
+const c: number = g(1);
+"#;
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "successful overload assigned to incompatible type must still emit TS2322; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2769),
+        "successful call must not report TS2769; got {codes:?}"
+    );
+}
