@@ -17,7 +17,8 @@ function usage() {
     "usage: refresh-green-prs.mjs [--repository owner/repo] [--base main] [--max-prs n] [--max-refreshes n] [--required-check name] [--dry-run] [--ignore-in-flight]",
     "",
     "Refreshes at most one ready, green PR that is behind the base branch, then",
-    "dispatches CI and enables squash auto-merge for the refreshed head.",
+    "enables squash auto-merge for the refreshed head. The branch update must",
+    "trigger the normal pull_request CI so required checks attach to the PR.",
   ].join("\n");
 }
 
@@ -264,9 +265,16 @@ export function autoMergeInFlightReason(pr, compare, options = {}) {
 
   const rollup = checkRollupState(pr.statusCheckRollup, options.requiredChecks || REQUIRED_CHECKS);
   if (rollup.kind === "pending") return "checks are still pending";
-  if (rollup.kind !== "passed") return null;
 
   const behind = compareBehindState(compare);
+  if (rollup.kind === "missing") {
+    if (behind.behindBy <= 0) {
+      return "required checks are not reported yet for the current auto-merge head";
+    }
+    return null;
+  }
+  if (rollup.kind !== "passed") return null;
+
   if (behind.behindBy <= 0) {
     return "auto-merge is armed on a current head";
   }
@@ -419,19 +427,6 @@ function updateBranch(repository, pr) {
   ]);
 }
 
-function dispatchCi(repository, pr) {
-  runGh([
-    "api",
-    "-X",
-    "POST",
-    "-H",
-    "Accept: application/vnd.github+json",
-    `repos/${repository}/actions/workflows/ci.yml/dispatches`,
-    "-f",
-    `ref=${pr.headRefName}`,
-  ]);
-}
-
 function sleep(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
@@ -485,7 +480,7 @@ export function formatResultReport(result) {
     for (const item of result.refreshed) {
       lines.push([
         markdownLink(`#${item.number}`, item.url),
-        result.dryRun ? "would refresh, dispatch CI, and enable auto-merge" : "refreshed, dispatched CI, and armed auto-merge",
+        result.dryRun ? "would refresh and enable auto-merge" : "refreshed and armed auto-merge",
         `\`${item.oldHead.slice(0, 12)}\``,
         item.newHead ? `\`${item.newHead.slice(0, 12)}\`` : result.dryRun ? "`pending`" : "`unknown`",
       ].join(" | ").replace(/^/, "| ").replace(/$/, " |"));
@@ -540,11 +535,10 @@ function refreshPullRequests(options) {
     if (options.ignoreInFlight) break;
     if (pr.baseRefName !== options.base || pr.isDraft === true || !hasAutoMerge(pr)) continue;
     const hydrated = readPullRequest(options.repository, pr.number);
-    let compare = null;
     const rollup = checkRollupState(hydrated.statusCheckRollup, options.requiredChecks);
-    if (rollup.kind === "passed") {
-      compare = readCompare(options.repository, currentBaseOid, hydrated.headRefOid);
-    }
+    const compare = rollup.kind === "passed" || rollup.kind === "missing"
+      ? readCompare(options.repository, currentBaseOid, hydrated.headRefOid)
+      : null;
     const inFlightReason = autoMergeInFlightReason(hydrated, compare, options);
     if (inFlightReason) {
       result.inFlight = hydrated;
@@ -594,7 +588,6 @@ function refreshPullRequests(options) {
       updateBranch(options.repository, hydrated);
       branchUpdateAccepted = true;
       const refreshed = waitForUpdatedHead(options.repository, hydrated, options);
-      dispatchCi(options.repository, refreshed);
       if (!hasAutoMerge(refreshed)) {
         enableAutoMerge(options.repository, refreshed);
       }
