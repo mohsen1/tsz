@@ -547,6 +547,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
@@ -576,6 +579,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "../tests/keyof_function_type_is_never_tests.rs"]
+mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
@@ -618,6 +624,9 @@ mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_discriminant_narrowing_tests.rs"]
+mod object_spread_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
