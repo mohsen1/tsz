@@ -250,7 +250,11 @@ pub(super) fn collect_runtime_exported_var_names_in_stmt(
 
     match stmt_node.kind {
         kind if kind == syntax_kind_ext::VARIABLE_STATEMENT => {
-            collect_from_var_statement(stmt_node, names);
+            if arena.get_variable(stmt_node).is_some_and(|var_data| {
+                arena.has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword)
+            }) {
+                collect_from_var_statement(stmt_node, names);
+            }
         }
         kind if kind == syntax_kind_ext::EXPORT_DECLARATION => {
             if let Some(export_data) = arena.get_export_decl(stmt_node)

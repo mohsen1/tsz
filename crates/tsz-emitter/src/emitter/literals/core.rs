@@ -48,11 +48,14 @@ impl<'a> Printer<'a> {
         let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
 
         // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
+        let namespace_local_var_shadow = self.is_shadowed_by_namespace_local_var(original_text);
         if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
             // Use write_identifier so source map name recording still works.
             // When renamed differs from original, the source map records the original
             // name so debuggers can map back to the source.
-            if renamed != *original_text {
+            if namespace_local_var_shadow && Self::emitted_name_is_export_qualified(&renamed) {
+                self.write_identifier(emit_text);
+            } else if renamed != *original_text {
                 if let Some(source_pos) = self.take_pending_source_pos() {
                     self.writer
                         .write_node_with_name(&renamed, source_pos, original_text);
@@ -78,6 +81,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .namespace_exported_names
                 .contains(original_text.as_str())
@@ -91,6 +95,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .namespace_parent_exported_names
                 .contains(original_text.as_str())
@@ -104,6 +109,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && let Some(qualifier) = self
                 .namespace_ancestor_export_qualifiers
                 .get(original_text.as_str())
@@ -113,6 +119,7 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write_identifier(emit_text);
         } else if !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .commonjs_exported_var_names
                 .contains(original_text.as_str())
@@ -136,6 +143,10 @@ impl<'a> Printer<'a> {
         } else {
             self.write_identifier(emit_text);
         }
+    }
+
+    fn emitted_name_is_export_qualified(name: &str) -> bool {
+        name.starts_with("exports.") || name.contains('.')
     }
 
     pub(in crate::emitter) fn write_identifier_by_id(&mut self, id: IdentifierId) {
