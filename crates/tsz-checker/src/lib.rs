@@ -544,6 +544,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
@@ -618,6 +621,9 @@ mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_discriminant_narrowing_tests.rs"]
+mod object_spread_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;

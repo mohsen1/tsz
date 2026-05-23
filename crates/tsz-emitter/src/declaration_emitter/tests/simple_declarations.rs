@@ -3557,6 +3557,21 @@ module.exports = {
 }
 
 #[test]
+fn test_js_commonjs_export_equals_require_default_alias_preserves_typeof_surface() {
+    let source = r#"
+const m = require("./exporter");
+module.exports = m.default;
+module.exports.memberName = "thing";
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        output.trim(),
+        "declare const _exports: typeof m.default;\nexport = _exports;\nimport m = require(\"./exporter\");"
+    );
+}
+
+#[test]
 fn test_js_export_import_equals_drops_export_keyword() {
     let source = "export import fs2 = require(\"fs\");";
     let mut parser = ParserState::new("test.js".to_string(), source.to_string());
