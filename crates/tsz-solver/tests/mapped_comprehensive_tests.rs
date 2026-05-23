@@ -433,6 +433,113 @@ fn test_mapped_type_remove_readonly() {
 }
 
 // =============================================================================
+// Readonly Mapped Type Over Tuple Tests (issue #9707)
+// =============================================================================
+
+fn num_str_tuple_elements() -> Vec<crate::types::TupleElement> {
+    use crate::types::TupleElement;
+    vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]
+}
+
+/// Build a homomorphic mapped type `{ <modifier>readonly [K in keyof source]: source[K] }`
+/// over `source` and return the evaluated result.
+fn eval_readonly_mapped_over(
+    interner: &TypeInterner,
+    source: TypeId,
+    readonly_modifier: Option<MappedModifier>,
+) -> TypeId {
+    let keyof_t = interner.keyof(source);
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
+    let template = interner.index_access(source, type_param);
+    let mapped = MappedType {
+        type_param: type_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier,
+    };
+    let mapped_id = interner.mapped(mapped);
+    evaluate_type(interner, mapped_id)
+}
+
+fn assert_is_readonly_tuple(interner: &TypeInterner, result: TypeId) {
+    match interner.lookup(result) {
+        Some(TypeData::ReadonlyType(inner)) => {
+            assert!(
+                matches!(interner.lookup(inner), Some(TypeData::Tuple(_))),
+                "ReadonlyType inner should be a Tuple, got {:?}",
+                interner.lookup(inner)
+            );
+        }
+        other => panic!("Expected ReadonlyType(Tuple), got {other:?}"),
+    }
+}
+
+#[test]
+fn test_add_readonly_mapped_over_mutable_tuple_yields_readonly_tuple() {
+    // type RO<T> = { readonly [K in keyof T]: T[K] }; RO<[number, string]>
+    let interner = TypeInterner::new();
+    let source = interner.tuple(num_str_tuple_elements());
+    let result = eval_readonly_mapped_over(&interner, source, Some(MappedModifier::Add));
+    assert_is_readonly_tuple(&interner, result);
+}
+
+#[test]
+fn test_no_modifier_mapped_over_mutable_tuple_stays_mutable() {
+    // Identity mapped type over a mutable tuple stays a mutable tuple.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(num_str_tuple_elements());
+    let result = eval_readonly_mapped_over(&interner, source, None);
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "Expected mutable Tuple, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_no_modifier_mapped_over_readonly_tuple_preserves_readonly() {
+    // Homomorphic preservation: no modifier over a readonly tuple stays readonly.
+    let interner = TypeInterner::new();
+    let source = interner.readonly_type(interner.tuple(num_str_tuple_elements()));
+    let result = eval_readonly_mapped_over(&interner, source, None);
+    assert_is_readonly_tuple(&interner, result);
+}
+
+#[test]
+fn test_remove_readonly_mapped_over_readonly_tuple_yields_mutable_tuple() {
+    // type Mut<T> = { -readonly [K in keyof T]: T[K] }; Mut<readonly [number, string]>
+    let interner = TypeInterner::new();
+    let source = interner.readonly_type(interner.tuple(num_str_tuple_elements()));
+    let result = eval_readonly_mapped_over(&interner, source, Some(MappedModifier::Remove));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "Expected mutable Tuple after -readonly, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+// =============================================================================
 // Key Remapping Tests
 // =============================================================================
 

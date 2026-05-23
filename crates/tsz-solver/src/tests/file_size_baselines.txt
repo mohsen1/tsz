@@ -14,25 +14,25 @@
 # Manual edits are also fine, but the env-var path keeps the comments below
 # in sync with the actual values.
 
-solver_max_loc      3381
-solver_oversized    20
+solver_max_loc      3399
+solver_oversized    21
 solver_file_generic_call_resolve 3381
-solver_file_eval_conditional 3120
-solver_file_evaluate 3366
+solver_file_eval_conditional 3131
+solver_file_evaluate 3399
 solver_file_instantiate 2872
 solver_file_subtype_core 2863
-solver_file_type_queries_flow 2837
+solver_file_type_queries_flow 2880
 solver_file_diag_format_compound 2763
-solver_file_eval_infer_pattern_helpers 2733
+solver_file_eval_infer_pattern_helpers 2738
 solver_file_narrowing_core 2702
 solver_file_relations_compat 2950
 solver_file_constraints_walker 2348
 solver_file_diag_format_mod 2312
-solver_file_eval_mapped 2425
-solver_file_subtype_generics 2217
+solver_file_eval_mapped 2455
+solver_file_subtype_generics 2225
 solver_file_call_args 2122
 solver_file_eval_index_access 2219
-solver_file_def_core 2165
+solver_file_def_core 2217
 solver_file_visitor_predicates 2162
 solver_file_types 2018
 

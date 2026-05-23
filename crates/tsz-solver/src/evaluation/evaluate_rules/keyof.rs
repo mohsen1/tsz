@@ -514,6 +514,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().union(key_types)
                     }
                 }
+                // A bare function type (`() => T`, `(x: U) => V`,
+                // `<U>(u: U) => U`) has no own properties or index signatures,
+                // so its key space is empty.  `Callable` with only construct
+                // signatures already collapses to `never` via the arm above;
+                // `Function` must do the same for `extends never` /
+                // `Equal<keyof Fn, never>` parity with tsc.
+                TypeData::Function(_) => TypeId::NEVER,
                 TypeData::Array(_) => self.interner().union(self.array_keyof_keys()),
                 TypeData::Tuple(elements) => {
                     let elements = self.interner().tuple_list(elements);

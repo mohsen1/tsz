@@ -283,7 +283,8 @@ impl RelationFailure {
                 Self::PropertyModifierMismatch { property_name }
             }
             SubtypeFailureReason::MissingIndexSignature { .. }
-            | SubtypeFailureReason::RecursionLimitExceeded => Self::TypeMismatch {
+            | SubtypeFailureReason::RecursionLimitExceeded
+            | SubtypeFailureReason::AbstractConstructorAssignment => Self::TypeMismatch {
                 source_type: TypeId::ERROR,
                 target_type: TypeId::ERROR,
             },

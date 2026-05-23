@@ -2080,6 +2080,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => prop.type_id,
             };
+            let mut captured = false;
             if let Some(nested_shape_id) = match self.interner().lookup(nested_type) {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     Some(shape_id)
@@ -2103,7 +2104,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return None;
                     }
                     infer_nested = Some((prop.name, nested_name, info));
+                    captured = true;
                 }
+            }
+
+            // A property that still carries an `infer` variable this fast path did
+            // not record (e.g. inside a function parameter, an array, or a nested
+            // object with multiple infers) cannot be modeled here. Defer to the
+            // general `match_infer_pattern` engine, which handles every position
+            // with variance-aware candidate merging.
+            if !captured && self.type_contains_infer(prop.type_id) {
+                return None;
             }
         }
 

@@ -530,6 +530,10 @@ impl<'a> CheckerState<'a> {
         self.merge_exports_into_props(sym_id, &mut props, true);
 
         let properties = props.into_values().collect();
+        // Keep the merged symbol so the type printer renders the static side as
+        // `typeof C` (the value+namespace identity) instead of expanding the
+        // structural shape. tsc displays a class merged with a namespace as
+        // `typeof C`.
         self.ctx.types.factory().callable(CallableShape {
             call_signatures: shape.call_signatures.clone(),
             construct_signatures: shape.construct_signatures.clone(),
@@ -537,7 +541,7 @@ impl<'a> CheckerState<'a> {
             string_index: shape.string_index,
             number_index: shape.number_index,
             symbol_index: shape.symbol_index,
-            symbol: None,
+            symbol: Some(sym_id),
             is_abstract: false,
         })
     }
