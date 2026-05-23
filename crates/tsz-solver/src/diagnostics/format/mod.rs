@@ -35,6 +35,19 @@ use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
 
+/// Format the property-name slot used by excess-property diagnostics.
+///
+/// The full diagnostic already wraps this value in single quotes. For property
+/// names that cannot be displayed as identifier-like names, `tsc` preserves an
+/// inner double-quoted property name, e.g. `'"data-id"'`.
+pub fn format_excess_property_name(name: &str) -> Cow<'_, str> {
+    if !needs_property_name_quotes(name) {
+        return Cow::Borrowed(name);
+    }
+    let escaped = name.replace('\\', "\\\\").replace('"', "\\\"");
+    Cow::Owned(format!("\"{escaped}\""))
+}
+
 /// Returns `true` if a property name needs to be quoted in type display
 /// (i.e. it is not a valid JS identifier or numeric literal).
 fn needs_property_name_quotes(name: &str) -> bool {

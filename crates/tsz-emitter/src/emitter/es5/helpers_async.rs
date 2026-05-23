@@ -1564,6 +1564,14 @@ impl<'a> Printer<'a> {
             }
             return;
         }
+        if !use_static_comma
+            && !defer_static_block_only_tail
+            && let Some(class_iife_expr) =
+                Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
+        {
+            self.write_multiline_fragment_preserving_indent(&class_iife_expr);
+            return;
+        }
 
         self.write("(function () {");
         self.write_line();
