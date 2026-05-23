@@ -165,6 +165,10 @@ pub struct ES5ClassTransformer<'a> {
     /// of the IIFE body.  Set for class-expression contexts where the caller
     /// owns the hoisting and needs the comma-expression pattern.
     emit_computed_props_outside: Cell<bool>,
+    /// Outer block-scope rename map passed from the enclosing printer so that
+    /// identifier references in class property initializers use the renamed form
+    /// when an outer `let`/`const` was renamed during ES5 lowering.
+    outer_rename_map: FxHashMap<String, String>,
 }
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -203,7 +207,14 @@ impl<'a> ES5ClassTransformer<'a> {
             generated_disposable_env_names: RefCell::new(Vec::new()),
             extra_hoisted_temps: RefCell::new(Vec::new()),
             emit_computed_props_outside: Cell::new(false),
+            outer_rename_map: FxHashMap::default(),
         }
+    }
+
+    /// Set the outer block-scope rename map (original → emitted name for
+    /// variables renamed during ES5 lowering in enclosing scopes).
+    pub fn set_outer_rename_map(&mut self, map: FxHashMap<String, String>) {
+        self.outer_rename_map = map;
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, enable: bool) {
@@ -708,6 +719,9 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         if let Some(ref transforms) = self.transforms {
             converter = converter.with_transforms(transforms.clone());
+        }
+        if !self.outer_rename_map.is_empty() {
+            converter = converter.with_outer_rename_map(self.outer_rename_map.clone());
         }
         converter
     }

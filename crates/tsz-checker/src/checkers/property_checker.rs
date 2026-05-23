@@ -191,6 +191,19 @@ impl<'a> CheckerState<'a> {
 
         let in_static_context = self.is_in_static_class_member_context(error_node);
 
+        // An abstract member has no base implementation to dispatch to, so
+        // referencing it through `super.` is an error (TS2513), which tsc gives
+        // priority over the field-via-super (TS2855) diagnostic below.
+        if self.report_abstract_member_via_super(
+            object_expr,
+            property_name,
+            error_node,
+            class_idx,
+            is_static,
+        ) {
+            return false;
+        }
+
         // TS2855 fires when `super.<field>` accesses a parent class **instance**
         // field. From within a static member/initializer, `super` is the parent
         // class object itself (not its prototype), so `super.x` resolves to the
