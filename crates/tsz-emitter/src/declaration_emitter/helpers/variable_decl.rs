@@ -450,6 +450,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
             {
                 self.write(": ");
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -458,6 +460,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -468,6 +472,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) = self.json_import_reference_type_text(initializer)
@@ -576,6 +582,8 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = template_index_type;
                 }
+                type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -1000,6 +1008,14 @@ impl<'a> DeclarationEmitter<'a> {
                 let selected_type_text =
                     Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
                         .unwrap_or(selected_type_text);
+                let selected_type_text = if has_initializer {
+                    self.rewrite_initializer_import_equals_type_text(
+                        initializer,
+                        selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,
