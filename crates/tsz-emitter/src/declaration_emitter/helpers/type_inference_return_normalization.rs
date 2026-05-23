@@ -1021,6 +1021,15 @@ impl<'a> DeclarationEmitter<'a> {
                     // return is equivalent to `return undefined` with
                     // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
                     "void".to_string()
+                } else if self
+                    .arena
+                    .get(ret.expression)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                    && let Some(text) = self
+                        .preferred_expression_type_text(ret.expression)
+                        .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
                 } else if let Some(text) = self
                     .widened_inferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty() && text != "any")

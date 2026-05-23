@@ -2438,19 +2438,20 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(crate) fn emit_heritage_clauses(&mut self, clauses: &NodeList) {
-        self.emit_heritage_clauses_inner(clauses, false, None);
+        self.emit_heritage_clauses_inner(clauses, false, None, None);
     }
 
     pub(crate) fn emit_class_heritage_clauses(
         &mut self,
         clauses: &NodeList,
         extends_alias: Option<&str>,
+        jsdoc_extends_type: Option<&str>,
     ) {
-        self.emit_heritage_clauses_inner(clauses, false, extends_alias);
+        self.emit_heritage_clauses_inner(clauses, false, extends_alias, jsdoc_extends_type);
     }
 
     pub(crate) fn emit_interface_heritage_clauses(&mut self, clauses: &NodeList) {
-        self.emit_heritage_clauses_inner(clauses, true, None);
+        self.emit_heritage_clauses_inner(clauses, true, None, None);
     }
 
     fn emit_heritage_clauses_inner(
@@ -2458,6 +2459,7 @@ impl<'a> DeclarationEmitter<'a> {
         clauses: &NodeList,
         is_interface: bool,
         extends_alias: Option<&str>,
+        jsdoc_extends_type: Option<&str>,
     ) {
         for &clause_idx in &clauses.nodes {
             let Some(clause_node) = self.arena.get(clause_idx) else {
@@ -2476,17 +2478,18 @@ impl<'a> DeclarationEmitter<'a> {
             // For interfaces, filter out heritage types with non-entity-name
             // expressions (e.g. `typeof X`, parenthesized expressions).
             // tsc strips these in declaration emit.
-            let valid_types: Vec<_> = if is_interface {
-                heritage
-                    .types
-                    .nodes
-                    .iter()
-                    .copied()
-                    .filter(|&type_idx| self.is_entity_name_heritage(type_idx))
-                    .collect()
-            } else {
-                heritage.types.nodes.clone()
-            };
+            let valid_types: Vec<_> = heritage
+                .types
+                .nodes
+                .iter()
+                .copied()
+                .filter(|&type_idx| !is_interface || self.is_entity_name_heritage(type_idx))
+                .filter(|&type_idx| {
+                    !(self.source_is_js_file
+                        && heritage.token == SyntaxKind::ExtendsKeyword as u16
+                        && self.heritage_type_is_null(type_idx))
+                })
+                .collect();
 
             if valid_types.is_empty() {
                 continue;
@@ -2508,6 +2511,13 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     self.emit_type_arguments(type_args);
                 }
+                continue;
+            }
+
+            if heritage.token == SyntaxKind::ExtendsKeyword as u16
+                && let Some(type_text) = jsdoc_extends_type
+            {
+                self.write(type_text);
                 continue;
             }
 
@@ -2548,6 +2558,16 @@ impl<'a> DeclarationEmitter<'a> {
                     .copied()
                     .any(|type_idx| self.heritage_type_is_bare_array(type_idx))
         })
+    }
+
+    pub(in crate::declaration_emitter) fn heritage_type_is_null(
+        &self,
+        type_idx: NodeIndex,
+    ) -> bool {
+        self.arena
+            .get(type_idx)
+            .and_then(|node| self.get_source_slice_no_semi(node.pos, node.end))
+            .is_some_and(|text| text.trim() == "null")
     }
 
     fn heritage_type_is_bare_array(&self, type_idx: NodeIndex) -> bool {
