@@ -1302,6 +1302,60 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn collect_namespace_non_exported_local_var_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            if self.statement_has_export_modifier(stmt_node) {
+                continue;
+            }
+            let Some(var_data) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_data.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut binding_names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut binding_names);
+                    names.extend(binding_names);
+                }
+            }
+        }
+        names
+    }
+
+    pub(in crate::emitter) fn is_shadowed_by_namespace_local_var(&self, name: &str) -> bool {
+        self.namespace_local_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn collect_namespace_local_module_names(
         &self,
         body_node: &tsz_parser::parser::node::Node,
@@ -1756,6 +1810,8 @@ impl<'a> Printer<'a> {
             }
             // Remove locally-declared non-exported names — they shadow prior exports
             let local_names = self.collect_namespace_local_var_names(body_node);
+            let local_var_shadow_names =
+                self.collect_namespace_non_exported_local_var_names(body_node);
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
@@ -1769,6 +1825,8 @@ impl<'a> Printer<'a> {
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
             self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
+            self.namespace_local_var_shadow_stack
+                .push(local_var_shadow_names);
             let (destructuring_export_temps, destructuring_export_temp_names) =
                 self.reserve_namespace_destructuring_export_temps(module);
 
@@ -2281,6 +2339,7 @@ impl<'a> Printer<'a> {
             }
 
             // Restore previous exported names
+            self.namespace_local_var_shadow_stack.pop();
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
             self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;
