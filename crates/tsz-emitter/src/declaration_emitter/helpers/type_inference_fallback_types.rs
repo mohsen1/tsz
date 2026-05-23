@@ -339,6 +339,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if ast_type_text
                     .as_ref()
                     .is_some_and(|type_text| type_text.contains(" & "))
+                    || self.class_expression_has_type_parameter_modifiers(expr_idx)
                     || self
                         .arena
                         .get_class(expr_node)
