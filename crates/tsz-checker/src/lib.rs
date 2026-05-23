@@ -544,6 +544,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
