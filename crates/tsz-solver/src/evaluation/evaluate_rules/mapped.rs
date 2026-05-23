@@ -437,9 +437,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return self.evaluate_mapped_array(mapped, element_type);
                     }
 
-                    // Tuple type: map each element
+                    // Tuple type: map each element. Source is mutable, so the
+                    // result is readonly only if the modifier adds `+readonly`.
                     Some(TypeData::Tuple(tuple_id)) => {
-                        return self.evaluate_mapped_tuple(mapped, tuple_id, source);
+                        return self
+                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
+                    }
+
+                    // `readonly [a, b]`: map each element and preserve readonly
+                    // unless the modifier strips it (`-readonly`).
+                    Some(TypeData::ReadonlyType(inner)) => {
+                        if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
+                            return self.evaluate_mapped_tuple_with_readonly(
+                                mapped, tuple_id, source, true,
+                            );
+                        }
                     }
 
                     // ReadonlyArray: map the element type and preserve readonly
@@ -1177,7 +1189,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // the loop falls back to the K-only substitution path —
                 // preserving deferred `T[K]` element types. Passing
                 // `resolved` keeps the helper signature uniform.
-                Some(self.evaluate_mapped_tuple(mapped, tuple_id, resolved))
+                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, resolved, false))
             }
             // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
             Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {
@@ -1185,14 +1197,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     tracing::trace!(
                         "evaluate_mapped: readonly-tuple-constrained type parameter → producing readonly tuple"
                     );
-                    let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, resolved);
-                    let final_readonly =
-                        !matches!(mapped.readonly_modifier, Some(MappedModifier::Remove));
-                    if final_readonly {
-                        Some(self.interner().readonly_type(mapped_tuple))
-                    } else {
-                        Some(mapped_tuple)
-                    }
+                    Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, resolved, true))
                 }
                 Some(TypeData::Array(element_type)) => {
                     tracing::trace!(
@@ -2013,6 +2018,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.interner().readonly_type(array_type)
         } else {
             self.interner().array(mapped_element)
+        }
+    }
+
+    /// Evaluate a homomorphic mapped type over a Tuple type, applying the
+    /// mapped type's `readonly` modifier at the tuple level.
+    ///
+    /// A tuple's readonly-ness is a property of the whole tuple (via the
+    /// `ReadonlyType` wrapper), not of individual elements, so the modifier is
+    /// resolved here with the standard homomorphic rule:
+    /// `+readonly` => readonly, `-readonly` => mutable, none => preserve the
+    /// source's readonly-ness (`source_readonly`). This mirrors
+    /// [`Self::evaluate_mapped_array_with_readonly`].
+    fn evaluate_mapped_tuple_with_readonly(
+        &mut self,
+        mapped: &MappedType,
+        tuple_id: TupleListId,
+        source: TypeId,
+        source_readonly: bool,
+    ) -> TypeId {
+        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, source);
+        let final_readonly = match mapped.readonly_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => source_readonly,
+        };
+        if final_readonly {
+            self.interner().readonly_type(mapped_tuple)
+        } else {
+            mapped_tuple
         }
     }
 
