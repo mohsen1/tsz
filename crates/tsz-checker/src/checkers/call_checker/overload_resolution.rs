@@ -218,6 +218,15 @@ impl<'a> CheckerState<'a> {
         // a fallback and continue trying later overloads which might have better
         // return context inference.
         let mut no_rcs_fallback: Option<NoReturnContextFallback> = None;
+        // Mark arguments whose type comes from a type annotation (typed
+        // identifier, `as`/`satisfies`/`as const`). The direct (non-overloaded)
+        // call path computes the same markers so generic inference treats their
+        // literals as non-fresh and does not re-widen them. Overload resolution
+        // must thread the same markers; otherwise an inferred type parameter
+        // (e.g. `Object.fromEntries`'s `T`) is widened `1 -> number` only
+        // because the call happened to be overloaded.
+        let arg_source_markers =
+            self.call_arg_source_type_annotation_markers(args, arg_types.len());
         for (idx, original_sig) in signatures.iter().enumerate() {
             let sig = self.overload_signature_for_inference(
                 original_sig,
@@ -262,12 +271,13 @@ impl<'a> CheckerState<'a> {
             {
                 (result, None, None)
             } else {
-                self.resolve_call_with_checker_adapter(
+                self.resolve_call_with_checker_adapter_maybe_arg_sources(
                     resolved_func_type,
                     &arg_types,
                     force_bivariant_callbacks,
                     sig_contextual_type,
                     None,
+                    &arg_source_markers,
                 )
             };
             if let CallResult::ArgumentTypeMismatch {
@@ -1033,12 +1043,13 @@ impl<'a> CheckerState<'a> {
                     candidate_callable_ctx,
                 );
                 let instantiated_params = self
-                    .resolve_call_with_checker_adapter(
+                    .resolve_call_with_checker_adapter_maybe_arg_sources(
                         resolved_func_type,
                         &round1_arg_types,
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         actual_this_type,
+                        &arg_source_markers,
                     )
                     .2;
                 let return_sub_for_preinfer = if sig_contextual_type.is_some() {
@@ -1290,12 +1301,13 @@ impl<'a> CheckerState<'a> {
             self.ensure_relation_input_ready(func_type);
 
             let (mut result, instantiated_predicate, instantiated_params) = self
-                .resolve_call_with_checker_adapter(
+                .resolve_call_with_checker_adapter_maybe_arg_sources(
                     resolved_func_type,
                     &sig_arg_types,
                     force_bivariant_callbacks,
                     sig_contextual_type,
                     actual_this_type,
+                    &arg_source_markers,
                 );
             if let CallResult::ArgumentTypeMismatch {
                 expected,
@@ -1427,12 +1439,13 @@ impl<'a> CheckerState<'a> {
                 self.ctx.in_const_assertion = prev_in_const_assertion_retry;
 
                 let (retry_result, retry_predicate, _retry_instantiated_params) = self
-                    .resolve_call_with_checker_adapter(
+                    .resolve_call_with_checker_adapter_maybe_arg_sources(
                         resolved_func_type,
                         &refreshed_arg_types,
                         force_bivariant_callbacks,
                         sig_contextual_type,
                         actual_this_type,
+                        &arg_source_markers,
                     );
                 if retry_predicate.is_some() {
                     selected_type_predicate = retry_predicate;
