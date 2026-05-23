@@ -869,6 +869,7 @@ impl<'a> Printer<'a> {
             .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         es5_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+        es5_emitter.set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
