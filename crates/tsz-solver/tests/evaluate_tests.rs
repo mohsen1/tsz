@@ -34222,6 +34222,113 @@ fn test_distributive_intrinsic_union() {
 }
 
 #[test]
+fn test_string_intrinsic_over_never_is_never() {
+    use crate::StringIntrinsicKind;
+
+    // `never` is the empty union; mapping zero members yields `never`.
+    // All four intrinsics must agree: Uppercase/Lowercase/Capitalize/Uncapitalize<never> = never.
+    let interner = TypeInterner::new();
+    for kind in [
+        StringIntrinsicKind::Uppercase,
+        StringIntrinsicKind::Lowercase,
+        StringIntrinsicKind::Capitalize,
+        StringIntrinsicKind::Uncapitalize,
+    ] {
+        let intrinsic = interner.string_intrinsic(kind, TypeId::NEVER);
+        let result = evaluate_type(&interner, intrinsic);
+        assert_eq!(
+            result,
+            TypeId::NEVER,
+            "string mapping {kind:?} over never should evaluate to never"
+        );
+    }
+}
+
+#[test]
+fn test_string_intrinsic_over_any_is_any() {
+    use crate::StringIntrinsicKind;
+
+    // `any` is not transformable / generic / a placeholder, so tsc returns the
+    // argument unchanged: Uppercase<any> = any (not `error`).
+    let interner = TypeInterner::new();
+    for kind in [
+        StringIntrinsicKind::Uppercase,
+        StringIntrinsicKind::Lowercase,
+        StringIntrinsicKind::Capitalize,
+        StringIntrinsicKind::Uncapitalize,
+    ] {
+        let intrinsic = interner.string_intrinsic(kind, TypeId::ANY);
+        let result = evaluate_type(&interner, intrinsic);
+        assert_eq!(
+            result,
+            TypeId::ANY,
+            "string mapping {kind:?} over any should evaluate to any"
+        );
+    }
+}
+
+#[test]
+fn test_string_intrinsic_non_empty_union_still_distributes() {
+    use crate::StringIntrinsicKind;
+
+    // Guard against over-broad short-circuiting: a non-empty union must still
+    // distribute member-wise, and an absorbed `never` member must not collapse
+    // the whole union to `never`.
+    let interner = TypeInterner::new();
+    let lit_a = interner.literal_string("a");
+    let lit_b = interner.literal_string("b");
+    let lit_upper_a = interner.literal_string("A");
+    let lit_upper_b = interner.literal_string("B");
+
+    let union_ab = interner.union(vec![lit_a, lit_b]);
+    let intrinsic = interner.string_intrinsic(StringIntrinsicKind::Uppercase, union_ab);
+    let result = evaluate_type(&interner, intrinsic);
+    let expected = interner.union(vec![lit_upper_a, lit_upper_b]);
+    assert_eq!(
+        result, expected,
+        "Uppercase<\"a\" | \"b\"> should be \"A\" | \"B\""
+    );
+
+    // `never` is absorbed when building the union, so this is identical to `"a"`.
+    let union_with_never = interner.union(vec![lit_a, TypeId::NEVER]);
+    let intrinsic2 = interner.string_intrinsic(StringIntrinsicKind::Uppercase, union_with_never);
+    let result2 = evaluate_type(&interner, intrinsic2);
+    assert_eq!(
+        result2, lit_upper_a,
+        "never absorbed in a union must not collapse the result to never"
+    );
+}
+
+#[test]
+fn test_string_intrinsic_over_type_param_stays_deferred() {
+    use crate::StringIntrinsicKind;
+
+    // Negative/fallback case: a generic type parameter argument must remain a
+    // deferred `StringIntrinsic`, not collapse to never or an error.
+    let interner = TypeInterner::new();
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("S"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    }));
+    let intrinsic = interner.string_intrinsic(StringIntrinsicKind::Uppercase, t_param);
+    let result = evaluate_type(&interner, intrinsic);
+    assert!(
+        matches!(
+            interner.lookup(result),
+            Some(TypeData::StringIntrinsic {
+                kind: StringIntrinsicKind::Uppercase,
+                ..
+            })
+        ),
+        "Uppercase<S> over a type parameter should stay deferred"
+    );
+    assert_ne!(result, TypeId::NEVER);
+    assert_ne!(result, TypeId::ERROR);
+}
+
+#[test]
 fn test_distributive_function_types() {
     // T extends (...args: any[]) => any ? "func" : "other"
     // with T = (() => void) | string | ((x: number) => string)
