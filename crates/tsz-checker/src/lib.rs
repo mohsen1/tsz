@@ -100,6 +100,9 @@ mod assertion_overlap_keyof_primitive_tests;
 #[path = "../tests/assertion_overlap_object_primitive_tests.rs"]
 mod assertion_overlap_object_primitive_tests;
 #[cfg(test)]
+#[path = "../tests/assertion_overlap_template_literal_tests.rs"]
+mod assertion_overlap_template_literal_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
@@ -394,6 +397,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/as_const_nested_literal_display_tests.rs"]
+mod as_const_nested_literal_display_tests;
+#[cfg(test)]
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
 #[cfg(test)]
@@ -481,6 +487,9 @@ mod for_in_narrowing_tests;
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
+#[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
+mod generic_callback_sibling_arg_inference_tests;
+#[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
 #[cfg(test)]
@@ -564,6 +573,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "../tests/keyof_function_type_is_never_tests.rs"]
+mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
