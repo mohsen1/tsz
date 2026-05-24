@@ -8,5 +8,6 @@ mod generic_spread;
 pub(crate) mod resolution;
 mod special_attribute_callbacks;
 mod synthesized_display;
+mod union_props;
 mod union_resolution_attrs;
 mod validation;
