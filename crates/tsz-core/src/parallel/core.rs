@@ -4211,39 +4211,32 @@ fn merge_bind_results_from_source(results: &mut impl BindResultsSource) -> Merge
                     // external modules, keep pure type-only top-level declarations file-scoped so
                     // unimported type aliases/interfaces do not leak across files. Value-bearing
                     // exports still stay visible because CommonJS/export-assignment and declaration
-                    // emit paths rely on them being reachable cross-file.
+                    // emit paths rely on them being reachable cross-file. This shares the single
+                    // `Symbol::is_cross_file_global` predicate with the checker's
+                    // `global_file_locals_index` builders so both cross-file tables agree.
                     let sym_info = global_symbols.get(new_sym_id);
-                    let is_alias =
-                        sym_info.is_some_and(|s| s.flags & crate::binder::symbol_flags::ALIAS != 0);
                     let is_umd = sym_info.is_some_and(|s| s.is_umd_export);
                     let is_declaration_file = result
                         .arena
                         .source_files
                         .first()
                         .is_some_and(|sf| sf.is_declaration_file);
-                    // Only top-level VALUE declarations that are actually exported
-                    // from the module should remain globally visible. Otherwise a
-                    // module-private const/let/var/function leaks into other files'
-                    // scopes via `program.globals` seeding of `file_locals`,
-                    // causing missing TS2304 ("Cannot find name") diagnostics for
-                    // references that should be unresolved.
-                    let has_value = sym_info.is_some_and(|s| {
-                        s.flags & crate::binder::symbol_flags::VALUE != 0 && s.is_exported
-                    });
-                    let is_module_decl = sym_info.is_some_and(|s| {
-                        s.flags
-                            & (crate::binder::symbol_flags::VALUE_MODULE
-                                | crate::binder::symbol_flags::NAMESPACE_MODULE)
-                            != 0
-                    });
                     let is_global_augmentation = result.global_augmentations.contains_key(name);
-                    let is_truly_global = (!is_alias
-                        && (!result.is_external_module
-                            || is_declaration_file
-                            || has_value
-                            || is_module_decl))
-                        || is_umd
-                        || is_global_augmentation;
+                    let is_truly_global = match sym_info {
+                        Some(s) => s.is_cross_file_global(
+                            result.is_external_module,
+                            is_declaration_file,
+                            is_global_augmentation,
+                        ),
+                        // When the merged symbol is unavailable, fall back to the
+                        // flagless classification (equivalent to a symbol with no
+                        // flags set), preserving the original behavior.
+                        None => {
+                            !result.is_external_module
+                                || is_declaration_file
+                                || is_global_augmentation
+                        }
+                    };
                     if is_truly_global {
                         // UMD namespace exports (`export as namespace Foo`) use
                         // "first in wins" semantics: when multiple modules declare
