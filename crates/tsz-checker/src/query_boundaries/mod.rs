@@ -35,6 +35,7 @@ pub(crate) mod js_exports;
 pub(crate) mod key_constraints;
 pub(crate) mod name_resolution;
 pub(crate) mod operator_wrappers;
+pub(crate) mod optional_chain;
 pub(crate) mod property_access;
 pub(crate) mod recursive_alias;
 pub(crate) mod relation_types;

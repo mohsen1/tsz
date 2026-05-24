@@ -1464,18 +1464,16 @@ impl<'a> CheckerState<'a> {
         // The inner function strips nullish from the object type, but the chain
         // can still short-circuit, so the result must include `| undefined`.
         if !request.flow.skip_flow_narrowing() {
-            self.maybe_add_chain_continuation_undefined(idx, result)
+            self.add_chain_continuation_undefined(idx, result)
         } else {
             result
         }
     }
 
-    fn maybe_add_chain_continuation_undefined(&mut self, idx: NodeIndex, result: TypeId) -> TypeId {
+    fn add_chain_continuation_undefined(&mut self, idx: NodeIndex, result: TypeId) -> TypeId {
         use crate::types_domain::computation::access::is_optional_chain;
 
-        if matches!(result, TypeId::ERROR | TypeId::ANY | TypeId::NEVER)
-            || crate::query_boundaries::common::type_contains_undefined(self.ctx.types, result)
-        {
+        if matches!(result, TypeId::ERROR | TypeId::ANY | TypeId::NEVER) {
             return result;
         }
         let Some(node) = self.ctx.arena.get(idx) else {
@@ -1497,7 +1495,10 @@ impl<'a> CheckerState<'a> {
         let obj_eval = self.evaluate_application_type(obj_type);
         let (_, nullish) = self.split_nullish_type(obj_eval);
         if nullish.is_some() {
-            crate::query_boundaries::common::union_with_undefined(self.ctx.types, result)
+            crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                result,
+            )
         } else {
             result
         }

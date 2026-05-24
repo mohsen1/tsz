@@ -1914,14 +1914,11 @@ impl<'a> CheckerState<'a> {
 
         // The chain can short-circuit at the `?.`; add back the `| undefined`
         // that was stripped when resolving the element access.
-        if is_chain_continuation
-            && !crate::query_boundaries::common::type_contains_undefined(
+        if is_chain_continuation {
+            result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
                 self.ctx.types,
                 result_type,
-            )
-        {
-            result_type =
-                crate::query_boundaries::common::union_with_undefined(self.ctx.types, result_type);
+            );
         }
 
         let result_type = if skip_flow_narrowing {
