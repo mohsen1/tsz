@@ -371,12 +371,7 @@ impl<'a> FlowAnalyzer<'a> {
                         return None;
                     };
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
-                    let evaluator =
-                        crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
-                    return match evaluator.evaluate(left_type, right_type, op_str) {
-                        BinaryOpResult::Success(result) => Some(result),
-                        BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
-                    };
+                    return Some(self.evaluate_binary_op(left_type, right_type, op_str));
                 }
             }
         }
@@ -674,10 +669,23 @@ impl<'a> FlowAnalyzer<'a> {
         let left_type = self.resolve_operand_type(left)?;
         let right_type = self.resolve_operand_type(right)?;
         let op_str = map_compound_assignment_to_binary(operator)?;
+        Some(self.evaluate_binary_op(left_type, right_type, op_str))
+    }
+
+    /// Evaluate `left <op> right` through the shared binary-operation boundary,
+    /// mapping a type error to `any` to avoid cascading diagnostics. Shared by
+    /// the compound-assignment result paths so both route through a single
+    /// `query_boundaries::common` call site.
+    fn evaluate_binary_op(
+        &self,
+        left_type: TypeId,
+        right_type: TypeId,
+        op_str: &'static str,
+    ) -> TypeId {
         let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
         match evaluator.evaluate(left_type, right_type, op_str) {
-            BinaryOpResult::Success(result) => Some(result),
-            BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
+            BinaryOpResult::Success(result) => result,
+            BinaryOpResult::TypeError { .. } => TypeId::ANY,
         }
     }
 
