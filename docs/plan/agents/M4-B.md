@@ -25,9 +25,10 @@ scripts/agents/list-owned-work.sh M4-B
   before claiming issue backlog.
 - Current open PRs owned by `agent:M4-B`:
   - `#10078` ready/off-auto; docs-only CI is green on
-    `c3ad1b959978208148972d5c45e279eaa03f9445`, but direct squash merge is
-    blocked by the protected-branch policy while required `Queue Tested` is
-    missing.
+    `094e074a0994a9a3684755b455471d3c090508f5`. Direct squash merge is
+    blocked by the protected-branch policy; the queue workflow invalidated
+    `Queue Tested` on synchronize and the follow-up queue run reported no
+    queue-ready auto-merge PR because auto-merge remains off by lane rule.
   - `#10058` ready/off-auto on rebased head
     `171fc3620611a4ba128b1d156f1ee8d739372bf1`; fresh CI is running to
     determine whether the earlier `conformance-aggregate` coverage gap
@@ -59,9 +60,10 @@ scripts/agents/list-owned-work.sh M4-B
 - `#9807` is the remaining draft/WIP PR that should be advanced or handed off
   before taking issue backlog.
 - `#9230`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
-  landed only after exact-head required checks are complete and green. `#10078`
-  currently lacks required `Queue Tested`, and `#10058` is waiting on fresh CI
-  after its rebase.
+  landed only after exact-head required checks are complete and green. For
+  `#10078`, required `Queue Tested` is still pending because auto-merge is not
+  armed; do not arm it under the lane rules while a required status is pending.
+  `#10058` is waiting on fresh CI after its rebase.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
   ownership unless explicitly handed off.
