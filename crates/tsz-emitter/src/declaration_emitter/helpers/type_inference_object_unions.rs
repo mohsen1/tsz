@@ -172,7 +172,9 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        let has_empty_arm = types.iter().any(|ty| ty.trim() == "{}");
+        // Top-level member names for each arm that is an object type literal
+        // (`{ ... }`); `None` for non-object arms (primitives, named refs,
+        // function types, etc.), which are left untouched.
         let object_arm_names = types
             .iter()
             .map(|ty| {
@@ -184,6 +186,7 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .collect::<Vec<_>>();
 
+        // Union of every property/method name appearing in any object arm.
         let mut property_names = Vec::<String>::new();
         for names in object_arm_names.iter().flatten() {
             for name in names {
@@ -196,28 +199,11 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if has_empty_arm {
-            let members = property_names
-                .into_iter()
-                .map(|name| format!("    {name}?: undefined;"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            let replacement = format!("{{\n{members}\n}}");
-            for ty in types.iter_mut() {
-                if ty.trim() == "{}" {
-                    *ty = replacement.clone();
-                }
-            }
-            return;
-        }
-
-        if !types
-            .iter()
-            .any(|ty| Self::object_type_has_top_level_method(ty))
-        {
-            return;
-        }
-
+        // tsc normalizes object literals in a union upon widening: every arm
+        // gains an optional `name?: undefined` member for each sibling
+        // property it does not itself declare. This applies to every object
+        // arm — the empty `{}` arm and property-only arms included — not just
+        // arms that happen to contain a method.
         for (ty, present_names) in types.iter_mut().zip(object_arm_names) {
             let Some(present_names) = present_names else {
                 continue;
@@ -237,12 +223,11 @@ impl<'a> DeclarationEmitter<'a> {
         type_text: &str,
         missing_names: &[String],
     ) -> String {
-        let missing_members = missing_names
-            .iter()
-            .map(|name| format!("    {name}?: undefined;"))
-            .collect::<Vec<_>>();
-
         if type_text.trim() == "{}" {
+            let missing_members = missing_names
+                .iter()
+                .map(|name| format!("    {name}?: undefined;"))
+                .collect::<Vec<_>>();
             return format!("{{\n{}\n}}", missing_members.join("\n"));
         }
 
@@ -251,6 +236,25 @@ impl<'a> DeclarationEmitter<'a> {
             .iter()
             .rposition(|line| line.trim() == "}")
             .unwrap_or(lines.len());
+
+        // Match the existing members' indentation so nested object arms (e.g.
+        // array elements inside a JSON object) keep their column alignment
+        // instead of being forced to a fixed two-level indent.
+        let indent: String = lines[..insert_at]
+            .iter()
+            .rev()
+            .find(|line| !line.trim().is_empty() && line.trim() != "{")
+            .map(|line| {
+                line.chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect()
+            })
+            .unwrap_or_else(|| "    ".to_string());
+
+        let missing_members = missing_names
+            .iter()
+            .map(|name| format!("{indent}{name}?: undefined;"))
+            .collect::<Vec<_>>();
         lines.splice(insert_at..insert_at, missing_members);
         lines.join("\n")
     }
@@ -275,30 +279,6 @@ impl<'a> DeclarationEmitter<'a> {
             depth = Self::update_object_text_brace_depth(depth, line);
         }
         names
-    }
-
-    pub(in crate::declaration_emitter) fn object_type_has_top_level_method(
-        type_text: &str,
-    ) -> bool {
-        let trimmed = type_text.trim();
-        if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
-            return false;
-        }
-
-        let mut depth = 0usize;
-        for line in trimmed.lines() {
-            if depth == 1
-                && Self::object_type_member_name_from_line(line, true).is_some_and(|name| {
-                    let trimmed_line = line.trim_start();
-                    trimmed_line.starts_with(&format!("{name}("))
-                        || trimmed_line.starts_with(&format!("{name}?("))
-                })
-            {
-                return true;
-            }
-            depth = Self::update_object_text_brace_depth(depth, line);
-        }
-        false
     }
 
     pub(in crate::declaration_emitter) fn update_object_text_brace_depth(
