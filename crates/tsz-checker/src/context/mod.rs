@@ -1315,16 +1315,12 @@ pub struct CheckerContext<'a> {
     /// gate instead of tsz's normal coarser policy.
     pub in_satisfies_operand: bool,
 
-    /// When true, preserve literal types instead of widening.
-    /// Set during evaluation of compound expression branches (conditional `?:`,
-    /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
-    /// `"a" | "b"` instead of `string`.
+    /// Preserve literal branch types for compound expressions (`?:`, `||`, `&&`, `??`)
+    /// so `const x = cond ? "a" : "b"` infers `"a" | "b"`.
     pub preserve_literal_types: bool,
 
     /// Preserve primitive literal operands for logical `const` initializers.
-    /// Kept separate so object/array literal widening is unchanged.
     pub preserve_logical_operand_literals: bool,
-
     /// When true, identifier resolution should return the symbol's declared
     /// type (when one is explicitly annotated) rather than a flow-narrowed
     /// type. Set during class property initializer evaluation so that
@@ -1836,7 +1832,11 @@ impl ProgramContext {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
+            let arena = self.all_arenas.get(file_idx).map(Arc::as_ref);
             for (name, &sym_id) in binder.file_locals.iter() {
+                if !binder.cross_file_local_is_visible(arena, file_idx, name, sym_id) {
+                    continue;
+                }
                 file_locals_index
                     .entry(name.to_string())
                     .or_insert_with(|| {

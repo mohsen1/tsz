@@ -407,9 +407,10 @@ impl<'a> LoweringPass<'a> {
                     && self.arena.get(clause.named_bindings).is_some_and(|n| {
                         // Check for true named bindings (not namespace import)
                         n.kind != syntax_kind_ext::NAMESPACE_IMPORT
-                            && self.arena.get_named_imports(n).is_some_and(|ni| {
-                                ni.name.is_none() || !ni.elements.nodes.is_empty()
-                            })
+                            && self
+                                .arena
+                                .get_named_imports(n)
+                                .is_some_and(|ni| self.named_imports_have_value_usage(node, &ni))
                     });
 
                 // Combined default + named import (e.g., `import foo, {bar} from "mod"`)
@@ -660,6 +661,93 @@ impl<'a> LoweringPass<'a> {
         }
         self.ctx.target_es5
             && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+    }
+
+    fn named_imports_have_value_usage(
+        &self,
+        node: &Node,
+        named_imports: &tsz_parser::parser::node::NamedImportsData,
+    ) -> bool {
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            return true;
+        }
+
+        named_imports.elements.nodes.iter().any(|&spec_idx| {
+            let Some(spec_node) = self.arena.get(spec_idx) else {
+                return true;
+            };
+            let Some(spec) = self.arena.get_specifier(spec_node) else {
+                return true;
+            };
+            if spec.is_type_only || self.ctx.options.type_only_nodes.contains(&spec_idx) {
+                return false;
+            }
+            let local_name = emit_utils::identifier_text_or_empty(self.arena, spec.name);
+            if local_name.is_empty() {
+                return true;
+            }
+            if self
+                .classic_jsx_factory_roots()
+                .iter()
+                .any(|root| root == &local_name)
+            {
+                return true;
+            }
+            let Some(source_text) = self.current_source_text else {
+                return true;
+            };
+            let haystack = self.source_after_import_statement(node, source_text);
+            let value_haystack = crate::import_usage::strip_type_only_content(haystack);
+            let value_haystack = crate::import_usage::strip_qualified_accesses_for_names(
+                &value_haystack,
+                &self.ctx.options.external_const_enum_bindings,
+            );
+            if crate::import_usage::contains_identifier_occurrence(&value_haystack, &local_name) {
+                return true;
+            }
+            if self.ctx.options.emit_decorator_metadata
+                && crate::import_usage::name_appears_in_decorator_metadata_type(
+                    haystack,
+                    &local_name,
+                )
+            {
+                return true;
+            }
+            self.ctx.target_es5
+                && self.async_return_type_uses_imported_promise_constructor_after_node(
+                    node,
+                    &[local_name],
+                )
+        })
+    }
+
+    fn source_after_import_statement<'b>(&self, node: &Node, source_text: &'b str) -> &'b str {
+        let mut start = if let Some(import_decl) = self.arena.get_import_decl(node)
+            && let Some(module_node) = self.arena.get(import_decl.module_specifier)
+        {
+            module_node.end as usize
+        } else {
+            node.end as usize
+        };
+        start = start.min(source_text.len());
+        let bytes = source_text.as_bytes();
+        while start < bytes.len() {
+            match bytes[start] {
+                b'\n' => {
+                    start += 1;
+                    break;
+                }
+                b'\r' => {
+                    start += 1;
+                    if start < bytes.len() && bytes[start] == b'\n' {
+                        start += 1;
+                    }
+                    break;
+                }
+                _ => start += 1,
+            }
+        }
+        &source_text[start..]
     }
 
     fn async_return_type_uses_imported_promise_constructor_after_node(
