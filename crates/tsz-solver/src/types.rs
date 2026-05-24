@@ -1609,6 +1609,23 @@ pub struct MappedType {
     pub optional_modifier: Option<MappedModifier>,
 }
 
+impl MappedType {
+    /// Resolve the result `readonly`-ness of a homomorphic mapped type applied
+    /// to an array/tuple source.
+    ///
+    /// `+readonly` always makes the result readonly, `-readonly` always makes
+    /// it mutable, and an absent modifier copies the source's readonly-ness
+    /// (the homomorphic "copy modifiers" behavior `tsc` uses for arrays/tuples,
+    /// mirroring per-property modifier copying for object sources).
+    pub const fn resolve_readonly(&self, source_readonly: bool) -> bool {
+        match self.readonly_modifier {
+            Some(MappedModifier::Add) => true,
+            Some(MappedModifier::Remove) => false,
+            None => source_readonly,
+        }
+    }
+}
+
 /// Mapped type modifier (+/-)
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum MappedModifier {

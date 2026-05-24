@@ -1997,14 +1997,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             mapped_element = self.interner().union2(mapped_element, TypeId::UNDEFINED);
         }
 
-        // Apply readonly modifier if present
-        let final_readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => is_readonly, // Preserve original readonly status
-        };
-
-        if final_readonly {
+        // Apply readonly modifier (homomorphic: copy source readonly when absent)
+        if mapped.resolve_readonly(is_readonly) {
             // Wrap the array type in ReadonlyType to get readonly semantics
             let array_type = self.interner().array(mapped_element);
             self.interner().readonly_type(array_type)
@@ -2029,12 +2023,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_readonly: bool,
     ) -> TypeId {
         let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
-        let final_readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => source_readonly,
-        };
-        if final_readonly {
+        if mapped.resolve_readonly(source_readonly) {
             self.interner().readonly_type(mapped_tuple)
         } else {
             mapped_tuple
