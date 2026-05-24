@@ -10,6 +10,7 @@
 //! infinite") for such aliases; these helpers let the evaluator do the same.
 
 use crate::def::DefId;
+use crate::instantiation::instantiate::instantiate_generic;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{LiteralValue, TypeData, TypeId};
 
@@ -103,5 +104,62 @@ impl<R: TypeResolver> TypeEvaluator<'_, R> {
         }
         let charge = u32::try_from(weight).unwrap_or(u32::MAX);
         self.interner().consume_evaluation_fuel(charge)
+    }
+
+    /// Instantiate an Application type WITHOUT recursively evaluating the result.
+    ///
+    /// For tail-call optimization in conditional types: expands `TrimLeft<T>`
+    /// to its body with args substituted, but does NOT call `evaluate()` on
+    /// the result. This avoids incrementing the depth guard, allowing the
+    /// tail-call loop in `evaluate_conditional` to handle the result directly.
+    ///
+    /// Returns `Some(instantiated_body)` if the type is an Application that
+    /// could be instantiated. Returns `None` if the type is not an Application,
+    /// or if it couldn't be resolved/instantiated.
+    ///
+    /// The per-`DefId` depth guard is deliberately *not* incremented here so
+    /// convergent tail recursion (e.g. `Trim`, which needs 128+ iterations for
+    /// long strings) is not capped at `MAX_DEF_DEPTH`. `detect_recursive_growth`
+    /// bounds the complementary *divergent* case instead.
+    pub(crate) fn try_instantiate_application_for_tail_call(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<TypeId> {
+        let app_id = match self.interner().lookup(type_id) {
+            Some(TypeData::Application(app_id)) => app_id,
+            _ => return None,
+        };
+
+        let app = self.interner().type_application(app_id);
+
+        let base_key = self.interner().lookup(app.base)?;
+        let def_id = match base_key {
+            TypeData::Lazy(def_id) => Some(def_id),
+            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
+            _ => None,
+        }?;
+
+        let type_params = self.resolver().get_lazy_type_params(def_id)?;
+        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+
+        let body_is_conditional_with_app_infer =
+            self.is_conditional_with_application_infer(resolved);
+        let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional_with_app_infer {
+            std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(&app.args))
+        } else {
+            self.expand_type_args(&app.args)
+        };
+
+        // Bail with TS2589 when the recursive argument is diverging rather than
+        // building an ever-larger type.
+        if self.detect_recursive_growth(def_id, &expanded_args) {
+            self.mark_depth_exceeded();
+            return Some(TypeId::ERROR);
+        }
+
+        // Instantiate the body with the type arguments — but do NOT evaluate.
+        let instantiated =
+            instantiate_generic(self.interner(), resolved, &type_params, &expanded_args);
+        Some(instantiated)
     }
 }

@@ -574,68 +574,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.guard.mark_exceeded();
     }
 
-    /// Instantiate an Application type WITHOUT recursively evaluating the result.
-    ///
-    /// For tail-call optimization in conditional types: expands `TrimLeft<T>`
-    /// to its body with args substituted, but does NOT call `evaluate()` on
-    /// the result. This avoids incrementing the depth guard, allowing the
-    /// tail-call loop in `evaluate_conditional` to handle the result directly.
-    ///
-    /// Returns `Some(instantiated_body)` if the type is an Application that
-    /// could be instantiated. Returns `None` if the type is not an Application,
-    /// or if it couldn't be resolved/instantiated.
-    pub(crate) fn try_instantiate_application_for_tail_call(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<TypeId> {
-        let app_id = match self.interner.lookup(type_id) {
-            Some(TypeData::Application(app_id)) => app_id,
-            _ => return None,
-        };
-
-        let app = self.interner.type_application(app_id);
-
-        let base_key = self.interner.lookup(app.base)?;
-        let def_id = match base_key {
-            TypeData::Lazy(def_id) => Some(def_id),
-            TypeData::TypeQuery(sym_ref) => self.resolver.symbol_to_def_id(sym_ref),
-            _ => None,
-        }?;
-
-        let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved = self.resolver.resolve_lazy(def_id, self.interner)?;
-
-        // Do NOT check/increment def_depth for tail-call instantiations.
-        // The caller (tail-call loop in evaluate_conditional) has its own
-        // MAX_TAIL_RECURSION_DEPTH (1000) limit. Incrementing def_depth here
-        // defeats tail-call optimization by hitting MAX_DEF_DEPTH (100) first.
-        // Example: `type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S`
-        // needs 128+ iterations for long strings.
-
-        // Expand type arguments
-        let body_is_conditional_with_app_infer =
-            self.is_conditional_with_application_infer(resolved);
-        let expanded_args: std::borrow::Cow<'_, [TypeId]> = if body_is_conditional_with_app_infer {
-            std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(&app.args))
-        } else {
-            self.expand_type_args(&app.args)
-        };
-
-        // Divergence guard. The tail-call path deliberately skips the per-DefId
-        // depth guard so convergent tail recursion (e.g. `Trim`) can iterate past
-        // MAX_DEF_DEPTH, which would otherwise let a *growing* recursive alias
-        // reached through an `infer`/conditional wrapper expand without bound.
-        if self.detect_recursive_growth(def_id, &expanded_args) {
-            self.mark_depth_exceeded();
-            return Some(TypeId::ERROR);
-        }
-
-        // Instantiate the body with the type arguments — but do NOT evaluate
-        let instantiated =
-            instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
-        Some(instantiated)
-    }
-
     /// Global thread-local depth counter for cross-evaluator stack overflow prevention.
     ///
     /// Each `SubtypeChecker::evaluate_type` creates a fresh `TypeEvaluator` with fresh
@@ -1968,7 +1906,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Check if a type is a Conditional whose `extends_type` is an Application containing infer.
     /// This detects patterns like `T extends Promise<infer U> ? U : T`.
-    fn is_conditional_with_application_infer(&self, type_id: TypeId) -> bool {
+    pub(crate) fn is_conditional_with_application_infer(&self, type_id: TypeId) -> bool {
         if type_id.is_intrinsic() {
             return false;
         }
@@ -1985,7 +1923,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Like `expand_type_args` but preserves Application types without evaluating them.
     /// Used for conditional type bodies so the conditional evaluator can match
     /// at the Application level for infer pattern matching.
-    fn expand_type_args_preserve_applications(&mut self, args: &[TypeId]) -> Vec<TypeId> {
+    pub(crate) fn expand_type_args_preserve_applications(
+        &mut self,
+        args: &[TypeId],
+    ) -> Vec<TypeId> {
         // Fast path: check if any non-Application arg needs expansion.
         let needs_expansion = args.iter().any(|&arg| {
             if arg.is_intrinsic() {
