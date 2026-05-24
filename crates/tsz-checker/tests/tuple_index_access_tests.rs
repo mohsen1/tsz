@@ -30,6 +30,36 @@ const result = apply((x: number) => x.toString(), 42);
 }
 
 #[test]
+fn parameters_utility_numeric_index_detection_is_syntactic() {
+    let source = r#"
+type Parameters<T extends (...args: any) => any> = T extends (...args: infer P) => any ? P : never;
+type ConstructorParameters<T extends new (...args: any) => any> =
+  T extends new (...args: infer P) => any ? P : never;
+
+function call<T extends (x: any) => any>(fn: T, arg: Parameters <T>[0]) {
+  return fn(arg);
+}
+
+class Box {
+  constructor(value: string) {}
+}
+function make<C extends new (value: any) => any>(ctor: C, value: (ConstructorParameters <C>)[0]) {
+  return new ctor(value);
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2536: Vec<_> = diagnostics.iter().filter(|d| d.code == 2536).collect();
+    assert!(
+        ts2536.is_empty(),
+        "Expected spaced Parameters/ConstructorParameters numeric indexes to avoid TS2536. Got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn readonly_variadic_tuple_to_mutable_variadic_tuple_emits_ts4104() {
     let diagnostics = check_source_diagnostics(
         r"
