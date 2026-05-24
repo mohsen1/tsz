@@ -355,6 +355,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // The solver otherwise resolves `globalThis` to `any` in the
                 // emit boundary, producing a less-informative annotation.
                 self.write(": typeof globalThis");
+            } else if has_initializer
+                && self.initializer_references_elided_namespace_require_import(initializer)
+            {
+                self.write(": any");
             } else if keyword != "const"
                 && has_initializer
                 && !js_has_jsdoc_type
@@ -400,13 +404,35 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = jsdoc_type_text.as_deref()
             {
                 self.write(": ");
-                self.write(&self.jsdoc_type_text_for_declaration_emit(type_text));
+                let type_text = self.jsdoc_type_text_for_declaration_emit(type_text);
+                self.write(&type_text);
+                if keyword == "const"
+                    && has_initializer
+                    && (self.get_identifier_text(initializer).as_deref() == Some("undefined")
+                        || self
+                            .arena
+                            .get(initializer)
+                            .is_some_and(|node| node.kind == SyntaxKind::UndefinedKeyword as u16))
+                    && !matches!(type_text.as_str(), "void" | "undefined" | "null")
+                    && !Self::type_text_has_undefined_branch(&type_text)
+                {
+                    self.write(" | undefined");
+                }
             } else if self.source_is_js_file
                 && has_initializer
                 && let Some(type_text) = self.js_special_initializer_type_text(initializer)
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if self.source_is_js_file
+                && has_initializer
+                && self.variable_declaration_has_effective_export(decl_idx)
+                && let Some((local_name, _, _)) =
+                    self.js_require_property_import_alias_for_value_expression(initializer)
+            {
+                self.record_js_require_property_import_alias_for_new_expression(initializer);
+                self.write(": ");
+                self.write(&local_name);
             } else if has_initializer
                 && let Some(type_text) = self.as_const_single_spread_array_type_text(initializer)
             {
@@ -439,6 +465,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
             {
                 self.write(": ");
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -447,6 +475,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 let type_text = if declaration_has_effective_export {
                     self.record_js_require_property_import_alias_for_new_expression(initializer)
                         .unwrap_or(type_text)
@@ -463,6 +493,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 let type_text = if declaration_has_effective_export {
                     self.record_js_require_property_import_alias_for_new_expression(initializer)
                         .unwrap_or(type_text)
@@ -577,6 +609,9 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = template_index_type;
                 }
+                type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+                type_text = self.imported_call_public_type_text(initializer, &type_text);
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -987,6 +1022,17 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = if self.source_is_js_file
+                    && has_initializer
+                    && self.is_js_named_exported_name(decl_name)
+                    && let Some((local_name, _, _)) =
+                        self.js_require_property_import_alias_for_value_expression(initializer)
+                {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer);
+                    local_name
+                } else {
+                    selected_type_text
+                };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
@@ -1001,9 +1047,17 @@ impl<'a> DeclarationEmitter<'a> {
                 let selected_type_text =
                     Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
                         .unwrap_or(selected_type_text);
-                let selected_type_text = if has_initializer && declaration_has_effective_export {
-                    self.record_js_require_property_import_alias_for_new_expression(initializer)
-                        .unwrap_or(selected_type_text)
+                let selected_type_text = if has_initializer {
+                    let selected_type_text = self.rewrite_initializer_import_equals_type_text(
+                        initializer,
+                        selected_type_text,
+                    );
+                    if declaration_has_effective_export {
+                        self.record_js_require_property_import_alias_for_new_expression(initializer)
+                            .unwrap_or(selected_type_text)
+                    } else {
+                        selected_type_text
+                    }
                 } else {
                     selected_type_text
                 };
@@ -1209,7 +1263,9 @@ impl<'a> DeclarationEmitter<'a> {
             }
 
             let &type_idx = heritage.types.nodes.first()?;
-            if self.is_entity_name_heritage(type_idx) {
+            if self.is_entity_name_heritage(type_idx)
+                && !self.js_entity_extends_needs_synthetic_alias(type_idx)
+            {
                 return None;
             }
 
@@ -1223,6 +1279,188 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    pub(in crate::declaration_emitter) fn js_entity_extends_needs_synthetic_alias(
+        &self,
+        type_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let expr_idx = self
+            .arena
+            .get(type_idx)
+            .and_then(|type_node| self.arena.get_expr_type_args(type_node))
+            .map(|eta| eta.expression)
+            .unwrap_or(type_idx);
+        if self
+            .nameable_constructor_expression_text(expr_idx)
+            .is_none()
+        {
+            return false;
+        }
+        !self.constructor_reference_resolves_to_class(expr_idx)
+    }
+
+    fn constructor_reference_resolves_to_class(&self, expr_idx: NodeIndex) -> bool {
+        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && let Some(binder) = self.binder
+            && binder.lib_symbol_ids.contains(&sym_id)
+        {
+            return true;
+        }
+
+        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && let Some(binder) = self.binder
+            && let Some(symbol) = binder.symbols.get(sym_id)
+            && (symbol.flags & symbol_flags::CLASS != 0
+                || symbol.declarations.iter().copied().any(|decl_idx| {
+                    self.arena.get(decl_idx).is_some_and(|decl_node| {
+                        decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                    })
+                }))
+        {
+            return true;
+        }
+
+        let Some(expr_name) = self.get_identifier_text(expr_idx) else {
+            return false;
+        };
+        self.arena.nodes.iter().any(|decl_node| {
+            self.arena.get_class(decl_node).is_some_and(|class| {
+                self.get_identifier_text(class.name).as_deref() == Some(expr_name.as_str())
+            })
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn js_extends_entity_reference_has_any_annotation(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        self.source_is_js_file
+            && self
+                .js_extends_entity_reference_declared_type_text(expr_idx)
+                .is_some_and(|type_text| {
+                    self.jsdoc_type_text_for_declaration_emit(&type_text).trim() == "any"
+                })
+    }
+
+    pub(in crate::declaration_emitter) fn js_extends_entity_reference_declared_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        self.reference_declared_type_annotation_text(expr_idx)
+            .or_else(|| self.value_reference_initializer_asserted_type_text(expr_idx))
+    }
+
+    fn value_reference_initializer_asserted_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(expr_idx)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_declaration_symbol(raw_sym_id, binder));
+
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
+            let decl_node = source_arena.get(decl_idx)?;
+            let initializer = source_arena
+                .get_variable_declaration(decl_node)
+                .and_then(|decl| decl.initializer.is_some().then_some(decl.initializer))
+                .or_else(|| {
+                    source_arena
+                        .get_property_decl(decl_node)
+                        .and_then(|decl| decl.initializer.is_some().then_some(decl.initializer))
+                })?;
+
+            if std::ptr::eq(source_arena, self.arena) {
+                return self
+                    .explicit_asserted_type_text(initializer)
+                    .or_else(|| self.jsdoc_type_text_for_node(initializer));
+            }
+
+            let asserted_type =
+                Self::explicit_asserted_type_node_from_arena(source_arena, initializer)?;
+            let type_text =
+                self.type_annotation_text_from_arena_node(source_arena, asserted_type)?;
+            Some(self.jsdoc_type_text_for_declaration_emit(&type_text))
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn js_variable_dependency_is_synthetic_class_extends_alias_source(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        if !self.source_is_js_file
+            || !self.public_api_filter_enabled()
+            || self
+                .get_identifier_text(name_idx)
+                .is_some_and(|name| self.public_api_type_surface_contains_typeof_name(&name))
+        {
+            return false;
+        }
+        let Some(source_sym_id) = self.declaration_name_symbol(name_idx) else {
+            return false;
+        };
+        let source_name = self.get_identifier_text(name_idx);
+
+        self.arena
+            .nodes
+            .iter()
+            .enumerate()
+            .any(|(class_idx, class_node)| {
+                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                    return false;
+                }
+                let Some(class) = self.arena.get_class(class_node) else {
+                    return false;
+                };
+                let Ok(class_idx) = u32::try_from(class_idx) else {
+                    return false;
+                };
+                let class_idx = NodeIndex(class_idx);
+                let wrapped_export = self.arena.nodes.iter().any(|node| {
+                    self.arena
+                        .get_export_decl(node)
+                        .is_some_and(|export| export.export_clause == class_idx)
+                });
+                let parent_export = self
+                    .arena
+                    .get_extended(class_idx)
+                    .map(|ext| ext.parent)
+                    .is_some_and(|parent| self.statement_has_effective_export(parent));
+                if !self.statement_has_effective_export(class_idx)
+                    && !wrapped_export
+                    && !parent_export
+                    && !self.should_emit_public_api_dependency(class.name)
+                {
+                    return false;
+                }
+                let Some(heritage) = class.heritage_clauses.as_ref() else {
+                    return false;
+                };
+                let Some((type_idx, expr_idx)) = self.non_nameable_extends_heritage_type(heritage)
+                else {
+                    return false;
+                };
+                let reference_name = self.nameable_constructor_expression_text(expr_idx);
+                self.js_entity_extends_needs_synthetic_alias(type_idx)
+                    && (self.value_reference_symbol(expr_idx) == Some(source_sym_id)
+                        || (source_name.is_some() && reference_name == source_name))
+            })
+    }
+
+    fn declaration_name_symbol(&self, name_idx: NodeIndex) -> Option<SymbolId> {
+        let binder = self.binder?;
+        binder.node_symbols.get(&name_idx.0).copied().or_else(|| {
+            self.get_identifier_text(name_idx)
+                .and_then(|name| binder.file_locals.get(&name))
+        })
     }
 
     pub(in crate::declaration_emitter) fn initializer_is_new_expression(
@@ -1391,7 +1629,14 @@ impl<'a> DeclarationEmitter<'a> {
         self.write(&alias_name);
         self.write(": ");
         let type_text = self.print_synthetic_class_extends_alias_type(type_id);
-        let source_type_text = self.synthetic_class_extends_alias_source_type_text(heritage);
+        let source_type_text = self
+            .synthetic_class_extends_alias_source_type_text(heritage)
+            .or_else(|| {
+                let heritage = heritage?;
+                let (_, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
+                self.js_extends_entity_reference_declared_type_text(expr_idx)
+                    .map(|type_text| self.jsdoc_type_text_for_declaration_emit(&type_text))
+            });
         let prefer_source_text = type_text == "never"
             || source_type_text.as_ref().is_some_and(|source_text| {
                 source_text.contains(" & ")
