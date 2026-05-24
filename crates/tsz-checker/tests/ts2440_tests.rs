@@ -437,3 +437,107 @@ export = qux;
         get_diagnostics(source)
     );
 }
+
+// =========================================================================
+// Module augmentation members (`declare module "base" { interface X {} }`)
+// are contributions to the augmented module's export table, not local
+// declarations in the augmenting file. Importing the same name from that
+// module must NOT report TS2440. (Mirrors Check 1 / Check 2 symmetry.)
+// =========================================================================
+
+fn multi_file_codes(files: &[(&str, &str)], entry: &str) -> Vec<u32> {
+    crate::test_utils::check_multi_file(files, entry, CheckerOptions::default())
+        .into_iter()
+        .map(|d| d.code)
+        .collect()
+}
+
+#[test]
+fn test_augmentation_member_plus_import_of_same_name_no_ts2440() {
+    let base = r#"
+declare module "base" {
+  export interface Opts { a: number; }
+}
+"#;
+    let aug = r#"
+import "base";
+declare module "base" {
+  interface Opts { b: string; }
+}
+import { Opts } from "base";
+const o: Opts = { a: 1, b: "x" };
+"#;
+    let codes = multi_file_codes(&[("base.d.ts", base), ("aug.ts", aug)], "aug.ts");
+    assert!(
+        !codes.contains(&2440),
+        "Augmentation member + import of same name must NOT emit TS2440. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_augmentation_member_plus_import_renamed_no_ts2440() {
+    // Same shape, different name — proves the fix is structural, not hardcoded.
+    let base = r#"
+declare module "base" {
+  export interface Settings { a: number; }
+}
+"#;
+    let aug = r#"
+import "base";
+declare module "base" {
+  interface Settings { b: string; }
+}
+import { Settings } from "base";
+const s: Settings = { a: 1, b: "x" };
+"#;
+    let codes = multi_file_codes(&[("base.d.ts", base), ("aug.ts", aug)], "aug.ts");
+    assert!(
+        !codes.contains(&2440),
+        "Renamed augmentation member + import must NOT emit TS2440. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_augmentation_member_exported_plus_import_no_ts2440() {
+    // Augmentation member written with the `export` keyword (vs bare member).
+    let base = r#"
+declare module "base" {
+  export interface Opts { a: number; }
+}
+"#;
+    let aug = r#"
+import "base";
+declare module "base" {
+  export interface Opts { b: string; }
+}
+import { Opts } from "base";
+const o: Opts = { a: 1, b: "x" };
+"#;
+    let codes = multi_file_codes(&[("base.d.ts", base), ("aug.ts", aug)], "aug.ts");
+    assert!(
+        !codes.contains(&2440),
+        "Exported augmentation member + import must NOT emit TS2440. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn test_genuine_local_interface_plus_import_still_conflicts() {
+    // Negative control: a genuine top-level local interface (NOT inside an
+    // augmentation) colliding with a type-bearing import must still report
+    // TS2440. This proves the fix only relaxes augmentation-scoped members.
+    let base = r#"
+declare module "base" {
+  export interface Opts { a: number; }
+}
+"#;
+    let use_ts = r#"
+import { Opts } from "base";
+interface Opts { b: string; }
+const o: Opts = { a: 1, b: "x" };
+"#;
+    let codes = multi_file_codes(&[("base.d.ts", base), ("use.ts", use_ts)], "use.ts");
+    assert!(
+        codes.contains(&2440),
+        "Genuine local interface colliding with import must still emit TS2440. Got: {codes:?}"
+    );
+}

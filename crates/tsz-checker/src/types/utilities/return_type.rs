@@ -5,6 +5,7 @@
 //! and checking for explicit `any` assertion returns.
 
 use crate::context::TypingRequest;
+use crate::query_boundaries::function_returns as return_type_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -21,10 +22,7 @@ impl<'a> CheckerState<'a> {
         if return_context == TypeId::ANY
             || return_context == TypeId::UNKNOWN
             || self.type_has_unresolved_inference_holes(return_context)
-            || crate::query_boundaries::common::contains_type_parameters(
-                self.ctx.types,
-                return_context,
-            )
+            || return_type_queries::contains_type_parameters(self.ctx.types, return_context)
         {
             return None;
         }
@@ -72,8 +70,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn return_context_is_async_array_union_context(&self, return_context: TypeId) -> bool {
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, return_context)
+        let Some(members) = return_type_queries::union_members(self.ctx.types, return_context)
         else {
             return false;
         };
@@ -81,18 +78,16 @@ impl<'a> CheckerState<'a> {
         let mut saw_array = false;
         let mut saw_promise_wrapped_array = false;
         for member in members {
-            if crate::query_boundaries::common::array_element_type(self.ctx.types, member).is_some()
-            {
+            if return_type_queries::array_element_type(self.ctx.types, member).is_some() {
                 saw_array = true;
                 continue;
             }
 
             if let Some((base, args)) =
-                crate::query_boundaries::common::application_info(self.ctx.types, member)
+                return_type_queries::application_info(self.ctx.types, member)
                 && args.len() == 1
                 && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
-                && crate::query_boundaries::common::array_element_type(self.ctx.types, args[0])
-                    .is_some()
+                && return_type_queries::array_element_type(self.ctx.types, args[0]).is_some()
             {
                 saw_promise_wrapped_array = true;
             }
@@ -451,7 +446,7 @@ impl<'a> CheckerState<'a> {
             return type_id;
         }
 
-        if crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id).is_some() {
+        if return_type_queries::lazy_def_id(self.ctx.types, type_id).is_some() {
             return type_id;
         }
 
@@ -462,13 +457,13 @@ impl<'a> CheckerState<'a> {
 
     fn record_index_access_value_type(&self, type_id: TypeId) -> Option<TypeId> {
         let (object_type, _index_type) =
-            crate::query_boundaries::common::index_access_types(self.ctx.types, type_id)?;
+            return_type_queries::index_access_types(self.ctx.types, type_id)?;
         let app_type = self
             .ctx
             .types
             .get_display_alias(object_type)
             .unwrap_or(object_type);
-        let app = crate::query_boundaries::common::type_application(self.ctx.types, app_type)?;
+        let app = return_type_queries::type_application(self.ctx.types, app_type)?;
         if !self.application_alias_maps_keys_to_second_type_arg(app.base) || app.args.len() != 2 {
             return None;
         }
@@ -476,8 +471,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn application_alias_maps_keys_to_second_type_arg(&self, base: TypeId) -> bool {
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, base)
-        else {
+        let Some(def_id) = return_type_queries::lazy_def_id(self.ctx.types, base) else {
             return false;
         };
         let Some(def) = self.ctx.definition_store.get(def_id) else {
@@ -489,12 +483,11 @@ impl<'a> CheckerState<'a> {
         let Some(body) = def.body else {
             return false;
         };
-        let Some(mapped) = crate::query_boundaries::common::mapped_type_info(self.ctx.types, body)
-        else {
+        let Some(mapped) = return_type_queries::mapped_type_info(self.ctx.types, body) else {
             return false;
         };
         let Some(template_param) =
-            crate::query_boundaries::common::type_param_info(self.ctx.types, mapped.template)
+            return_type_queries::type_param_info(self.ctx.types, mapped.template)
         else {
             return false;
         };
@@ -802,8 +795,7 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_lazy_class_to_constructor(&self, type_id: TypeId) -> TypeId {
         use tsz_solver::SymbolRef;
 
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
-        else {
+        let Some(def_id) = return_type_queries::lazy_def_id(self.ctx.types, type_id) else {
             return type_id;
         };
 
@@ -892,9 +884,9 @@ impl<'a> CheckerState<'a> {
         // results (e.g., `unbox(a)` resolving W=B instead of W=T[]).
         // This matches tsc's behavior where type parameter contextual return types
         // do not flow into inner call expression inference.
-        use crate::query_boundaries::common::type_param_info;
-        let effective_return_context =
-            return_context.filter(|&ctx_type| type_param_info(self.ctx.types, ctx_type).is_none());
+        let effective_return_context = return_context.filter(|&ctx_type| {
+            return_type_queries::type_param_info(self.ctx.types, ctx_type).is_none()
+        });
         let request = match effective_return_context {
             Some(ctx_type) => TypingRequest::with_contextual_type(ctx_type),
             None => TypingRequest::NONE,
@@ -930,19 +922,17 @@ impl<'a> CheckerState<'a> {
                     return_type,
                     contextual_type,
                 )
-                || (crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    return_type,
-                ) && self
-                    .ctx
-                    .arena
-                    .get_call_expr_at(expr_idx)
-                    .is_some_and(|new_expr| {
-                        self.contextual_application_matches_new_target(
-                            new_expr.expression,
-                            contextual_type,
-                        )
-                    })))
+                || (return_type_queries::contains_type_parameters(self.ctx.types, return_type)
+                    && self
+                        .ctx
+                        .arena
+                        .get_call_expr_at(expr_idx)
+                        .is_some_and(|new_expr| {
+                            self.contextual_application_matches_new_target(
+                                new_expr.expression,
+                                contextual_type,
+                            )
+                        })))
         {
             return_type = contextual_type;
         }
