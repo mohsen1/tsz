@@ -298,6 +298,7 @@ mod fix_verification;
 mod generics_and_ambient;
 mod jsdoc_template_defaults;
 mod misc_features;
+mod misc_inference_features;
 mod probes_issues;
 mod probes_systematic;
 mod probes_tsc_comparison;
