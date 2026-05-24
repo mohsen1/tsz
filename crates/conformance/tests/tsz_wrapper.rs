@@ -1385,44 +1385,46 @@ test.ts(1,1): error TS2304: Cannot find name 'missing'.";
 }
 
 #[test]
-fn test_parse_batch_output_drops_fingerprints_for_filtered_codes() {
+fn test_parse_batch_output_retains_all_ts2430_diagnostics() {
     let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.\n\
 test.ts(2,1): error TS2304: Cannot find name 'missing'.";
     let root = std::path::Path::new("/tmp/tsz-test");
 
     let result = parse_batch_output(output, root, HashMap::new());
 
-    assert_eq!(result.error_codes, vec![2304]);
-    assert_eq!(result.diagnostic_fingerprints.len(), 1);
-    assert_eq!(result.diagnostic_fingerprints[0].code, 2304);
+    assert_eq!(result.error_codes, vec![2430, 2304]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 2);
 }
 
 #[test]
-fn test_parse_batch_output_filters_fingerprints_per_diagnostic_line() {
+fn test_parse_batch_output_retains_all_fingerprints_per_diagnostic_line() {
     let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.\n\
 test.ts(2,1): error TS2430: Interface 'Kept' incorrectly extends interface 'Base'.";
     let root = std::path::Path::new("/tmp/tsz-test");
 
     let result = parse_batch_output(output, root, HashMap::new());
 
-    assert_eq!(result.error_codes, vec![2430]);
-    assert_eq!(result.diagnostic_fingerprints.len(), 1);
+    assert_eq!(result.error_codes, vec![2430, 2430]);
+    assert_eq!(result.diagnostic_fingerprints.len(), 2);
     assert_eq!(result.diagnostic_fingerprints[0].code, 2430);
-    assert_eq!(result.diagnostic_fingerprints[0].line, 2);
-    assert_eq!(result.diagnostic_fingerprints[0].column, 1);
+    assert_eq!(result.diagnostic_fingerprints[0].line, 1);
+    assert_eq!(result.diagnostic_fingerprints[1].code, 2430);
+    assert_eq!(result.diagnostic_fingerprints[1].line, 2);
 }
 
 #[test]
-fn test_parse_diagnostic_fingerprints_filters_nonretained_codes() {
+fn test_parse_diagnostic_fingerprints_retains_ts2430() {
     let output = "test.ts(1,1): error TS2430: Interface 'I' incorrectly extends interface 'A'.";
     let root = std::path::Path::new("/tmp/tsz-test");
 
     let fingerprints = parse_diagnostic_fingerprints_from_text(output, root);
 
-    assert!(
-        fingerprints.is_empty(),
-        "fingerprints should mirror retained diagnostic codes",
+    assert_eq!(
+        fingerprints.len(),
+        1,
+        "TS2430 fingerprints must not be filtered by diagnostic message content"
     );
+    assert_eq!(fingerprints[0].code, 2430);
 }
 
 #[test]
@@ -1786,9 +1788,6 @@ fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
     // sanctioned place to hardcode fingerprint shapes. New ad-hoc
     // `is_extra_*` predicates in `tsz_wrapper.rs` recreate the §25 anti-pattern.
     //
-    // One historical helper (`is_extra_signature_inheritance_*`) is grandfathered
-    // until #8349 lands the inheritance entry into the catalog. Any other
-    // `is_extra_*` function must go through the catalog.
     // Match the function name regardless of visibility (`fn`, `pub fn`,
     // `pub(crate) fn`, `pub(super) fn`, ...). The pattern is intentionally
     // permissive so visibility renames or attribute-prefixed forms still
@@ -1807,11 +1806,7 @@ fn tsz_wrapper_has_no_ad_hoc_extra_fingerprint_helpers() {
         if !preceded_by_decl_boundary {
             continue;
         }
-        let rest = &source[start + needle.len()..];
-        if rest.starts_with("signature_inheritance_") {
-            continue;
-        }
-        let name = rest
+        let name = source[start + needle.len()..]
             .split(|c: char| !c.is_alphanumeric() && c != '_')
             .next()
             .unwrap_or("");

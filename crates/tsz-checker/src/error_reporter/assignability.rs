@@ -545,6 +545,17 @@ impl<'a> CheckerState<'a> {
         if source == target {
             return;
         }
+        // A type alias flagged as unconditionally-infinite (TS2589 at its
+        // definition) collapses to the error type in tsc, which is assignable in
+        // both directions. When either side involves such a poisoned alias, the
+        // structural relation is meaningless, so suppress the TS2322 cascade.
+        // Gated on the poison set so the common case pays nothing.
+        if self.ctx.definition_store.has_any_depth_poisoned()
+            && (self.ctx.type_involves_depth_poisoned_def(source)
+                || self.ctx.type_involves_depth_poisoned_def(target))
+        {
+            return;
+        }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if !self.has_exact_optional_property_mismatch(source, target)
             && self.should_suppress_assignability_diagnostic(source, target)
@@ -1325,16 +1336,15 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_some();
         if !source_has_display_props && !source_is_array {
-            let has_direct_literal_prop = crate::query_boundaries::common::object_shape_for_type(
-                self.ctx.types,
-                evaluated_source,
-            )
-            .is_some_and(|shape| {
-                shape.properties.iter().any(|p| {
-                    crate::query_boundaries::common::is_literal_type(self.ctx.types, p.type_id)
-                })
-            });
-            if has_direct_literal_prop {
+            // A non-fresh source (no fresh-object-literal display provenance —
+            // e.g. produced by `as const`, a declared annotation, or a named
+            // type) carries canonical literal members that tsc preserves
+            // verbatim at every nesting depth. Only genuinely fresh object
+            // literals (which intern a widened canonical shape) are widened for
+            // non-literal targets. Detect a literal member at ANY depth, not
+            // just the top level, so nested const-asserted literals like
+            // `{ p: { q: 1 } }` are preserved instead of text-widened.
+            if self.source_carries_canonical_literal_member(evaluated_source) {
                 return source_display;
             }
         }
@@ -1366,11 +1376,62 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns `true` when `ty` (a non-fresh source type) contains a literal-typed
+    /// member at any nesting depth: a property of an object, an array element, a
+    /// tuple element, or a union member, recursively. Used to decide whether a
+    /// source whose canonical shape is authoritative (no fresh-object-literal
+    /// display provenance) should be displayed verbatim instead of text-widened.
+    pub(super) fn source_carries_canonical_literal_member(&self, ty: TypeId) -> bool {
+        let mut visiting = rustc_hash::FxHashSet::default();
+        self.source_carries_canonical_literal_member_inner(ty, &mut visiting, 0)
+    }
+
+    fn source_carries_canonical_literal_member_inner(
+        &self,
+        ty: TypeId,
+        visiting: &mut rustc_hash::FxHashSet<TypeId>,
+        depth: usize,
+    ) -> bool {
+        const MAX_DEPTH: usize = 8;
+        if depth > MAX_DEPTH || !visiting.insert(ty) {
+            return false;
+        }
+        let db = self.ctx.types;
+        let recurse = |child: TypeId, visiting: &mut rustc_hash::FxHashSet<TypeId>| -> bool {
+            crate::query_boundaries::common::is_literal_type(db, child)
+                || self.source_carries_canonical_literal_member_inner(child, visiting, depth + 1)
+        };
+
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, ty) {
+            return shape
+                .properties
+                .iter()
+                .any(|p| recurse(p.type_id, visiting));
+        }
+        if let Some(elem) = crate::query_boundaries::common::array_element_type(db, ty) {
+            return recurse(elem, visiting);
+        }
+        if let Some(elements) = crate::query_boundaries::common::tuple_elements(db, ty) {
+            return elements.iter().any(|e| recurse(e.type_id, visiting));
+        }
+        if let Some(members) = crate::query_boundaries::common::union_members(db, ty) {
+            return members.iter().any(|&m| recurse(m, visiting));
+        }
+        false
+    }
+
     pub(super) fn rewrite_target_display_for_non_literal_assignability(
         &mut self,
         target: TypeId,
         target_display: String,
     ) -> String {
+        // Conditional types separate the false branch with `:` (`C extends E ? X : Y`),
+        // which the text-based member-literal widener mistakes for an object member and
+        // widens (`... : 2` → `... : number`, `... : "no"` → `... : string`). tsc renders
+        // deferred conditional branches verbatim, so never text-widen a conditional target.
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
+            return target_display;
+        }
         // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
         // but these are parameter literals that should be preserved, not object property
         // literals that should be widened. Skip rewriting for callable types.

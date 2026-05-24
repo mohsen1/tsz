@@ -2504,36 +2504,41 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        // For type parameters with a concrete (non-generic) constraint, check the
-        // constraint's indexability. tsc reports TS7053 when the constraint lacks
-        // the needed index signature (e.g., T extends Item, obj[string] → TS7053).
-        // Only do this when the index type is concrete (e.g., `string`, a literal).
-        // When the index is itself a type parameter (e.g., K extends keyof T), the
-        // generic element resolution path already handles it via deferred IndexAccess.
-        // Also skip when the constraint contains type parameters (e.g., Record<K, number>)
-        // since indexability depends on the instantiation.
-        let check_type = if let Some(constraint) =
-            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, object_type)
-        {
-            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type)
-                || crate::query_boundaries::common::contains_type_parameters(
+        // For a type parameter, indexability is governed by its base constraint:
+        // the declared `extends` type, or `unknown` when there is none. tsc
+        // reports TS7053 whenever a concrete key can't index that base
+        // constraint — both for a constraint that lacks the needed index
+        // signature (`T extends Item`) and for an unconstrained `T`, whose base
+        // constraint `unknown` has no index signatures at all.
+        let check_type =
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
+                if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type) {
+                    return false;
+                }
+                match crate::query_boundaries::common::type_parameter_constraint(
                     self.ctx.types,
-                    constraint,
-                )
-            {
-                // Constraint is generic or index is generic — can't determine
-                // indexability until instantiation. Don't report TS7053.
-                return false;
-            }
-            constraint
-        } else {
-            object_type
-        };
+                    object_type,
+                ) {
+                    // A constraint that still mentions type parameters (e.g.
+                    // `Record<K, number>`) can't be resolved until instantiation.
+                    Some(constraint)
+                        if crate::query_boundaries::common::contains_type_parameters(
+                            self.ctx.types,
+                            constraint,
+                        ) =>
+                    {
+                        return false;
+                    }
+                    Some(constraint) => constraint,
+                    // Unconstrained: the base constraint is `unknown`, which has
+                    // no index signatures, so a concrete key can't index it.
+                    None => TypeId::UNKNOWN,
+                }
+            } else {
+                object_type
+            };
 
-        if check_type == TypeId::ANY
-            || check_type == TypeId::ERROR
-            || (self.ctx.compiler_options.strict_null_checks && check_type == TypeId::UNKNOWN)
-        {
+        if check_type == TypeId::ANY || check_type == TypeId::ERROR {
             return false;
         }
 

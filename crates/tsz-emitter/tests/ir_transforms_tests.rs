@@ -22,6 +22,7 @@ fn test_ir_enum_numeric() {
             },
         ],
         namespace_export: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
@@ -50,6 +51,7 @@ fn test_ir_enum_string() {
             },
         ],
         namespace_export: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
@@ -75,7 +77,7 @@ fn test_ir_namespace_iife() {
         ],
         is_exported: false,
         attach_to_exports: false,
-        commonjs_export_name: None,
+        commonjs_export_names: Vec::new(),
         system_export_names: Vec::new(),
         should_declare_var: true,
         default_export_merge: false,
@@ -83,6 +85,7 @@ fn test_ir_namespace_iife() {
         param_name: None,
         skip_sequence_indent: false,
         trailing_comment: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);
@@ -100,7 +103,7 @@ fn test_ir_namespace_qualified() {
         body: vec![],
         is_exported: false,
         attach_to_exports: false,
-        commonjs_export_name: None,
+        commonjs_export_names: Vec::new(),
         system_export_names: Vec::new(),
         should_declare_var: true,
         default_export_merge: false,
@@ -108,6 +111,7 @@ fn test_ir_namespace_qualified() {
         param_name: None,
         skip_sequence_indent: false,
         trailing_comment: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);

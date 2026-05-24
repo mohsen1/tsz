@@ -2176,10 +2176,18 @@ impl BinderState {
                                         || name_node.kind
                                             == SyntaxKind::NoSubstitutionTemplateLiteral as u16
                                 });
-                                arena.has_modifier_ref(
+                                let is_ambient = arena.has_modifier_ref(
                                     module.modifiers.as_ref(),
                                     SyntaxKind::DeclareKeyword,
-                                ) || is_external
+                                ) || is_external;
+                                // Implicit export only applies while the ambient body
+                                // is still an export context (no explicit export
+                                // declaration/assignment); see the helper for the rule.
+                                is_ambient
+                                    && !Self::ambient_module_body_disables_export_context(
+                                        arena,
+                                        module.body,
+                                    )
                             });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
