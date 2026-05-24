@@ -63,7 +63,7 @@ impl<'a> Printer<'a> {
         let inner = header[open_paren + 1..].trim_start();
         let after_let = keyword_tail(inner, "let")?.trim_start();
         let after_of = keyword_tail(after_let, "of")?.trim_start();
-        let array = after_of.strip_prefix('[')?.strip_suffix(']')?;
+        let array = recovered_array_elements_source(after_of)?;
         let elements = array
             .split(',')
             .map(str::trim)
@@ -92,4 +92,74 @@ fn is_keyword_followed_by(text: &str, first: &str, second: &str) -> bool {
         return false;
     };
     keyword_tail(tail.trim_start(), second).is_some()
+}
+
+fn recovered_array_elements_source(text: &str) -> Option<&str> {
+    let after_open = text.strip_prefix('[')?;
+    let close_offset = after_open.rfind(']')?;
+    let trailing = &after_open[close_offset + 1..];
+    if source_tail_is_trivia(trailing) {
+        Some(&after_open[..close_offset])
+    } else {
+        None
+    }
+}
+
+fn source_tail_is_trivia(mut text: &str) -> bool {
+    loop {
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() {
+            return true;
+        }
+        if let Some(rest) = trimmed.strip_prefix("//") {
+            return !rest.contains('\n');
+        }
+        if let Some(rest) = trimmed.strip_prefix("/*") {
+            let Some(end) = rest.find("*/") else {
+                return false;
+            };
+            text = &rest[end + 2..];
+            continue;
+        }
+        return false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::context::emit::EmitContext;
+    use crate::emitter::{Printer, PrinterOptions};
+    use crate::lowering::LoweringPass;
+    use tsz_common::ScriptTarget;
+
+    fn emit_es5(source: &str) -> String {
+        let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_target_es5(ctx.target_es5);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    #[test]
+    fn invalid_let_of_array_for_recovery_accepts_trailing_header_trivia() {
+        for source in [
+            "for (let of [1, 2, 3] ) ;",
+            "for (let of [1, 2, 3] /* keep */) ;",
+        ] {
+            let output = emit_es5(source);
+
+            assert!(
+                output.contains("for (let of, []; 1, 2, 3; )"),
+                "Invalid `let of` recovery should ignore trailing header trivia.\nSource:\n{source}\nOutput:\n{output}"
+            );
+        }
+    }
 }
