@@ -955,6 +955,7 @@ impl ParserState {
         if self.is_token(SyntaxKind::QuestionToken)
             && !self.scanner.has_preceding_line_break()
             && (self.context_flags & crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT) == 0
+            && !self.node_is_bare_infer_type(base_type)
         {
             // Lookahead: if the token after `?` can start a type, this is a conditional
             // type's `?`, not a nullable suffix.
@@ -1017,7 +1018,10 @@ impl ParserState {
             }
         }
 
-        if self.is_token(SyntaxKind::ExclamationToken) && !self.scanner.has_preceding_line_break() {
+        if self.is_token(SyntaxKind::ExclamationToken)
+            && !self.scanner.has_preceding_line_break()
+            && !self.node_is_bare_infer_type(base_type)
+        {
             let bang_end = self.token_end();
             let (diag_start, suggested) = if let Some(node) = self.arena.get(base_type) {
                 (
@@ -1166,6 +1170,14 @@ impl ParserState {
                 },
             );
 
+            // `...infer R` is still a bare `infer` type, so a trailing `?`/`!`
+            // is a stray token (TS1005 + TS1110), not a rest-optional marker —
+            // unlike a non-infer rest such as `[...T?]` handled below.
+            if self.bare_infer_has_stray_tuple_marker(element_type) {
+                self.recover_stray_infer_tuple_marker();
+                return rest_node;
+            }
+
             // Trailing `?` after a rest element (e.g. `[...T?]`) is invalid TS
             // (TS17019), but tsc still parses it as an optional wrapping the
             // rest so the type displays as `[...?T]` in declaration emit.
@@ -1239,6 +1251,16 @@ impl ParserState {
         let type_node = self.parse_type();
         self.context_flags = saved_flags;
 
+        // A bare (unparenthesized) `infer X` does not absorb a trailing postfix
+        // marker. tsc returns the infer type directly from
+        // `parseTypeOperatorOrHigher`, bypassing the postfix parser, so a `?`/`!`
+        // after it is not an optional/nullable marker — it is a stray token. The
+        // valid optional form requires parentheses: `[(infer X)?]`.
+        if self.bare_infer_has_stray_tuple_marker(type_node) {
+            self.recover_stray_infer_tuple_marker();
+            return type_node;
+        }
+
         // Check for optional marker: T?
         if self.parse_optional(SyntaxKind::QuestionToken) {
             let end_pos = self.token_full_start();
@@ -1251,6 +1273,46 @@ impl ParserState {
         }
 
         type_node
+    }
+
+    /// Returns true when `node` is a bare `infer X` type (`InferType`), i.e. an
+    /// `infer` declaration that was not parenthesized. tsc parses such a type
+    /// without applying any postfix marker (`?`, `!`, `[]`), so callers must not
+    /// treat a following marker as belonging to the infer type.
+    fn node_is_bare_infer_type(&self, node: NodeIndex) -> bool {
+        self.arena
+            .get(node)
+            .is_some_and(|n| n.kind == syntax_kind_ext::INFER_TYPE)
+    }
+
+    /// True when a tuple element `node` is a bare `infer` type immediately
+    /// followed by a stray postfix marker (`?` or `!`).
+    fn bare_infer_has_stray_tuple_marker(&self, node: NodeIndex) -> bool {
+        self.node_is_bare_infer_type(node)
+            && (self.is_token(SyntaxKind::QuestionToken)
+                || self.is_token(SyntaxKind::ExclamationToken))
+    }
+
+    /// Recover from a stray postfix `?`/`!` on a bare `infer` tuple element.
+    /// Mirrors tsc's delimited-list recovery: report a missing `,` (TS1005) at
+    /// the marker, consume it, then report a missing element type (TS1110).
+    ///
+    /// A stray `?` is itself a possible element starter in tsc's recovery, so
+    /// the `Type expected` is suppressed when another element can follow — i.e.
+    /// the next token can begin a type or is a `,` separator. A stray `!` is not
+    /// an element starter, so it always yields `Type expected`.
+    fn recover_stray_infer_tuple_marker(&mut self) {
+        let marker_is_question = self.is_token(SyntaxKind::QuestionToken);
+        self.parse_error_at_current_token(
+            "',' expected.",
+            tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+        );
+        self.next_token(); // consume the stray `?`/`!`
+        let element_can_follow = marker_is_question
+            && (self.can_token_start_type() || self.is_token(SyntaxKind::CommaToken));
+        if !element_can_follow {
+            self.error_type_expected();
+        }
     }
 
     /// Parse a named tuple member: name: T or name?: T
@@ -1313,6 +1375,13 @@ impl ParserState {
             self.context_flags = saved_flags;
             type_node
         };
+
+        // A bare `infer X` member type does not absorb a trailing `?`/`!`; the
+        // marker is a stray token (TS1005 + TS1110), as in a plain tuple element.
+        if self.bare_infer_has_stray_tuple_marker(type_node) {
+            self.recover_stray_infer_tuple_marker();
+            return type_node;
+        }
 
         if self.parse_optional(SyntaxKind::QuestionToken) {
             let end_pos = self.token_full_start();
@@ -1713,8 +1782,15 @@ impl ParserState {
             // Parse the constraint type with conditional types disallowed.
             // This prevents `number ? 1 : 0` from being parsed as a conditional type
             // within the constraint itself.
+            //
+            // The constraint is a complete type, not a tuple element, so clear the
+            // IN_TUPLE_ELEMENT flag: a postfix `?` on the constraint (e.g.
+            // `[infer A extends string?]`) must be parsed as the constraint's own
+            // nullable marker (TS17019), exactly as tsc parses it via a fresh
+            // `parseType`, rather than being reserved for a tuple-level optional.
             let saved_flags = self.context_flags;
             self.context_flags |= crate::parser::state::CONTEXT_FLAG_DISALLOW_CONDITIONAL_TYPES;
+            self.context_flags &= !crate::parser::state::CONTEXT_FLAG_IN_TUPLE_ELEMENT;
             let constraint_type = self.parse_type();
             self.context_flags = saved_flags;
 

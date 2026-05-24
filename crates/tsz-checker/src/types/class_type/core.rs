@@ -2435,14 +2435,18 @@ impl<'a> CheckerState<'a> {
         let mut type_params = Vec::with_capacity(template_names.len());
         let mut scope_updates = Vec::with_capacity(template_names.len());
         let factory = self.ctx.types.factory();
+        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in template_names {
             let atom = self.ctx.types.intern_string(&name);
             let default = default_str
                 .as_deref()
                 .and_then(|s| self.resolve_jsdoc_reference(s));
+            let constraint = constraint_strs
+                .get(&name)
+                .and_then(|s| self.resolve_jsdoc_reference(s));
             let info = TypeParamInfo {
                 name: atom,
-                constraint: None,
+                constraint,
                 default,
                 is_const,
             };

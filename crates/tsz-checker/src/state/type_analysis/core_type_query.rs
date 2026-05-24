@@ -650,6 +650,16 @@ impl<'a> CheckerState<'a> {
             .arena
             .get(assertion_expr)
             .is_some_and(|node| node.kind == syntax_kind_ext::SATISFIES_EXPRESSION);
+
+        // A contextual type — an explicit annotation or a `satisfies` target —
+        // fixes the member's type, so it must not be re-widened from the
+        // initializer here. Re-widening matched only the assignment view, leaving
+        // conditional-type `extends` checks to see the widened base. Bail to the
+        // general type-query path, which reads the member from the symbol's
+        // declared/contextual type and stays consistent across both views.
+        if decl.type_annotation.is_some() || initializer_is_satisfies_wrapper {
+            return None;
+        }
         let initializer = self
             .ctx
             .arena
@@ -669,10 +679,7 @@ impl<'a> CheckerState<'a> {
                 {
                     let member_type =
                         self.literal_type_from_const_member_initializer(prop.initializer)?;
-                    let preserve_member_literal = initializer_is_const_assertion
-                        || (initializer_is_satisfies_wrapper
-                            && self.expression_is_const_assertion(prop.initializer));
-                    return Some(if preserve_member_literal {
+                    return Some(if initializer_is_const_assertion {
                         member_type
                     } else {
                         self.widen_literal_type(member_type)
