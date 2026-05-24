@@ -582,6 +582,10 @@ name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
 
 [[test]]
+name = "keyof_well_known_symbol_key_tests"
+path = "tests/keyof_well_known_symbol_key_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 
