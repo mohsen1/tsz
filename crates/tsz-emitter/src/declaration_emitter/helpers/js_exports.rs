@@ -3578,13 +3578,18 @@ impl<'a> DeclarationEmitter<'a> {
 
     /// Whether an exported declaration should emit its `export` keyword.
     ///
+    /// Source ambient external modules (`declare module "pkg"`) already expose
+    /// their members through the module body, so `tsc` strips member `export`
+    /// keywords even when the body mixes exported and non-exported declarations.
+    ///
     /// Inside a `declare namespace` (including non-ambient namespaces that
-    /// gain `declare` in the .d.ts output), `export` is only emitted when
-    /// the namespace body has a mix of exported and non-exported members
-    /// (i.e., a "scope marker" is present).  Outside a `declare namespace`,
-    /// `export` is always emitted.
+    /// gain `declare` in the .d.ts output), `export` is only emitted when the
+    /// namespace body has a mix of exported and non-exported members (i.e., a
+    /// "scope marker" is present). Outside a `declare namespace`, `export` is
+    /// always emitted.
     pub(crate) const fn should_emit_export_keyword(&self) -> bool {
-        !self.inside_declare_namespace || self.ambient_module_has_scope_marker
+        self.current_ambient_module_specifier.is_none()
+            && (!self.inside_declare_namespace || self.ambient_module_has_scope_marker)
     }
 
     pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {
