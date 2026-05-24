@@ -395,6 +395,12 @@ impl<'a> Printer<'a> {
             {
                 break;
             }
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| !matches!(b, b' ' | b'\t' | 0x0b | 0x0c))
+            {
+                break;
+            }
 
             self.write_space();
             if let Ok(comment_text) =
