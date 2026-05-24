@@ -1,5 +1,6 @@
 //! Small helper predicates used by assignability diagnostics.
 
+use crate::state::CheckerState;
 use tsz_solver::TypeId;
 
 /// Returns true if the formatted type name matches a built-in wrapper type
@@ -151,4 +152,16 @@ pub(super) fn has_own_signature_type_params(
         return !shape.type_params.is_empty();
     }
     false
+}
+
+impl<'a> CheckerState<'a> {
+    pub(super) fn typeof_result_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<&'static str> {
+        (!self.is_literal_sensitive_assignment_target(target)
+            && crate::query_boundaries::diagnostics::is_typeof_result_union(self.ctx.types, source))
+        .then_some("string")
+    }
 }

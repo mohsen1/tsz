@@ -1,5 +1,5 @@
 use super::state::checking as state_checking;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, construction::TypeDatabase};
 
 pub(crate) use super::common::{
     application_info, array_element_type, callable_shape_for_type, enum_def_id,
@@ -14,6 +14,46 @@ pub(crate) fn assignment_numeric_display_children(
     type_id: TypeId,
 ) -> AssignmentNumericDisplayChildren {
     tsz_solver::type_queries::assignment_numeric_display_children(db, type_id)
+}
+
+pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    const STRING: u8 = 1 << 0;
+    const NUMBER: u8 = 1 << 1;
+    const BIGINT: u8 = 1 << 2;
+    const BOOLEAN: u8 = 1 << 3;
+    const SYMBOL: u8 = 1 << 4;
+    const UNDEFINED: u8 = 1 << 5;
+    const OBJECT: u8 = 1 << 6;
+    const FUNCTION: u8 = 1 << 7;
+    const ALL: u8 = STRING | NUMBER | BIGINT | BOOLEAN | SYMBOL | UNDEFINED | OBJECT | FUNCTION;
+
+    let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) else {
+        return false;
+    };
+    if members.len() != 8 {
+        return false;
+    }
+
+    let mut seen = 0u8;
+    for member in members {
+        let Some(atom) = tsz_solver::type_queries::get_string_literal_value(db, member) else {
+            return false;
+        };
+        let bit = match db.resolve_atom_ref(atom).as_ref() {
+            "string" => STRING,
+            "number" => NUMBER,
+            "bigint" => BIGINT,
+            "boolean" => BOOLEAN,
+            "symbol" => SYMBOL,
+            "undefined" => UNDEFINED,
+            "object" => OBJECT,
+            "function" => FUNCTION,
+            _ => return false,
+        };
+        seen |= bit;
+    }
+
+    seen == ALL
 }
 
 pub(crate) fn object_shape_for_assignment_numeric_display(

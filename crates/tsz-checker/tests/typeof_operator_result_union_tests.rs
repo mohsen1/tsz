@@ -51,6 +51,31 @@ fn typeof_result_not_assignable_to_single_string_member() {
     );
 }
 
+#[test]
+fn typeof_result_assigned_to_non_string_target_reports_string_source() {
+    let src = "declare const o: unknown;\nconst z: number = typeof o;\n";
+    let messages = check_source_strict_messages(src);
+    let ts2322: Vec<&str> = messages
+        .iter()
+        .filter(|(code, _)| *code == 2322)
+        .map(|(_, m)| m.as_str())
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "exactly one TS2322 expected when assigning typeof result to number; got: {messages:?}"
+    );
+    let msg = ts2322[0];
+    assert!(
+        msg.contains("Type 'string' is not assignable to type 'number'"),
+        "non-string targets should display typeof result as `string`, got: {msg}"
+    );
+    assert!(
+        !msg.contains("\"function\""),
+        "non-string target diagnostics should not display the typeof literal union, got: {msg}"
+    );
+}
+
 // =========================================================================
 // Independent of operand shape (rule is about the operator, not the operand)
 // =========================================================================

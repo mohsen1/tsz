@@ -1295,6 +1295,9 @@ impl<'a> CheckerState<'a> {
                 .get_display_properties(evaluated_source)
                 .is_some();
 
+        if let Some(display) = self.typeof_result_source_display(evaluated_source, target) {
+            return display.to_string();
+        }
         if source_has_display_props
             && self.target_is_normalized_object_literal_union(target)
             && display_has_boolean_member_literal_assignability(&source_display)
