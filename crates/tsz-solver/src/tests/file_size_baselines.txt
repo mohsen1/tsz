@@ -14,11 +14,11 @@
 # Manual edits are also fine, but the env-var path keeps the comments below
 # in sync with the actual values.
 
-solver_max_loc      3432
+solver_max_loc      3398
 solver_oversized    21
 solver_file_generic_call_resolve 3381
 solver_file_eval_conditional 3127
-solver_file_evaluate 3432
+solver_file_evaluate 3398
 solver_file_instantiate 2872
 solver_file_subtype_core 2862
 solver_file_type_queries_flow 2874
