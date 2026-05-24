@@ -460,6 +460,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "assignability"
             / "assignment_checker"
             / "destructuring.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignment_checker"
+            / "assignment_ops.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "assignability" / "nullish_error_targets.rs",
             ROOT
             / "crates"
