@@ -112,7 +112,11 @@ fn source_tail_is_trivia(mut text: &str) -> bool {
             return true;
         }
         if let Some(rest) = trimmed.strip_prefix("//") {
-            return !rest.contains('\n');
+            let Some(line_end) = rest.find('\n') else {
+                return true;
+            };
+            text = &rest[line_end + 1..];
+            continue;
         }
         if let Some(rest) = trimmed.strip_prefix("/*") {
             let Some(end) = rest.find("*/") else {
@@ -153,6 +157,7 @@ mod tests {
         for source in [
             "for (let of [1, 2, 3] ) ;",
             "for (let of [1, 2, 3] /* keep */) ;",
+            "for (let of [1, 2, 3] // keep\n) ;",
         ] {
             let output = emit_es5(source);
 
