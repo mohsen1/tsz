@@ -788,6 +788,73 @@ module.exports.map = function map(value) {
         output.contains("export function map(value: number): number;"),
         "Expected CJS synthetic function export to emit at its own statement: {output}"
     );
+    assert!(
+        !output.contains("@param"),
+        "Expected signature JSDoc on direct CJS function exports to be consumed, not re-emitted: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_same_file_typeof_commonjs_function_export_expands_static_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports.make = function make() {}
+module.exports.make.label = "ok";
+
+/**
+ * @param {{value: typeof module.exports.make}} input
+ */
+function use(input) {
+    input.value();
+}
+module.exports.use = use;
+"#,
+    );
+
+    assert!(
+        output.contains("value: {\n        (): void;\n        label: string;\n    };"),
+        "Expected same-file typeof module.exports function references to expand callable static surface: {output}"
+    );
+    assert!(
+        output.contains("export function use(input: {"),
+        "Expected local CJS function alias to keep the exported function surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_class_expando_declarations_follow_direct_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.Widget = class {}
+module.exports.bar = function bar() {}
+/**
+ * @param {number} value
+ */
+function later(value) {
+    return value;
+}
+module.exports.later = later;
+"#,
+    );
+
+    let namespace_pos = output
+        .find("export namespace foo")
+        .unwrap_or_else(|| panic!("expected foo namespace in output: {output}"));
+    let bar_pos = output
+        .find("export function bar")
+        .unwrap_or_else(|| panic!("expected direct bar export in output: {output}"));
+    let class_pos = output
+        .find("declare class Widget")
+        .unwrap_or_else(|| panic!("expected Widget class declaration in output: {output}"));
+    let later_pos = output
+        .find("export function later")
+        .unwrap_or_else(|| panic!("expected deferred later export in output: {output}"));
+
+    assert!(
+        namespace_pos < bar_pos && bar_pos < class_pos && class_pos < later_pos,
+        "Expected class expando declarations after direct named exports and before deferred CJS aliases: {output}"
+    );
 }
 
 #[test]

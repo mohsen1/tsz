@@ -1450,6 +1450,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let export_targets = self.collect_js_named_export_targets(source_file);
+        if !self.source_file_has_native_esm_syntax(source_file)
+            && self.js_export_equals_names.is_empty()
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some((name_idx, initializer)) =
+                    self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+                else {
+                    continue;
+                };
+                if self.js_commonjs_export_name_text(name_idx).is_none() {
+                    continue;
+                }
+                let Some(local_name) = self.get_identifier_text(initializer) else {
+                    continue;
+                };
+                let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
+                    continue;
+                };
+                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
+                    deferred.insert(target_stmt_idx);
+                }
+            }
+        }
+
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;

@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{BinderState, symbol_flags};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
@@ -71,7 +71,12 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(sym_id) =
+                    Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
+                else {
                     return false;
                 };
                 if seen.contains(&sym_id) {
@@ -284,7 +289,12 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(sym_id) =
+                    Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
+                else {
                     return false;
                 };
                 if seen.contains(&sym_id) {
@@ -444,6 +454,27 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    fn source_file_resolve_alias_symbol_for_lowering(
+        binder: &BinderState,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        let symbol = binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return Some(sym_id);
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+        if import_name == "*" {
+            return None;
+        }
+        let (target_sym_id, _) =
+            binder.resolve_import_with_reexports_type_only(module_specifier, import_name)?;
+        (target_sym_id != sym_id).then_some(target_sym_id)
     }
 
     fn source_file_mapped_type_is_generic_local_alias_application_lowerable(
