@@ -3385,7 +3385,7 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
         )
         self.assertIn(
             (
-                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_object_helpers.rs",
                 "let mut alias_visited = visited.clone();",
             ),
             allowlist,

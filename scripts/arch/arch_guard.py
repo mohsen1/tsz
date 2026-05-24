@@ -516,7 +516,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down by 5 after literal alias / literal widening
         # diagnostic display probes moved through query_boundaries::diagnostics.
-        3372,
+        #
+        # Ratcheted down by 14 after branch refresh removed stale direct
+        # common references.
+        3358,
     ),
 ]
 
@@ -802,7 +805,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
                 "let mut alias_visited = visited.clone();",
             ),
             (
-                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_object_helpers.rs",
                 "let mut alias_visited = visited.clone();",
             ),
         ),
