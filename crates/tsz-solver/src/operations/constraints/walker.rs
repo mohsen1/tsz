@@ -328,19 +328,30 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             self.array_like_element_for_constraint(target),
         ) {
             let prev = ctx.in_array_element_context;
+            let prev_ro = ctx.in_readonly_source_context;
             ctx.in_array_element_context = true;
+            ctx.in_readonly_source_context |= self.source_is_readonly_array_like(source);
             self.constrain_types(ctx, var_map, source_elem, target_elem, priority);
             ctx.in_array_element_context = prev;
+            ctx.in_readonly_source_context = prev_ro;
             return;
         }
 
         match (source_key, target_key) {
-            (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner)))
-            | (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
+            (Some(TypeData::ReadonlyType(s_inner)), Some(TypeData::ReadonlyType(t_inner))) => {
+                let prev_ro = ctx.in_readonly_source_context;
+                ctx.in_readonly_source_context = true;
+                self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
+                ctx.in_readonly_source_context = prev_ro;
+            }
+            (Some(TypeData::NoInfer(s_inner)), Some(TypeData::NoInfer(t_inner))) => {
                 self.constrain_types(ctx, var_map, s_inner, t_inner, priority);
             }
             (Some(TypeData::ReadonlyType(s_inner)), _) => {
+                let prev_ro = ctx.in_readonly_source_context;
+                ctx.in_readonly_source_context = true;
                 self.constrain_types(ctx, var_map, s_inner, target, priority);
+                ctx.in_readonly_source_context = prev_ro;
             }
             (_, Some(TypeData::ReadonlyType(t_inner))) => {
                 self.constrain_types(ctx, var_map, source, t_inner, priority);

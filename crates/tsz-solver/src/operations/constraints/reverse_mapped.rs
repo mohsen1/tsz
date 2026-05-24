@@ -1257,6 +1257,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
     }
 
+    /// Whether `type_id` is a `readonly` array/tuple source (e.g. an `as const`
+    /// argument or a `readonly T[]` annotation). Element literals of such a source
+    /// are non-fresh in tsc and must not be widened during inference.
+    pub(super) fn source_is_readonly_array_like(&mut self, type_id: TypeId) -> bool {
+        match self.interner.lookup(type_id) {
+            Some(TypeData::ReadonlyType(_)) => true,
+            Some(TypeData::Application(_) | TypeData::Lazy(_)) => {
+                let evaluated = self.checker.evaluate_type(type_id);
+                evaluated != type_id
+                    && matches!(
+                        self.interner.lookup(evaluated),
+                        Some(TypeData::ReadonlyType(_))
+                    )
+            }
+            _ => false,
+        }
+    }
+
     pub(super) fn array_like_element_for_constraint(&mut self, type_id: TypeId) -> Option<TypeId> {
         if let Some(elem) = crate::type_queries::get_array_element_type(self.interner, type_id) {
             return Some(elem);
