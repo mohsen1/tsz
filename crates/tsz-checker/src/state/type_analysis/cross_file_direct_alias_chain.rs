@@ -243,6 +243,15 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                Self::source_file_mapped_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    type_param_names,
+                    seen,
+                )
+            }
             _ => false,
         }
     }
@@ -424,7 +433,95 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                Self::source_file_mapped_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    &[],
+                    seen,
+                )
+            }
             _ => false,
         }
+    }
+
+    fn source_file_mapped_type_is_generic_local_alias_application_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        let Some(mapped) = arena.get_mapped_type(node) else {
+            return false;
+        };
+        if mapped
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(type_param_node) = arena.get(mapped.type_parameter) else {
+            return false;
+        };
+        let Some(type_param) = arena.get_type_parameter(type_param_node) else {
+            return false;
+        };
+        let Some(name_node) = arena.get(type_param.name) else {
+            return false;
+        };
+        let Some(name) = arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        if !type_param.constraint.is_none()
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                type_param.constraint,
+                type_param_names,
+                seen,
+            )
+        {
+            return false;
+        }
+        if !type_param.default.is_none()
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                type_param.default,
+                type_param_names,
+                seen,
+            )
+        {
+            return false;
+        }
+
+        let mut mapped_param_names = type_param_names.to_vec();
+        if !mapped_param_names
+            .iter()
+            .any(|param| param == &name.escaped_text)
+        {
+            mapped_param_names.push(name.escaped_text.to_string());
+        }
+
+        (mapped.name_type.is_none()
+            || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                mapped.name_type,
+                &mapped_param_names,
+                seen,
+            ))
+            && (mapped.type_node.is_none()
+                || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    mapped.type_node,
+                    &mapped_param_names,
+                    seen,
+                ))
     }
 }
