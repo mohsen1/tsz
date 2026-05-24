@@ -810,6 +810,20 @@ const b = <video data-\u0076ideo />;"#;
     }
 
     #[test]
+    fn jsx_classic_self_closing_asi_statement_comment_stays_after_semicolon() {
+        let source = "const x = <Item value={1} /> // kept\nconst y = 1;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("const x = React.createElement(Item, { value: 1 }); // kept"),
+            "Classic JSX transform should emit synthetic semicolons before ASI statement comments.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("React.createElement(Item, { value: 1 }) // kept\n;"),
+            "Classic JSX transform must not let JSX expression comments pull the semicolon onto the next line.\nOutput: {output}"
+        );
+    }
+
+    #[test]
     fn jsx_classic_self_closing_trailing_comment_ignores_attribute_string_slash_gt() {
         let source = "const x = (\n  <Item label=\"/>\"\n    value={1} /> // kept\n);";
         let output = emit_jsx_react(source);

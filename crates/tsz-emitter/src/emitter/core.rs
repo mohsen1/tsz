@@ -583,6 +583,10 @@ pub struct Printer<'a> {
     /// to an owning semicolon when the source semicolon follows the arrow body.
     pub(crate) arrow_concise_body_trailing_comment_defer_range: Option<(u32, u32)>,
 
+    /// Source range where direct JSX trailing line comments should be deferred
+    /// to an owning statement semicolon.
+    pub(crate) jsx_trailing_comment_defer_range: Option<(u32, u32)>,
+
     /// When true, suppress namespace identifier qualification (emitting a declaration name).
     pub(crate) suppress_ns_qualification: bool,
 
@@ -1192,6 +1196,7 @@ impl<'a> Printer<'a> {
             suppress_ns_qualification: false,
             suppress_commonjs_named_import_substitution: false,
             arrow_concise_body_trailing_comment_defer_range: None,
+            jsx_trailing_comment_defer_range: None,
             pending_class_field_inits: Vec::new(),
             pending_auto_accessor_inits: Vec::new(),
             next_auto_accessor_name_index: 0,

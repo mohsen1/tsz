@@ -300,6 +300,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if let Some((defer_start, defer_end)) = self.jsx_trailing_comment_defer_range
+            && end_pos == defer_start
+            && self
+                .jsx_trailing_line_comment_end(end_pos, defer_end)
+                .is_some()
+        {
+            return;
+        }
+
         if self.emit_jsx_trailing_comments_from_cursor(end_pos) {
             return;
         }
@@ -325,6 +334,87 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+    }
+
+    pub(in crate::emitter) fn direct_transformed_jsx_trailing_comment_range(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(u32, u32)> {
+        let node = self.arena.get(idx)?;
+        let comment_start = self.transformed_jsx_trailing_comment_start(node)?;
+        let comment_end = self.jsx_trailing_line_comment_end(comment_start, u32::MAX)?;
+        Some((comment_start, comment_end))
+    }
+
+    pub(crate) fn with_jsx_trailing_comments_deferred<R>(
+        &mut self,
+        defer_start: u32,
+        defer_end: u32,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        let prev = self.jsx_trailing_comment_defer_range;
+        self.jsx_trailing_comment_defer_range = Some((defer_start, defer_end));
+        let result = f(self);
+        self.jsx_trailing_comment_defer_range = prev;
+        result
+    }
+
+    fn transformed_jsx_trailing_comment_start(&self, node: &Node) -> Option<u32> {
+        match node.kind {
+            syntax_kind_ext::JSX_ELEMENT => {
+                let jsx = self.arena.get_jsx_element(node)?;
+                let closing = self.arena.get(jsx.closing_element)?;
+                Some(self.find_token_end_before_trivia(closing.pos, closing.end))
+            }
+            syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => Some(
+                self.find_jsx_self_closing_tag_end(node)
+                    .unwrap_or_else(|| self.find_token_end_before_trivia(node.pos, node.end)),
+            ),
+            syntax_kind_ext::JSX_FRAGMENT => {
+                let jsx = self.arena.get_jsx_fragment(node)?;
+                let closing = self.arena.get(jsx.closing_fragment)?;
+                Some(self.find_token_end_before_trivia(closing.pos, closing.end))
+            }
+            _ => None,
+        }
+    }
+
+    fn jsx_trailing_line_comment_end(&self, start_pos: u32, scan_end: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let limit = std::cmp::min(scan_end as usize, bytes.len());
+        let mut idx = self.comment_emit_idx;
+
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.pos < start_pos {
+                idx += 1;
+                continue;
+            }
+
+            if comment.pos as usize >= limit {
+                return None;
+            }
+
+            let gap_start = std::cmp::min(start_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                return None;
+            }
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| !matches!(b, b' ' | b'\t' | 0x0b | 0x0c))
+            {
+                return None;
+            }
+
+            return (!comment.is_multi_line).then_some(comment.end);
+        }
+
+        None
     }
 
     fn find_jsx_self_closing_tag_end(&self, node: &Node) -> Option<u32> {

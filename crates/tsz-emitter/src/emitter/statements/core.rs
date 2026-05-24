@@ -1034,21 +1034,17 @@ impl<'a> Printer<'a> {
             last_concise_arrow_comment_range.is_some();
         let last_emitted_declaration_end =
             self.variable_statement_last_emitted_declaration_end(&var_stmt.declarations);
-        if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
-            self.with_arrow_concise_body_trailing_comments_deferred(
-                comment_start,
-                comment_end,
-                |this| {
-                    for &decl_list_idx in &var_stmt.declarations.nodes {
-                        this.emit(decl_list_idx);
-                    }
-                },
-            );
-        } else {
-            for &decl_list_idx in &var_stmt.declarations.nodes {
-                self.emit(decl_list_idx);
-            }
-        }
+        let last_direct_jsx_comment_range =
+            self.variable_statement_last_direct_jsx_comment_range(&var_stmt.declarations);
+        self.with_statement_trailing_comments_deferred(
+            last_concise_arrow_comment_range,
+            last_direct_jsx_comment_range,
+            |this| {
+                for &decl_list_idx in &var_stmt.declarations.nodes {
+                    this.emit(decl_list_idx);
+                }
+            },
+        );
         let recovered_async_arrow_return = self.recovered_async_arrow_return_name(node);
         let recovered_bare_arrow_return = self.recovered_bare_arrow_return_name(node);
         let recovered_arrow_return = recovered_async_arrow_return
@@ -1094,6 +1090,9 @@ impl<'a> Printer<'a> {
         // not find semicolons inside the erased type annotation.
         self.emit_trailing_comment_after_semicolon_in_range(node.pos, effective_end);
         if let Some((comment_start, comment_end)) = last_concise_arrow_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
+        if let Some((comment_start, comment_end)) = last_direct_jsx_comment_range {
             self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
         }
         self.emit_static_block_await_arrow_recovery_blocks_after_variable_statement(
@@ -1751,18 +1750,16 @@ impl<'a> Printer<'a> {
                 text.len() as u32,
             )
         });
+        let expression_jsx_trailing_comment_range =
+            self.direct_transformed_jsx_trailing_comment_range(expr_stmt.expression);
 
-        if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
-            self.with_arrow_concise_body_trailing_comments_deferred(
-                comment_start,
-                comment_end,
-                |this| {
-                    this.emit_expression_in_statement_position(expr_stmt.expression);
-                },
-            );
-        } else {
-            self.emit_expression_in_statement_position(expr_stmt.expression);
-        }
+        self.with_statement_trailing_comments_deferred(
+            expression_trailing_comment_range,
+            expression_jsx_trailing_comment_range,
+            |this| {
+                this.emit_expression_in_statement_position(expr_stmt.expression);
+            },
+        );
         if self.emit_recovered_jsx_unary_trailing_less_than(node, expr_stmt.expression) {
             self.write_line();
         }
@@ -1778,6 +1775,9 @@ impl<'a> Printer<'a> {
         }
         self.emit_trailing_comment_after_semicolon(node);
         if let Some((comment_start, comment_end)) = expression_trailing_comment_range {
+            self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
+        }
+        if let Some((comment_start, comment_end)) = expression_jsx_trailing_comment_range {
             self.emit_comments_after_deferred_semicolon(comment_start, comment_end);
         }
     }
