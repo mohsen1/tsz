@@ -1180,16 +1180,14 @@ impl<'a> ES5ClassTransformer<'a> {
             body.append(&mut deferred_static_prop_inits);
         }
 
-        let deferred_static_blocks = deferred_static_block_indices
+        deferred_static_block_indices
             .into_iter()
             .map(|member_idx| {
                 let statements =
                     self.convert_block_body_with_alias_impl(member_idx, class_alias.clone(), true);
                 IRNode::StaticBlockIIFE { statements }
             })
-            .collect();
-
-        deferred_static_blocks
+            .collect()
     }
 
     pub(super) fn has_static_property_initializer(

@@ -3408,7 +3408,7 @@ impl<'a> ES5ClassTransformer<'a> {
             let mut prev_stmt_end = block_node.pos;
             if block.statements.nodes.is_empty() {
                 self.emit_empty_block_comments(body, block_node);
-            } else if let Some((env_name, error_name)) = using_region_names.clone() {
+            } else if let Some((env_name, error_name)) = using_region_names {
                 body.push(IRNode::var_decl(
                     env_name.clone(),
                     Some(Self::disposable_env_initializer_ir()),

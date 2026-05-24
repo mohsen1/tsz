@@ -181,7 +181,7 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_disposable_env_context(next_env_id);
     }
 
-    pub fn disposable_env_counter(&self) -> u32 {
+    pub const fn disposable_env_counter(&self) -> u32 {
         self.transformer.disposable_env_counter()
     }
 

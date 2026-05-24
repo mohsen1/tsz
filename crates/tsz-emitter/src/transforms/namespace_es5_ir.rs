@@ -183,7 +183,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         self.disposable_env_counter.set(next_env_id);
     }
 
-    pub fn disposable_env_counter(&self) -> u32 {
+    pub const fn disposable_env_counter(&self) -> u32 {
         self.disposable_env_counter.get()
     }
 

@@ -439,8 +439,8 @@ impl<'a> Printer<'a> {
         // Determine if we should emit a variable declaration for this namespace.
         // Skip if name already declared by class/function/enum (both at top level and
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
-        let should_declare = !self.declared_namespace_names.contains(&name)
-            && !(self.in_top_level_using_scope && parent_name.is_none());
+        let should_declare = !(self.declared_namespace_names.contains(&name)
+            || self.in_top_level_using_scope && parent_name.is_none());
         if should_declare {
             let keyword = if (self.in_namespace_iife || self.function_scope_depth > 0)
                 && !self.ctx.target_es5
