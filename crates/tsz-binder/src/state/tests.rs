@@ -5,7 +5,9 @@ use crate::{SymbolId, SymbolTable, symbol_flags};
 use std::sync::Arc;
 use tsz_common::common::ScriptTarget;
 use tsz_parser::parser::{ParserState, node_flags, syntax_kind_ext};
-use tsz_scanner::SyntaxKind;
+
+mod loop_flow;
+
 fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::parser::NodeIndex) {
     let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -1989,40 +1991,6 @@ while (true) {
     assert!(
         branch_count >= 1,
         "break in loop should have BRANCH_LABEL for post-loop"
-    );
-}
-
-#[test]
-fn while_true_post_loop_uses_break_edges_only() {
-    let (binder, parser) = parse_and_bind(
-        r#"
-function f(x: string | number) {
-    while (true) {
-        if (typeof x === "string") {
-            break;
-        }
-        return;
-    }
-    x;
-}
-"#,
-    );
-
-    let arena = parser.get_arena();
-    let false_true_conditions = binder
-        .flow_nodes
-        .iter()
-        .filter(|flow| flow.has_flags(flow_flags::FALSE_CONDITION))
-        .filter(|flow| {
-            arena
-                .get(flow.node)
-                .is_some_and(|node| node.kind == SyntaxKind::TrueKeyword as u16)
-        })
-        .count();
-
-    assert_eq!(
-        false_true_conditions, 0,
-        "`while (true)` should not add an impossible false-condition edge to the post-loop flow"
     );
 }
 
