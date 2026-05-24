@@ -526,15 +526,6 @@ impl<'a> CheckerState<'a> {
         self.ctx.push_diagnostic(base_diag);
     }
 
-    /// Whether `type_id` references any type-alias `DefId` flagged as
-    /// unconditionally-infinite (TS2589). Such aliases are error types in tsc,
-    /// so assignments involving them must not produce structural mismatches.
-    fn type_involves_depth_poisoned_def(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::collect_lazy_def_ids(self.ctx.types, type_id)
-            .into_iter()
-            .any(|def_id| self.ctx.definition_store.is_depth_poisoned(def_id))
-    }
-
     /// Diagnose why an assignment failed and report a detailed error.
     pub fn diagnose_assignment_failure(&mut self, source: TypeId, target: TypeId, idx: NodeIndex) {
         let anchor_idx =
@@ -560,8 +551,8 @@ impl<'a> CheckerState<'a> {
         // structural relation is meaningless, so suppress the TS2322 cascade.
         // Gated on the poison set so the common case pays nothing.
         if self.ctx.definition_store.has_any_depth_poisoned()
-            && (self.type_involves_depth_poisoned_def(source)
-                || self.type_involves_depth_poisoned_def(target))
+            && (self.ctx.type_involves_depth_poisoned_def(source)
+                || self.ctx.type_involves_depth_poisoned_def(target))
         {
             return;
         }
