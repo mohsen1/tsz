@@ -583,6 +583,111 @@ impl<'a> LoweringPass<'a> {
             .is_some_and(|name_n| name_n.kind == SyntaxKind::PrivateIdentifier as u16)
     }
 
+    fn assignment_pattern_contains_private_field_access(
+        &self,
+        pattern_idx: NodeIndex,
+        needle: NodeIndex,
+    ) -> bool {
+        let pattern_idx = self.unwrap_parens_and_types(pattern_idx);
+        if pattern_idx == needle && self.is_private_field_access(pattern_idx) {
+            return true;
+        }
+
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(node).is_some_and(|binary| {
+                    binary.operator_token == SyntaxKind::EqualsToken as u16
+                        && self
+                            .assignment_pattern_contains_private_field_access(binary.left, needle)
+                })
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                self.arena.get_literal_expr(node).is_some_and(|literal| {
+                    literal.elements.nodes.iter().any(|&element| {
+                        self.assignment_pattern_contains_private_field_access(element, needle)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                self.arena.get_binding_pattern(node).is_some_and(|pattern| {
+                    pattern.elements.nodes.iter().any(|&element| {
+                        self.assignment_pattern_contains_private_field_access(element, needle)
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(node)
+                .is_some_and(|prop| {
+                    self.assignment_pattern_contains_private_field_access(prop.initializer, needle)
+                }),
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                self.arena.get_spread(node).is_some_and(|spread| {
+                    self.assignment_pattern_contains_private_field_access(spread.expression, needle)
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn assignment_pattern_has_private_field_access(&self, pattern_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return false;
+        };
+        let start = node.pos;
+        let end = node.end;
+        for i in 0..self.arena.len() {
+            let nidx = NodeIndex(i as u32);
+            let Some(candidate) = self.arena.get(nidx) else {
+                continue;
+            };
+            if candidate.pos < start || candidate.end > end {
+                continue;
+            }
+            if self.is_private_field_access(nidx)
+                && self.assignment_pattern_contains_private_field_access(pattern_idx, nidx)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn collect_private_field_accesses_in_assignment_pattern(
+        &self,
+        pattern_idx: NodeIndex,
+        consumed: &mut std::collections::HashSet<u32>,
+    ) {
+        let Some(node) = self.arena.get(pattern_idx) else {
+            return;
+        };
+        let start = node.pos;
+        let end = node.end;
+        for i in 0..self.arena.len() {
+            let nidx = NodeIndex(i as u32);
+            let Some(candidate) = self.arena.get(nidx) else {
+                continue;
+            };
+            if candidate.pos < start || candidate.end > end {
+                continue;
+            }
+            if self.is_private_field_access(nidx)
+                && self.assignment_pattern_contains_private_field_access(pattern_idx, nidx)
+            {
+                consumed.insert(nidx.0);
+            }
+        }
+    }
+
     /// Unwrap parenthesized expressions to get the inner expression.
     fn unwrap_parens(&self, mut idx: NodeIndex) -> NodeIndex {
         loop {
@@ -886,7 +991,9 @@ impl<'a> LoweringPass<'a> {
                         continue;
                     }
                     let left = self.unwrap_parens_and_types(bin.left);
-                    if self.is_private_field_access(left) {
+                    if self.is_private_field_access(left)
+                        || self.assignment_pattern_has_private_field_access(bin.left)
+                    {
                         return true;
                     }
                 }
@@ -947,7 +1054,9 @@ impl<'a> LoweringPass<'a> {
                     if bin.operator_token == SyntaxKind::EqualsToken as u16 {
                         // Unwrap parens AND type assertions to find the actual LHS
                         let left = self.unwrap_parens_and_types(bin.left);
-                        if left == nidx {
+                        if left == nidx
+                            || self.assignment_pattern_contains_private_field_access(bin.left, nidx)
+                        {
                             is_write_only = true;
                             break;
                         }
@@ -1014,6 +1123,10 @@ impl<'a> LoweringPass<'a> {
                     if self.is_private_field_access(left) {
                         consumed_pa.insert(left.0);
                     }
+                    self.collect_private_field_accesses_in_assignment_pattern(
+                        bin.left,
+                        &mut consumed_pa,
+                    );
                 }
                 if (n.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
                     || n.kind == syntax_kind_ext::POSTFIX_UNARY_EXPRESSION)
@@ -1044,7 +1157,9 @@ impl<'a> LoweringPass<'a> {
                     )
                 {
                     let left = self.unwrap_parens(bin.left);
-                    if self.is_private_field_access(left) {
+                    let lhs_has_private_pattern =
+                        self.assignment_pattern_has_private_field_access(bin.left);
+                    if self.is_private_field_access(left) || lhs_has_private_pattern {
                         let is_plain_assign = bin.operator_token == SyntaxKind::EqualsToken as u16;
                         if earliest_pos.is_none() || n.pos < earliest_pos.unwrap() {
                             earliest_pos = Some(n.pos);
