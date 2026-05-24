@@ -100,7 +100,22 @@ impl<'a> NarrowingContext<'a> {
             )
             .collect();
 
-        let narrowed_inner = self.narrow_excluding_types(inner, &normalized);
+        let inner_literals = match union_list_id(self.db, inner) {
+            Some(union_id) => self.db.type_list(union_id).to_vec(),
+            None => vec![inner],
+        };
+        let mut expanded = normalized.clone();
+        for source_lit in inner_literals {
+            if normalized
+                .iter()
+                .any(|&excluded| self.literal_values_equivalent_for_narrowing(source_lit, excluded))
+                && !expanded.contains(&source_lit)
+            {
+                expanded.push(source_lit);
+            }
+        }
+
+        let narrowed_inner = self.narrow_excluding_types(inner, &expanded);
 
         if narrowed_inner == TypeId::NEVER {
             return Some(TypeId::NEVER);
@@ -126,10 +141,43 @@ impl<'a> NarrowingContext<'a> {
         self.class_defs_equivalent_for_narrowing(source_enum_def, parent)
     }
 
+    fn literal_values_equivalent_for_narrowing(&self, left: TypeId, right: TypeId) -> bool {
+        left == right
+            || matches!(
+                (literal_value(self.db, left), literal_value(self.db, right)),
+                (Some(left), Some(right)) if left == right
+            )
+    }
+
+    pub(in crate::narrowing) fn same_enum_member_value_for_narrowing(
+        &self,
+        left: TypeId,
+        right: TypeId,
+    ) -> bool {
+        let Some(resolver) = self.resolver else {
+            return false;
+        };
+        let Some((left_def, left_inner)) = crate::visitor::enum_components(self.db, left) else {
+            return false;
+        };
+        let Some((right_def, right_inner)) = crate::visitor::enum_components(self.db, right) else {
+            return false;
+        };
+        let Some(left_parent) = resolver.get_enum_parent_def_id(left_def) else {
+            return false;
+        };
+        let Some(right_parent) = resolver.get_enum_parent_def_id(right_def) else {
+            return false;
+        };
+
+        left_parent == right_parent
+            && self.literal_values_equivalent_for_narrowing(left_inner, right_inner)
+    }
+
     /// Wrap a narrowed inner literal (or union of literals) back into the
     /// appropriate enum nominal. When `parent_def` is a whole-enum with
-    /// registered members and every literal in `narrowed_inner` matches a
-    /// member's value, returns the union of `Enum(member_def_i, lit_i)`.
+    /// registered members and every literal in `narrowed_inner` matches one or
+    /// more member values, returns the union of `Enum(member_def_i, lit_i)`.
     /// Otherwise falls back to wrapping `narrowed_inner` with `parent_def`.
     fn wrap_enum_narrowed(&self, parent_def: DefId, narrowed_inner: TypeId) -> TypeId {
         let fallback = || self.db.enum_type(parent_def, narrowed_inner);
@@ -159,13 +207,23 @@ impl<'a> NarrowingContext<'a> {
 
         let mut parts: Vec<TypeId> = Vec::with_capacity(literals.len());
         for lit in literals {
-            let Some(&(_, member_def)) = lit_to_member.iter().find(|(l, _)| *l == lit) else {
+            let mut matched = false;
+            for &(member_lit, member_def) in lit_to_member.iter().filter(|(member_lit, _)| {
+                self.literal_values_equivalent_for_narrowing(*member_lit, lit)
+            }) {
+                matched = true;
+                let part = self.db.enum_type(member_def, member_lit);
+                if !parts.contains(&part) {
+                    parts.push(part);
+                }
+            }
+
+            if !matched {
                 // At least one literal does not correspond to a registered
                 // member (e.g., when the inner has been further narrowed to a
                 // subtype of a member's value). Preserve the parent's nominal.
                 return fallback();
-            };
-            parts.push(self.db.enum_type(member_def, lit));
+            }
         }
 
         union_or_single(self.db, parts)
@@ -575,6 +633,10 @@ impl<'a> NarrowingContext<'a> {
         }
 
         if self.is_class_subtype_for_narrowing(source, target) {
+            return true;
+        }
+
+        if self.same_enum_member_value_for_narrowing(source, target) {
             return true;
         }
 

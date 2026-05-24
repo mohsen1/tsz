@@ -271,7 +271,8 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     /// 1. Different enums with different `DefIds` are NOT assignable (nominal typing)
     /// 2. Numeric enums are bidirectionally assignable to number (Rule #7 - Open Numeric Enums)
     /// 3. String enums are strictly nominal (string literals NOT assignable to string enums)
-    /// 4. Same enum members with different values are NOT assignable (EnumA.X != EnumA.Y)
+    /// 4. Same enum members with different values are NOT assignable (EnumA.X != EnumA.Y);
+    ///    duplicate-valued members of the same enum remain mutually assignable.
     /// 5. Unions containing enums: Source union assigned to target enum checks all members
     pub fn enum_assignability_override(&self, source: TypeId, target: TypeId) -> Option<bool> {
         use crate::type_queries;
@@ -285,6 +286,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             && type_queries::is_union_type(self.interner, source)
         {
             let union_members = type_queries::get_union_members(self.interner, source)?;
+            let target_parent = self.subtype.resolver.get_enum_parent_def_id(t_def);
 
             let mut all_same_enum = true;
             let mut has_non_enum = false;
@@ -294,7 +296,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                     // Members have their own DefIds (different from parent enum's DefId),
                     // so we must also check the parent relationship.
                     let member_parent = self.subtype.resolver.get_enum_parent_def_id(member_def);
-                    if member_def != t_def && member_parent != Some(t_def) {
+                    if member_def != t_def
+                        && member_parent != Some(t_def)
+                        && !(target_parent.is_some()
+                            && member_parent == target_parent
+                            && self.same_parent_enum_members_share_value(member, target))
+                    {
                         // Found an enum member from a different enum than target
                         return Some(false);
                     }
@@ -361,6 +368,9 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                 match (s_parent, t_parent) {
                     (Some(sp), Some(tp)) if sp == tp => {
                         // Same parent enum
+                        if self.same_parent_enum_members_share_value(source, target) {
+                            return Some(true);
+                        }
                         // If target is the Enum Type (e.g., 'E'), allow structural check
                         if self.subtype.resolver.is_enum_type(target, self.interner) {
                             return None;
@@ -452,6 +462,34 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Case 4: Neither is an enum
             (None, None) => None,
         }
+    }
+
+    fn same_parent_enum_members_share_value(&self, source: TypeId, target: TypeId) -> bool {
+        let Some((source_def, source_inner)) =
+            crate::visitor::enum_components(self.interner, source)
+        else {
+            return false;
+        };
+        let Some((target_def, target_inner)) =
+            crate::visitor::enum_components(self.interner, target)
+        else {
+            return false;
+        };
+        let Some(source_parent) = self.subtype.resolver.get_enum_parent_def_id(source_def) else {
+            return false;
+        };
+        let Some(target_parent) = self.subtype.resolver.get_enum_parent_def_id(target_def) else {
+            return false;
+        };
+
+        source_parent == target_parent
+            && matches!(
+                (
+                    crate::visitor::literal_value(self.interner, source_inner),
+                    crate::visitor::literal_value(self.interner, target_inner),
+                ),
+                (Some(source_value), Some(target_value)) if source_value == target_value
+            )
     }
 
     fn contains_string_like_source(&self, type_id: TypeId) -> bool {

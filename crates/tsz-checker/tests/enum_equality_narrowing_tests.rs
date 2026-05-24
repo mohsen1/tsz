@@ -170,6 +170,26 @@ if (e === 0) {
 }
 
 #[test]
+fn equality_narrow_duplicate_value_enum_preserves_all_member_identities() {
+    let source = r"
+enum E { A = 0, B = 0, C = 1 }
+declare const e: E;
+declare const ab: E.A | E.B;
+const directA: E.A = ab;
+const directB: E.B = ab;
+if (e === E.A) {
+  const a: E.A = e;
+  const b: E.B = e;
+  const u: E.A | E.B = e;
+}
+if (e !== E.A) {
+  const c: E.C = e;
+}
+";
+    assert_clean(source);
+}
+
+#[test]
 fn equality_narrow_preserves_whole_enum_assignment_after_narrow() {
     // After narrowing to a member, the value is still assignable to the
     // whole enum (member <: parent).
