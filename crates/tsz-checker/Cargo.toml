@@ -1230,6 +1230,10 @@ name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
 
 [[test]]
+name = "wide_symbol_equality_no_unique_narrowing_tests"
+path = "tests/wide_symbol_equality_no_unique_narrowing_tests.rs"
+
+[[test]]
 name = "mixin_base_no_member_no_ts2416_tests"
 path = "tests/mixin_base_no_member_no_ts2416_tests.rs"
 
