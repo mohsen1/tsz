@@ -108,6 +108,28 @@ type Bad = MyPick<I, boolean>;
 }
 
 #[test]
+fn inline_anonymous_arg_does_not_borrow_sibling_alias_name() {
+    // Regression for the structural-interning hazard: an inline anonymous
+    // object argument shares a `TypeId` with the same-shape alias `T`. The
+    // constraint display must NOT recover `keyof T` here — the user wrote no
+    // `T` reference, so the recovery must be gated on the written AST node
+    // being a type reference, not on the shared structural `TypeId`.
+    let messages = ts2344_messages(
+        r#"
+type MyPick<O, K extends keyof O> = { [P in K]: O[P] };
+type T = { foo: 1; bar: 2 };
+type Bad = MyPick<{ foo: 1; bar: 2 }, boolean>;
+"#,
+    );
+    assert_eq!(messages.len(), 1, "expected one TS2344, got: {messages:?}");
+    assert!(
+        !messages[0].contains("keyof T"),
+        "inline anonymous arg must not borrow the sibling alias name `T`, got: {:?}",
+        messages[0]
+    );
+}
+
+#[test]
 fn plain_alias_constraint_still_displays_alias_name() {
     // Negative control: a non-`keyof` alias constraint must keep showing the
     // alias name (`Keys`), proving the fix is scoped to operator preservation.

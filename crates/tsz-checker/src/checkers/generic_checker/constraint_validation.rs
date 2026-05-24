@@ -1591,7 +1591,8 @@ impl<'a> CheckerState<'a> {
                 let mut display_subst = query_common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
-                        display_subst.insert(p.name, self.type_arg_reference_form(arg));
+                        let arg_node = type_args_list.nodes.get(j).copied();
+                        display_subst.insert(p.name, self.type_arg_reference_form(arg, arg_node));
                     }
                 }
                 let constraint_for_message = if display_subst.is_empty() {
