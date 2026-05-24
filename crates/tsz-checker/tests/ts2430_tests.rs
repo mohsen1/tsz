@@ -4,7 +4,7 @@
 //! including scope-aware type resolution in ambient modules.
 
 use tsz_checker::test_utils::{
-    check_source_code_messages as get_diagnostics, diagnostics_with_code,
+    check_source_code_messages as get_diagnostics, diagnostics_with_code, has_diagnostic_code,
 };
 
 fn has_error_with_code(source: &str, code: u32) -> bool {
@@ -870,5 +870,93 @@ interface Derived<T> extends Base<T> {
     assert!(
         !diagnostics_with_code(&diags, 2430).is_empty(),
         "Got: {diags:?}"
+    );
+}
+
+// =========================================================================
+// TS2430 diagnostic count parity: one per violated base, no extras
+// =========================================================================
+
+#[test]
+fn test_multi_base_incompatible_emits_exactly_one_per_violated_base() {
+    // Guard against duplicates from separate internal code paths (worklist + direct).
+    let source = r#"
+interface A { f(x: string): number }
+interface B { f(x: number): string }
+interface I extends A, B { f(x: boolean): boolean }
+"#;
+    let diags = get_diagnostics(source);
+    assert_eq!(
+        diagnostics_with_code(&diags, 2430).len(),
+        2,
+        "Should emit exactly 1 TS2430 per violated base (2 total). Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_multi_base_incompatible_renamed_ids_still_one_per_base() {
+    // Renamed identifiers must produce the same count — fix must not be keyed on 'I'/'A'/'B'.
+    let source = r#"
+interface Base1 { f(x: string): number }
+interface Base2 { f(x: number): string }
+interface Derived extends Base1, Base2 { f(x: boolean): boolean }
+"#;
+    let diags = get_diagnostics(source);
+    assert_eq!(
+        diagnostics_with_code(&diags, 2430).len(),
+        2,
+        "Renamed identifiers should produce the same 2 TS2430s. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_three_base_incompatible_emits_one_per_base() {
+    let source = r#"
+interface A { f(x: string): number }
+interface B { f(x: number): string }
+interface C { f(x: symbol): object }
+interface I extends A, B, C { f(x: boolean): boolean }
+"#;
+    let diags = get_diagnostics(source);
+    assert_eq!(
+        diagnostics_with_code(&diags, 2430).len(),
+        3,
+        "Should emit exactly 1 TS2430 per violated base (3 total). Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_call_sig_multi_base_overloads_no_false_ts2430() {
+    let source = r#"
+class C { foo: string; bar: number; }
+interface A { (x: C, y: string): C; }
+interface B { (x: C, y: number): C; }
+interface I extends A, B {
+    (x: C, y: string): C;
+    (x: C, y: number): C;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2430),
+        "Should NOT emit TS2430 when call-sig overloads satisfy both bases. Got: {diags:?}"
+    );
+}
+
+#[test]
+fn test_method_overloads_cover_both_bases_no_false_ts2430() {
+    let source = r#"
+interface A { foo(x: string, y: string): string; }
+interface B { foo(x: number, y: number): number; }
+interface I extends A, B {
+    foo(x: string, y: string): string;
+    foo(x: number, y: number): number;
+    foo(x: boolean, y: boolean): boolean;
+}
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        !has_diagnostic_code(&diags, 2430),
+        "Should NOT emit TS2430 when method overloads satisfy both bases. Got: {diags:?}"
     );
 }

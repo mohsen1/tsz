@@ -267,6 +267,9 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let object_node = self.arena.get(object_expr_idx)?;
         let object = self.arena.get_literal_expr(object_node)?;
+        if let Some(type_text) = self.single_spread_object_literal_type_text(object) {
+            return Some(type_text);
+        }
 
         // Pre-scan: collect setter and getter names for accessor pair handling
         let mut setter_names = rustc_hash::FxHashSet::<String>::default();
@@ -337,6 +340,84 @@ impl<'a> DeclarationEmitter<'a> {
                 formatted_members.join("\n")
             ))
         }
+    }
+
+    pub(in crate::declaration_emitter) fn single_spread_object_literal_type_text(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+    ) -> Option<String> {
+        if object.elements.nodes.len() != 1 {
+            return None;
+        }
+        let member_idx = object.elements.nodes[0];
+        let member_node = self.arena.get(member_idx)?;
+        if member_node.kind != syntax_kind_ext::SPREAD_ASSIGNMENT {
+            return None;
+        }
+        let spread = self.arena.get_spread(member_node)?;
+        if !self.expression_references_parameter(spread.expression) {
+            return None;
+        }
+        let spread_type = self
+            .get_node_type_or_names(&[spread.expression])
+            .or_else(|| self.get_symbol_cached_type(spread.expression))
+            .or_else(|| self.get_type_via_symbol(spread.expression))?;
+        let interner = self.type_interner?;
+        match tsz_solver::type_queries::classify_object_spread_dts_projection(interner, spread_type)
+        {
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::InvalidSpread => {
+                Some("any".to_string())
+            }
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::EmptyObject => {
+                Some("{}".to_string())
+            }
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => self
+                .reference_declared_source_type_annotation_text(spread.expression)
+                .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
+                .filter(|type_text| !type_text.is_empty())
+                .or_else(|| {
+                    self.reference_declared_type_annotation_text(spread.expression)
+                        .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
+                })
+                .filter(|type_text| !type_text.is_empty())
+                .or_else(|| self.preferred_expression_type_text(spread.expression))
+                .or_else(|| Some(self.print_type_id_for_inferred_declaration(spread_type))),
+        }
+    }
+
+    fn expression_references_parameter(&self, expr_idx: NodeIndex) -> bool {
+        let Some(symbol_id) = self.value_reference_symbol(expr_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(symbol_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|decl_node| self.arena.get_parameter(decl_node).is_some())
+        })
+    }
+
+    fn parenthesize_union_intersection_arms(type_text: &str) -> String {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        if parts.len() <= 1 {
+            return type_text.to_string();
+        }
+        parts
+            .into_iter()
+            .map(|part| {
+                if part.contains(" & ") && !part.starts_with('(') {
+                    format!("({part})")
+                } else {
+                    part
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" | ")
     }
 
     pub(in crate::declaration_emitter) fn object_literal_value_typeof_type_text(
