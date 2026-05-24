@@ -753,7 +753,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn symbol_is_intrinsic_type_only_without_value(symbol: &tsz_binder::Symbol) -> bool {
+    const fn symbol_is_intrinsic_type_only_without_value(symbol: &tsz_binder::Symbol) -> bool {
         use tsz_binder::symbol_flags;
 
         symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
