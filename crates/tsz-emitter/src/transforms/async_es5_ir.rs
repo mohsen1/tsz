@@ -67,6 +67,8 @@ mod bindings;
 mod condition_await;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_for_of.rs"]
+mod for_of;
 #[path = "async_es5_ir_loop_control.rs"]
 mod loop_control;
 #[path = "async_es5_ir_state.rs"]
@@ -2693,6 +2695,11 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => {
                 if !self.process_for_await_using_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) && !self.process_for_of_statement_in_async(
                     idx,
                     cases,
                     current_statements,
