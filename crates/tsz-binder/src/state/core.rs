@@ -65,6 +65,44 @@ impl BinderStateScopeInputs {
 }
 
 impl BinderState {
+    /// Whether a file-local `name -> sym_id` entry owned by `file_idx` is
+    /// visible in the cross-file global scope (the checker's
+    /// `global_file_locals_index` fallback).
+    ///
+    /// Mirrors [`Symbol::is_cross_file_global`] so that index agrees with
+    /// `program.globals`: a module's pure type-only top-level exports stay
+    /// file-scoped. Only symbols genuinely declared in this file are
+    /// classified; lib symbols and globals folded in from other files (which
+    /// carry a different `decl_file_idx`) are always kept, so lib/global
+    /// resolution is unaffected. A raw, unmerged per-file binder leaves
+    /// `decl_file_idx == u32::MAX` while owning all of its locals.
+    #[must_use]
+    pub fn cross_file_local_is_visible(
+        &self,
+        arena: Option<&NodeArena>,
+        file_idx: usize,
+        name: &str,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(sym) = self.get_symbol(sym_id) else {
+            return true;
+        };
+        if self.lib_symbol_ids.contains(&sym_id) {
+            return true;
+        }
+        if sym.decl_file_idx != u32::MAX && sym.decl_file_idx != file_idx as u32 {
+            return true;
+        }
+        let is_declaration_file = arena
+            .and_then(|arena| arena.source_files.first())
+            .is_some_and(|sf| sf.is_declaration_file);
+        sym.is_cross_file_global(
+            self.is_external_module,
+            is_declaration_file,
+            self.global_augmentations.contains_key(name),
+        )
+    }
+
     fn parse_jsdoc_import_tag(rest: &str) -> Vec<(String, String, String)> {
         let rest = rest.trim();
         let mut results = Vec::new();
