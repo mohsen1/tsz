@@ -484,6 +484,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "state"
             / "state_checking_members"
             / "statement_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "property_access_type"
+            / "helpers.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "declarations" / "dynamic_import_checker.rs",
             ROOT
             / "crates"
