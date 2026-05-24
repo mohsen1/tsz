@@ -516,126 +516,57 @@ pub(super) struct CollectDiagnosticsInput<'a> {
     pub(super) collect_compile_stats: bool,
 }
 
-#[cfg(test)]
-pub(super) fn collect_diagnostics(
-    input: &CollectDiagnosticsInput<'_>,
-    cache: Option<&mut CompilationCache>,
-    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
-) -> CollectDiagnosticsResult {
-    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None)
+type CachedModuleSpecifier = (
+    String,
+    tsz::parser::NodeIndex,
+    tsz::module_resolver::ImportKind,
+    Option<tsz::module_resolver::ImportingModuleKind>,
+);
+
+type ResolutionRequestMapKey = (
+    usize,
+    String,
+    Option<tsz::checker::context::ResolutionModeOverride>,
+    tsz::checker::context::ResolutionRequestKind,
+);
+
+struct SourceResolutionSetup {
+    cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>>,
+    resolved_module_paths: Arc<FxHashMap<(usize, String), usize>>,
+    resolved_module_request_paths: Arc<FxHashMap<ResolutionRequestMapKey, usize>>,
+    resolved_module_ts_extension_flags: Arc<FxHashMap<(usize, String), bool>>,
+    resolved_module_errors: Arc<FxHashMap<(usize, String), tsz::checker::context::ResolutionError>>,
+    resolved_module_request_errors:
+        Arc<FxHashMap<ResolutionRequestMapKey, tsz::checker::context::ResolutionError>>,
+    resolved_modules_per_file: Arc<Vec<Arc<rustc_hash::FxHashSet<String>>>>,
 }
 
-pub(super) fn collect_diagnostics_with_source_resolutions(
-    input: &CollectDiagnosticsInput<'_>,
-    cache: Option<&mut CompilationCache>,
-    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
-    source_module_resolutions: Option<
-        &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
-    >,
-) -> CollectDiagnosticsResult {
-    let &CollectDiagnosticsInput {
+struct SourceResolutionSetupInput<'a> {
+    program: &'a MergedProgram,
+    options: &'a ResolvedCompilerOptions,
+    base_dir: &'a Path,
+    source_module_resolutions:
+        Option<&'a FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>>,
+    canonical_to_file_idx: &'a FxHashMap<PathBuf, usize>,
+    program_paths: &'a FxHashSet<PathBuf>,
+    package_redirects: &'a FxHashMap<PathBuf, PathBuf>,
+    resolution_cache: &'a mut ModuleResolutionCache,
+}
+
+fn prepare_source_resolution_setup(input: SourceResolutionSetupInput<'_>) -> SourceResolutionSetup {
+    let SourceResolutionSetupInput {
         program,
         options,
         base_dir,
-        checker_libs,
-        typescript_dom_replacement_globals,
-        has_deprecation_diagnostics,
-        collect_compile_stats,
+        source_module_resolutions,
+        canonical_to_file_idx,
+        program_paths,
+        package_redirects,
+        resolution_cache,
     } = input;
-    let _collect_span =
-        tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
-    // Production CLI semantic diagnostics are scheduled here. Lower-level
-    // helpers in `tsz::parallel` stay reusable infrastructure unless this
-    // driver opts into changed CLI behavior.
-    #[cfg(not(target_arch = "wasm32"))]
-    tsz::parallel::ensure_rayon_global_pool();
-
-    let mut diagnostics: Vec<Diagnostic> = Vec::new();
-    let mut request_cache_counters = RequestCacheCounters::default();
-    let file_count = program.files.len();
-    let mut used_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
-    let mut cache = cache;
-    let mut resolution_cache = ModuleResolutionCache::default();
-    // Pre-size: each map ends up with exactly one entry per file. Without
-    // capacity hints the inserts go through the standard power-of-two grow
-    // path (~12 rehashes for a 6000-entry map). Driver setup runs once per
-    // build, but on a 6000-file project the rehash cost is real startup
-    // overhead.
-    let mut program_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
-    let mut canonical_to_file_name: FxHashMap<PathBuf, String> =
-        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
-    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
-        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
-    let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
-    let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
-
-    // TS6504: when allowJs is disabled, emit one error per explicit JS root file.
-    // tsc includes the JS file in the program but rejects it with this diagnostic
-    // and skips semantic checks for that file (the suppression is in
-    // post_process_checker_diagnostics).
-    if program_has_unsupported_js_root {
-        for file in &program.files {
-            if is_js_file(Path::new(&file.file_name)) {
-                let mut ts6504 = Diagnostic::from_code(
-                    diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
-                    "",
-                    0,
-                    0,
-                    &[&file.file_name],
-                );
-                ts6504
-                    .related_information
-                    .push(DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
-                        file: String::new(),
-                        start: 0,
-                        length: 0,
-                        message_text: "The file is in the program because:".to_string(),
-                    });
-                ts6504
-                    .related_information
-                    .push(DiagnosticRelatedInformation {
-                        category: DiagnosticCategory::Message,
-                        code: diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
-                        file: String::new(),
-                        start: 0,
-                        length: 0,
-                        message_text: "Root file specified for compilation".to_string(),
-                    });
-                diagnostics.push(ts6504);
-            }
-        }
-    }
-
-    {
-        let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
-        for (idx, file) in program.files.iter().enumerate() {
-            let canonical = normalize_resolved_path(Path::new(&file.file_name), options);
-            program_paths.insert(canonical.clone());
-            canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
-            canonical_to_file_idx.insert(canonical, idx);
-        }
-    }
-
-    // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
-    let mut module_resolver = ModuleResolver::new(options);
 
     // Cache module specifiers per file — collected once, reused in prepare_binders
     // and check_file_for_parallel to avoid 3× redundant AST traversals.
-    type CachedModuleSpecifier = (
-        String,
-        tsz::parser::NodeIndex,
-        tsz::module_resolver::ImportKind,
-        Option<tsz::module_resolver::ImportingModuleKind>,
-    );
-
-    // AST traversal is pure read-only: each file independently scans its own
-    // arena. Doing this up-front lets the subsequent (sequential)
-    // module-resolution loop iterate over a pre-built `Vec<Vec<...>>` instead
-    // of interleaving the AST scan with resolution-cache mutation. Tiny
-    // projects stay sequential because there is less work than Rayon scheduler
-    // overhead; larger repos keep the N-way parallel pass.
     let cached_module_specifiers: Vec<Vec<CachedModuleSpecifier>> = {
         let _span =
             tracing::info_span!("collect_module_specifiers", files = program.files.len()).entered();
@@ -667,15 +598,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         }
     };
 
-    // Duplicate package redirect map
-    let package_redirects: FxHashMap<PathBuf, PathBuf> = {
-        let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
-        build_duplicate_package_redirects(&file_names, options)
-    };
+    // Create ModuleResolver instance for proper error reporting (TS2834, TS2835, TS2792, etc.)
+    let mut module_resolver = ModuleResolver::new(options);
     let module_specifier_count: usize = cached_module_specifiers.iter().map(Vec::len).sum();
 
     // Build resolved_module_paths map: (source_file_idx, specifier) -> target_file_idx
-    // Also build resolved_module_errors map for specific error codes
+    // Also build resolved_module_errors map for specific error codes.
     let mut resolved_module_paths: FxHashMap<(usize, String), usize> =
         FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
     // Per-resolution `resolvedUsingTsExtension` flag — populated when the
@@ -684,15 +612,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
     // error maps stay sparse: most programs resolve without these entries.
     let mut resolved_module_ts_extension_flags: FxHashMap<(usize, String), bool> =
         FxHashMap::default();
-    let mut resolved_module_request_paths: FxHashMap<
-        (
-            usize,
-            String,
-            Option<tsz::checker::context::ResolutionModeOverride>,
-            tsz::checker::context::ResolutionRequestKind,
-        ),
-        usize,
-    > = FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
+    let mut resolved_module_request_paths: FxHashMap<ResolutionRequestMapKey, usize> =
+        FxHashMap::with_capacity_and_hasher(module_specifier_count, Default::default());
     let mut resolved_module_specifiers: FxHashSet<(usize, String)> =
         FxHashSet::with_capacity_and_hasher(module_specifier_count, Default::default());
     let mut resolved_module_errors: FxHashMap<
@@ -700,12 +621,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
     let mut resolved_module_request_errors: FxHashMap<
-        (
-            usize,
-            String,
-            Option<tsz::checker::context::ResolutionModeOverride>,
-            tsz::checker::context::ResolutionRequestKind,
-        ),
+        ResolutionRequestMapKey,
         tsz::checker::context::ResolutionError,
     > = FxHashMap::default();
     // Phase 2 step 1: route the module-resolver's ambient-module check through
@@ -821,8 +737,8 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                             spec,
                             options,
                             base_dir,
-                            &mut resolution_cache,
-                            &program_paths,
+                            resolution_cache,
+                            program_paths,
                         )
                     },
                     |spec| {
@@ -834,7 +750,7 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         program.declared_modules.contains(spec)
                             || program.shorthand_ambient_modules.contains(spec)
                     },
-                    Some(&program_paths),
+                    Some(program_paths),
                 );
 
                 // Classify the lookup result into a driver-facing outcome.
@@ -848,15 +764,15 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
                         options,
                         file_path,
                         base_dir,
-                        &mut resolution_cache,
+                        resolution_cache,
                     )
                     && let Some(resolved_path) = resolve_module_specifier(
                         file_path,
                         specifier,
                         options,
                         base_dir,
-                        &mut resolution_cache,
-                        &program_paths,
+                        resolution_cache,
+                        program_paths,
                     )
                     && resolved_path.extension().is_some_and(|ext| ext == "json")
                 {
@@ -941,13 +857,6 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
         }
     }
 
-    let resolved_module_paths = Arc::new(resolved_module_paths);
-    let resolved_module_request_paths = Arc::new(resolved_module_request_paths);
-    let resolved_module_ts_extension_flags = Arc::new(resolved_module_ts_extension_flags);
-    let resolved_module_specifiers = Arc::new(resolved_module_specifiers);
-    let resolved_module_errors = Arc::new(resolved_module_errors);
-    let resolved_module_request_errors = Arc::new(resolved_module_request_errors);
-
     // Pre-bucket resolved-module specifiers by file_idx so each per-file
     // checker can look up its own set in O(1) instead of scanning the
     // entire cross-file `resolved_module_specifiers` map. The previous
@@ -978,6 +887,143 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             }
         }
         by_file.into_iter().map(Arc::new).collect()
+    });
+
+    SourceResolutionSetup {
+        cached_module_specifiers,
+        resolved_module_paths: Arc::new(resolved_module_paths),
+        resolved_module_request_paths: Arc::new(resolved_module_request_paths),
+        resolved_module_ts_extension_flags: Arc::new(resolved_module_ts_extension_flags),
+        resolved_module_errors: Arc::new(resolved_module_errors),
+        resolved_module_request_errors: Arc::new(resolved_module_request_errors),
+        resolved_modules_per_file,
+    }
+}
+
+#[cfg(test)]
+pub(super) fn collect_diagnostics(
+    input: &CollectDiagnosticsInput<'_>,
+    cache: Option<&mut CompilationCache>,
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
+) -> CollectDiagnosticsResult {
+    collect_diagnostics_with_source_resolutions(input, cache, type_cache_output, None)
+}
+
+pub(super) fn collect_diagnostics_with_source_resolutions(
+    input: &CollectDiagnosticsInput<'_>,
+    cache: Option<&mut CompilationCache>,
+    type_cache_output: &std::sync::Mutex<FxHashMap<PathBuf, TypeCache>>,
+    source_module_resolutions: Option<
+        &FxHashMap<SourceModuleResolutionKey, SourceModuleResolution>,
+    >,
+) -> CollectDiagnosticsResult {
+    let &CollectDiagnosticsInput {
+        program,
+        options,
+        base_dir,
+        checker_libs,
+        typescript_dom_replacement_globals,
+        has_deprecation_diagnostics,
+        collect_compile_stats,
+    } = input;
+    let _collect_span =
+        tracing::info_span!("collect_diagnostics", files = program.files.len()).entered();
+    // Production CLI semantic diagnostics are scheduled here. Lower-level
+    // helpers in `tsz::parallel` stay reusable infrastructure unless this
+    // driver opts into changed CLI behavior.
+    #[cfg(not(target_arch = "wasm32"))]
+    tsz::parallel::ensure_rayon_global_pool();
+
+    let mut diagnostics: Vec<Diagnostic> = Vec::new();
+    let mut request_cache_counters = RequestCacheCounters::default();
+    let file_count = program.files.len();
+    let mut used_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
+    let mut cache = cache;
+    let mut resolution_cache = ModuleResolutionCache::default();
+    // Pre-size: each map ends up with exactly one entry per file. Without
+    // capacity hints the inserts go through the standard power-of-two grow
+    // path (~12 rehashes for a 6000-entry map). Driver setup runs once per
+    // build, but on a 6000-file project the rehash cost is real startup
+    // overhead.
+    let mut program_paths = FxHashSet::with_capacity_and_hasher(file_count, Default::default());
+    let mut canonical_to_file_name: FxHashMap<PathBuf, String> =
+        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
+    let mut canonical_to_file_idx: FxHashMap<PathBuf, usize> =
+        FxHashMap::with_capacity_and_hasher(file_count, Default::default());
+    let program_has_real_syntax_errors = program_has_real_syntax_errors(program);
+    let program_has_unsupported_js_root = program_has_unsupported_js_root(program, options);
+
+    // TS6504: when allowJs is disabled, emit one error per explicit JS root file.
+    // tsc includes the JS file in the program but rejects it with this diagnostic
+    // and skips semantic checks for that file (the suppression is in
+    // post_process_checker_diagnostics).
+    if program_has_unsupported_js_root {
+        for file in &program.files {
+            if is_js_file(Path::new(&file.file_name)) {
+                let mut ts6504 = Diagnostic::from_code(
+                    diagnostic_codes::FILE_IS_A_JAVASCRIPT_FILE_DID_YOU_MEAN_TO_ENABLE_THE_ALLOWJS_OPTION,
+                    "",
+                    0,
+                    0,
+                    &[&file.file_name],
+                );
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::THE_FILE_IS_IN_THE_PROGRAM_BECAUSE,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "The file is in the program because:".to_string(),
+                    });
+                ts6504
+                    .related_information
+                    .push(DiagnosticRelatedInformation {
+                        category: DiagnosticCategory::Message,
+                        code: diagnostic_codes::ROOT_FILE_SPECIFIED_FOR_COMPILATION,
+                        file: String::new(),
+                        start: 0,
+                        length: 0,
+                        message_text: "Root file specified for compilation".to_string(),
+                    });
+                diagnostics.push(ts6504);
+            }
+        }
+    }
+
+    {
+        let _span = tracing::info_span!("build_program_path_maps", files = file_count).entered();
+        for (idx, file) in program.files.iter().enumerate() {
+            let canonical = normalize_resolved_path(Path::new(&file.file_name), options);
+            program_paths.insert(canonical.clone());
+            canonical_to_file_name.insert(canonical.clone(), file.file_name.clone());
+            canonical_to_file_idx.insert(canonical, idx);
+        }
+    }
+
+    // Duplicate package redirect map
+    let package_redirects: FxHashMap<PathBuf, PathBuf> = {
+        let file_names: Vec<String> = program.files.iter().map(|f| f.file_name.clone()).collect();
+        build_duplicate_package_redirects(&file_names, options)
+    };
+    let SourceResolutionSetup {
+        cached_module_specifiers,
+        resolved_module_paths,
+        resolved_module_request_paths,
+        resolved_module_ts_extension_flags,
+        resolved_module_errors,
+        resolved_module_request_errors,
+        resolved_modules_per_file,
+    } = prepare_source_resolution_setup(SourceResolutionSetupInput {
+        program,
+        options,
+        base_dir,
+        source_module_resolutions,
+        canonical_to_file_idx: &canonical_to_file_idx,
+        program_paths: &program_paths,
+        package_redirects: &package_redirects,
+        resolution_cache: &mut resolution_cache,
     });
 
     // Pre-compute per-file TS7016 diagnostics for CJS require() calls.
