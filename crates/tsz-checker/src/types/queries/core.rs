@@ -1138,7 +1138,7 @@ impl<'a> CheckerState<'a> {
                 return None;
             }
             if name.starts_with("[Symbol.")
-                && let Some(symbol_ref) = self.resolve_well_known_symbol_ref_from_name(&name)
+                && let Some(symbol_ref) = self.well_known_symbol_ref_for_name(&name, name_idx)
             {
                 self.register_well_known_symbol_name_mapping(&name, symbol_ref);
             }
@@ -1630,6 +1630,39 @@ impl<'a> CheckerState<'a> {
         if let Ok(mut env) = self.ctx.type_environment.try_borrow_mut() {
             env.register_well_known_symbol_name(name_key, symbol_ref);
         }
+    }
+
+    /// Recover the `SymbolRef` behind a canonical `[Symbol.xxx]` property-name
+    /// key so `keyof` can contribute the precise `typeof Symbol.xxx`
+    /// (`UniqueSymbol(ref)`) key type instead of widening to the generic
+    /// `symbol`.  The reliable source of identity is the *type* of the
+    /// underlying `Symbol.xxx` access expression: that is exactly the
+    /// `UniqueSymbol(ref)` that `typeof Symbol.xxx` produces, so the recovered
+    /// ref always matches the use-site.  Falls back to a name-based
+    /// global-`Symbol` member lookup when no computed expression node is
+    /// available.
+    fn well_known_symbol_ref_for_name(
+        &mut self,
+        name: &str,
+        name_idx: NodeIndex,
+    ) -> Option<tsz_solver::SymbolRef> {
+        if let Some(expr_idx) = self
+            .ctx
+            .arena
+            .get(name_idx)
+            .and_then(|node| self.ctx.arena.get_computed_property(node))
+            .map(|computed| computed.expression)
+        {
+            let expr_type = self.get_type_of_node(expr_idx);
+            for candidate in [expr_type, self.evaluate_type_with_env(expr_type)] {
+                if let Some(symbol_ref) =
+                    crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, candidate)
+                {
+                    return Some(symbol_ref);
+                }
+            }
+        }
+        self.resolve_well_known_symbol_ref_from_name(name)
     }
 
     fn resolve_well_known_symbol_ref_from_name(&self, name: &str) -> Option<tsz_solver::SymbolRef> {
