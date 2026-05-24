@@ -1501,3 +1501,107 @@ type T = TrimRight<"hello   ">;
         "TrimRight<\"hello   \"> is bounded; must NOT emit TS2589. Got: {diags_trim:?}"
     );
 }
+
+mod issue_9784 {
+    //! Tests for <https://github.com/mohsen1/tsz/issues/9784>.
+    //!
+    //! Structural rule: a generic type alias whose body is `T extends infer X
+    //! ? <re-application of the alias> : ...` always takes the true branch (a
+    //! bare `infer X` matches unconditionally), so re-applying the alias is
+    //! infinite instantiation. tsc reports TS2589 and collapses the alias to
+    //! the error type; this makes tsz do the same so use sites do not cascade
+    //! into a spurious TS2322 against the unexpanded alias. The fix is keyed on
+    //! the structural shape, not on identifier names or the grown wrapper type.
+    use std::sync::{Arc, OnceLock};
+
+    use tsz_binder::lib_loader::LibFile;
+
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{
+        check_source_with_libs, diagnostics_with_code, load_default_lib_files,
+    };
+
+    fn check_with_libs(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
+        static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+        let libs = LIBS.get_or_init(load_default_lib_files);
+        check_source_with_libs(source, "test.ts", CheckerOptions::default(), libs)
+    }
+
+    fn codes(source: &str) -> Vec<u32> {
+        check_with_libs(source)
+            .into_iter()
+            .map(|d| d.code)
+            .collect()
+    }
+
+    #[test]
+    fn intersection_growth_emits_ts2589_no_cascade() {
+        let diags = check_with_libs(
+            "type Acc<T> = T extends infer X ? Acc<X & { k: 1 }> : never;\ntype R = Acc<{}>;\nconst r: R = { k: 1 };\n",
+        );
+        assert!(
+            !diagnostics_with_code(&diags, 2589).is_empty(),
+            "expected TS2589 for unbounded intersection growth; got: {diags:?}"
+        );
+        assert!(
+            diagnostics_with_code(&diags, 2322).is_empty(),
+            "poisoned alias must collapse to error type, no TS2322 cascade; got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn renamed_alias_and_var_still_emits_ts2589() {
+        let diags = check_with_libs(
+            "type Grow<P> = P extends infer Y ? Grow<Y & { m: 2 }> : never;\ntype Q = Grow<{}>;\nconst q: Q = { m: 2 };\n",
+        );
+        assert!(
+            !diagnostics_with_code(&diags, 2589).is_empty(),
+            "renamed alias/var must still emit TS2589; got: {diags:?}"
+        );
+        assert!(
+            diagnostics_with_code(&diags, 2322).is_empty(),
+            "renamed alias must not cascade TS2322; got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn direct_recursion_still_emits_ts2589() {
+        let diags = check_with_libs(
+            "type Foo<T> = T extends unknown ? Foo<T> : unknown;\ntype R = Foo<number>;\nconst r: R = { k: 1 };\n",
+        );
+        assert!(
+            !diagnostics_with_code(&diags, 2589).is_empty(),
+            "direct recursion must still emit TS2589; got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn terminating_infer_alias_no_ts2589() {
+        let diags = check_with_libs(
+            "type Once<T> = T extends infer X ? { v: X } : never;\ntype R = Once<number>;\nconst ok: R = { v: 1 };\nconst bad: R = { v: 5 as unknown as string };\n",
+        );
+        assert!(
+            diagnostics_with_code(&diags, 2589).is_empty(),
+            "terminating infer alias must NOT emit TS2589; got: {diags:?}"
+        );
+        assert!(
+            !diagnostics_with_code(&diags, 2322).is_empty(),
+            "the real string-vs-number mismatch must still be reported; got: {diags:?}"
+        );
+    }
+
+    #[test]
+    fn guarded_infer_recursion_no_ts2589() {
+        let cs = codes(
+            "type Flatten<T> = T extends infer X ? (X extends readonly any[] ? Flatten<X[number]> : X) : never;\ntype R = Flatten<number[][]>;\nconst r: R = 5;\n",
+        );
+        assert!(
+            !cs.contains(&2589),
+            "guarded recursion that terminates must NOT emit TS2589; got: {cs:?}"
+        );
+        assert!(
+            !cs.contains(&2322),
+            "Flatten<number[][]> resolves to number, 5 is assignable; got: {cs:?}"
+        );
+    }
+}
