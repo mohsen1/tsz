@@ -254,8 +254,71 @@ impl<'a> Printer<'a> {
         self.emit_object_literal_entries_es5_with_comments(elements, false, None, false);
     }
 
+    fn emit_object_literal_assign_entries_es5(&mut self, elements: &[NodeIndex]) {
+        if self.object_literal_assign_segment_can_emit_compact(elements) {
+            self.emit_object_literal_entries_es5_compact(elements);
+        } else {
+            self.emit_object_literal_entries_es5(elements);
+        }
+    }
+
     fn emit_object_literal_prefix_entries_es5(&mut self, elements: &[NodeIndex]) {
         self.emit_object_literal_entries_es5_with_comments(elements, false, None, true);
+    }
+
+    fn emit_object_literal_entries_es5_compact(&mut self, elements: &[NodeIndex]) {
+        if elements.is_empty() {
+            self.write("{}");
+            return;
+        }
+
+        self.write("{ ");
+        for (i, &prop) in elements.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit_object_literal_member_es5(prop);
+        }
+        self.write(" }");
+    }
+
+    fn object_literal_assign_segment_can_emit_compact(&self, elements: &[NodeIndex]) -> bool {
+        if elements.is_empty() {
+            return true;
+        }
+
+        if !elements.iter().all(|&idx| {
+            self.arena.get(idx).is_some_and(|node| {
+                node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+            })
+        }) {
+            return false;
+        }
+
+        let Some(source) = self.source_text else {
+            return true;
+        };
+
+        for pair in elements.windows(2) {
+            let Some(curr) = self.arena.get(pair[0]) else {
+                continue;
+            };
+            let Some(next) = self.arena.get(pair[1]) else {
+                continue;
+            };
+            let curr_end = std::cmp::min(curr.end as usize, source.len());
+            let next_pos = std::cmp::min(next.pos as usize, source.len());
+            if curr_end >= next_pos {
+                continue;
+            }
+            let gap = &source[curr_end..next_pos];
+            if gap.contains('\n') || gap.contains("//") || gap.contains("/*") {
+                return false;
+            }
+        }
+
+        true
     }
 
     fn emit_object_literal_entries_es5_with_comments(
@@ -902,7 +965,7 @@ impl<'a> Printer<'a> {
                 if has_computed {
                     self.emit_object_literal_without_spread_es5(elems, source_range, false);
                 } else {
-                    self.emit_object_literal_entries_es5(elems);
+                    self.emit_object_literal_assign_entries_es5(elems);
                 }
                 self.write(", ");
                 self.emit_spread_expr_from_idx(*spread_idx);
@@ -950,7 +1013,7 @@ impl<'a> Printer<'a> {
                     self.write(&temp_var);
                     self.write(")");
                 } else {
-                    self.emit_object_literal_entries_es5(elems);
+                    self.emit_object_literal_assign_entries_es5(elems);
                 }
                 self.write(")");
             }
@@ -1017,7 +1080,7 @@ impl<'a> Printer<'a> {
                             self.write(&temp_var);
                             self.write(")");
                         } else {
-                            self.emit_object_literal_entries_es5(elems);
+                            self.emit_object_literal_assign_entries_es5(elems);
                         }
                     }
                     ObjectSegment::Spread(spread_idx) => {
@@ -1065,7 +1128,7 @@ impl<'a> Printer<'a> {
                                 self.write(&temp_var);
                                 self.write(")");
                             } else if !elems.is_empty() {
-                                self.emit_object_literal_entries_es5(elems);
+                                self.emit_object_literal_assign_entries_es5(elems);
                             } else {
                                 self.write("{}");
                             }
