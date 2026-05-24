@@ -131,7 +131,16 @@ impl<'a> InferenceContext<'a> {
     /// 3. Otherwise → find single common supertype via tournament reduction
     ///    (matching tsc's `getSingleCommonSupertype` reduceLeft fallback)
     /// 4. Add stripped nullable types back to the result
-    pub fn get_common_supertype_for_inference(&self, types: &[TypeId]) -> TypeId {
+    ///
+    /// `array_element_first_wins` requests tsc's strict leftmost-wins behaviour
+    /// for the incompatible-candidate fallback when one of the candidates was
+    /// inferred from an array-literal element (see the step-5 comment for why
+    /// this is gated).
+    pub fn get_common_supertype_for_inference(
+        &self,
+        types: &[TypeId],
+        array_element_first_wins: bool,
+    ) -> TypeId {
         if types.is_empty() {
             return TypeId::UNKNOWN;
         }
@@ -289,9 +298,28 @@ impl<'a> InferenceContext<'a> {
         // indicating a "loose" inference context (like `new Array(...)` with
         // mixed types). In tsc, without strictNullChecks, null/undefined are
         // subtypes of everything and don't affect the first-wins result.
-        // When no nullable was stripped, we fall back to union creation for
-        // safety with complex candidates (tuples, objects, etc.).
-        let first_wins_for_incompatible = has_undefined || has_null;
+        //
+        // We also use first-wins when one of the candidates was inferred from an
+        // array-literal element AND every candidate is a primitive or literal (or
+        // a union thereof). For primitives the simplified `is_subtype` above is
+        // exact, so there is no risk of missing a real subtype relationship, and
+        // matching tsc's leftmost-wins is required. Without this, inferring `T`
+        // from a `T[]` parameter that yields `string` (from an array literal)
+        // competing with a naked `T` argument that yields `number` — as in
+        // `f<T>(a: T[], b: T)` called `f(["a","b"], 1)` — wrongly produced the
+        // union `string | number` instead of fixing `T = string` and reporting
+        // the conflicting argument (TS2345). tsc's `getCommonSupertype` never
+        // unions incompatible primitives here; it keeps the leftmost candidate.
+        //
+        // The union fallback is intentionally retained for the non-array case
+        // (e.g. plain multi-lower-bound merges) and for structural candidates
+        // (objects, tuples, functions) where `is_subtype` is unreliable; the
+        // wholesale union→supertype realignment for those is tracked separately.
+        let all_primitive_or_literal = primary_types
+            .iter()
+            .all(|&ty| self.is_primitive_or_primitive_union(ty));
+        let first_wins_for_incompatible =
+            has_undefined || has_null || (array_element_first_wins && all_primitive_or_literal);
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {

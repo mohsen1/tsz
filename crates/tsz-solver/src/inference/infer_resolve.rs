@@ -756,7 +756,17 @@ impl<'a> InferenceContext<'a> {
             // (first-wins from the tournament).
             let widened_candidates =
                 self.union_object_and_array_literal_candidates(&widened_candidates);
-            self.get_common_supertype_for_inference(&widened_candidates)
+            // When a candidate was inferred from an array-literal element position
+            // (a `T[]` parameter), tsc's `getCommonSupertype` fixes `T` to the
+            // leftmost candidate rather than unioning incompatible primitives.
+            // Surface that fact so the supertype fallback matches tsc and a
+            // conflicting naked argument is reported (issue #9667).
+            let has_array_element_candidate =
+                filtered_no_never.iter().any(|c| c.from_array_element);
+            self.get_common_supertype_for_inference(
+                &widened_candidates,
+                has_array_element_candidate,
+            )
         };
         // When candidates come from index signature inference (e.g., inferring T from
         // source properties against target `{ [x: string]: T }`), tsc creates a union
