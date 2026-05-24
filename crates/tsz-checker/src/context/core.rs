@@ -1298,7 +1298,7 @@ impl<'a> CheckerContext<'a> {
                 }
             }
         }
-        candidates.sort_by(|left, right| right.0.cmp(&left.0));
+        candidates.sort_by_key(|(pattern_len, _)| std::cmp::Reverse(*pattern_len));
 
         for (_, target) in candidates {
             if let Some(idx) = self.file_index_for_package_relative_path(&package_root, &target) {
