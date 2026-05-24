@@ -84,6 +84,11 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return true;
         }
+        if self.source_return_type_preserves_mapped_alias_application(source_type_text)
+            && self.print_type_id(inferred_return_type) != source_type_text
+        {
+            return true;
+        }
         if !source_type_text.contains("typeof ") {
             return Self::type_text_contains_mapped_type_literal(source_type_text)
                 && self.print_type_id(inferred_return_type) != source_type_text;
@@ -128,6 +133,18 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.inferred_return_application_base_name(inferred_return_type)
             .is_some_and(|base_name| source_name == base_name)
+    }
+
+    fn source_return_type_preserves_mapped_alias_application(
+        &self,
+        source_type_text: &str,
+    ) -> bool {
+        let Some((alias_name, _)) = Self::single_type_reference_application(source_type_text)
+        else {
+            return false;
+        };
+        self.source_type_alias_type_text(self.arena, alias_name)
+            .is_some_and(|alias_text| Self::type_text_contains_mapped_type_literal(&alias_text))
     }
 
     fn inferred_return_application_base_name(
