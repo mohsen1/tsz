@@ -257,6 +257,13 @@ impl<'a> CheckerState<'a> {
                     seen,
                 )
             }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                Self::source_file_type_literal_has_generic_scope_independent_properties(
+                    arena,
+                    node,
+                    type_param_names,
+                )
+            }
             _ => false,
         }
     }
@@ -452,6 +459,13 @@ impl<'a> CheckerState<'a> {
                     seen,
                 )
             }
+            k if k == syntax_kind_ext::TYPE_LITERAL => {
+                Self::source_file_type_literal_has_generic_scope_independent_properties(
+                    arena,
+                    node,
+                    &[],
+                )
+            }
             _ => false,
         }
     }
@@ -554,5 +568,48 @@ impl<'a> CheckerState<'a> {
                     &mapped_param_names,
                     seen,
                 ))
+    }
+
+    fn source_file_type_literal_has_generic_scope_independent_properties(
+        arena: &NodeArena,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+    ) -> bool {
+        let Some(type_literal) = arena.get_type_literal(node) else {
+            return false;
+        };
+        type_literal
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .all(|member_idx| {
+                let Some(member_node) = arena.get(member_idx) else {
+                    return false;
+                };
+                if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                    return false;
+                }
+                let Some(signature) = arena.get_signature(member_node) else {
+                    return false;
+                };
+                if signature.type_parameters.is_some()
+                    || signature.parameters.is_some()
+                    || signature.type_annotation.is_none()
+                {
+                    return false;
+                }
+                if arena
+                    .get(signature.name)
+                    .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+                {
+                    return false;
+                }
+                Self::source_file_type_node_is_generic_scope_independent(
+                    arena,
+                    signature.type_annotation,
+                    type_param_names,
+                )
+            })
     }
 }
