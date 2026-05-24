@@ -100,6 +100,39 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Detect a circular constraint hidden behind a transparent type-alias
+    /// application, e.g. `type Self<T extends Self<T>> = T`.
+    ///
+    /// tsc expands a type-alias application to its body before resolving a
+    /// parameter's base constraint, so the raw `Application` the other checks see
+    /// as opaque actually reduces to its body. When that body reduces — along the
+    /// base-constraint resolution path — back to the parameter, the constraint is
+    /// circular. Interfaces/classes and aliases with opaque bodies (object,
+    /// conditional) do not reduce to the parameter, so F-bounded polymorphism such
+    /// as `T extends C<T>` is left alone. The walk is keyed by the parameter's own
+    /// (list-unique) name, so it is independent of the chosen identifier.
+    pub(crate) fn constraint_alias_application_is_circular(
+        &mut self,
+        constraint_type: TypeId,
+        param_name: tsz_common::interner::Atom,
+    ) -> bool {
+        // Every non-application constraint is already covered by the direct /
+        // resolution-path identity checks, so only pay for the extra evaluation
+        // when there is an application that expansion could reshape.
+        if !crate::query_boundaries::common::contains_application_in_structure(
+            self.ctx.types,
+            constraint_type,
+        ) {
+            return false;
+        }
+        let expanded = self.evaluate_type_with_env(constraint_type);
+        crate::query_boundaries::common::constraint_references_type_param_in_resolution_path(
+            self.ctx.types,
+            expanded,
+            param_name,
+        )
+    }
+
     /// Check if a constraint type creates a circular constraint for a type parameter.
     ///
     /// This detects:

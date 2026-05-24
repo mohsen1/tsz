@@ -1908,7 +1908,7 @@ impl<'a> CheckerState<'a> {
                     // NOT considered circular by tsc — it's a valid pattern for type narrowing.
                     // tsc's getConstraintOfTypeParameter defers typeof resolution.
                     let is_circular = !is_typeof_constraint
-                        && if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
+                        && (if let Some(&param_type_id) = self.ctx.type_parameter_scope.get(&name) {
                             self.is_same_type_parameter(
                                 constraint_type,
                                 param_type_id,
@@ -1918,7 +1918,8 @@ impl<'a> CheckerState<'a> {
                             )
                         } else {
                             false
-                        };
+                        } || self
+                            .constraint_alias_application_is_circular(constraint_type, atom));
 
                     if is_circular {
                         self.error_at_node_msg(
