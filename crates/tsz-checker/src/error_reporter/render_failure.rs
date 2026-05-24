@@ -1763,7 +1763,7 @@ impl<'a> CheckerState<'a> {
             let prop_list: Vec<String> = all_missing
                 .iter()
                 .take(4)
-                .map(|name| self.missing_property_name_for_display(*name, target))
+                .map(|name| self.missing_property_list_name_for_display(*name))
                 .collect();
             let props_joined = prop_list.join(", ");
             let (message, code) = if all_missing.len() > 4 {
@@ -1822,7 +1822,7 @@ impl<'a> CheckerState<'a> {
                 let prop_list: Vec<String> = ordered_names
                     .iter()
                     .take(5)
-                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .map(|name| self.missing_property_list_name_for_display(*name))
                     .collect();
                 let props_joined = prop_list.join(", ");
                 let message = format_message(
@@ -2380,7 +2380,7 @@ impl<'a> CheckerState<'a> {
                 let prop_list: Vec<String> = ordered_names
                     .iter()
                     .take(5)
-                    .map(|name| self.missing_property_name_for_display(*name, target))
+                    .map(|name| self.missing_property_list_name_for_display(*name))
                     .collect();
                 let props_joined = prop_list.join(", ");
                 let message = format_message(
@@ -2549,7 +2549,7 @@ impl<'a> CheckerState<'a> {
         let prop_list: Vec<String> = ordered_names
             .iter()
             .take(display_count)
-            .map(|name| self.missing_property_name_for_display(*name, target))
+            .map(|name| self.missing_property_list_name_for_display(*name))
             .collect();
         let props_joined = prop_list.join(", ");
         if is_truncated {
@@ -2580,6 +2580,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render the property key for the single-property TS2741 message.
+    ///
+    /// tsc qualifies an enum-member-derived key as `[E.B]` here (the single
+    /// "Property '…' is missing" message), so this path consults the enum
+    /// origin of the key. The multi-property TS2739/TS2740 list uses bare
+    /// member names instead — see [`Self::missing_property_list_name_for_display`].
     fn missing_property_name_for_display(
         &mut self,
         property_name: tsz_common::interner::Atom,
@@ -2591,16 +2597,70 @@ impl<'a> CheckerState<'a> {
         self.ctx.types.resolve_atom_ref(property_name).to_string()
     }
 
+    /// Render a property key for the multi-property TS2739/TS2740 list
+    /// ("… is missing the following properties from type '…': a, b").
+    ///
+    /// Unlike the single-property TS2741 message, tsc lists bare member names
+    /// here even when the keys originate from an enum (`b, c`, not
+    /// `[E.B], [E.C]`), so this path never qualifies the key with its enum
+    /// member origin.
+    fn missing_property_list_name_for_display(
+        &mut self,
+        property_name: tsz_common::interner::Atom,
+    ) -> String {
+        self.ctx.types.resolve_atom_ref(property_name).to_string()
+    }
+
     fn enum_mapped_property_name_for_display(
         &mut self,
         property_name: tsz_common::interner::Atom,
         target: TypeId,
     ) -> Option<String> {
         let property_key = self.ctx.types.resolve_atom_ref(property_name).to_string();
-        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, target)?;
 
+        // A mapped type `{ [K in E]: V }` iterates the members of the enum `E`,
+        // so every generated property key originates from an enum member. tsc
+        // renders such computed keys as `[E.B]` rather than the underlying
+        // literal value `b`. Recover the iteration constraint from the target
+        // (the mapped type itself, an alias to it, or a `Lazy` reference whose
+        // body is the mapped type) and match the missing key to its member.
+        if let Some(constraint) = self.mapped_iteration_key_constraint(target)
+            && let Some(display) =
+                self.enum_key_property_name_for_display(&property_key, constraint)
+        {
+            return Some(display);
+        }
+
+        // `Record<E, V>`-style applications carry the enum as a type argument.
+        let (_, args) = crate::query_boundaries::common::application_info(self.ctx.types, target)?;
         args.into_iter()
             .find_map(|arg| self.enum_key_property_name_for_display(&property_key, arg))
+    }
+
+    /// Recover the key constraint (e.g. the enum `E` in `{ [K in E]: V }`) of a
+    /// mapped type reachable from `target`.
+    ///
+    /// `target` may be the mapped type directly, a `Lazy(DefId)` reference to a
+    /// type alias whose body is the mapped type, or an evaluated object whose
+    /// display alias is the mapped type.
+    fn mapped_iteration_key_constraint(&mut self, target: TypeId) -> Option<TypeId> {
+        let lazy_body = {
+            let env = self.ctx.type_env.try_borrow().ok();
+            crate::query_boundaries::flow::resolve_lazy_def_with_env(
+                self.ctx.types,
+                env.as_deref(),
+                target,
+            )
+        };
+        let candidates = [
+            target,
+            lazy_body,
+            self.ctx.types.get_display_alias(target).unwrap_or(target),
+        ];
+        let mapped_id = candidates
+            .into_iter()
+            .find_map(|t| crate::query_boundaries::common::mapped_type_id(self.ctx.types, t))?;
+        Some(self.ctx.types.mapped_type(mapped_id).constraint)
     }
 
     fn enum_key_property_name_for_display(
