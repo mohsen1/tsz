@@ -1616,15 +1616,15 @@ impl<'a> Printer<'a> {
                 // export default <expression> - emit as exports.default = expr;
                 // In System modules, use exports_1("default", expr) instead.
                 _ => {
-                    // `export default X` — use `exports.X` only when the variable
-                    // was inlined (`exports.x = val;` with no local declaration),
-                    // otherwise use the local name (class/function/enum have local
-                    // declarations).
+                    // `export default X` — exported variables are lowered to the
+                    // `exports.X` binding in CommonJS, including recovered
+                    // no-initializer declarations that emit no local declaration.
+                    // Other values (classes/functions/enums) keep local bindings.
                     if let Some(expr_node) = self.arena.get(export.export_clause)
                         && expr_node.is_identifier()
                     {
                         let ident = self.get_identifier_text_idx(export.export_clause);
-                        if self.ctx.module_state.inlined_var_exports.contains(&ident) {
+                        if self.commonjs_exported_var_names.contains(ident.as_str()) {
                             self.write("exports.default = exports.");
                             self.write(&ident);
                             self.write(";");
