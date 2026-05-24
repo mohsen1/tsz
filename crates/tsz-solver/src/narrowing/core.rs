@@ -1173,9 +1173,6 @@ impl<'a> NarrowingContext<'a> {
 
     /// Narrow a type to exclude members assignable to target.
     pub fn narrow_excluding_type(&self, source_type: TypeId, excluded_type: TypeId) -> TypeId {
-        // `any` cannot be narrowed by exclusion — it remains `any` in all branches.
-        // Without this guard, the `is_assignable_to(any, X)` check below would always
-        // succeed (any is assignable to everything), incorrectly producing `never`.
         if source_type == TypeId::ANY {
             return TypeId::ANY;
         }
@@ -1196,7 +1193,6 @@ impl<'a> NarrowingContext<'a> {
         {
             return narrowed;
         }
-
         if let Some(members) = intersection_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let mut narrowed_members = Vec::with_capacity(members.len());
@@ -1217,7 +1213,6 @@ impl<'a> NarrowingContext<'a> {
             return self.db.intersection(narrowed_members);
         }
 
-        // If source is a union, filter out matching members
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
@@ -1313,29 +1308,15 @@ impl<'a> NarrowingContext<'a> {
         }
     }
 
-    /// Narrow a type by excluding multiple types at once (batched version).
-    ///
-    /// This is an optimized version of `narrow_excluding_type` for cases like
-    /// switch default clauses where we need to exclude many types at once.
-    /// It avoids creating intermediate union types and reduces complexity from O(N²) to O(N).
-    ///
-    /// # Arguments
-    /// * `source_type` - The type to narrow (typically a union)
-    /// * `excluded_types` - Types to exclude from the source
-    ///
-    /// # Returns
-    /// The narrowed type with all excluded types removed
+    /// Narrow a type by excluding multiple types at once.
     pub fn narrow_excluding_types(&self, source_type: TypeId, excluded_types: &[TypeId]) -> TypeId {
         if excluded_types.is_empty() {
             return source_type;
         }
 
-        // Enum decomposition for the batched path (issue #6823).
         if let Some(narrowed) = self.narrow_enum_excluding_types(source_type, excluded_types) {
             return narrowed;
         }
-
-        // For small lists, use sequential narrowing (avoids HashSet overhead)
         if excluded_types.len() <= 4 {
             let mut result = source_type;
             for &excluded in excluded_types {
@@ -1347,37 +1328,29 @@ impl<'a> NarrowingContext<'a> {
             return result;
         }
 
-        // For larger lists, use HashSet for O(1) lookup
         let excluded_set: rustc_hash::FxHashSet<TypeId> = excluded_types.iter().copied().collect();
 
-        // Handle union source type
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
             let remaining: Vec<TypeId> = members
                 .iter()
                 .filter_map(|&member| {
-                    // Fast path: direct identity check against the set
                     if excluded_set.contains(&member) {
                         return None;
                     }
 
-                    // Handle intersection members
                     if intersection_list_id(self.db, member).is_some() {
                         return self
                             .narrow_excluding_types(member, excluded_types)
                             .non_never();
                     }
 
-                    // Handle type parameters
                     if let Some(narrowed) =
                         self.narrow_type_param_excluding_set(member, &excluded_set)
                     {
                         return narrowed.non_never();
                     }
 
-                    // Slow path: check assignability for complex cases
-                    // This handles cases where the member isn't identical to an excluded type
-                    // but might still be assignable to one (e.g., literal subtypes)
                     for &excluded in &excluded_set {
                         if self.is_assignable_to(member, excluded) {
                             return None;
@@ -1395,12 +1368,10 @@ impl<'a> NarrowingContext<'a> {
             return self.db.union(remaining);
         }
 
-        // Handle single type (not a union)
         if excluded_set.contains(&source_type) {
             return TypeId::NEVER;
         }
 
-        // Check assignability for single type
         for &excluded in &excluded_set {
             if self.is_assignable_to(source_type, excluded) {
                 return TypeId::NEVER;
@@ -1453,7 +1424,7 @@ impl<'a> NarrowingContext<'a> {
         // If target is the same enum, unwrap to narrow within the enum domain.
         let effective_target = match crate::visitor::enum_components(self.db, target_type) {
             Some((target_def, target_inner))
-                if self.class_defs_equivalent_for_narrowing(enum_def, target_def) =>
+                if self.enum_defs_match_for_narrowing(enum_def, target_def) =>
             {
                 target_inner
             }
@@ -1481,14 +1452,20 @@ impl<'a> NarrowingContext<'a> {
         source_type: TypeId,
         excluded_types: &[TypeId],
     ) -> Option<TypeId> {
-        let (enum_def, inner) = crate::visitor::enum_components(self.db, source_type)?;
+        let (enum_def, inner) =
+            crate::visitor::enum_components(self.db, source_type).or_else(|| {
+                let resolved = self.resolve_for_exclusion_narrowing(source_type);
+                (resolved != source_type)
+                    .then(|| crate::visitor::enum_components(self.db, resolved))
+                    .flatten()
+            })?;
 
         let normalized: Vec<TypeId> = excluded_types
             .iter()
             .map(
                 |&excluded| match crate::visitor::enum_components(self.db, excluded) {
                     Some((excluded_def, excluded_inner))
-                        if self.class_defs_equivalent_for_narrowing(enum_def, excluded_def) =>
+                        if self.enum_defs_match_for_narrowing(enum_def, excluded_def) =>
                     {
                         excluded_inner
                     }
@@ -1504,6 +1481,11 @@ impl<'a> NarrowingContext<'a> {
         }
         if narrowed_inner == inner {
             return Some(source_type);
+        }
+        if let Some((narrowed_def, _)) = crate::visitor::enum_components(self.db, narrowed_inner)
+            && self.enum_defs_match_for_narrowing(enum_def, narrowed_def)
+        {
+            return Some(narrowed_inner);
         }
         Some(self.db.enum_type(enum_def, narrowed_inner))
     }
@@ -2063,6 +2045,14 @@ impl<'a> NarrowingContext<'a> {
         self.resolver
             .map(|resolver| resolver.defs_are_equivalent(left, right))
             .unwrap_or(false)
+    }
+
+    fn enum_defs_match_for_narrowing(&self, enum_def: DefId, candidate_def: DefId) -> bool {
+        self.class_defs_equivalent_for_narrowing(enum_def, candidate_def)
+            || self
+                .resolver
+                .and_then(|resolver| resolver.get_enum_parent_def_id(candidate_def))
+                .is_some_and(|parent| self.class_defs_equivalent_for_narrowing(enum_def, parent))
     }
 
     fn remove_redundant_intersection_members(&self, members: &mut Vec<TypeId>) {

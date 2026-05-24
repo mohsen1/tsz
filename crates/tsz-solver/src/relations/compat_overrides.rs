@@ -380,6 +380,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
                         // Target is an enum type but not the parent
                         Some(false)
                     }
+                    (None, Some(tp)) if tp == s_def => {
+                        // Source is the parent enum and target is one of its members.
+                        // This is only assignable after flow narrows the parent enum's
+                        // inner value to the target member's literal value.
+                        Some(self.enum_inner_assignable_to(source, target))
+                    }
                     _ => {
                         // Different parents (or one/both are types, not members)
                         // Nominal mismatch: EnumA.X is not assignable to EnumB
@@ -452,6 +458,21 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             // Case 4: Neither is an enum
             (None, None) => None,
         }
+    }
+
+    fn enum_inner_assignable_to(&self, source: TypeId, target: TypeId) -> bool {
+        let Some((_source_def, source_inner)) =
+            crate::visitor::enum_components(self.interner, source)
+        else {
+            return false;
+        };
+        let Some((_target_def, target_inner)) =
+            crate::visitor::enum_components(self.interner, target)
+        else {
+            return false;
+        };
+
+        crate::relations::subtype::is_subtype_of(self.interner, source_inner, target_inner)
     }
 
     fn contains_string_like_source(&self, type_id: TypeId) -> bool {

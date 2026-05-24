@@ -2095,7 +2095,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // - MemberType: For structural assignability to primitives (E1 <: number)
         // =======================================================================
 
-        if let (Some((s_def_id, _s_members)), Some((t_def_id, _t_members))) = (
+        if let (Some((s_def_id, s_members)), Some((t_def_id, t_members))) = (
             enum_components(self.interner, source),
             enum_components(self.interner, target),
         ) {
@@ -2128,6 +2128,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 if self.resolver.is_enum_type(target, self.interner) {
                     return SubtypeResult::True;
                 }
+            }
+
+            // Source is the parent enum, target is one of its members. This is
+            // valid only when prior flow narrowing reduced the source's inner
+            // value to the target member's literal value.
+            if self.resolver.get_enum_parent_def_id(t_def_id) == Some(s_def_id)
+                && self.check_subtype(s_members, t_members).is_true()
+            {
+                return SubtypeResult::True;
             }
 
             // Different enums are NOT compatible (nominal typing)
