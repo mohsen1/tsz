@@ -1668,6 +1668,49 @@ export function transform(v) {
 }
 
 #[test]
+fn test_js_non_exported_hoisted_function_preserves_typedef_comments_before_pending_aliases() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {number} N */
+/**
+ * @typedef {Object} D1
+ * @property {1} e Just link to {@link NS.R} this time
+ */
+/**
+ * @param {number} value {@link N}
+ */
+function compute(value) {
+  return value;
+}
+/** {@link https://example.test} */
+var marker = true;
+"#,
+    );
+
+    let typedef_comment_pos = output
+        .find("/** @typedef {number} N */")
+        .expect("Expected source typedef comment to stay before the function");
+    let function_pos = output
+        .find("declare function compute(value: number): number;")
+        .expect("Expected non-exported function declaration");
+    let var_pos = output
+        .find("declare var marker: boolean;")
+        .expect("Expected following variable declaration");
+    let alias_pos = output
+        .find("type N = number;")
+        .expect("Expected pending alias");
+
+    assert!(
+        typedef_comment_pos < function_pos && function_pos < var_pos && var_pos < alias_pos,
+        "Non-exported JSDoc-hoisted functions should keep typedef comments before the function and defer aliases after declarations: {output}"
+    );
+    assert!(
+        output.contains("type D1 = {") && output.contains("e: 1;"),
+        "Expected object typedef alias to still be emitted from the deferred pass: {output}"
+    );
+}
+
+#[test]
 fn test_js_leading_jsdoc_typedef_before_exported_class_is_emitted() {
     // Leading @typedef before an exported class should also be emitted before the class.
     let output = emit_js_dts(
@@ -3078,6 +3121,16 @@ export function inJs(l) {
         !output.contains("@type {IFn}"),
         "Did not expect implementation-only @type comment in declaration output: {output}"
     );
+    let function_pos = output
+        .find("export function inJs<T>(m: T): T;")
+        .expect("Expected emitted function signature");
+    let alias_pos = output
+        .find("export type IFn = <T>(m: T) => T;")
+        .expect("Expected emitted typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "JSDoc @type alias-driven exported functions should emit before the pending alias: {output}"
+    );
 }
 
 #[test]
@@ -3164,6 +3217,16 @@ export function mapValue(value) {
     assert!(
         !output.contains("@type {Mapper}"),
         "Did not expect renamed implementation-only @type comment in declaration output: {output}"
+    );
+    let function_pos = output
+        .find("export function mapValue<Value>(input: Value): Value;")
+        .expect("Expected emitted function signature");
+    let alias_pos = output
+        .find("export type Mapper = <Value>(input: Value) => Value;")
+        .expect("Expected emitted typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "Renamed JSDoc @type alias-driven exported functions should emit before the pending alias: {output}"
     );
 }
 
