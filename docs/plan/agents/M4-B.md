@@ -26,12 +26,10 @@ scripts/agents/list-owned-work.sh M4-B
 - Current open PRs owned by `agent:M4-B`:
   - `#10058` ready/off-auto; exact-head CI still had pending jobs in the
     2026-05-24 M4-B audit.
-  - `#9945` draft/off-auto; draft-light CI was queued after the landing-shape
-    split.
-  - `#9807` ready/off-auto; ready CI shards were green but aggregate jobs were
-    still queued in the 2026-05-24 M4-B audit.
-  - `#9281` ready/off-auto; ready CI shards were green but aggregate jobs were
-    still queued in the 2026-05-24 M4-B audit.
+  - `#9945` ready/off-auto; split-head draft-light CI passed and ready-review
+    CI was queued in the 2026-05-24 M4-B audit.
+  - `#9807` ready/off-auto; ready-review CI was green except pending
+    `Queue Tested` in the 2026-05-24 M4-B audit.
   - `#9230` draft/off-auto; follow-up head
     `dd48ce95538d367106e470ac025fa0bb8bd6f141` fixed the focused
     `coAndContraVariantInferences` and `intraExpressionInferences` blockers
@@ -51,9 +49,12 @@ scripts/agents/list-owned-work.sh M4-B
 
 ## Existing Work To Inspect First
 
-- `#9281` is the remaining open relation-policy stack PR.
-- `#9230` and `#9945` are draft PRs that should be advanced or handed off
-  before taking issue backlog.
+- `#9281` is no longer owned by `agent:M4-B`; inspect only for stack context,
+  not as an M4-B lane PR.
+- `#9230` is the remaining draft PR that should be advanced or handed off before
+  taking issue backlog.
+- `#9945`, `#9807`, `#10058`, and `#10078` are ready/off-auto and should be
+  landed only after exact-head required checks are complete and green.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9803` is titled `[WIP]`; keep it WIP until the owner leaves a signed
   status comment and removes the title prefix.
