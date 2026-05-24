@@ -474,6 +474,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "assignability"
             / "polymorphic_this_diagnostics.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "statement_helpers.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "declarations" / "dynamic_import_checker.rs",
             ROOT
             / "crates"
