@@ -132,6 +132,11 @@ pub enum IRNode {
     /// ```
     CommaExprMultiline(Vec<Self>),
 
+    /// Multiline comma expression whose continuation lines reuse the current
+    /// indentation level. Used when a comma expression is nested inside another
+    /// multiline comma expression.
+    CommaExprMultilineFlat(Vec<Self>),
+
     /// Array literal: `[a, b, c]`
     ArrayLiteral(Vec<Self>),
 
@@ -143,6 +148,9 @@ pub enum IRNode {
         properties: Vec<IRProperty>,
         /// Source range (pos, end) for single-line vs multiline detection
         source_range: Option<(u32, u32)>,
+        /// Extra continuation indentation for object literals that TypeScript
+        /// emits as part of downlevel computed-property temporaries.
+        extra_indent: u8,
     },
 
     /// Function expression: `function name(params) { body }`
@@ -920,6 +928,7 @@ impl IRNode {
             }
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
+            | Self::CommaExprMultilineFlat(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)
@@ -1238,6 +1247,7 @@ impl IRNode {
             }
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
+            | Self::CommaExprMultilineFlat(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)
@@ -1485,6 +1495,7 @@ impl IRNode {
         Self::ObjectLiteral {
             properties: props,
             source_range: None,
+            extra_indent: 0,
         }
     }
 
@@ -1493,6 +1504,7 @@ impl IRNode {
         Self::ObjectLiteral {
             properties: Vec::new(),
             source_range: None,
+            extra_indent: 0,
         }
     }
 

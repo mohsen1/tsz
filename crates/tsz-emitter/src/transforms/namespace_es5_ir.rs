@@ -783,6 +783,7 @@ impl<'a> NamespaceES5Transformer<'a> {
                 },
             ],
             source_range: None,
+            extra_indent: 0,
         }
     }
 
@@ -1809,6 +1810,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
             IRNode::CommaExpr(items)
             | IRNode::CommaExprMultiline(items)
+            | IRNode::CommaExprMultilineFlat(items)
             | IRNode::ArrayLiteral(items)
             | IRNode::VarDeclList(items)
             | IRNode::Block(items)
