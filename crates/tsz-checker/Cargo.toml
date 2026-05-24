@@ -958,6 +958,10 @@ name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
 
 [[test]]
+name = "jsdoc_template_constraint_enforcement_tests"
+path = "tests/jsdoc_template_constraint_enforcement_tests.rs"
+
+[[test]]
 name = "jsdoc_template_in_body_scope_tests"
 path = "tests/jsdoc_template_in_body_scope_tests.rs"
 

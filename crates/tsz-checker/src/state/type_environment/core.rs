@@ -1776,6 +1776,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
+        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
@@ -1783,9 +1784,12 @@ impl<'a> CheckerState<'a> {
             let default = default_str
                 .as_deref()
                 .and_then(|s| checker.resolve_jsdoc_reference(s));
+            let constraint = constraint_strs
+                .get(&name)
+                .and_then(|s| checker.resolve_jsdoc_reference(s));
             params.push(tsz_solver::TypeParamInfo {
                 name: checker.ctx.types.intern_string(&name),
-                constraint: None,
+                constraint,
                 default,
                 is_const,
             });
