@@ -62,6 +62,11 @@ pub(crate) fn keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Ty
     tsz_solver::type_queries::keyof_inner_type(db, type_id)
 }
 
+/// Return true when a resolved constraint is structurally a `keyof` surface.
+pub(crate) fn constraint_has_keyof_surface(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    keyof_operand(db, type_id).is_some()
+}
+
 /// Get the extends type and false type of a conditional type.
 ///
 /// Returns `Some((extends_type, false_type))` if the type is a `Conditional`.
@@ -255,6 +260,50 @@ pub(crate) fn is_boxed_function_def(db: &dyn TypeDatabase, type_id: TypeId) -> b
         db.is_boxed_def_id(def_id, tsz_solver::IntrinsicKind::Function)
     } else {
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::PropertyInfo;
+    use tsz_solver::construction::TypeInterner;
+
+    fn object_with_property(db: &TypeInterner, name: &str) -> TypeId {
+        db.object(vec![PropertyInfo::new(
+            db.intern_string(name),
+            TypeId::STRING,
+        )])
+    }
+
+    #[test]
+    fn constraint_keyof_surface_detects_direct_keyof() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "alpha");
+        let keyof = db.keyof(object);
+
+        assert!(constraint_has_keyof_surface(&db, keyof));
+    }
+
+    #[test]
+    fn constraint_keyof_surface_ignores_non_keyof_alias() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "gamma");
+        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        db.store_display_alias(evaluated, object);
+
+        assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
+
+    #[test]
+    fn constraint_keyof_surface_ignores_keyof_display_alias() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "delta");
+        let keyof = db.keyof(object);
+        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        db.store_display_alias(evaluated, keyof);
+
+        assert!(!constraint_has_keyof_surface(&db, evaluated));
     }
 }
 
