@@ -6,6 +6,9 @@
 //! - `helpers` — foundational helpers, contextual typing, relationship queries
 //! - `access` — property/element access type resolution
 //! - `binary` — binary expression operators
+//! - `binary_comparison` — binary comparison and diagnostic display helpers
+//! - `binary_in` — `in` binary-operator checks
+//! - `binary_instanceof` — `instanceof` binary-operator checks
 //! - `call` — call expression resolution and overload handling
 //! - `call_display` — display skeleton and constructor-propagation helpers for calls
 //! - `call_helpers` — shared helpers for call/new expressions
@@ -30,6 +33,9 @@ mod access_tests;
 pub(crate) mod array_literal;
 pub(crate) mod assignment_target;
 pub(crate) mod binary;
+mod binary_comparison;
+mod binary_in;
+mod binary_instanceof;
 pub(crate) mod call;
 pub(crate) mod call_display;
 pub(crate) mod call_finalize;
