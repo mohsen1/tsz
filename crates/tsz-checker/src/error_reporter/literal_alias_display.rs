@@ -1,5 +1,6 @@
 //! Literal-only generic alias display helpers.
 
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -33,8 +34,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         declared_type: TypeId,
     ) -> Option<String> {
-        let (_, args) =
-            crate::query_boundaries::common::application_info(self.ctx.types, declared_type)?;
+        let (_, args) = diagnostic_query::application_info(self.ctx.types, declared_type)?;
         let has_literal_arg = args
             .iter()
             .copied()
@@ -48,14 +48,11 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let is_literal = |state: &Self, ty| {
-            crate::query_boundaries::common::literal_value(state.ctx.types, ty).is_some()
-        };
+        let is_literal =
+            |state: &Self, ty| diagnostic_query::literal_value(state.ctx.types, ty).is_some();
         let literal_only = if is_literal(self, evaluated) {
             true
-        } else if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, evaluated)
-        {
+        } else if let Some(members) = diagnostic_query::union_members(self.ctx.types, evaluated) {
             !members.is_empty() && members.into_iter().all(|member| is_literal(self, member))
         } else {
             false
@@ -65,10 +62,10 @@ impl<'a> CheckerState<'a> {
     }
 
     fn contains_literal_display_candidate(&self, ty: TypeId) -> bool {
-        if crate::query_boundaries::common::literal_value(self.ctx.types, ty).is_some() {
+        if diagnostic_query::literal_value(self.ctx.types, ty).is_some() {
             return true;
         }
-        if let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, ty) {
+        if let Some(members) = diagnostic_query::union_members(self.ctx.types, ty) {
             return members
                 .into_iter()
                 .any(|member| self.contains_literal_display_candidate(member));
