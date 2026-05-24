@@ -418,6 +418,15 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if self.source_is_js_file
+                && has_initializer
+                && self.variable_declaration_has_effective_export(decl_idx)
+                && let Some((local_name, _, _)) =
+                    self.js_require_property_import_alias_for_value_expression(initializer)
+            {
+                self.record_js_require_property_import_alias_for_new_expression(initializer);
+                self.write(": ");
+                self.write(&local_name);
             } else if has_initializer
                 && let Some(type_text) = self.as_const_single_spread_array_type_text(initializer)
             {
@@ -992,6 +1001,17 @@ impl<'a> DeclarationEmitter<'a> {
                         initializer,
                         &selected_type_text,
                     )
+                } else {
+                    selected_type_text
+                };
+                let selected_type_text = if self.source_is_js_file
+                    && has_initializer
+                    && self.is_js_named_exported_name(decl_name)
+                    && let Some((local_name, _, _)) =
+                        self.js_require_property_import_alias_for_value_expression(initializer)
+                {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer);
+                    local_name
                 } else {
                     selected_type_text
                 };

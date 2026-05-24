@@ -19,6 +19,98 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+#[test]
+fn labeled_while_continue_inside_nested_loop_targets_outer_async_case() {
+    let output = transform_and_print(
+        "async function f() { outer: while (x) { await y; while (z) { continue outer; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "Nested loops inside an async-lowered labeled loop must rewrite `continue outer` to the outer loop's generator continue target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue outer;"),
+        "The labeled continue must not remain as raw JS inside the generator body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn element_access_with_suspended_index_captures_object_before_yield() {
+    let output = transform_and_print("async function f() { z = x[await y]; }");
+
+    assert!(
+        output.contains("var _a;"),
+        "Suspended element access must hoist a temp for the object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = x;") && output.contains("return [4 /*yield*/, y];"),
+        "The object expression must be evaluated before yielding the index.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("z = _a[") && output.contains(".sent()];"),
+        "The resumed assignment must index into the captured object using the sent value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn labeled_while_continue_rewrite_uses_user_chosen_label() {
+    let output = transform_and_print(
+        "async function f() { retry: while (x) { await y; while (z) { continue retry; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "The rewrite must be keyed by the active label target, not by a specific spelling.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue retry;"),
+        "The user-chosen label should be lowered to the generator jump.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn return_element_access_with_suspended_index_captures_user_chosen_object() {
+    let output = transform_and_print("async function f() { return receiver[await key]; }");
+
+    assert!(
+        output.contains("_a = receiver;") && output.contains("return [4 /*yield*/, key];"),
+        "Return expressions should capture the element object before the suspended index.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [2 /*return*/, _a[") && output.contains(".sent()]];"),
+        "The returned value should use the captured receiver and resumed index.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn variable_initializer_element_access_with_suspended_index_captures_object() {
+    let output = transform_and_print("async function f() { var result = obj[await key]; }");
+
+    assert!(
+        output.contains("_a = obj;") && output.contains("return [4 /*yield*/, key];"),
+        "Variable initializers should preserve object-before-index evaluation order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("result = _a[") && output.contains(".sent()];"),
+        "The initializer assignment should use the captured object after resume.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn non_assignment_binary_with_suspended_element_index_keeps_normal_fallback() {
+    let output = transform_and_print("async function f() { return lhs() + obj[await key]; }");
+
+    assert!(
+        !output.contains("_a = obj;"),
+        "The element-object capture helper must not reorder unrelated binary-left side effects.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("lhs() + obj[") && output.contains(".sent()]"),
+        "Unsupported binary shapes should keep the existing expression fallback.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
