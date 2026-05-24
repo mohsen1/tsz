@@ -117,3 +117,40 @@ const r = g(["a", "b"], 1);
         "T must be fixed from the array element so the naked argument conflicts"
     );
 }
+
+#[test]
+fn rest_parameter_element_inference_reports_ts2345() {
+    // Adjacent family: a rest parameter `...args: T[]` is the same array-element
+    // inference position. tsc fixes `T` from the leftmost element (number) and
+    // reports the conflicting `""` argument — see the checked-in tsc baseline
+    // `genericRestArgs.errors.txt` (`makeArrayG(1, "")` → TS2345).
+    let source = r#"
+declare function f<T>(...args: T[]): T;
+f(1, "a");
+"#;
+    assert_eq!(
+        ts2345_count(source),
+        1,
+        "rest-parameter element inference must fix T from the leftmost element and report the conflict"
+    );
+}
+
+#[test]
+fn keyof_literal_union_candidates_are_not_first_wins() {
+    // Guard against over-narrowing: when `K` is inferred from `keyof`-derived
+    // string-literal-union candidates (not bare primitive intrinsics), the
+    // leftmost-wins path must NOT engage — those candidates union, matching tsc.
+    // A spurious first-wins here would drop keys and surface a false TS2345.
+    let source = r#"
+declare function pick<T, K extends keyof T>(obj: T, ...keys: K[]): Pick<T, K>;
+const o = { a: 1, b: "x", c: true };
+const r = pick(o, "a", "b");
+const ra: number = r.a;
+const rb: string = r.b;
+"#;
+    assert_eq!(
+        ts2345_count(source),
+        0,
+        "keyof-derived literal-union key candidates must union, not first-win"
+    );
+}

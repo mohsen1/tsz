@@ -300,26 +300,33 @@ impl<'a> InferenceContext<'a> {
         // subtypes of everything and don't affect the first-wins result.
         //
         // We also use first-wins when one of the candidates was inferred from an
-        // array-literal element AND every candidate is a primitive or literal (or
-        // a union thereof). For primitives the simplified `is_subtype` above is
-        // exact, so there is no risk of missing a real subtype relationship, and
-        // matching tsc's leftmost-wins is required. Without this, inferring `T`
-        // from a `T[]` parameter that yields `string` (from an array literal)
-        // competing with a naked `T` argument that yields `number` — as in
-        // `f<T>(a: T[], b: T)` called `f(["a","b"], 1)` — wrongly produced the
-        // union `string | number` instead of fixing `T = string` and reporting
-        // the conflicting argument (TS2345). tsc's `getCommonSupertype` never
-        // unions incompatible primitives here; it keeps the leftmost candidate.
+        // array-literal element AND every candidate is a *bare primitive
+        // intrinsic* (`string`, `number`, `boolean`, `bigint`, `symbol`) — i.e.
+        // genuinely disjoint base primitives. For those the simplified
+        // `is_subtype` above is exact, so there is no risk of missing a real
+        // subtype relationship, and matching tsc's leftmost-wins is required.
+        // Without this, inferring `T` from a `T[]` parameter that yields
+        // `string` (from an array literal) competing with a naked `T` argument
+        // that yields `number` — as in `f<T>(a: T[], b: T)` called
+        // `f(["a","b"], 1)` — wrongly produced the union `string | number`
+        // instead of fixing `T = string` and reporting the conflicting argument
+        // (TS2345). tsc's `getCommonSupertype` never unions incompatible
+        // primitives here; it keeps the leftmost candidate.
         //
-        // The union fallback is intentionally retained for the non-array case
-        // (e.g. plain multi-lower-bound merges) and for structural candidates
-        // (objects, tuples, functions) where `is_subtype` is unreliable; the
-        // wholesale union→supertype realignment for those is tracked separately.
-        let all_primitive_or_literal = primary_types
-            .iter()
-            .all(|&ty| self.is_primitive_or_primitive_union(ty));
+        // The check is deliberately limited to bare intrinsics: literal types
+        // and unions thereof (e.g. `"a" | "b"` produced by `keyof`/mapped/
+        // template-literal inference) must keep unioning, and structural
+        // candidates (objects, tuples, functions) keep the union fallback where
+        // `is_subtype` is unreliable. The wholesale union→supertype realignment
+        // for those is a separate, broader change.
+        let all_bare_primitive_intrinsic = primary_types.iter().all(|&ty| {
+            matches!(
+                ty,
+                TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
+            )
+        });
         let first_wins_for_incompatible =
-            has_undefined || has_null || (array_element_first_wins && all_primitive_or_literal);
+            has_undefined || has_null || (array_element_first_wins && all_bare_primitive_intrinsic);
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {
