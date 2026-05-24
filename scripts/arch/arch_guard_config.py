@@ -497,6 +497,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "crates"
             / "tsz-checker"
             / "src"
+            / "state"
+            / "variable_checking"
+            / "for_loop.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
             / "checkers"
             / "call_checker"
             / "diagnostics.rs",
