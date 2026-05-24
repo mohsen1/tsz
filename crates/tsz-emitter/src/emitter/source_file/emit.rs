@@ -84,6 +84,8 @@ impl<'a> Printer<'a> {
         self.preplanned_legacy_decorated_class_aliases.clear();
         self.async_generator_inner_name_counts.clear();
         self.reserved_disposable_env_names.clear();
+        self.reserved_top_level_using_class_result_temps.clear();
+        self.hoisted_deferred_static_class_result_temps.clear();
         self.node_esm_create_require_names = None;
         // The wrapper sets the correct binding (e.g. "tslib_2" for a second outFile
         // module) before calling the body; resetting here would clobber that value.
@@ -2250,6 +2252,15 @@ impl<'a> Printer<'a> {
         let mut ref_vars = Vec::new();
         ref_vars.extend(self.hoisted_assignment_temps.iter().cloned());
         ref_vars.extend(self.hoisted_for_of_temps.iter().cloned());
+
+        if !self.hoisted_deferred_static_class_result_temps.is_empty() {
+            let var_decl = format!(
+                "var {};",
+                self.hoisted_deferred_static_class_result_temps.join(", ")
+            );
+            self.writer
+                .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
+        }
 
         if !ref_vars.is_empty() {
             let var_decl = format!("var {};", ref_vars.join(", "));
