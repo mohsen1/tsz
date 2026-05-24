@@ -2457,6 +2457,33 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
+#[test]
+fn test_numeric_literal_union_display_policy_avoids_rendered_union_separator_decisions() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/error_reporter/assignability_numeric_display.rs");
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+    let forbidden = [
+        "source_order.contains(\" | \")",
+        "member.contains(\" | \")",
+        "member_displays.iter().all(|member| !member.contains(\" | \"))",
+    ];
+
+    let violations = forbidden
+        .iter()
+        .filter(|pattern| src.contains(**pattern))
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert!(
+        violations.is_empty(),
+        "numeric literal union display policy must use TypeId facts, not rendered \
+         union separators. Violations in {}:\n  {}",
+        path.display(),
+        violations.join("\n  ")
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
