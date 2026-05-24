@@ -12,6 +12,7 @@ mod assignability_eval;
 mod assignability_type_param_helpers;
 pub mod assignment_checker;
 mod awaited_variance_normalization;
+mod callable_union_relation;
 pub(crate) mod compound_assignment;
 mod index_access_normalization;
 mod nullish_error_targets;
