@@ -1200,6 +1200,35 @@ function f2(item: A | B | undefined) {
 }
 
 #[test]
+fn test_function_returning_implemented_generic_mapped_alias_call_preserves_alias_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+function boxify<T>(obj: T): Boxified<T> {
+    return obj as any;
+}
+type A = { a: string };
+type B = { b: string };
+function f1(x: A | B | undefined) {
+    return boxify(x);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(x: A | B | undefined): Boxified<A | B | undefined>;"),
+        "Expected implemented helper return to keep the generic mapped alias instantiation: {output}"
+    );
+    assert!(
+        !output.contains("declare function f1(x: A | B | undefined): {\n    a: Box<string>;"),
+        "Did not expect the mapped alias return to expand into object-union members: {output}"
+    );
+}
+
+#[test]
 fn test_function_return_prefers_object_literal_over_return_type_wrapper() {
     let source = r#"
     function f1(s: string) {
