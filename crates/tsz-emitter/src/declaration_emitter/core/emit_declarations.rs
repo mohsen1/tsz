@@ -728,6 +728,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .and_then(|export| self.arena.get(export.export_clause))
                     .is_some_and(|clause| clause.kind == syntax_kind_ext::VARIABLE_STATEMENT));
         let has_effective_export = self.statement_has_effective_export(stmt_idx);
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
         let js_export_equals_declaration_name = match kind {
             k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
                 .arena
@@ -743,7 +746,10 @@ impl<'a> DeclarationEmitter<'a> {
         };
         if let Some(name) = js_export_equals_declaration_name {
             self.emit_pending_js_export_equals_for_name(name);
-        } else if has_effective_export && !is_variable_like_export {
+        } else if has_effective_export
+            && !is_variable_like_export
+            && !has_jsdoc_type_function_signature
+        {
             self.emit_leading_jsdoc_type_aliases_for_pos(stmt_node.pos, has_effective_export);
         }
         if kind == syntax_kind_ext::VARIABLE_STATEMENT
@@ -793,13 +799,11 @@ impl<'a> DeclarationEmitter<'a> {
         let emitted_leading_typedef_aliases = self.source_is_js_file
             && has_effective_export
             && !is_variable_like_export
-            && js_export_equals_declaration_name.is_none();
+            && js_export_equals_declaration_name.is_none()
+            && !has_jsdoc_type_function_signature;
         let suppress_jsdoc_type_alias_comments = has_jsdoc_type_alias
             && (self.statement_emits_js_object_literal_namespace(stmt_idx)
                 || emitted_leading_typedef_aliases);
-        let has_jsdoc_type_function_signature = self
-            .statement_jsdoc_type_function_signature_node(stmt_idx)
-            .is_some();
         let jsdoc_overload_function_node =
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
@@ -1003,24 +1007,26 @@ impl<'a> DeclarationEmitter<'a> {
             self.leading_jsdoc_comment_chain_for_pos(stmt_node.pos);
         let jsdoc_chain = self.current_statement_jsdoc_chain.clone();
 
+        let has_jsdoc_type_function_signature = self
+            .statement_jsdoc_type_function_signature_node(stmt_idx)
+            .is_some();
+        let is_effectively_exported = self.statement_has_effective_export(stmt_idx);
         let has_leading_jsdoc_typedef = self.source_is_js_file
             && self.js_export_equals_names.is_empty()
+            && is_effectively_exported
+            && !has_jsdoc_type_function_signature
             && jsdoc_chain
                 .iter()
                 .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
         if has_leading_jsdoc_typedef {
-            let is_exported = self.statement_has_effective_export(stmt_idx);
             // Reuse the already-computed jsdoc_chain instead of re-walking comments.
             for jsdoc in &jsdoc_chain {
                 if let Some(decl) = Self::parse_jsdoc_type_alias_decl(jsdoc) {
-                    self.emit_rendered_jsdoc_type_alias(decl, is_exported);
+                    self.emit_rendered_jsdoc_type_alias(decl, is_effectively_exported);
                 }
             }
         }
 
-        let has_jsdoc_type_function_signature = self
-            .statement_jsdoc_type_function_signature_node(stmt_idx)
-            .is_some();
         let jsdoc_overload_function_node =
             self.jsdoc_overload_function_node_for_statement(stmt_idx);
         let has_jsdoc_overload_signatures = jsdoc_overload_function_node
@@ -1046,15 +1052,16 @@ impl<'a> DeclarationEmitter<'a> {
             ) {
                 self.emit_jsdoc_comment_chain(&filtered);
             }
-        } else if effective_chain.len() == 1
-            && Self::jsdoc_has_function_signature_tags(effective_chain[0].as_str())
+        } else if effective_chain
+            .iter()
+            .any(|jsdoc| Self::jsdoc_has_function_signature_tags(jsdoc))
             && self.hoisted_jsdoc_source_comment_is_multiline(stmt_node.pos)
         {
             if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(
                 stmt_node.pos,
                 &effective_chain,
             ) {
-                self.emit_multiline_jsdoc_comment(&effective_chain[0]);
+                self.emit_jsdoc_comment_chain(&effective_chain);
             }
         } else {
             self.emit_jsdoc_comment_chain(&effective_chain);
