@@ -4563,6 +4563,75 @@ impl<'a> DeclarationEmitter<'a> {
         Some(name.clone())
     }
 
+    pub(in crate::declaration_emitter) fn initializer_references_elided_namespace_require_import(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        if !self.inside_non_ambient_namespace {
+            return false;
+        }
+        let Some(root_ident) = self.expression_root_identifier(initializer) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(root_name) = self.get_identifier_text(root_ident) else {
+            return false;
+        };
+        let Some(scope_id) = binder.find_enclosing_scope(self.arena, root_ident) else {
+            return false;
+        };
+        let Some(sym_id) = self.resolve_name_in_scope_chain(binder, scope_id, &root_name) else {
+            return false;
+        };
+        let Some(sym) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if sym.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+            return false;
+        }
+        sym.declarations.iter().copied().any(|decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+                return false;
+            }
+            let Some(import_decl) = self.arena.get_import_decl(decl_node) else {
+                return false;
+            };
+            if self
+                .arena
+                .has_modifier(&import_decl.modifiers, SyntaxKind::ExportKeyword)
+            {
+                return false;
+            }
+            self.arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|node| node.kind == SyntaxKind::StringLiteral as u16)
+        })
+    }
+
+    fn expression_root_identifier(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            return Some(expr_idx);
+        }
+        if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            let access = self.arena.get_access_expr(node)?;
+            return self.expression_root_identifier(access.expression);
+        }
+        if node.kind == syntax_kind_ext::NEW_EXPRESSION
+            || node.kind == syntax_kind_ext::CALL_EXPRESSION
+        {
+            let call = self.arena.get_call_expr(node)?;
+            return self.expression_root_identifier(call.expression);
+        }
+        None
+    }
+
     /// Check whether an import-equals alias resolves to a plain variable.
     /// Returns `true` when the alias target's symbol has only VARIABLE flags
     /// (not FUNCTION, CLASS, ENUM, or MODULE).

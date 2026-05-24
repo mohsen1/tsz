@@ -353,6 +353,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // The solver otherwise resolves `globalThis` to `any` in the
                 // emit boundary, producing a less-informative annotation.
                 self.write(": typeof globalThis");
+            } else if has_initializer
+                && self.initializer_references_elided_namespace_require_import(initializer)
+            {
+                self.write(": any");
             } else if keyword != "const"
                 && has_initializer
                 && !js_has_jsdoc_type
