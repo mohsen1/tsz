@@ -488,6 +488,7 @@ REGEX_LINE_COUNT_CHECKS = [
             / "types"
             / "property_access_type"
             / "helpers.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "lookup.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "declarations" / "dynamic_import_checker.rs",
             ROOT
             / "crates"
