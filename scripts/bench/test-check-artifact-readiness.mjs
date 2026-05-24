@@ -327,6 +327,31 @@ withTempDir((dir) => {
 console.log("✅ partial yellow compatibility is gray");
 
 // ---------------------------------------------------------------------------
+// Test: status text must not turn missing/incomplete project metadata into an
+// authoritative red row.
+// ---------------------------------------------------------------------------
+withTempDir((dir) => {
+  const file = path.join(dir, "bench.json");
+  const incompleteStatusRow = makeRow(REQUIRED_PROJECT_ROWS[0], "red", {
+    errorStatus: "tsz crashed before compatibility artifact",
+  });
+  delete incompleteStatusRow.compatibility;
+  incompleteStatusRow.artifact_missing = true;
+  const rows = REQUIRED_PROJECT_ROWS.map((name, i) =>
+    i === 0 ? incompleteStatusRow : makeRow(name, "green"),
+  );
+  writeJson(file, makeArtifact(rows));
+  const result = run(file, ["--json"]);
+  assert.equal(result.status, 0, `status-only incomplete metadata should not fail readiness:\n${result.stderr}`);
+  const parsed = JSON.parse(result.stdout.trim());
+  assert.equal(parsed.red, 0, "status-only incomplete row must not count as red");
+  assert.equal(parsed.gray, 1, "status-only incomplete row should count as gray/incomplete");
+  assert.equal(parsed.rows[0].state, "gray", "status-only incomplete row should render as gray");
+  assert.equal(parsed.rows[0].exit_class, null, "status-only incomplete row should not invent exit metadata");
+});
+console.log("✅ status-only incomplete project metadata is gray");
+
+// ---------------------------------------------------------------------------
 // Test: duplicate required rows are ambiguous, not authoritative green rows.
 // ---------------------------------------------------------------------------
 withTempDir((dir) => {
