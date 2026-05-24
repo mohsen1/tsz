@@ -63,6 +63,52 @@ export const x = <div />;
 }
 
 #[test]
+fn commonjs_classic_jsx_default_import_ignores_type_only_named_imports() {
+    let source = r#"import React, { ComponentPropsWithRef, ElementType, ReactNode } from "react";
+
+type ButtonBaseProps<T extends ElementType> = ComponentPropsWithRef<T> & { children?: ReactNode };
+
+export function Component<T extends ElementType = "span">(props: ButtonBaseProps<T>) {
+    return <></>;
+}
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::React,
+        es_module_interop: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __importDefault = "),
+        "Classic JSX default factory import should request __importDefault.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__importStar"),
+        "Type-only named imports beside a JSX default factory must not force __importStar.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const react_1 = __importDefault(require(\"react\"));"),
+        "Default import should lower as default-only when named imports are type-only.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return react_1.default.createElement(react_1.default.Fragment, null);"),
+        "Classic JSX should still use the default import as the factory root.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esmodule_es5_default_class_exports_after_iife() {
     let source = r#"export default class A {
     method() { return 1; }

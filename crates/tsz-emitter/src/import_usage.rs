@@ -741,9 +741,10 @@ fn is_var_type_annotation_colon(line: &str, colon_pos: usize) -> bool {
     true
 }
 
-/// Check if `<` at position `i` starts a generic type argument list.
+/// Check if `<` at position `i` starts a generic type argument/parameter list.
 /// Heuristic: try to find matching `>` with balanced nesting, followed by `(`.
-/// This distinguishes `f<T>()` (generic call) from `a < b` (comparison).
+/// This distinguishes `f<T>()` / `function f<T = U>()` from `a < b`
+/// (comparison).
 fn is_generic_type_args(bytes: &[u8], start: usize) -> bool {
     let len = bytes.len();
     let mut depth = 0u32;
@@ -764,8 +765,9 @@ fn is_generic_type_args(bytes: &[u8], start: usize) -> bool {
                     return k < len && matches!(bytes[k], b'(' | b')' | b',' | b'>' | b';');
                 }
             }
-            // If we hit something that can't be in a type argument, it's a comparison
-            b'{' | b'}' | b';' | b'=' => return false,
+            // If we hit something that can't be in a type argument, it's a comparison.
+            // `=` is allowed for defaulted type parameters, e.g. `<T = U>()`.
+            b'{' | b'}' | b';' => return false,
             _ => {}
         }
         j += 1;
