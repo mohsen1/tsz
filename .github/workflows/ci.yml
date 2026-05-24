@@ -5,7 +5,9 @@ on:
     types: [opened, reopened, synchronize, ready_for_review, converted_to_draft]
   merge_group:
   push:
-    branches: [main]
+    branches:
+      - main
+      - 'automation/merge-queue/**'
   workflow_dispatch:
 
 permissions:

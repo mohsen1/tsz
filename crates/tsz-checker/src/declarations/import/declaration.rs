@@ -2399,6 +2399,13 @@ impl<'a> CheckerState<'a> {
                                             {
                                                 return false;
                                             }
+                                            // `declare module "..." { ... }` augmentation members
+                                            // merge into the augmented module's export table, not
+                                            // the augmenting file's scope, so they can't conflict
+                                            // with an import. Mirrors the Check 1 skip above.
+                                            if self.is_inside_module_augmentation(decl_idx) {
+                                                return false;
+                                            }
                                             // `declare global { ... }` places declarations in
                                             // the global scope; they can't conflict with an
                                             // import living in the enclosing module scope.
@@ -2666,6 +2673,9 @@ impl<'a> CheckerState<'a> {
                 }
                 let has_local_decl = other_sym.declarations.iter().any(|&decl_idx| {
                     if self.ctx.binder.node_symbols.get(&decl_idx.0) != Some(&other_sym_id) {
+                        return false;
+                    }
+                    if self.is_inside_module_augmentation(decl_idx) {
                         return false;
                     }
                     if self.is_inside_global_augmentation(decl_idx) {

@@ -538,11 +538,24 @@ impl<'a> LoweringPass<'a> {
         if !uses_classic_factory {
             return Vec::new();
         }
+        if !self.has_jsx_syntax() {
+            return Vec::new();
+        }
 
         self.current_jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
         )
+    }
+
+    fn has_jsx_syntax(&self) -> bool {
+        (0..self.arena.len()).any(|idx| {
+            self.arena.get(NodeIndex(idx as u32)).is_some_and(|node| {
+                node.kind == syntax_kind_ext::JSX_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || node.kind == syntax_kind_ext::JSX_FRAGMENT
+            })
+        })
     }
 
     pub(super) fn import_has_value_usage_after_node(
