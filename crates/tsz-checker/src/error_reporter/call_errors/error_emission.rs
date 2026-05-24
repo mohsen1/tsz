@@ -50,41 +50,14 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        self.same_non_class_nominal_display(arg_type, param_type)
-    }
-
-    fn same_non_class_nominal_display(&mut self, arg_type: TypeId, param_type: TypeId) -> bool {
-        let arg_display = self.format_type_diagnostic(arg_type);
-        if arg_display != self.format_type_diagnostic(param_type)
-            || !arg_display.contains('<')
-            || arg_display.starts_with("typeof ")
-        {
-            return false;
-        }
-
-        match (
-            self.non_class_nominal_def(arg_type),
-            self.non_class_nominal_def(param_type),
-        ) {
-            (Some(arg_def), Some(param_def)) => arg_def == param_def,
-            (Some(_), None) | (None, Some(_)) => true,
-            (None, None) => false,
-        }
-    }
-
-    fn non_class_nominal_def(&mut self, type_id: TypeId) -> Option<tsz_solver::DefId> {
-        let def_id = self.nominal_def_for_argument_display(type_id).or_else(|| {
-            let evaluated = self.evaluate_type_for_assignability(type_id);
-            self.nominal_def_for_argument_display(evaluated)
-        })?;
-        let def = self.ctx.definition_store.get(def_id)?;
-        (!matches!(def.kind, tsz_solver::def::DefKind::Class)).then_some(def_id)
-    }
-
-    fn nominal_def_for_argument_display(&self, type_id: TypeId) -> Option<tsz_solver::DefId> {
-        crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-            .and_then(|app| crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base))
-            .or_else(|| crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id))
+        let evaluated_arg = self.evaluate_type_for_assignability(arg_type);
+        let evaluated_param = self.evaluate_type_for_assignability(param_type);
+        crate::query_boundaries::diagnostics::same_non_class_nominal_application_surface(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            &[arg_type, evaluated_arg],
+            &[param_type, evaluated_param],
+        )
     }
 
     /// Report an argument not assignable error using solver diagnostics with source tracking.
