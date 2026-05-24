@@ -63,6 +63,52 @@ export const x = <div />;
 }
 
 #[test]
+fn commonjs_classic_jsx_default_import_ignores_type_only_named_imports() {
+    let source = r#"import React, { ComponentPropsWithRef, ElementType, ReactNode } from "react";
+
+type ButtonBaseProps<T extends ElementType> = ComponentPropsWithRef<T> & { children?: ReactNode };
+
+export function Component<T extends ElementType = "span">(props: ButtonBaseProps<T>) {
+    return <></>;
+}
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        jsx: JsxEmit::React,
+        es_module_interop: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __importDefault = "),
+        "Classic JSX default factory import should request __importDefault.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__importStar"),
+        "Type-only named imports beside a JSX default factory must not force __importStar.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const react_1 = __importDefault(require(\"react\"));"),
+        "Default import should lower as default-only when named imports are type-only.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return react_1.default.createElement(react_1.default.Fragment, null);"),
+        "Classic JSX should still use the default import as the factory root.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esmodule_es5_default_class_exports_after_iife() {
     let source = r#"export default class A {
     method() { return 1; }
@@ -1071,6 +1117,112 @@ export const x = <span {...o} />;
     assert!(
         output.contains("React.createElement(\"span\", tslib_1.__assign({}, o))"),
         "ES5 JSX spread should call the imported __assign helper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_classic_jsx_spread_child_lowers_create_element_args() {
+    let source = r#"declare var React: any;
+declare var items: any;
+export const x = <div>{...items}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __spreadArray = "),
+        "ES5 JSX spread children should request the __spreadArray helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "React.createElement.apply(React, __spreadArray([\"div\", null], items, false))"
+        ),
+        "Classic JSX spread children should lower createElement args through apply.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_classic_jsx_spread_child_preserves_adjacent_children() {
+    let source = r#"declare var React: any;
+declare var items: any;
+export const x = <div>{1}{...items}{2}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(
+            "React.createElement.apply(React, __spreadArray(__spreadArray([\"div\", null, 1], items, false), [2], false))"
+        ),
+        "Classic JSX spread children should preserve regular children around the spread.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_automatic_jsx_spread_child_uses_jsxs_array_child() {
+    let source = r#"declare var items: any;
+export const x = <div>{...items}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::ReactJsx,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var jsx_runtime_1 = require(\"react/jsx-runtime\");"),
+        "ES5 automatic JSX runtime imports should be var declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(0, jsx_runtime_1.jsxs)(\"div\", { children: __spreadArray([], items, true) })"
+        ),
+        "Automatic JSX spread children should force jsxs with an ES5 array-spread child.\nOutput:\n{output}"
     );
 }
 
@@ -2906,11 +3058,54 @@ export { m as secondAlias };
     let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
 
     assert!(
-        output.contains("})(m || (exports.firstAlias = m = {}));"),
-        "The first namespace alias should be folded into the IIFE tail.\nOutput:\n{output}"
+        output.contains("})(m || (exports.secondAlias = exports.firstAlias = m = {}));"),
+        "Namespace aliases should fold into the IIFE tail in source order.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("exports.secondAlias = m;"),
-        "Aliases not folded into the IIFE tail still need a later live export assignment.\nOutput:\n{output}"
+        !output.contains("exports.secondAlias = m;"),
+        "Aliases folded into the IIFE tail should not emit later duplicate assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_exported_namespace_and_alias_fold_through_direct_export() {
+    let source = r#"export namespace M {
+    export var x;
+}
+
+export { M as M1 };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(M || (exports.M1 = exports.M = M = {}));"),
+        "A direct namespace export plus alias should fold both export bindings into the IIFE tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_exported_import_alias_reexport_reads_live_export_binding() {
+    let source = r#"export namespace M {
+    export var x;
+}
+export import a = M.x;
+
+export { a as a1 };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("exports.a = M.x;"),
+        "The direct import alias export should initialize the live export binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a1 = exports.a;"),
+        "A renamed export of an already-exported import alias should read through exports.a.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.a1 = a;"),
+        "The renamed export should not read the erased local alias.\nOutput:\n{output}"
     );
 }

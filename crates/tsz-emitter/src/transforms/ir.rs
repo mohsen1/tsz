@@ -607,9 +607,10 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
-        /// CommonJS export property for an exported namespace IIFE. Usually the
-        /// local namespace name, but `export { N as Alias }` folds `Alias`.
-        commonjs_export_name: Option<Cow<'static, str>>,
+        /// CommonJS export properties folded into an exported namespace IIFE.
+        /// Names are in source order, so the last name becomes the outermost
+        /// assignment: `[N, Alias]` emits `exports.Alias = exports.N = N = {}`.
+        commonjs_export_names: Vec<Cow<'static, str>>,
         /// `SystemJS` export names folded into the namespace IIFE tail:
         /// `N || (exports_1("alias", exports_1("name", N = {})))`.
         system_export_names: Vec<Cow<'static, str>>,
@@ -717,6 +718,10 @@ pub struct IRParam {
 pub struct IRSwitchCase {
     pub test: Option<IRNode>, // None for default case
     pub statements: Vec<IRNode>,
+    /// Render the (single) clause statement on the same line as the `case`
+    /// label, e.g. `case x: return [3 /*break*/, 2];`. tsc emits synthesized
+    /// single-statement clauses inline; user-authored clauses stay multi-line.
+    pub inline: bool,
 }
 
 /// Catch clause

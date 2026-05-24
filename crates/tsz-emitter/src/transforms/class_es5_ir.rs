@@ -98,7 +98,8 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{
-    contains_new_target_reference, contains_this_reference, is_private_identifier,
+    contains_new_target_reference, contains_super_reference, contains_this_reference,
+    is_private_identifier,
 };
 use tsz_scanner::SyntaxKind;
 
@@ -793,6 +794,16 @@ impl<'a> ES5ClassTransformer<'a> {
         let converter = self.make_converter().with_this_captured(true);
         let mut result = converter.convert_statement(idx);
         Self::rewrite_bare_constructor_returns_to_this(&mut result);
+        self.collect_from_converter(&converter);
+        result
+    }
+
+    /// Convert an AST statement to IR with `this` captured as `_this`, without
+    /// changing bare constructor returns. Used for invalid-but-emitted pre-super
+    /// statements in derived constructors.
+    fn convert_statement_pre_super_this_captured(&self, idx: NodeIndex) -> IRNode {
+        let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
         result
     }
@@ -2838,6 +2849,8 @@ impl<'a> ES5ClassTransformer<'a> {
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
+        let needs_pre_super_this_capture =
+            self.derived_constructor_needs_pre_super_this_capture(block, super_stmt_position);
         let has_top_level_using = block.statements.nodes.iter().any(|&stmt_idx| {
             self.using_declaration_list_for_statement(stmt_idx)
                 .is_some()
@@ -2856,6 +2869,17 @@ impl<'a> ES5ClassTransformer<'a> {
             return;
         }
 
+        if super_stmt_idx.is_none() && contains_super_reference(self.arena, body_idx) {
+            self.emit_derived_constructor_body_with_nested_super_ir(
+                body,
+                body_node,
+                block,
+                params,
+                instance_props,
+            );
+            return;
+        }
+
         let can_use_tail_super_return = super_stmt_idx.is_some()
             && stmts_after_super == 0
             && instance_props.is_empty()
@@ -2864,6 +2888,7 @@ impl<'a> ES5ClassTransformer<'a> {
             && !has_private_fields
             && !has_auto_accessors
             && !has_private_accessors
+            && !needs_pre_super_this_capture
             && !needs_this_capture;
 
         if can_use_tail_super_return {
@@ -2897,7 +2922,13 @@ impl<'a> ES5ClassTransformer<'a> {
         let saved_temp_counter = self.temp_var_counter.get();
         self.temp_var_counter.set(0);
 
-        // Emit statements before super() unchanged
+        if super_stmt_idx.is_some() && needs_pre_super_this_capture {
+            body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+        }
+
+        // Emit statements before super(). When they reference `this` or
+        // `super.property`, tsc preserves the invalid pre-super shape by routing
+        // those references through a preinitialized `_this` capture.
         let mut prev_stmt_end = body_node.pos;
         for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
             if i >= super_stmt_position && super_stmt_idx.is_some() {
@@ -2907,13 +2938,25 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
                 prev_stmt_end = stmt_node.end;
             }
-            body.push(self.convert_statement(stmt_idx));
+            let statement = if needs_pre_super_this_capture {
+                self.convert_statement_pre_super_this_captured(stmt_idx)
+            } else {
+                self.convert_statement(stmt_idx)
+            };
+            body.push(statement);
         }
 
-        // Emit super() as var _this = _super.call(this, args) || this;
+        // Emit super() as either `var _this = _super.call(...) || this` or, when
+        // a pre-super capture already exists, `_this = _super.call(...) || this`.
         if let Some(super_idx) = super_stmt_idx {
-            let super_call = self.emit_super_call_ir(super_idx);
-            body.push(super_call);
+            if needs_pre_super_this_capture {
+                body.push(IRNode::expr_stmt(
+                    self.emit_super_call_assignment_ir_with_arg_capture(super_idx, true),
+                ));
+            } else {
+                let super_call = self.emit_super_call_ir(super_idx);
+                body.push(super_call);
+            }
         }
 
         // Emit destructuring prologue for binding-pattern parameters
@@ -3087,6 +3130,55 @@ impl<'a> ES5ClassTransformer<'a> {
         };
 
         if super_stmt_idx.is_some() && remaining_can_complete_normally {
+            body.push(IRNode::ret(Some(IRNode::id("_this"))));
+        }
+    }
+
+    fn emit_derived_constructor_body_with_nested_super_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        body_node: &Node,
+        block: &tsz_parser::parser::node::BlockData,
+        params: &NodeList,
+        instance_props: &[NodeIndex],
+    ) {
+        let temps_before = self.extra_hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
+
+        body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+
+        {
+            let ir_params = self.extract_parameters(params);
+            let prologue = self.generate_destructuring_prologue(params, &ir_params);
+            body.extend(prologue);
+        }
+
+        self.emit_parameter_properties_ir(body, params, true);
+        self.emit_private_field_initializations_ir(body, true);
+        self.emit_private_accessor_initializations_ir(body, true);
+        self.emit_auto_accessor_initializations_ir(body, true);
+
+        for &prop_idx in instance_props {
+            self.emit_property_leading_comment(body, prop_idx);
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+                body.push(ir);
+            }
+        }
+
+        let mut prev_stmt_end = body_node.pos;
+        for &stmt_idx in &block.statements.nodes {
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                self.emit_leading_statement_comments(body, prev_stmt_end, stmt_node.pos);
+                prev_stmt_end = stmt_node.end;
+            }
+            body.push(self.convert_statement_this_captured(stmt_idx));
+        }
+
+        self.insert_constructor_hoisted_temps(body, temps_before);
+        self.temp_var_counter.set(saved_temp_counter);
+
+        if self.statements_can_complete_normally(&block.statements.nodes) {
             body.push(IRNode::ret(Some(IRNode::id("_this"))));
         }
     }
@@ -3506,13 +3598,29 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn emit_super_call_assignment_ir(&self, stmt_idx: NodeIndex) -> IRNode {
+        self.emit_super_call_assignment_ir_with_arg_capture(stmt_idx, false)
+    }
+
+    fn emit_super_call_assignment_ir_with_arg_capture(
+        &self,
+        stmt_idx: NodeIndex,
+        capture_args_this: bool,
+    ) -> IRNode {
         IRNode::assign(
             IRNode::id("_this"),
-            self.emit_super_call_assignment_value_ir(stmt_idx),
+            self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, capture_args_this),
         )
     }
 
     fn emit_super_call_assignment_value_ir(&self, stmt_idx: NodeIndex) -> IRNode {
+        self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, false)
+    }
+
+    fn emit_super_call_assignment_value_ir_with_arg_capture(
+        &self,
+        stmt_idx: NodeIndex,
+        capture_args_this: bool,
+    ) -> IRNode {
         let mut args = vec![IRNode::this()];
 
         if let Some(stmt_node) = self.arena.get(stmt_idx)
@@ -3522,7 +3630,12 @@ impl<'a> ES5ClassTransformer<'a> {
             && let Some(ref call_args) = call.arguments
         {
             for &arg_idx in &call_args.nodes {
-                args.push(self.convert_expression(arg_idx));
+                let arg = if capture_args_this {
+                    self.convert_expression_this_captured(arg_idx)
+                } else {
+                    self.convert_expression(arg_idx)
+                };
+                args.push(arg);
             }
         }
 
@@ -3533,6 +3646,18 @@ impl<'a> ES5ClassTransformer<'a> {
             ),
             IRNode::this(),
         )
+    }
+
+    fn derived_constructor_needs_pre_super_this_capture(
+        &self,
+        block: &tsz_parser::parser::node::BlockData,
+        super_stmt_position: usize,
+    ) -> bool {
+        if block.statements.nodes.get(super_stmt_position).is_none() {
+            return false;
+        }
+
+        super_stmt_position > 0
     }
 
     /// Emit super(args) as return _super.call(this, args) || this;
