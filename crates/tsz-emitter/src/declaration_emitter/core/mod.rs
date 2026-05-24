@@ -4,6 +4,7 @@
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
+mod emit_statements;
 mod import_rewrites;
 mod inferred_predicate_returns;
 mod js_class_static;
