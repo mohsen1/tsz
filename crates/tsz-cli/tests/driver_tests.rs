@@ -7245,10 +7245,9 @@ fn reserved_word_parameters_emit_as_empty() {
 }
 
 #[test]
-fn void_keyword_not_parsed_as_type_alias_name() {
-    // tsc's nextTokenIsIdentifierOnSameLine() uses isIdentifier(), which does NOT
-    // accept reserved words like `void`.  So `type void = T` should fall through to
-    // expression-statement parsing and produce syntax errors, NOT a TypeAliasDeclaration.
+fn void_keyword_type_alias_reports_ts2457_recovery() {
+    // tsc keeps `void` on the type-alias recovery path and reports TS2457
+    // alongside parser/expression diagnostics.
     let temp = TempDir::new().expect("temp dir");
     let base = &temp.path;
 
@@ -7266,8 +7265,8 @@ fn void_keyword_not_parsed_as_type_alias_name() {
         result.diagnostics
     );
     assert!(
-        !result.diagnostics.iter().any(|d| d.code == 2457),
-        "TS2457 must not appear for `type void = I;` (it is not a type alias declaration): {:?}",
+        result.diagnostics.iter().any(|d| d.code == 2457),
+        "TS2457 must appear for `type void = I;`: {:?}",
         result.diagnostics
     );
 }
