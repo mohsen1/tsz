@@ -254,11 +254,20 @@ impl<'a> Printer<'a> {
         self.emit_object_literal_entries_es5_with_comments(elements, false, None, false);
     }
 
-    fn emit_object_literal_assign_entries_es5(&mut self, elements: &[NodeIndex]) {
-        if self.object_literal_assign_segment_can_emit_compact(elements) {
+    fn emit_object_literal_assign_entries_es5(
+        &mut self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) {
+        if self.object_literal_assign_segment_can_emit_compact(elements, source_range) {
             self.emit_object_literal_entries_es5_compact(elements);
         } else {
-            self.emit_object_literal_entries_es5(elements);
+            self.emit_object_literal_entries_es5_with_comments(
+                elements,
+                false,
+                source_range,
+                false,
+            );
         }
     }
 
@@ -282,7 +291,11 @@ impl<'a> Printer<'a> {
         self.write(" }");
     }
 
-    fn object_literal_assign_segment_can_emit_compact(&self, elements: &[NodeIndex]) -> bool {
+    fn object_literal_assign_segment_can_emit_compact(
+        &self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) -> bool {
         if elements.is_empty() {
             return true;
         }
@@ -299,6 +312,10 @@ impl<'a> Printer<'a> {
         let Some(source) = self.source_text else {
             return true;
         };
+
+        if self.object_literal_source_range_blocks_compact(source_range) {
+            return false;
+        }
 
         for pair in elements.windows(2) {
             let Some(curr) = self.arena.get(pair[0]) else {
@@ -454,7 +471,8 @@ impl<'a> Printer<'a> {
             // For a single-element object literal, check if the source was multi-line.
             // tsc preserves the source formatting: multi-line source → multi-line output.
             // A single method with a multi-line body should be emitted multi-line.
-            let use_multiline = self.es5_single_element_needs_multiline(elements[0]);
+            let use_multiline = self.es5_single_element_needs_multiline(elements[0])
+                || self.object_literal_source_range_blocks_compact(source_range);
             if use_multiline {
                 self.write("{");
                 self.write_line();
@@ -504,6 +522,26 @@ impl<'a> Printer<'a> {
                 self.write(" }");
             }
         }
+    }
+
+    fn object_literal_source_range_blocks_compact(&self, source_range: Option<(u32, u32)>) -> bool {
+        let Some((start, end)) = source_range else {
+            return false;
+        };
+        let Some(source) = self.source_text else {
+            return false;
+        };
+        let start = std::cmp::min(start as usize, source.len());
+        let end = std::cmp::min(end as usize, source.len());
+        if start >= end {
+            return false;
+        }
+        let literal_source = &source[start..end];
+        literal_source.contains('\n')
+            || self
+                .all_comments
+                .iter()
+                .any(|comment| comment.pos as usize >= start && comment.end as usize <= end)
     }
 
     fn object_literal_member_comment_start_es5(&self, prop_idx: NodeIndex, node: &Node) -> u32 {
@@ -965,7 +1003,7 @@ impl<'a> Printer<'a> {
                 if has_computed {
                     self.emit_object_literal_without_spread_es5(elems, source_range, false);
                 } else {
-                    self.emit_object_literal_assign_entries_es5(elems);
+                    self.emit_object_literal_assign_entries_es5(elems, source_range);
                 }
                 self.write(", ");
                 self.emit_spread_expr_from_idx(*spread_idx);
@@ -1013,7 +1051,7 @@ impl<'a> Printer<'a> {
                     self.write(&temp_var);
                     self.write(")");
                 } else {
-                    self.emit_object_literal_assign_entries_es5(elems);
+                    self.emit_object_literal_assign_entries_es5(elems, source_range);
                 }
                 self.write(")");
             }
@@ -1080,7 +1118,7 @@ impl<'a> Printer<'a> {
                             self.write(&temp_var);
                             self.write(")");
                         } else {
-                            self.emit_object_literal_assign_entries_es5(elems);
+                            self.emit_object_literal_assign_entries_es5(elems, source_range);
                         }
                     }
                     ObjectSegment::Spread(spread_idx) => {
@@ -1128,7 +1166,7 @@ impl<'a> Printer<'a> {
                                 self.write(&temp_var);
                                 self.write(")");
                             } else if !elems.is_empty() {
-                                self.emit_object_literal_assign_entries_es5(elems);
+                                self.emit_object_literal_assign_entries_es5(elems, source_range);
                             } else {
                                 self.write("{}");
                             }

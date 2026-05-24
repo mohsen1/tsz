@@ -171,6 +171,41 @@ fn es5_object_spread_assign_operands_keep_simple_property_groups_compact() {
     }
 }
 
+#[test]
+fn es5_object_spread_assign_operands_preserve_boundary_comments() {
+    let source = r#"function f(t) {
+    let x09 = { a: 1 /* keep trailing */, ...t };
+    let x10 = { /* keep leading */ a: 1, ...t };
+    let x11 = { ...t, a: 1 /* keep final */ };
+}
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    for expected in [
+        "/* keep trailing */",
+        "/* keep leading */",
+        "/* keep final */",
+    ] {
+        assert!(
+            output.contains(expected),
+            "ES5 object-spread lowering should preserve boundary comments instead of compacting them away.\nExpected comment: {expected}\nOutput:\n{output}"
+        );
+    }
+}
+
 /// When moduleDetection=force, a file without any import/export syntax
 /// should still be treated as a module and get the CJS __esModule preamble.
 #[test]
