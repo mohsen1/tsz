@@ -1366,6 +1366,10 @@ name = "generic_property_mismatch_display_tests"
 path = "tests/generic_property_mismatch_display_tests.rs"
 
 [[test]]
+name = "nominal_application_call_suppression_tests"
+path = "tests/nominal_application_call_suppression_tests.rs"
+
+[[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 

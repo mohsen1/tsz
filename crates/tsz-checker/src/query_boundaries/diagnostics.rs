@@ -92,26 +92,57 @@ pub(crate) fn type_application(
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
 
-pub(crate) fn same_non_class_nominal_application_surface(
+pub(crate) fn same_non_class_nominal_application_surface<R: tsz_solver::resolver::TypeResolver>(
     db: &dyn tsz_solver::construction::TypeDatabase,
+    resolver: &R,
     def_store: &tsz_solver::def::DefinitionStore,
     source_candidates: &[TypeId],
     target_candidates: &[TypeId],
 ) -> bool {
-    let source_def = source_candidates
-        .iter()
-        .find_map(|&candidate| non_class_nominal_application_def(db, def_store, candidate));
-    let target_def = target_candidates
-        .iter()
-        .find_map(|&candidate| non_class_nominal_application_def(db, def_store, candidate));
-    matches!((source_def, target_def), (Some(source), Some(target)) if source == target)
+    source_candidates.iter().any(|&source_candidate| {
+        let Some(source) = non_class_nominal_application_surface(db, def_store, source_candidate)
+        else {
+            return false;
+        };
+
+        target_candidates
+            .iter()
+            .filter_map(|&candidate| {
+                non_class_nominal_application_surface(db, def_store, candidate)
+            })
+            .any(|target| nominal_application_surfaces_match(db, resolver, &source, &target))
+    })
 }
 
-fn non_class_nominal_application_def(
+struct NominalApplicationSurface {
+    def_id: tsz_solver::DefId,
+    args: Vec<TypeId>,
+}
+
+fn nominal_application_surfaces_match<R: tsz_solver::resolver::TypeResolver>(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    resolver: &R,
+    source: &NominalApplicationSurface,
+    target: &NominalApplicationSurface,
+) -> bool {
+    source.def_id == target.def_id
+        && source.args.len() == target.args.len()
+        && source
+            .args
+            .iter()
+            .zip(&target.args)
+            .all(|(&source, &target)| {
+                tsz_solver::relations::subtype::are_types_structurally_identical(
+                    db, resolver, source, target,
+                )
+            })
+}
+
+fn non_class_nominal_application_surface(
     db: &dyn tsz_solver::construction::TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
     type_id: TypeId,
-) -> Option<tsz_solver::DefId> {
+) -> Option<NominalApplicationSurface> {
     if is_type_query_surface(db, type_id) {
         return None;
     }
@@ -131,7 +162,10 @@ fn non_class_nominal_application_def(
         def.kind,
         tsz_solver::def::DefKind::Class | tsz_solver::def::DefKind::ClassConstructor
     ))
-    .then_some(def_id)
+    .then(|| NominalApplicationSurface {
+        def_id,
+        args: app.args.clone(),
+    })
 }
 
 fn is_type_query_surface(db: &dyn tsz_solver::construction::TypeDatabase, type_id: TypeId) -> bool {
@@ -200,10 +234,24 @@ mod tests {
             let target = db.application(base, vec![TypeId::STRING]);
 
             assert!(
-                same_non_class_nominal_application_surface(&db, &store, &[source], &[target]),
+                same_non_class_nominal_application_surface(&db, &db, &store, &[source], &[target],),
                 "same interface application surface should match structurally for {name}"
             );
         }
+    }
+
+    #[test]
+    fn non_class_nominal_application_surface_rejects_different_type_args() {
+        let db = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let base = register_interface_base(&db, &store, "Carrier");
+        let source = db.application(base, vec![TypeId::STRING]);
+        let target = db.application(base, vec![TypeId::NUMBER]);
+
+        assert!(
+            !same_non_class_nominal_application_surface(&db, &db, &store, &[source], &[target]),
+            "same generic base with different type arguments must not suppress TS2345"
+        );
     }
 
     #[test]
@@ -219,6 +267,7 @@ mod tests {
         let class_app = db.application(db.lazy(class_def), vec![TypeId::STRING]);
         assert!(!same_non_class_nominal_application_surface(
             &db,
+            &db,
             &store,
             &[class_app],
             &[class_app]
@@ -226,6 +275,7 @@ mod tests {
 
         let query_app = db.application(db.type_query(SymbolRef(7)), vec![TypeId::STRING]);
         assert!(!same_non_class_nominal_application_surface(
+            &db,
             &db,
             &store,
             &[query_app],

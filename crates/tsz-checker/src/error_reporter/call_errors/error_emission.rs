@@ -54,6 +54,7 @@ impl<'a> CheckerState<'a> {
         let evaluated_param = self.evaluate_type_for_assignability(param_type);
         crate::query_boundaries::diagnostics::same_non_class_nominal_application_surface(
             self.ctx.types,
+            &self.ctx,
             &self.ctx.definition_store,
             &[arg_type, evaluated_arg],
             &[param_type, evaluated_param],
