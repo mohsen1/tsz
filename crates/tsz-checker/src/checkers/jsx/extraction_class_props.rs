@@ -79,6 +79,17 @@ impl<'a> CheckerState<'a> {
             class_props,
         )
     }
+
+    pub(in crate::checkers_domain::jsx) fn jsx_class_props_has_readonly_mapped_surface(
+        &self,
+        class_props: TypeId,
+    ) -> bool {
+        self.jsx_class_props_is_readonly_wrapper(class_props)
+            || crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
+                self.ctx.types,
+                class_props,
+            )
+    }
 }
 
 impl<'a> CheckerState<'a> {

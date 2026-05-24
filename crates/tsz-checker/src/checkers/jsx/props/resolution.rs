@@ -322,6 +322,7 @@ impl<'a> CheckerState<'a> {
             && (raw_props_has_type_params
                 || component_type.is_some()
                 || special_attr_component_type.is_some());
+        let children_ctx_for_overload = children_ctx.clone();
         let component_has_managed_props_metadata = component_type.is_some_and(|comp| {
             use crate::query_boundaries::common::PropertyAccessResult;
             matches!(
@@ -352,6 +353,18 @@ impl<'a> CheckerState<'a> {
         let mut has_prop_type_error = false;
         let mut invalid_generic_spread_types: Vec<TypeId> = Vec::new();
         let mut has_explicit_jsx_attrs = false;
+
+        let class_props_overload_component_type = if self
+            .get_jsx_namespace_export_symbol_id("ElementType")
+            .is_some()
+            && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
+        {
+            special_attr_component_type.or(component_type)
+        } else {
+            None
+        };
+        let route_class_props_mismatch_to_overload = class_props_overload_component_type
+            .is_some_and(|comp| self.should_report_jsx_class_missing_props_via_assignability(comp));
 
         let mut named_attr_nodes: rustc_hash::FxHashMap<String, NodeIndex> =
             rustc_hash::FxHashMap::default();
@@ -693,6 +706,21 @@ impl<'a> CheckerState<'a> {
                             && !attr_name.starts_with("data-")
                             && !attr_name.starts_with("aria-")
                             {
+                                if route_class_props_mismatch_to_overload
+                                    && class_props_overload_component_type.is_some_and(|comp| {
+                                        self.report_jsx_class_props_overload_failure_if_needed(
+                                            comp,
+                                            props_type,
+                                            attributes_idx,
+                                            tag_name_idx,
+                                            children_ctx_for_overload.clone(),
+                                        )
+                                    })
+                                {
+                                    has_excess_property_error = true;
+                                    continue;
+                                }
+
                                 // Build the synthesized JSX-attributes source-type display:
                                 // when the element has spread attributes, tsc prints the merged
                                 // object (`{ extra: true; onClick: ... }`) rather than just the
@@ -1454,6 +1482,8 @@ impl<'a> CheckerState<'a> {
         let empty_attrs_with_children_injected_props = provided_attrs.is_empty()
             && self.strip_jsx_children_injection_for_display(props_type) != props_type;
 
+        let class_has_missing_required_props =
+            self.jsx_has_missing_required_props(props_type, &provided_attrs);
         let reported_class_missing_props_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !has_excess_property_error
@@ -1463,18 +1493,33 @@ impl<'a> CheckerState<'a> {
             && !empty_attrs_with_children_injected_props
             && !has_prop_type_error
             && !self.jsx_tag_is_logical_component_alias(tag_name_idx)
-            && class_missing_props_component_type.is_some_and(|comp| {
-                self.should_report_jsx_class_missing_props_via_assignability(comp)
-            })
-            && self.jsx_has_missing_required_props(props_type, &provided_attrs)
+            && class_has_missing_required_props
         {
-            let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            self.report_jsx_synthesized_props_assignability_error(
-                attrs_type,
-                &display_target,
-                tag_name_idx,
-            );
-            true
+            if route_class_props_mismatch_to_overload
+                && class_props_overload_component_type.is_some_and(|comp| {
+                    self.report_jsx_class_props_overload_failure_if_needed(
+                        comp,
+                        props_type,
+                        attributes_idx,
+                        tag_name_idx,
+                        children_ctx_for_overload.clone(),
+                    )
+                })
+            {
+                true
+            } else if class_missing_props_component_type.is_some_and(|comp| {
+                self.should_report_jsx_class_missing_props_via_assignability(comp)
+            }) {
+                let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
+                self.report_jsx_synthesized_props_assignability_error(
+                    attrs_type,
+                    &display_target,
+                    tag_name_idx,
+                );
+                true
+            } else {
+                false
+            }
         } else {
             false
         };
@@ -1504,6 +1549,7 @@ impl<'a> CheckerState<'a> {
             && !skip_prop_checks
             && !has_prop_type_error
             && props_is_type_param
+            && !self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             && !spread_satisfies_type_param
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
@@ -1578,8 +1624,52 @@ impl<'a> CheckerState<'a> {
                 && self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             {
                 let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-                if !self.diagnostic_relation_boolean_guard(attrs_type, raw_props_type) {
-                    let mut target = self.format_type(raw_props_type);
+                if !crate::query_boundaries::checkers::jsx::types_are_assignable(
+                    self,
+                    attrs_type,
+                    raw_props_type,
+                ) {
+                    let display_props_type = component_type
+                        .filter(|&component| {
+                            crate::query_boundaries::checkers::jsx::is_type_parameter_like(
+                                self.ctx.types,
+                                component,
+                            )
+                        })
+                        .and_then(|component| {
+                            let mut props_type = self
+                                .get_jsx_type_parameter_callable_constraint_props_type(component)
+                                .unwrap_or(props_type);
+                            if provided_attrs.is_empty()
+                                && (!crate::query_boundaries::checkers::jsx::has_object_shape(
+                                    self.ctx.types,
+                                    props_type,
+                                ) || self.jsx_type_contains_callable_surface(props_type))
+                            {
+                                props_type = attrs_type;
+                            }
+                            self.get_jsx_library_managed_attributes_application(
+                                component, props_type,
+                            )
+                        })
+                        .or_else(|| {
+                            if provided_attrs.is_empty() {
+                                let component = self
+                                    .jsx_library_managed_attributes_application_args(raw_props_type)
+                                    .and_then(|args| args.first().copied())?;
+                                return self.get_jsx_library_managed_attributes_application(
+                                    component, attrs_type,
+                                );
+                            }
+                            None
+                        })
+                        .unwrap_or(raw_props_type);
+                    let mut target = self
+                        .jsx_library_managed_attributes_application_display(display_props_type)
+                        .or_else(|| {
+                            self.jsx_library_managed_structural_props_display(display_props_type)
+                        })
+                        .unwrap_or_else(|| self.format_type(display_props_type));
                     if target.starts_with("LibraryManagedAttributes<")
                         && target.ends_with(", Element>")
                     {
@@ -1967,18 +2057,37 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> bool {
-        let Some((base, _args)) =
-            crate::query_boundaries::state::type_environment::application_info(
-                self.ctx.types,
-                type_id,
-            )
-        else {
-            return false;
-        };
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(base) else {
-            return false;
-        };
+        self.jsx_library_managed_attributes_application_args(type_id)
+            .is_some()
+    }
+
+    fn jsx_library_managed_attributes_application_args(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<Vec<TypeId>> {
+        let (base, args) = crate::query_boundaries::state::type_environment::application_info(
+            self.ctx.types,
+            type_id,
+        )?;
+        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
         self.get_symbol_globally(sym_id)
             .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
+            .then_some(args)
+    }
+
+    fn jsx_library_managed_attributes_application_display(
+        &mut self,
+        type_id: TypeId,
+    ) -> Option<String> {
+        let args = self.jsx_library_managed_attributes_application_args(type_id)?;
+        if args.len() != 2 {
+            return None;
+        }
+        Some(format!(
+            "LibraryManagedAttributes<{}, {}>",
+            self.format_type(args[0]),
+            self.jsx_library_managed_structural_props_display(args[1])
+                .unwrap_or_else(|| self.format_type(args[1]))
+        ))
     }
 }

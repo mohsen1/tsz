@@ -1329,6 +1329,50 @@ fn test_return_await_call_argument_captures_identifier_callee_before_yield() {
 }
 
 #[test]
+fn test_async_exponentiation_suspension_uses_math_pow_apply() {
+    let output = transform_and_print("async function foo() { (await x) ** y; x ** await y; }");
+
+    assert!(
+        output.contains("_b = (_a = Math).pow;")
+            && output.contains("_b.apply(_a, [(_f.sent()), y]);"),
+        "Suspended left operand must capture `Math.pow` before yielding and resume through apply.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_d = (_c = Math).pow;")
+            && output.contains("_e = [x];")
+            && output.contains("_d.apply(_c, _e.concat([_f.sent()]));"),
+        "Suspended right operand must preserve the already-evaluated left argument before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(" ** "),
+        "Async ES5 exponentiation lowering must not leave `**` in the output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_return_comma_suspension_preserves_sequence() {
+    let left_suspend = transform_and_print("async function foo() { return (await x), y; }");
+
+    assert!(
+        left_suspend.contains("return [2 /*return*/, ((_a.sent()), y)];"),
+        "A comma return with suspended left operand must return the whole comma expression as one generator value.\nOutput:\n{left_suspend}"
+    );
+    assert!(
+        !left_suspend.contains("return [2 /*return*/, (_a.sent()), y];"),
+        "The comma expression must not be split into multiple generator-op array elements.\nOutput:\n{left_suspend}"
+    );
+
+    let right_suspend = transform_and_print("async function foo() { return x, await y; }");
+    assert!(
+        right_suspend.contains("case 0:")
+            && right_suspend.contains("x;")
+            && right_suspend.contains("return [4 /*yield*/, y];")
+            && right_suspend.contains("case 1: return [2 /*return*/, _a.sent()];"),
+        "A comma return with suspended right operand must evaluate the left side before yielding and return the resumed right value.\nOutput:\n{right_suspend}"
+    );
+}
+
+#[test]
 fn test_await_call_argument_preserves_prefix_arguments() {
     let output =
         transform_and_print("async function foo() { var b = fn(a, await p, a); after(); }");
