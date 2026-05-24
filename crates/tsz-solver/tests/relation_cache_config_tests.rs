@@ -572,6 +572,20 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
 }
 
 #[test]
+fn relation_policy_legacy_packed_flags_accessor_preserves_input_bits() {
+    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
+        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
+    let policy = RelationPolicy::from_flags(packed);
+
+    assert_eq!(
+        policy.legacy_packed_flags(),
+        packed,
+        "compatibility edges should observe the exact legacy bit layout",
+    );
+}
+
+#[test]
 fn subtype_flags_entrypoint_uses_relation_policy_cache_config() {
     let flags =
         RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
