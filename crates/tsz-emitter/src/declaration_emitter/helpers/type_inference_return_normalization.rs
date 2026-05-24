@@ -35,6 +35,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn function_body_single_spread_object_literal_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let object_expr_idx = self.direct_returned_object_literal(body_idx)?;
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        self.single_spread_object_literal_type_text(object)
+    }
+
     pub(in crate::declaration_emitter) fn should_prefer_source_return_type_text(
         &self,
         source_type_text: &str,
@@ -892,7 +902,10 @@ impl<'a> DeclarationEmitter<'a> {
         rewritten
     }
 
-    fn direct_returned_object_literal(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn direct_returned_object_literal(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
         let mut returned_object = None;
