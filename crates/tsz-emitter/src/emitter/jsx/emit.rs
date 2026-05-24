@@ -300,7 +300,7 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        if let Some((defer_start, defer_end)) = self.jsx_trailing_comment_defer_range
+        if let Some((defer_start, defer_end)) = self.arrow_concise_body_trailing_comment_defer_range
             && end_pos == defer_start
             && self
                 .jsx_trailing_line_comment_end(end_pos, defer_end)
@@ -344,19 +344,6 @@ impl<'a> Printer<'a> {
         let comment_start = self.transformed_jsx_trailing_comment_start(node)?;
         let comment_end = self.jsx_trailing_line_comment_end(comment_start, u32::MAX)?;
         Some((comment_start, comment_end))
-    }
-
-    pub(crate) fn with_jsx_trailing_comments_deferred<R>(
-        &mut self,
-        defer_start: u32,
-        defer_end: u32,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        let prev = self.jsx_trailing_comment_defer_range;
-        self.jsx_trailing_comment_defer_range = Some((defer_start, defer_end));
-        let result = f(self);
-        self.jsx_trailing_comment_defer_range = prev;
-        result
     }
 
     fn transformed_jsx_trailing_comment_start(&self, node: &Node) -> Option<u32> {

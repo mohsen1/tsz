@@ -6,27 +6,6 @@ impl<'a> Printer<'a> {
     // Comment Emission Helpers
     // =========================================================================
 
-    pub(crate) fn with_statement_trailing_comments_deferred<R>(
-        &mut self,
-        arrow_range: Option<(u32, u32)>,
-        jsx_range: Option<(u32, u32)>,
-        f: impl FnOnce(&mut Self) -> R,
-    ) -> R {
-        match (arrow_range, jsx_range) {
-            (Some((arrow_start, arrow_end)), Some((jsx_start, jsx_end))) => self
-                .with_arrow_concise_body_trailing_comments_deferred(
-                    arrow_start,
-                    arrow_end,
-                    |this| this.with_jsx_trailing_comments_deferred(jsx_start, jsx_end, f),
-                ),
-            (Some((start, end)), None) => {
-                self.with_arrow_concise_body_trailing_comments_deferred(start, end, f)
-            }
-            (None, Some((start, end))) => self.with_jsx_trailing_comments_deferred(start, end, f),
-            (None, None) => f(self),
-        }
-    }
-
     /// Emit trailing comments after a node's end position.
     /// Trailing comments are comments on the same line as `end_pos`,
     /// e.g. `foo(); // comment` — the `// comment` is trailing.
