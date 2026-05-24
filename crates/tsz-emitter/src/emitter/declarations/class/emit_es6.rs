@@ -2386,7 +2386,12 @@ impl<'a> Printer<'a> {
 
             // Emit leading comments before this member
             if let Some(member_node) = self.arena.get(member_idx) {
+                let comments_end_with_line_break =
+                    self.pending_comments_before_pos_end_with_line_break(member_node.pos);
                 self.emit_comments_before_pos(member_node.pos);
+                if comments_end_with_line_break && !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
             }
 
             let before_len = self.writer.len();
