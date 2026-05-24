@@ -84,6 +84,7 @@ impl<'a> CheckerState<'a> {
         }
         if !alias_display_queries::source_can_use_declared_generic_alias_annotation(
             self.ctx.types,
+            self.ctx.definition_store.as_ref(),
             source,
         ) {
             return None;
@@ -117,6 +118,7 @@ impl<'a> CheckerState<'a> {
         {
             return Some((source_display.to_string(), target_display));
         }
+        let source_fact = self.alias_display_source_fact_type(anchor_idx, source);
         if let Some(expr_idx) = self.assignment_target_expression(anchor_idx)
             && let Some(annotation_text) =
                 self.declared_type_annotation_text_for_expression(expr_idx)
@@ -131,7 +133,7 @@ impl<'a> CheckerState<'a> {
         }
         if let Some(source_display) = self.declared_generic_alias_source_display_for_target_display(
             anchor_idx,
-            source,
+            source_fact,
             source_display,
             target_display,
         ) {
@@ -146,26 +148,41 @@ impl<'a> CheckerState<'a> {
             || annotation_text.trim_start().starts_with("typeof ")
             // No structural query for module-import types yet; keep as display fallback.
             || source_display.starts_with("import(")
-            || (alias_display_queries::is_object_for_alias_display(self.ctx.types, source)
+            || (alias_display_queries::is_object_for_alias_display(self.ctx.types, source_fact)
                 && !annotation_text.contains('{'))
             || (!annotation_text.contains('<')
-                && alias_display_queries::is_application_for_alias_display(self.ctx.types, source)
+                && alias_display_queries::is_application_for_alias_display(self.ctx.types, source_fact)
                 && alias_display_queries::is_application_for_alias_display(self.ctx.types, target))
             || annotation_text.contains(" | ")
             || annotation_text.contains(" & ")
             || annotation_text.contains('<')
             || annotation_text.contains('.')
-            || (alias_display_queries::contains_undefined_for_alias_display(
+            || ((alias_display_queries::contains_undefined_for_alias_display(
                 self.ctx.types,
-                source,
-            )
+                source_fact,
+            ) || alias_display_queries::has_optional_parameter_undefined_surface(
+                self.ctx.types,
+                source_fact,
+            ))
                 && !annotation_text.contains("| undefined"))
-            || alias_display_queries::is_literal_for_alias_display(self.ctx.types, source)
+            || alias_display_queries::is_literal_for_alias_display(self.ctx.types, source_fact)
         {
             return None;
         }
         let source_display = self.format_declared_annotation_for_diagnostic(&annotation_text);
         Some((source_display, target_display.to_string()))
+    }
+
+    fn alias_display_source_fact_type(
+        &mut self,
+        anchor_idx: NodeIndex,
+        fallback: TypeId,
+    ) -> TypeId {
+        self.direct_diagnostic_source_expression(anchor_idx)
+            .or_else(|| self.assignment_source_expression(anchor_idx))
+            .map(|expr_idx| self.get_type_of_node(expr_idx))
+            .filter(|type_id| !matches!(*type_id, TypeId::ERROR | TypeId::UNKNOWN))
+            .unwrap_or(fallback)
     }
 
     pub(in crate::error_reporter) fn rewrite_declared_generic_alias_source_in_ts2322_message(
