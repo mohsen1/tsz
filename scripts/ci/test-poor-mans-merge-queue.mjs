@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import {
+  formatResult,
+  parseArgs,
+  queueSkipReason,
+  requiredCheckState,
+} from "./poor-mans-merge-queue.mjs";
+
+function check(overrides = {}) {
+  return {
+    __typename: "CheckRun",
+    name: "CI Summary",
+    status: "COMPLETED",
+    conclusion: "SUCCESS",
+    ...overrides,
+  };
+}
+
+function pr(overrides = {}) {
+  return {
+    autoMergeRequest: { mergeMethod: "SQUASH" },
+    baseRefName: "main",
+    body: "AgentName: TestAgent\n\nReady.",
+    headRefOid: "a".repeat(40),
+    isCrossRepository: false,
+    isDraft: false,
+    labels: [],
+    number: 42,
+    statusCheckRollup: [check(), check({ name: "GitGuardian Security Checks" })],
+    title: "fix(ci): sample",
+    url: "https://github.example/pull/42",
+    ...overrides,
+  };
+}
+
+assert.equal(parseArgs(["--repository", "owner/repo"]).repository, "owner/repo");
+assert.deepEqual(
+  parseArgs(["--no-default-pr-required-checks", "--pr-required-check", "lint"]).prRequiredChecks,
+  ["lint"],
+);
+assert.deepEqual(
+  parseArgs(["--no-default-merge-required-checks", "--merge-required-check", "CI Summary"]).mergeRequiredChecks,
+  ["CI Summary"],
+);
+assert.equal(parseArgs(["--invalidate-pr", "123"]).invalidatePr, 123);
+
+assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
+assert.equal(requiredCheckState([check({ status: "IN_PROGRESS", conclusion: "" })], ["CI Summary"]).kind, "pending");
+assert.equal(requiredCheckState([check({ conclusion: "FAILURE" })], ["CI Summary"]).kind, "failed");
+assert.equal(requiredCheckState([], ["CI Summary"]).kind, "missing");
+assert.equal(requiredCheckState([{ context: "Queue Tested", state: "SUCCESS" }], ["Queue Tested"]).kind, "passed");
+assert.equal(requiredCheckState([{ context: "Queue Tested", state: "PENDING" }], ["Queue Tested"]).kind, "pending");
+
+assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
+assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");
+assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"), "ready-state WIP marker: WIP label");
+assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
+assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
+
+assert.match(
+  formatResult({
+    dryRun: true,
+    selected: pr(),
+    baseOid: "b".repeat(40),
+    skips: [],
+  }, parseArgs(["--repository", "owner/repo", "--dry-run"])),
+  /Would synthetic-test and merge #42/,
+);
+
+assert.match(
+  formatResult({
+    selected: pr(),
+    merged: true,
+    synthetic: { mergeOid: "c".repeat(40) },
+    skips: [],
+  }, parseArgs(["--repository", "owner/repo"])),
+  /Merged #42 after synthetic merge/,
+);
+
+assert.match(
+  formatResult({
+    selected: pr(),
+    baseMoved: true,
+    oldBaseOid: "d".repeat(40),
+    newBaseOid: "e".repeat(40),
+    synthetic: { mergeOid: "f".repeat(40) },
+    skips: [],
+  }, parseArgs(["--repository", "owner/repo"])),
+  /Retest needed/,
+);
+
+console.log("poor man's merge queue tests passed");
