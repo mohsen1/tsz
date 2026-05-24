@@ -310,9 +310,22 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if (return_type_id == tsz_solver::types::TypeId::ANY
                         || return_type_id == tsz_solver::types::TypeId::NEVER)
                         && method_body.is_some()
-                        && self.body_returns_void(method_body)
                     {
-                        self.write(": void");
+                        if self.body_returns_void(method_body) {
+                            self.write(": void");
+                        } else if let Some(type_text) =
+                            self.function_body_preferred_return_type_text(method_body)
+                        {
+                            self.write(": ");
+                            let type_text =
+                                self.wrap_async_method_return_type_text(method, type_text);
+                            self.write(&type_text);
+                        } else {
+                            self.write(": ");
+                            self.write(
+                                &self.inferred_method_return_type_text(method, return_type_id),
+                            );
+                        }
                     } else if self
                         .type_mentions_scoped_type_param_nodes(return_type_id, &all_param_nodes)
                     {
@@ -859,6 +872,13 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         };
 
+        if self.constructor_belongs_to_jsdoc_extends_class(ctor_idx) {
+            if let Some(body_node) = self.arena.get(ctor.body) {
+                self.skip_comments_in_node(body_node.pos, body_node.end);
+            }
+            return;
+        }
+
         // Check if this is an overload (no body) or implementation (has body)
         let is_overload = ctor.body.is_none();
         let is_implementation = !is_overload;
@@ -946,6 +966,40 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(body_node) = self.arena.get(ctor_body) {
             self.skip_comments_in_node(body_node.pos, body_node.end);
         }
+    }
+
+    fn constructor_belongs_to_jsdoc_extends_class(&self, ctor_idx: NodeIndex) -> bool {
+        if !self.source_is_js_file {
+            return false;
+        }
+        let Some(class_idx) = self.arena.parent_of(ctor_idx) else {
+            return false;
+        };
+        let Some(class_node) = self.arena.get(class_idx) else {
+            return false;
+        };
+        let Some(class) = self.arena.get_class(class_node) else {
+            return false;
+        };
+        self.jsdoc_extends_type_for_class_declaration(class_idx, class)
+            .is_some()
+    }
+
+    pub(in crate::declaration_emitter) fn emit_js_any_base_index_signature_if_needed(
+        &mut self,
+        heritage_clauses: Option<&NodeList>,
+    ) {
+        if !self.source_is_js_file {
+            return;
+        }
+        if self.synthetic_class_extends_alias_type_id(heritage_clauses)
+            != Some(tsz_solver::TypeId::ANY)
+        {
+            return;
+        }
+        self.write_indent();
+        self.write("[x: string]: any;");
+        self.write_line();
     }
 
     pub(in crate::declaration_emitter) fn emit_js_array_subclass_constructor_overloads_if_needed(
@@ -2525,13 +2579,13 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         continue;
                     }
-                    // When an exported variable has a class expression initializer with no
-                    // explicit type annotation, tsc synthesizes a class declaration using the
-                    // binding name. Covers namespace-exported class expressions:
-                    // `export const C = class { }`, `export const C = class C { }`,
-                    // generic class expressions, and class expressions with heritage.
+                    // In JS declaration emit, an exported variable with a class expression
+                    // initializer and no explicit annotation is surfaced as an exported class.
+                    // TS source keeps the variable shape and emits a structural constructor
+                    // object type, including inside namespaces.
                     // (Top-level `export const` goes through emit_exported_variable instead.)
-                    if is_exported
+                    if self.source_is_js_file
+                        && is_exported
                         && decl.type_annotation.is_none()
                         && self.emit_js_named_class_expression_declaration(
                             decl.name,
@@ -2571,6 +2625,9 @@ impl<'a> DeclarationEmitter<'a> {
                             )
                             && !self.initializer_references_js_elided_bare_require_binding(
                                 decl.initializer,
+                            )
+                            && !self.js_variable_dependency_is_synthetic_class_extends_alias_source(
+                                decl.name,
                             )
                     });
                 }
