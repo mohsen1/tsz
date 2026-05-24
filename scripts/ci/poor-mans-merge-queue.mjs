@@ -227,7 +227,6 @@ function readPullRequests(repository, base, maxPrs) {
       "isDraft",
       "labels",
       "number",
-      "statusCheckRollup",
       "title",
       "url",
     ].join(","),
@@ -301,6 +300,24 @@ function invalidateOpen(repository, options) {
   return { invalidated: prs.length };
 }
 
+function readQueueCandidates(repository, options) {
+  return readPullRequests(repository, options.base, options.maxPrs)
+    .sort((a, b) => a.number - b.number)
+    .map((pr) => {
+      const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base);
+      if (skipReason) return { pr, skipReason };
+      const detailed = readPullRequest(repository, pr.number);
+      return {
+        pr: detailed,
+        skipReason: queueSkipReason(
+          detailed,
+          requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks),
+          options.base,
+        ),
+      };
+    });
+}
+
 function queueBranch(options, pr) {
   return `${options.queueBranchPrefix}/pr-${pr.number}`;
 }
@@ -317,6 +334,7 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
     git(["push", "--force-with-lease", "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
+    runGh(["workflow", "run", "ci.yml", "--repo", repository, "--ref", branch]);
   }
   return { branch, mergeOid };
 }
@@ -370,14 +388,11 @@ function mergePullRequest(repository, pr) {
 }
 
 function processOne(repository, options) {
-  const prs = readPullRequests(repository, options.base, options.maxPrs)
-    .sort((a, b) => a.number - b.number);
+  const candidates = readQueueCandidates(repository, options);
   const baseOid = readBranchOid(repository, options.base);
   const skips = [];
 
-  for (const pr of prs) {
-    const requiredState = requiredCheckState(pr.statusCheckRollup, options.prRequiredChecks);
-    const skipReason = queueSkipReason(pr, requiredState, options.base);
+  for (const { pr, skipReason } of candidates) {
     if (skipReason) {
       if (options.verbose) skips.push({ number: pr.number, reason: skipReason, url: pr.url });
       continue;

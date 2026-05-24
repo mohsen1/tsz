@@ -57,6 +57,7 @@ assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" },
 assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"), "ready-state WIP marker: WIP label");
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
+assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
 
 assert.match(
   formatResult({
