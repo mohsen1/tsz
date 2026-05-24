@@ -34,9 +34,10 @@ scripts/agents/list-owned-work.sh M4-B
     determine whether the earlier `conformance-aggregate` coverage gap
     (`11844 < 11865` tolerance 5) was stale-base/cache-related.
   - `#9945` ready/off-auto; exact-head ready-review CI is still running.
-  - `#9807` draft/WIP/off-auto; follow-up head
+  - `#9807` ready/off-auto; follow-up head
     `023ac1dde31e330514196d178b11d3515f832814` splits visitor predicates below
-    2000 LOC, but exact-head draft-light jobs are still running.
+    2000 LOC. Exact-head draft-light CI is clean, `WIP` has been removed, and
+    M4-B marked the PR ready for heavy CI.
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`.
@@ -49,17 +50,17 @@ scripts/agents/list-owned-work.sh M4-B
 - Track: roadmap Tracks 3, 4, and 10.
 - Next concrete step: inspect queued exact-head CI for the open PR set above.
   If a PR is green and not draft/WIP/blocked, mark or keep it ready and land it
-  according to the TSZ CI rules. If a PR is draft but light CI is clean and the
-  body/comment handoff says its blocker is fixed, mark it ready for heavy CI
-  instead of adding more scope.
+  according to the TSZ CI rules. Do not claim issue backlog until these open
+  lane PRs have either landed, failed with a signed handoff, or reached a clear
+  external blocker.
 
 ## Existing Work To Inspect First
 
 - `#9281` is no longer owned by `agent:M4-B`; inspect only for stack context,
   not as an M4-B lane PR.
-- `#9807` is the remaining draft/WIP PR that should be advanced or handed off
-  before taking issue backlog.
-- `#9230`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
+- `#9807` has been advanced out of draft/WIP and is now ready/off-auto; inspect
+  ready-review CI like the rest of the open ready PR set.
+- `#9230`, `#9807`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
   landed only after exact-head required checks are complete and green. For
   `#10078`, required `Queue Tested` is still pending because auto-merge is not
   armed; do not arm it under the lane rules while a required status is pending.
