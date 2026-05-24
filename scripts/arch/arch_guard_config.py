@@ -542,6 +542,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "checkers"
             / "generic_checker"
+            / "constraint_syntax_instantiation.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
             / "union_constraint_helpers.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "iterable_checker.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "parameter_checker.rs",
