@@ -510,9 +510,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Current post-merge count on this Application-source refresh PR.
-        # Keep this ratchet exact when the broad boundary debt shrinks.
-        3378,
+        # Ratcheted to the post-merge count for the Application-source
+        # refresh PR after current main reduced the quarantine surface.
+        3349,
     ),
 ]
 

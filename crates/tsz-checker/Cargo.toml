@@ -850,6 +850,10 @@ name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
 [[test]]
+name = "ts2344_keyof_constraint_display_tests"
+path = "tests/ts2344_keyof_constraint_display_tests.rs"
+
+[[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
 path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 
