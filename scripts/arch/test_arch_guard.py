@@ -3135,6 +3135,22 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("types.rs:2", hits[3])
         self.assertIn("types.rs:3", hits[4])
 
+    def test_flags_relation_policy_packed_flag_storage(self):
+        pattern, _max_lines = self._check_by_name("RelationPolicy must store typed flags")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/relations/relation_queries.rs": (
+                    "pub struct RelationPolicy {\n"
+                    "    flags: u16,\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("relation_queries.rs:2", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_scan_regex_line_count_accepts_file_roots(self):
         pattern, _max_lines = self._check_by_name(
             "raw diagnostic assignability predicates"

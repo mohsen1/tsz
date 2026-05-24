@@ -658,6 +658,12 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: RelationPolicy must store typed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"^\s*(?:pub\s+)?flags\s*:\s*u16\s*,"),
+        0,
+    ),
+    (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
         [
             ROOT

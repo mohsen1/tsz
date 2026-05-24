@@ -6,7 +6,7 @@
 //! Environment:
 //! - `TSZ_QUERY_RUN_ID`: optional run identifier attached to every event.
 
-use crate::TypeId;
+use crate::types::{RelationFlags, TypeId};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{Level, trace};
@@ -74,7 +74,7 @@ pub(crate) fn relation_start(
     op: &'static str,
     source: TypeId,
     target: TypeId,
-    flags: u16,
+    flags: RelationFlags,
 ) {
     trace!(
         target: "tsz::query_json",
@@ -85,7 +85,7 @@ pub(crate) fn relation_start(
         op,
         source_type_id = source.0,
         target_type_id = target.0,
-        flags
+        flags = flags.bits()
     );
 }
 
