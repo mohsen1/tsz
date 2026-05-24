@@ -1412,7 +1412,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if op_kind == SyntaxKind::InKeyword as u16 {
-                let result = self.check_in_operator(left_idx, right_idx, right_type);
+                let result = self.check_in_operator(left_idx, right_idx, left_type, right_type);
                 type_stack.push(result);
                 continue;
             }
@@ -2859,16 +2859,56 @@ impl<'a> CheckerState<'a> {
         TypeId::BOOLEAN
     }
 
+    /// Validate that the left operand of `in` is assignable to the property-key
+    /// space (`string`, `number`, or `symbol`), which is what `in` probes. On
+    /// failure tsc emits TS2322 at the left operand with the key union rendered
+    /// structurally, since tsc strips the `PropertyKey` alias from this target.
+    fn check_in_operator_lhs_key_type(&mut self, left_idx: NodeIndex, left_type: TypeId) {
+        if matches!(left_type, TypeId::ANY | TypeId::ERROR) {
+            return;
+        }
+        // Mirror tsc's checkNonNullType: strip the nullish part before the key check
+        // so `string | undefined` is not spuriously rejected. A purely nullish operand
+        // contributes no key and is left to the existing nullish diagnostics.
+        let Some(key_type) = self.split_nullish_type(left_type).0 else {
+            return;
+        };
+        let target = self
+            .ctx
+            .types
+            .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
+        if self.is_assignable_to(key_type, target) {
+            return;
+        }
+        // Source uses the widened diagnostic form so a fresh literal operand shows its
+        // primitive (`boolean`, not `true`) against this non-literal target, matching
+        // tsc. The target uses the constraint formatter, which renders the canonical
+        // key union structurally (tsc strips its `PropertyKey` alias on this surface).
+        let display_source = crate::query_boundaries::common::widen_argument_type_for_display(
+            self.ctx.types,
+            key_type,
+        );
+        let source_str = self.format_type_diagnostic_widened(display_source);
+        let target_str = self.format_type_diagnostic_constraint(target);
+        self.error_at_node_msg(
+            left_idx,
+            tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            &[&source_str, &target_str],
+        );
+    }
+
     /// Check the `in` operator.
     ///
     /// Validates:
     /// - TS18046: RHS is not `unknown`
     /// - TS2322: RHS is assignable to object
     /// - TS2638: RHS may not represent a primitive value
+    /// - TS2322: LHS is assignable to `string | number | symbol`
     fn check_in_operator(
         &mut self,
         left_idx: NodeIndex,
         right_idx: NodeIndex,
+        left_type: TypeId,
         right_type: TypeId,
     ) -> TypeId {
         // TS1451: Private identifiers must be the direct LHS of `in`, not wrapped
@@ -2892,6 +2932,8 @@ impl<'a> CheckerState<'a> {
         } else if left_node_kind == SyntaxKind::PrivateIdentifier as u16 {
             // Direct private identifier as LHS — validate it
             self.check_private_identifier_in_expression(left_stripped, right_idx, right_type);
+        } else {
+            self.check_in_operator_lhs_key_type(left_idx, left_type);
         }
 
         // TS18047/TS18049: RHS of `in` must not be possibly null (or null|undefined).

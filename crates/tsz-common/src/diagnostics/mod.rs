@@ -169,11 +169,14 @@ impl Diagnostic {
 /// Look up a `DiagnosticMessage` (code + category + template) by numeric code.
 /// Uses binary search over the sorted generated table — O(log n).
 pub fn lookup_diagnostic(code: u32) -> Option<DiagnosticMessage> {
-    use self::data::DIAGNOSTIC_MESSAGES;
-    DIAGNOSTIC_MESSAGES
-        .binary_search_by_key(&code, |m| m.code)
-        .ok()
-        .map(|idx| DIAGNOSTIC_MESSAGES[idx])
+    self::data::DIAGNOSTIC_MESSAGE_SECTIONS
+        .iter()
+        .find_map(|section| {
+            section
+                .binary_search_by_key(&code, |m| m.code)
+                .ok()
+                .map(|idx| section[idx])
+        })
 }
 
 pub fn get_message_template(code: u32) -> Option<&'static str> {
@@ -247,9 +250,8 @@ mod tests {
 
     #[test]
     fn lookup_diagnostic_finds_known_code_and_rejects_unknown_code() {
-        let known = data::DIAGNOSTIC_MESSAGES
-            .first()
-            .copied()
+        let known = data::iter_diagnostic_messages()
+            .next()
             .expect("generated diagnostic table should not be empty");
 
         let lookup = lookup_diagnostic(known.code).expect("known code should resolve");
@@ -259,9 +261,8 @@ mod tests {
 
     #[test]
     fn get_message_template_matches_lookup_and_returns_none_for_unknown_code() {
-        let known = data::DIAGNOSTIC_MESSAGES
-            .first()
-            .copied()
+        let known = data::iter_diagnostic_messages()
+            .next()
             .expect("generated diagnostic table should not be empty");
 
         assert_eq!(get_message_template(known.code), Some(known.message));
@@ -276,9 +277,8 @@ mod tests {
 
     #[test]
     fn diagnostic_from_code_uses_table_entry_for_known_code() {
-        let known = data::DIAGNOSTIC_MESSAGES
-            .first()
-            .copied()
+        let known = data::iter_diagnostic_messages()
+            .next()
             .expect("generated diagnostic table should not be empty");
         let args = ["left", "right", "extra"];
         let expected_message = format_message(known.message, &args);

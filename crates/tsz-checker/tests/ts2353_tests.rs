@@ -65,6 +65,50 @@ const badInline: { [key: number]: boolean } = { baz: true };
 }
 
 #[test]
+fn ts2353_quotes_non_identifier_excess_property_name() {
+    let source = r#"
+interface I { foo: string; }
+const i: I = { foo: "x", "bad-name": "y" };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 for hyphenated excess key, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'\"bad-name\"'"),
+        "Expected TS2353 to quote non-identifier key, got: {:?}",
+        ts2353[0].1
+    );
+}
+
+#[test]
+fn ts2353_keeps_identifier_and_numeric_excess_property_names_unquoted() {
+    let source = r#"
+interface I { foo: string; }
+const ident: I = { foo: "x", goodName: "y" };
+const numeric: I = { foo: "x", 42: "y" };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected TS2353 for identifier and numeric excess keys, got: {diags:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'goodName'")),
+        "Expected identifier excess key to stay unquoted, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'42'")),
+        "Expected numeric excess key to stay unquoted, got: {ts2353:?}",
+    );
+}
+
+#[test]
 fn record_number_allows_quoted_numeric_object_literal_key() {
     let source = r#"
 type NumRecord = Record<number, boolean>;
@@ -1264,8 +1308,8 @@ const ti: TemplateIndexed = {
         "Property 'foo-bar' doesn't match either pattern; expected TS2353, got: {diags:?}"
     );
     assert!(
-        ts2353[0].1.contains("'foo-bar'"),
-        "Expected 'foo-bar' in error message, got: {:?}",
+        ts2353[0].1.contains("'\"foo-bar\"'"),
+        "Expected quoted 'foo-bar' in error message, got: {:?}",
         ts2353[0].1
     );
 }
