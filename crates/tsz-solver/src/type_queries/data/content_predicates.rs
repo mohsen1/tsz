@@ -474,6 +474,16 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     })
 }
 
+/// Check if a type contains a generic application with an `unknown` argument.
+pub fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| {
+        let TypeData::Application(app_id) = key else {
+            return false;
+        };
+        db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
+    })
+}
+
 /// Check if a type contains the `never` intrinsic.
 ///
 /// Delegates to `visitor_predicates::contains_type_matching` with a `Never`-only

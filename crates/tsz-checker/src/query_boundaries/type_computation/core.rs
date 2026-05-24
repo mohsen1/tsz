@@ -38,6 +38,10 @@ pub(crate) fn is_bigint_like(
     tsz_solver::operations::BinaryOpEvaluator::new(db).is_bigint_like(type_id)
 }
 
+pub(crate) fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::contains_application_unknown_arg(db, type_id)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum WriteTargetLogicalOperator {
     LogicalOr,

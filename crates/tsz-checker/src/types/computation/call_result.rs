@@ -965,10 +965,10 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let aggregate_literal_actual = if self
-                    .format_type_diagnostic(expected)
-                    .contains("<unknown>")
-                {
+                let aggregate_literal_actual = if expr_ops::contains_application_unknown_arg(
+                    self.ctx.types.as_type_database(),
+                    expected,
+                ) {
                     None
                 } else {
                     self.literalized_aggregate_actual_for_call_args(args, index, actual, expected)

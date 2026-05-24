@@ -1174,3 +1174,32 @@ fn literal_or_primitive_compound_rejects_application() {
         &interner, app
     ));
 }
+
+#[test]
+fn contains_application_unknown_arg_finds_direct_application_arg() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::UNKNOWN]);
+
+    assert!(contains_application_unknown_arg(&interner, app));
+}
+
+#[test]
+fn contains_application_unknown_arg_finds_nested_application_arg() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::UNKNOWN]);
+    let nested = interner.union2(TypeId::STRING, app);
+
+    assert!(contains_application_unknown_arg(&interner, nested));
+}
+
+#[test]
+fn contains_application_unknown_arg_rejects_non_application_unknown() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::ANY]);
+
+    assert!(!contains_application_unknown_arg(
+        &interner,
+        TypeId::UNKNOWN
+    ));
+    assert!(!contains_application_unknown_arg(&interner, app));
+}
