@@ -6,6 +6,7 @@
 
 use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
+use tsz_scanner::SyntaxKind;
 
 impl<'a> CheckerState<'a> {
     /// Collect every object-literal expression node reachable on the RHS of an
@@ -42,6 +43,7 @@ impl<'a> CheckerState<'a> {
             }
             if node.kind == syntax_kind_ext::BINARY_EXPRESSION
                 && let Some(bin) = self.ctx.arena.get_binary_expr(node)
+                && Self::is_rhs_object_literal_wrapper_operator(bin.operator_token)
             {
                 // `||`, `??`, `,`, `=` may all pass the contextual type to one
                 // or both sides; recurse into both operands so every reachable
@@ -59,5 +61,12 @@ impl<'a> CheckerState<'a> {
             }
         }
         out
+    }
+
+    const fn is_rhs_object_literal_wrapper_operator(operator: u16) -> bool {
+        operator == SyntaxKind::BarBarToken as u16
+            || operator == SyntaxKind::QuestionQuestionToken as u16
+            || operator == SyntaxKind::CommaToken as u16
+            || operator == SyntaxKind::EqualsToken as u16
     }
 }

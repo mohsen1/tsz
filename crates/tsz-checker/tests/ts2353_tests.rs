@@ -1546,6 +1546,23 @@ const v: I = d ?? { a: 1, b: 2 };
 }
 
 #[test]
+fn non_contextual_binary_rhs_does_not_report_property_excess() {
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+const v: I = (0 as any) + { a: 1, b: 2 };
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.0 != 2353
+            && !d
+                .1
+                .contains("Object literal may only specify known properties")),
+        "Did not expect property-level excess checking through `+`, got: {diags:?}",
+    );
+}
+
+#[test]
 fn ternary_branch_excess_property_uses_renamed_property() {
     // Test matrix item: the rule applies regardless of property spelling.
     let diags = get_diagnostics(
