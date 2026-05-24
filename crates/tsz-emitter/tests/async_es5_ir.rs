@@ -1674,6 +1674,57 @@ fn discovery_body_contains_await_returns_false_for_pure_body() {
     assert!(!body_contains_await("async function f() { var x = 1; }"));
 }
 
+#[test]
+fn for_await_of_in_async_function_uses_async_iterator_state_machine() {
+    let output = transform_and_print("async function f() { let y; for await (const x of y) {} }");
+
+    assert!(
+        output.contains("__asyncValues(y)") && output.contains(".next()"),
+        "Plain `for await...of` must lower through the async iterator helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(".trys.push([0, 5, 6, 11]);")
+            && output.contains("if (!(!_a && !_b && (_c = y_1.return)))"),
+        "The lowered loop must protect iterator close with tsc's outer try/finally shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _d;") && !output.contains("for await"),
+        "The iteration value should assign after the awaited `next()` result resumes.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn labeled_for_await_continue_targets_iteration_case() {
+    let output = transform_and_print(
+        "async function f() { let y; outer: for await (const x of y) { continue outer; } }",
+    );
+
+    assert!(
+        output.contains("x = _d;\n                    return [3 /*break*/, 3];"),
+        "A labeled continue targeting the for-await loop should jump to the loop iteration case.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue outer;"),
+        "The source-level labeled continue must not survive in ES5 async output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_in_async_generator_wraps_protocol_awaits() {
+    let output = transform_async_generator_inner_and_print(
+        "async function* f() { for await (const x of y) {} }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, __await(y_1.next())];"),
+        "Async generators must yield `__await(iterator.next())` for for-await protocol awaits.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, __await(_c.call(y_1))];"),
+        "Async generators must also wrap iterator `return()` awaits during cleanup.\nOutput:\n{output}"
+    );
+}
+
 // ---------------------------------------------------------------------
 // Async/generator state-machine ES2020+ operator lowering
 //

@@ -71,6 +71,8 @@ mod condition_await;
 mod discovery;
 #[path = "async_es5_ir_element_access.rs"]
 mod element_access;
+#[path = "async_es5_ir_for_await.rs"]
+mod for_await;
 #[path = "async_es5_ir_for_of.rs"]
 mod for_of;
 #[path = "async_es5_ir_loop_control.rs"]
@@ -2796,7 +2798,13 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => {
-                if !self.process_for_await_using_statement_in_async(
+                if !self.process_for_await_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                    None,
+                ) && !self.process_for_await_using_statement_in_async(
                     idx,
                     cases,
                     current_statements,
@@ -4813,6 +4821,17 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
                 Some(&label),
             );
+            return;
+        }
+        if statement_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && self.process_for_await_statement_in_async(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+                Some(&label),
+            )
+        {
             return;
         }
         if statement_node.kind == syntax_kind_ext::BLOCK
