@@ -499,6 +499,15 @@ impl TypeInterner {
         // `getTemplateLiteralType` "Normalize `${Mapping<xxx>}` into Mapping<xxx>".
         if let [TemplateSpan::Type(only_type)] = normalized.as_slice() {
             let only_type = *only_type;
+            // A lone `${string}` placeholder spans the entire `string` domain,
+            // so the template is mutually assignable with — and `Equal` to —
+            // `string`. tsc's `getTemplateLiteralType` collapses it to
+            // `string`. (`number`/`bigint` are proper subsets and stay
+            // templates; `any`/`unknown` are handled by the absorption passes
+            // above.)
+            if only_type == TypeId::STRING {
+                return TypeId::STRING;
+            }
             if self.is_pattern_literal_type(only_type) {
                 return only_type;
             }

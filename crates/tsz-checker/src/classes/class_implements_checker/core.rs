@@ -559,12 +559,17 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        // Collect abstract members from base class that are not implemented
+        // Collect abstract members from base class that are not implemented.
+        // Multiple declarations can share one member name (a get/set accessor
+        // pair, or overload signatures) yet form a single inherited abstract
+        // member, so dedup by name to avoid inflating the count (which would
+        // flip TS2515 -> TS2654) and duplicating the rendered name.
         let mut missing_members: Vec<String> = Vec::new();
         for &member_idx in &base_class.members.nodes {
             if self.member_is_abstract(member_idx)
                 && let Some(name) = self.get_member_name(member_idx)
                 && !implemented_members.contains(&name)
+                && !missing_members.contains(&name)
             {
                 missing_members.push(name);
             }

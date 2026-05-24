@@ -385,6 +385,7 @@ run_lint() {
   node scripts/ci/test-pr-ownership-report.mjs || return $?
   node scripts/ci/test-type-challenges-semantic-families.mjs || return $?
   node scripts/ci/test-pr-ready-state.mjs || return $?
+  node scripts/ci/test-refresh-green-prs.mjs || return $?
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?

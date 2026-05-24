@@ -177,6 +177,18 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.block_scope_reserved_names = names;
     }
 
+    pub fn set_disposable_env_context(&mut self, next_env_id: u32) {
+        self.transformer.set_disposable_env_context(next_env_id);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.transformer.disposable_env_counter()
+    }
+
+    pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
+        self.transformer.take_generated_disposable_env_names()
+    }
+
     pub fn block_scope_reserved_names(&self) -> Vec<String> {
         let mut names = self.block_scope_reserved_names.clone();
         names.sort();
@@ -225,6 +237,10 @@ impl<'a> NamespaceES5Emitter<'a> {
 
     pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
         self.transformer.set_commonjs_export_name(name);
+    }
+
+    pub fn set_commonjs_export_names(&mut self, names: Vec<String>) {
+        self.transformer.set_commonjs_export_names(names);
     }
 
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
