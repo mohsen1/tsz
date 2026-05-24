@@ -482,6 +482,10 @@ name = "js_constructor_property_tests"
 path = "tests/js_constructor_property_tests.rs"
 
 [[test]]
+name = "js_constructor_property_more_tests"
+path = "tests/js_constructor_property_more_tests.rs"
+
+[[test]]
 name = "jsdoc_type_tag_tests"
 path = "tests/jsdoc_type_tag_tests.rs"
 
