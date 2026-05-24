@@ -109,6 +109,10 @@ pub struct TypeEvaluator<'a, R: TypeResolver = NoopResolver> {
     /// of recursive type-tree walks like `ts-toolbelt`'s `ComputeDeep` /
     /// `Invert` mapped+conditional bodies. See `is_silent_depth_bailed`.
     silent_depth_bailed: bool,
+    /// Per-`DefId` `(max_argument_weight, new_maxima_count)` used by the TS2589
+    /// detection pass to recognize a divergent (unconditionally growing)
+    /// recursive alias. See `recursive_growth::detect_recursive_growth`.
+    pub(super) detection_growth_runs: FxHashMap<DefId, (u64, u32)>,
 }
 
 /// Operation-local memo table statistics for [`TypeEvaluator`].
@@ -205,6 +209,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
             silent_depth_bailed: false,
+            detection_growth_runs: FxHashMap::default(),
         }
     }
 }
@@ -368,6 +373,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             expand_application_display_alias_args: false,
             apparent_conditional_branch: None,
             silent_depth_bailed: false,
+            detection_growth_runs: FxHashMap::default(),
         }
     }
 
@@ -610,6 +616,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             self.expand_type_args(&app.args)
         };
 
+        // Divergence guard. The tail-call path deliberately skips the per-DefId
+        // depth guard so convergent tail recursion (e.g. `Trim`) can iterate past
+        // MAX_DEF_DEPTH, which would otherwise let a *growing* recursive alias
+        // reached through an `infer`/conditional wrapper expand without bound.
+        if self.detect_recursive_growth(def_id, &expanded_args) {
+            self.mark_depth_exceeded();
+            return Some(TypeId::ERROR);
+        }
+
         // Instantiate the body with the type arguments — but do NOT evaluate
         let instantiated =
             instantiate_generic(self.interner, resolved, &type_params, &expanded_args);
@@ -837,6 +852,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // recursive expansions are allowed before bailing to `TypeId::ERROR`,
         // matching tsc's TS2589 behavior.
         if !self.increment_def_depth(def_id) {
+            self.guard.mark_exceeded();
+            return TypeId::ERROR;
+        }
+
+        // Divergence guard. MAX_DEF_DEPTH bounds the *number* of re-expansions
+        // but not the *size* of each, so a growing recursive alias can build
+        // enormous types within that budget. Gating on depth >= 2 keeps flat,
+        // non-recursive instantiation from feeding the detector.
+        if self.def_depth.get(&def_id).is_some_and(|&d| d >= 2)
+            && self.detect_recursive_growth(def_id, &app.args)
+        {
+            self.decrement_def_depth(def_id);
             self.guard.mark_exceeded();
             return TypeId::ERROR;
         }

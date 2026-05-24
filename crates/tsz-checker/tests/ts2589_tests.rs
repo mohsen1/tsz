@@ -1605,3 +1605,119 @@ mod issue_9784 {
         );
     }
 }
+
+mod issue_9777 {
+    //! Tests for <https://github.com/mohsen1/tsz/issues/9777>.
+    //!
+    //! Structural rule: when a recursive type alias re-applies itself through an
+    //! `infer`/conditional wrapper and the type argument *grows* every step (an
+    //! unbounded template-literal string, tuple, or intersection), the recursion
+    //! is divergent. tsc bounds it and reports TS2589 ("Type instantiation is
+    //! excessively deep and possibly infinite"); tsz must do the same instead of
+    //! expanding the argument without bound until it exhausts memory/time.
+    //!
+    //! The growing recursion reaches the tail-call instantiation path
+    //! (`try_instantiate_application_for_tail_call`), which intentionally skips
+    //! the per-`DefId` depth guard so convergent tail recursion can iterate past
+    //! it. A cumulative structural-weight budget on that path catches the
+    //! divergent (growing) case while leaving convergent recursion untouched.
+    //! The rule is keyed on structural growth, not on identifier names, the
+    //! grown wrapper type, or the spelling of any single witness.
+    use std::sync::{Arc, OnceLock};
+
+    use tsz_binder::lib_loader::LibFile;
+
+    use crate::context::CheckerOptions;
+    use crate::test_utils::{check_source_with_libs, load_default_lib_files};
+
+    fn codes(source: &str) -> Vec<u32> {
+        static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+        let libs = LIBS.get_or_init(load_default_lib_files);
+        check_source_with_libs(source, "test.ts", CheckerOptions::default(), libs)
+            .into_iter()
+            .map(|d| d.code)
+            .collect()
+    }
+
+    /// Reported repro: unbounded template-literal growth behind an `infer`/
+    /// conditional wrapper hangs without the fix; it must emit TS2589 instead.
+    #[test]
+    fn template_growth_infer_indirection_emits_ts2589() {
+        let cs = codes(
+            "type Grow<A> = A extends infer X ? (X extends string ? Grow<`${A}${A}`> : never) : never;\ntype R = Grow<\"ab\">;\nconst r: R = \"x\" as any;\n",
+        );
+        assert!(
+            cs.contains(&2589),
+            "unbounded template growth through infer wrapper must emit TS2589; got: {cs:?}"
+        );
+    }
+
+    /// Same rule, different identifier spellings and a primitive-typed argument.
+    /// If renaming the bound variable or alias breaks the fix, it is hardcoded.
+    #[test]
+    fn template_growth_renamed_params_emits_ts2589() {
+        let cs = codes(
+            "type Expand<S> = S extends infer Y ? (Y extends string ? Expand<`${S}-${S}`> : never) : never;\ntype Q = Expand<\"z\">;\nconst q: Q = \"x\" as any;\n",
+        );
+        assert!(
+            cs.contains(&2589),
+            "renamed template-growth alias must still emit TS2589; got: {cs:?}"
+        );
+    }
+
+    /// Witness from the issue comment: unbounded tuple growth behind the same
+    /// `infer`/conditional wrapper. Linear (not exponential) growth, same rule.
+    #[test]
+    fn tuple_growth_infer_indirection_emits_ts2589() {
+        let cs = codes(
+            "type Push<T extends any[]> = T extends infer X ? (X extends any[] ? Push<[...X, 1]> : never) : never;\ntype R = Push<[]>;\nconst r: R = [] as any;\n",
+        );
+        assert!(
+            cs.contains(&2589),
+            "unbounded tuple growth through infer wrapper must emit TS2589; got: {cs:?}"
+        );
+    }
+
+    /// Renamed tuple-growth variant — proves the fix is not keyed to spellings.
+    #[test]
+    fn tuple_growth_renamed_params_emits_ts2589() {
+        let cs = codes(
+            "type Append<L extends unknown[]> = L extends infer M ? (M extends unknown[] ? Append<[...M, true]> : never) : never;\ntype W = Append<[]>;\nconst w: W = [] as any;\n",
+        );
+        assert!(
+            cs.contains(&2589),
+            "renamed tuple-growth alias must still emit TS2589; got: {cs:?}"
+        );
+    }
+
+    /// Control: a bounded infer-wrapped template recursion that terminates well
+    /// before the growth budget must be accepted, with no spurious TS2589.
+    #[test]
+    fn bounded_infer_template_no_ts2589() {
+        let cs = codes(
+            "type Build<S extends string> = S extends infer X ? (X extends \"xxx\" ? X : Build<`${S}x`>) : never;\ntype R = Build<\"\">;\nconst r: R = \"xxx\";\n",
+        );
+        assert!(
+            !cs.contains(&2589),
+            "bounded template recursion must NOT emit TS2589; got: {cs:?}"
+        );
+        assert!(
+            !cs.contains(&2322),
+            "Build<\"\"> resolves to \"xxx\", which the value matches; got: {cs:?}"
+        );
+    }
+
+    /// Control: a bounded infer-wrapped tuple recursion that terminates must be
+    /// accepted. Mirrors the issue's `Loop` control with a small bound so the
+    /// test stays fast and does not depend on the exact ceiling.
+    #[test]
+    fn bounded_infer_tuple_loop_no_ts2589() {
+        let cs = codes(
+            "type Loop<A extends 1[], N extends number> = A['length'] extends infer L ? (L extends N ? A : Loop<[...A, 1], N>) : never;\ntype R = Loop<[], 3>;\nconst r: R = [1, 1, 1];\n",
+        );
+        assert!(
+            !cs.contains(&2589),
+            "bounded tuple recursion must NOT emit TS2589; got: {cs:?}"
+        );
+    }
+}
