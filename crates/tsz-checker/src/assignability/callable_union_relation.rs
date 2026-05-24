@@ -1,15 +1,15 @@
-//! Callable-to-union assignment compatibility helpers.
+//! Shared callable-to-union assignability compatibility helpers.
 
 use crate::state::CheckerState;
-use tsz_solver::TypeId;
+use tsz_solver::{ParamInfo, TypeId};
 
 impl<'a> CheckerState<'a> {
-    pub(in crate::assignability_domain::assignment_checker) fn callable_assignment_satisfies_union_callable_arm(
+    pub(in crate::assignability_domain) fn callable_source_satisfies_union_callable_arm(
         &mut self,
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let source_signatures = self.assignment_callable_signatures(source, false);
+        let source_signatures = self.callable_relation_signatures(source, false);
         if source_signatures.is_empty() {
             return false;
         }
@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
 
         let mut target_signatures = Vec::new();
         for member in members {
-            target_signatures.extend(self.assignment_callable_signatures(member, true));
+            target_signatures.extend(self.callable_relation_signatures(member, true));
         }
         if target_signatures.is_empty() {
             return false;
@@ -34,18 +34,18 @@ impl<'a> CheckerState<'a> {
                 target_signatures
                     .iter()
                     .any(|(target_params, target_return)| {
-                        self.assignment_callable_params_compatible(source_params, target_params)
+                        self.callable_relation_params_compatible(source_params, target_params)
                             && self
                                 .diagnostic_relation_boolean_guard(*source_return, *target_return)
                     })
             })
     }
 
-    fn assignment_callable_signatures(
+    fn callable_relation_signatures(
         &mut self,
         type_id: TypeId,
         require_plain_callable: bool,
-    ) -> Vec<(Vec<tsz_solver::ParamInfo>, TypeId)> {
+    ) -> Vec<(Vec<ParamInfo>, TypeId)> {
         let mut signatures = Vec::new();
         let mut stack = vec![type_id];
         let mut seen = rustc_hash::FxHashSet::default();
@@ -91,10 +91,10 @@ impl<'a> CheckerState<'a> {
         signatures
     }
 
-    fn assignment_callable_params_compatible(
+    fn callable_relation_params_compatible(
         &mut self,
-        source_params: &[tsz_solver::ParamInfo],
-        target_params: &[tsz_solver::ParamInfo],
+        source_params: &[ParamInfo],
+        target_params: &[ParamInfo],
     ) -> bool {
         let source_required = source_params
             .iter()

@@ -1772,10 +1772,6 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.callable_assignment_satisfies_union_callable_arm(source_type, target_type) {
-            return;
-        }
-
         // TS2322 anchoring should point at the assignment target (LHS), not the RHS expression.
         // This aligns diagnostic fingerprints with tsc for assignment-compatibility suites.
         let _ = self.check_assignable_or_report_at(source_type, target_type, right_idx, left_idx);
