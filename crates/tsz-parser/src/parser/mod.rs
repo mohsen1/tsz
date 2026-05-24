@@ -31,22 +31,31 @@ pub mod spelling;
 pub mod state;
 mod state_declarations;
 mod state_declarations_exports;
+mod state_declarations_modules;
 mod state_expressions;
 mod state_expressions_literals;
 mod state_expressions_literals_regex;
 mod state_import_attributes;
 mod state_statements;
 mod state_statements_class;
+mod state_statements_class_declarations;
 mod state_statements_class_members;
 mod state_statements_recovery;
 mod state_type_parameters;
 mod state_types;
+mod state_types_advanced;
 mod state_types_jsx;
 
 #[cfg(test)]
 #[path = "../../tests/test_fixture.rs"]
 pub(crate) mod test_fixture;
 
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_late_tests.rs"]
+mod parser_improvement_late_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_middle_tests.rs"]
+mod parser_improvement_middle_tests;
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_tests.rs"]
 mod parser_improvement_tests;
