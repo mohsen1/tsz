@@ -2637,6 +2637,81 @@ export const SpotifyAgeGroupEnum = { ...AgeGroups };
 }
 
 #[test]
+fn declaration_emit_single_object_spread_projects_falsy_operand_types() {
+    let temp = TempDir::new().expect("temp dir");
+    let base = temp.path.as_path();
+
+    write_file(
+        &base.join("index.ts"),
+        r#"function f1<T>(a: T & undefined) {
+    return { ...a };
+}
+function f2<T>(a: T | T & undefined) {
+    return { ...a };
+}
+function f3<T extends undefined>(a: T) {
+    return { ...a };
+}
+function f4<T extends undefined>(a: object | T) {
+    return { ...a };
+}
+function f5<S, T extends undefined>(a: S | T) {
+    return { ...a };
+}
+function f6<T extends object | undefined>(a: T) {
+    return { ...a };
+}
+function g1<Q extends {}, A extends { z: (Q | undefined) & Q }>(a: A) {
+    const { z } = a;
+    return { ...z };
+}
+"#,
+    );
+    write_file(
+        &base.join("tsconfig.json"),
+        r#"{
+  "compilerOptions": {
+    "target": "es2015",
+    "strict": true,
+    "declaration": true
+  },
+  "files": ["index.ts"]
+}"#,
+    );
+
+    let mut args = default_args();
+    args.project = Some(base.join("tsconfig.json"));
+
+    let _ = compile(&args, base).expect("compile should succeed");
+    let dts = fs::read_to_string(base.join("index.d.ts")).expect("read index.d.ts");
+    assert!(
+        dts.contains("declare function f1<T>(a: T & undefined): any;"),
+        "invalid definitely-falsy spread should emit any: {dts}"
+    );
+    assert!(
+        dts.contains("declare function f2<T>(a: T | T & undefined): T | (T & undefined);"),
+        "generic union with a definitely-falsy arm should preserve source spelling: {dts}"
+    );
+    assert!(
+        dts.contains("declare function f3<T extends undefined>(a: T): any;"),
+        "type parameter constrained to undefined should emit any: {dts}"
+    );
+    assert!(
+        dts.contains("declare function f4<T extends undefined>(a: object | T): {};"),
+        "object plus definitely-falsy arm should emit empty object: {dts}"
+    );
+    assert!(
+        dts.contains("declare function f5<S, T extends undefined>(a: S | T): S | T;")
+            && dts.contains("declare function f6<T extends object | undefined>(a: T): T;"),
+        "generic spread operands should remain nameable: {dts}"
+    );
+    assert!(
+        dts.contains("declare function g1<Q extends {}, A extends {\n    z: (Q | undefined) & Q;\n}>(a: A): Q;"),
+        "destructured local spreads should keep solver-inferred generic return: {dts}"
+    );
+}
+
+#[test]
 fn declaration_emit_import_equals_alias_to_merged_namespace_value_allows_property_access() {
     let temp = TempDir::new().expect("temp dir");
     let base = temp.path.as_path();
