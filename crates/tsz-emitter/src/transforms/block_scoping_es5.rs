@@ -119,12 +119,14 @@ impl BlockScopeState {
         // block-scoped declarations that shadow it to avoid conflicts.
         let is_builtin_shadow = original_name == "arguments";
 
-        let needs_rename = is_builtin_shadow
-            || self.reserved_names.contains(original_name)
-            || self
+        let shadows_outer_generated_function_name = !at_function_level
+            && self
                 .function_scope_shadowed_names
                 .last()
-                .is_some_and(|names| names.contains(original_name))
+                .is_some_and(|names| names.contains(original_name));
+        let needs_rename = is_builtin_shadow
+            || self.reserved_names.contains(original_name)
+            || shadows_outer_generated_function_name
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
