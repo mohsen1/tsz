@@ -195,13 +195,26 @@ impl<'a> TypePrinter<'a> {
         shape_id: tsz_solver::types::FunctionShapeId,
         type_args: &[TypeId],
     ) -> String {
-        if self.recursive_expansion_depth >= crate::MAX_RECURSIVE_EXPANSION {
-            return crate::ELIDED_ANY.to_string();
-        }
         let func_shape = self.interner.function_shape(shape_id);
         let subst = TypeSubstitution::from_args(self.interner, &func_shape.type_params, type_args);
-        let return_type =
-            instantiate_type_cached(self.interner, None, func_shape.return_type, &subst);
+        let mut return_template = func_shape.return_type;
+        if self.recursive_expansion_depth > 0
+            && visitor::object_shape_id(self.interner, return_template)
+                .or_else(|| visitor::object_with_index_shape_id(self.interner, return_template))
+                .is_some()
+        {
+            return_template = self.rename_recursive_function_type_params_for_depth(return_template);
+        }
+        let return_type = instantiate_type_cached(self.interner, None, return_template, &subst);
+        let expansion_limit = if visitor::intersection_list_id(self.interner, return_type).is_some()
+        {
+            crate::MAX_RECURSIVE_INTERSECTION_EXPANSION
+        } else {
+            crate::MAX_RECURSIVE_EXPANSION
+        };
+        if self.recursive_expansion_depth >= expansion_limit {
+            return self.print_recursive_expansion_limit(return_type);
+        }
         let mut nested = self.clone();
         nested.recursive_expansion_depth += 1;
         nested.print_type(return_type)
@@ -730,7 +743,7 @@ impl<'a> TypePrinter<'a> {
             // `print_conditional` while it walks `cond.extends_type`.
             if self.is_in_extends_clause() && visitor::is_infer_type(self.interner, type_id) {
                 let mut result = String::from("infer ");
-                result.push_str(&self.resolve_type_param_name(param_info.name));
+                result.push_str(&self.resolve_type_param_type_name(type_id, param_info.name));
                 if let Some(constraint) = param_info.constraint {
                     // The constraint of an `infer T extends C` annotation is
                     // not itself part of the extends clause for `infer`
@@ -753,7 +766,7 @@ impl<'a> TypePrinter<'a> {
                 }
                 return "unknown".to_string();
             }
-            return self.print_type_parameter(&param_info);
+            return self.print_type_parameter_type(type_id, &param_info);
         }
         if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
             return self.print_lazy_type(def_id);

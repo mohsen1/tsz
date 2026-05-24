@@ -53,7 +53,7 @@ pub struct TypePrinter<'a> {
     /// filtered from union members (matching tsc's DTS behaviour).
     strict_null_checks: bool,
     outer_type_param_names: Vec<Atom>,
-    type_param_renames: Vec<(Atom, String)>,
+    type_param_renames: Vec<(tsz_solver::types::TypeId, String)>,
     /// True while printing types that lexically appear inside the `extends`
     /// clause of a conditional type. Only inside this clause should an
     /// `Infer(T)` placeholder render as `infer T`; references to the same
@@ -196,8 +196,16 @@ impl<'a> TypePrinter<'a> {
         self
     }
     pub(crate) fn resolve_type_param_name(&self, name: Atom) -> String {
-        for (atom, renamed) in &self.type_param_renames {
-            if *atom == name {
+        self.interner.resolve_atom(name)
+    }
+
+    pub(crate) fn resolve_type_param_type_name(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        name: Atom,
+    ) -> String {
+        for (renamed_type_id, renamed) in self.type_param_renames.iter().rev() {
+            if *renamed_type_id == type_id {
                 return renamed.clone();
             }
         }
@@ -232,7 +240,6 @@ impl<'a> TypePrinter<'a> {
                 all_in_scope.push(renamed.clone());
             }
         }
-        scoped.type_param_renames.clear();
         let mut new_names_in_scope: Vec<String> = Vec::new();
         for tp in new_params {
             let original = self.interner.resolve_atom(tp.name);
@@ -243,7 +250,9 @@ impl<'a> TypePrinter<'a> {
                     if !all_in_scope.contains(&candidate)
                         && !new_names_in_scope.contains(&candidate)
                     {
-                        scoped.type_param_renames.push((tp.name, candidate.clone()));
+                        scoped
+                            .type_param_renames
+                            .push((scoped.interner.type_param(*tp), candidate.clone()));
                         new_names_in_scope.push(candidate);
                         break;
                     }

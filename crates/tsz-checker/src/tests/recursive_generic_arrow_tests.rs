@@ -83,6 +83,26 @@ void p3.result.three;
     );
 }
 
+#[test]
+fn recursive_generic_const_arrow_callback_argument_no_error() {
+    assert_no_diagnostics(
+        r#"
+type Key<U> = keyof U;
+type Value<K extends Key<U>, U> = U[K];
+const updateIfChanged = <T>(t: T) => {
+    const reduce = <U>(u: U, update: (u: U) => T) => {
+        return <K extends Key<U>>(key: K) =>
+            reduce<Value<K, U>>(
+                u[key as keyof U] as Value<K, U>,
+                (v: Value<K, U>) => update(u)
+            );
+    };
+    return reduce<T>(t, (t: T) => t);
+};
+"#,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Variant: different type parameter names (guards against hardcoding)
 // ---------------------------------------------------------------------------

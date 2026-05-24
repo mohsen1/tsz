@@ -20,8 +20,11 @@ pub(crate) mod jsx_pragmas;
 
 /// tsc emits this exact string when recursive DTS expansion reaches its depth limit.
 pub(crate) const ELIDED_ANY: &str = "/*elided*/ any";
-/// tsc stops expanding recursive generic function return types at this depth.
+/// tsc's visible recursive DTS expansion limit for object-shaped returns.
 pub(crate) const MAX_RECURSIVE_EXPANSION: u32 = 10;
+/// Intersection returns add one printable callable layer and one object-member
+/// layer per recursive frame, so five frames reach tsc's ten visible levels.
+pub(crate) const MAX_RECURSIVE_INTERSECTION_EXPANSION: u32 = 5;
 pub mod lowering;
 pub mod output;
 pub mod safe_slice;

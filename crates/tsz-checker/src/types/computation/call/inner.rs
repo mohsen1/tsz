@@ -259,6 +259,7 @@ impl<'a> CheckerState<'a> {
                 .and_then(|expr_type_args| expr_type_args.type_arguments.clone())
         });
         let mut circular_recursive_call_return_type = None;
+        let circular_identifier_callee = self.circular_identifier_callee_symbol(call.expression);
 
         if self.callee_name_conflicts_with_namespace_module(call.expression) {
             self.error_not_callable_at(callee_type, call.expression);
@@ -275,45 +276,87 @@ impl<'a> CheckerState<'a> {
 
         // Check if callee is any/error (don't report for those)
         if callee_type == TypeId::ANY {
-            if let Some(ref type_args_list) = explicit_call_type_arguments
-                && !type_args_list.nodes.is_empty()
-            {
-                // When the callee is a property access on `this` inside a class and
-                // the property doesn't exist, tsc emits TS2339 (property not found)
-                // instead of TS2347 (untyped function calls). The ANY here came from
-                // this_type_stack suppression; check if the property genuinely doesn't
-                // exist and emit TS2339 in that case.
-                let suppressed_ts2347 = self
-                    .try_emit_ts2339_for_missing_this_property(call.expression)
-                    || self.is_this_property_access_in_class_context(call.expression);
-                if !suppressed_ts2347 {
-                    self.error_at_node(
+            let recursive_function_like_callee = circular_identifier_callee.or_else(|| {
+                explicit_call_type_arguments
+                    .is_some()
+                    .then(|| self.function_like_unannotated_variable_callee_symbol(call.expression))
+                    .flatten()
+            });
+            if let Some(sym_id) = recursive_function_like_callee {
+                let type_args: Vec<TypeId> = explicit_call_type_arguments
+                    .as_ref()
+                    .map(|tl| {
+                        tl.nodes
+                            .iter()
+                            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let def_id = self.ctx.get_or_create_def_id(sym_id);
+                let factory = self.ctx.types.factory();
+                let lazy = factory.lazy(def_id);
+                let recursive_return_type = if type_args.is_empty() {
+                    lazy
+                } else {
+                    factory.application(lazy, type_args)
+                };
+
+                if let Some(validation_callee_type) =
+                    self.fresh_function_like_variable_call_type(sym_id)
+                {
+                    circular_recursive_call_return_type = Some(recursive_return_type);
+                    callee_type = validation_callee_type;
+                } else {
+                    self.collect_call_argument_types_with_context(
+                        args,
+                        |_, _| Some(TypeId::ANY),
+                        false,
+                        None,
+                        CallableContext::none(),
+                    );
+                    return recursive_return_type;
+                }
+            } else {
+                if let Some(ref type_args_list) = explicit_call_type_arguments
+                    && !type_args_list.nodes.is_empty()
+                {
+                    // When the callee is a property access on `this` inside a class and
+                    // the property doesn't exist, tsc emits TS2339 (property not found)
+                    // instead of TS2347 (untyped function calls). The ANY here came from
+                    // this_type_stack suppression; check if the property genuinely doesn't
+                    // exist and emit TS2339 in that case.
+                    let suppressed_ts2347 = self
+                        .try_emit_ts2339_for_missing_this_property(call.expression)
+                        || self.is_this_property_access_in_class_context(call.expression);
+                    if !suppressed_ts2347 {
+                        self.error_at_node(
                         idx,
                         crate::diagnostics::diagnostic_messages::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                         crate::diagnostics::diagnostic_codes::UNTYPED_FUNCTION_CALLS_MAY_NOT_ACCEPT_TYPE_ARGUMENTS,
                     );
+                    }
+                    // Resolve type arguments even though the call is untyped. Without
+                    // this, unresolved type names in arguments (e.g.
+                    // `g<InvalidReference>()`) silently succeed — tsc still emits
+                    // TS2304 for them. Mirrors the matching block in generic_checker.
+                    for &type_arg_idx in &type_args_list.nodes {
+                        self.get_type_of_node(type_arg_idx);
+                    }
                 }
-                // Resolve type arguments even though the call is untyped. Without
-                // this, unresolved type names in arguments (e.g.
-                // `g<InvalidReference>()`) silently succeed — tsc still emits
-                // TS2304 for them. Mirrors the matching block in generic_checker.
-                for &type_arg_idx in &type_args_list.nodes {
-                    self.get_type_of_node(type_arg_idx);
-                }
+                // Untyped calls accept ordinary args; callbacks still get their own context for TS7006.
+                let cb_args: Vec<_> = args
+                    .iter()
+                    .map(|&idx| self.is_callback_like_argument(idx))
+                    .collect();
+                self.collect_call_argument_types_with_context(
+                    args,
+                    |i, _arg_count| (!matches!(cb_args.get(i), Some(true))).then_some(TypeId::ANY),
+                    false,
+                    None, // No skipping needed
+                    CallableContext::none(),
+                );
+                return TypeId::ANY;
             }
-            // Untyped calls accept ordinary args; callbacks still get their own context for TS7006.
-            let cb_args: Vec<_> = args
-                .iter()
-                .map(|&idx| self.is_callback_like_argument(idx))
-                .collect();
-            self.collect_call_argument_types_with_context(
-                args,
-                |i, _arg_count| (!matches!(cb_args.get(i), Some(true))).then_some(TypeId::ANY),
-                false,
-                None, // No skipping needed
-                CallableContext::none(),
-            );
-            return TypeId::ANY;
         }
         if callee_type == TypeId::ERROR
             && let Some(recovered_type) = self.recover_declared_type_for_tdz_callee(call.expression)
@@ -322,32 +365,17 @@ impl<'a> CheckerState<'a> {
         }
 
         if callee_type == TypeId::ERROR {
-            // When an identifier callee is in symbol_resolution_set, ERROR is a circular
-            // placeholder for the symbol being resolved, not a genuine resolution failure.
-            // Preserve the recursive call as App(Lazy(def_id), type_args) for depth-limited
-            // DTS expansion instead of collapsing to any/ERROR.
-            let circular_sym = if self.ctx.symbol_resolution_set.is_empty() {
-                None
-            } else {
-                let is_identifier = self
-                    .ctx
-                    .arena
-                    .get(call.expression)
-                    .is_some_and(|n| n.kind == SyntaxKind::Identifier as u16);
-                if is_identifier {
-                    self.ctx
-                        .binder
-                        .node_symbols
-                        .get(&call.expression.0)
-                        .copied()
-                        .or_else(|| {
-                            self.resolve_identifier_symbol_without_tracking(call.expression)
-                        })
-                        .filter(|&sid| self.ctx.symbol_resolution_set.contains(&sid))
-                } else {
-                    None
-                }
-            };
+            // Circular identifiers and explicit type-argument calls to unannotated
+            // function-like variables can resolve through a temporary ERROR/ANY
+            // placeholder. Preserve those recursive calls as App(Lazy(def_id),
+            // type_args) for depth-limited DTS expansion instead of collapsing
+            // to any/ERROR.
+            let circular_sym = circular_identifier_callee.or_else(|| {
+                explicit_call_type_arguments
+                    .is_some()
+                    .then(|| self.function_like_unannotated_variable_callee_symbol(call.expression))
+                    .flatten()
+            });
 
             if let Some(sym_id) = circular_sym {
                 let type_args: Vec<TypeId> = explicit_call_type_arguments

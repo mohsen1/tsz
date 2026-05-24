@@ -367,6 +367,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         if source_type == target_type {
             return true;
         }
+        if self.same_named_type_param_application_pair(source_type, target_type, 0) {
+            return true;
+        }
 
         // Fast path: `any` in either parameter position is always compatible
         // in permissive mode. In strict mode (TopLevelOnly), we require structural
@@ -470,6 +473,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.in_callback_param_check = saved_in_callback;
         self.in_bivariant_callback_return_check = saved_in_bivariant_callback_return;
         result
+    }
+
+    fn same_named_type_param_application_pair(
+        &self,
+        source_type: TypeId,
+        target_type: TypeId,
+        depth: u8,
+    ) -> bool {
+        if source_type == target_type {
+            return true;
+        }
+        if depth >= 16 {
+            return false;
+        }
+        if let (Some(source_param), Some(target_param)) = (
+            type_param_info(self.interner, source_type),
+            type_param_info(self.interner, target_type),
+        ) {
+            return source_param.name == target_param.name;
+        }
+        if let (Some(source_app_id), Some(target_app_id)) = (
+            crate::visitor::application_id(self.interner, source_type),
+            crate::visitor::application_id(self.interner, target_type),
+        ) {
+            let source_app = self.interner.type_application(source_app_id);
+            let target_app = self.interner.type_application(target_app_id);
+            return source_app.args.len() == target_app.args.len()
+                && self.same_named_type_param_application_pair(
+                    source_app.base,
+                    target_app.base,
+                    depth + 1,
+                )
+                && source_app.args.iter().zip(target_app.args.iter()).all(
+                    |(&source_arg, &target_arg)| {
+                        self.same_named_type_param_application_pair(
+                            source_arg,
+                            target_arg,
+                            depth + 1,
+                        )
+                    },
+                );
+        }
+        if let (Some((source_obj, source_key)), Some((target_obj, target_key))) = (
+            crate::visitor::index_access_parts(self.interner, source_type),
+            crate::visitor::index_access_parts(self.interner, target_type),
+        ) {
+            return self.same_named_type_param_application_pair(source_obj, target_obj, depth + 1)
+                && self.same_named_type_param_application_pair(source_key, target_key, depth + 1);
+        }
+        if let (Some(source_inner), Some(target_inner)) = (
+            crate::visitor::keyof_inner_type(self.interner, source_type),
+            crate::visitor::keyof_inner_type(self.interner, target_type),
+        ) {
+            return self.same_named_type_param_application_pair(
+                source_inner,
+                target_inner,
+                depth + 1,
+            );
+        }
+        false
     }
 
     /// Returns true when the type is callable and the first call signature is

@@ -5,6 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
+use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
@@ -907,6 +908,206 @@ impl<'a> TypePrinter<'a> {
             .join(" & ")
     }
 
+    pub(crate) fn print_recursive_expansion_limit(&self, return_type: TypeId) -> String {
+        let Some(type_list_id) = visitor::intersection_list_id(self.interner, return_type) else {
+            return crate::ELIDED_ANY.to_string();
+        };
+        let types = self.interner.type_list(type_list_id);
+        let mut members: Vec<(u8, String)> = Vec::with_capacity(types.len());
+        for &type_id in types.iter() {
+            let (priority, text) = if visitor::function_shape_id(self.interner, type_id).is_some()
+                || visitor::callable_shape_id(self.interner, type_id).is_some()
+            {
+                (0, crate::ELIDED_ANY.to_string())
+            } else {
+                let text = self.composition_member_text(type_id);
+                let needs_parens = self.type_needs_parentheses_in_composition(type_id)
+                    || visitor::union_list_id(self.interner, type_id).is_some()
+                    || visitor::conditional_type_id(self.interner, type_id).is_some();
+                let text = if needs_parens {
+                    format!("({text})")
+                } else {
+                    text
+                };
+                (self.intersection_member_priority(type_id), text)
+            };
+            members.push((priority, text));
+        }
+        members.sort_by_key(|(priority, _)| *priority);
+        members
+            .into_iter()
+            .map(|(_, text)| text)
+            .collect::<Vec<_>>()
+            .join(" & ")
+    }
+
+    pub(crate) fn rename_recursive_function_type_params_for_depth(
+        &self,
+        type_id: TypeId,
+    ) -> TypeId {
+        if self.recursive_expansion_depth == 0 {
+            return type_id;
+        }
+        self.rename_recursive_function_type_params_inner(type_id, 0)
+    }
+
+    fn rename_recursive_function_type_params_inner(&self, type_id: TypeId, depth: u8) -> TypeId {
+        if depth >= 16 {
+            return type_id;
+        }
+
+        if let Some(func_id) = visitor::function_shape_id(self.interner, type_id) {
+            let func = self.interner.function_shape(func_id);
+            if func.type_params.is_empty() {
+                return type_id;
+            }
+
+            let mut subst = TypeSubstitution::new();
+            let mut renamed_names = Vec::with_capacity(func.type_params.len());
+            let mut reserved_names = Vec::with_capacity(func.type_params.len());
+            for tp in &func.type_params {
+                let name = self.recursive_expansion_type_param_name(tp.name, &reserved_names);
+                let placeholder =
+                    self.interner
+                        .fresh_type_param(tsz_solver::types::TypeParamInfo {
+                            name,
+                            constraint: None,
+                            default: None,
+                            is_const: tp.is_const,
+                        });
+                subst.insert(tp.name, placeholder);
+                reserved_names.push(self.interner.resolve_atom(name));
+                renamed_names.push(name);
+            }
+
+            let type_params = func
+                .type_params
+                .iter()
+                .zip(renamed_names)
+                .map(|(tp, name)| tsz_solver::types::TypeParamInfo {
+                    name,
+                    constraint: tp.constraint.map(|constraint| {
+                        instantiate_type_cached(self.interner, None, constraint, &subst)
+                    }),
+                    default: tp.default.map(|default| {
+                        instantiate_type_cached(self.interner, None, default, &subst)
+                    }),
+                    is_const: tp.is_const,
+                })
+                .collect();
+            let params = func
+                .params
+                .iter()
+                .map(|param| tsz_solver::types::ParamInfo {
+                    name: param.name,
+                    type_id: instantiate_type_cached(self.interner, None, param.type_id, &subst),
+                    optional: param.optional,
+                    rest: param.rest,
+                })
+                .collect();
+            let return_type =
+                instantiate_type_cached(self.interner, None, func.return_type, &subst);
+            let this_type = func
+                .this_type
+                .map(|this_type| instantiate_type_cached(self.interner, None, this_type, &subst));
+            let type_predicate = func.type_predicate.map(|predicate| {
+                let type_id = predicate
+                    .type_id
+                    .map(|type_id| instantiate_type_cached(self.interner, None, type_id, &subst));
+                tsz_solver::types::TypePredicate {
+                    type_id,
+                    ..predicate
+                }
+            });
+
+            return self.interner.function(tsz_solver::types::FunctionShape {
+                type_params,
+                params,
+                this_type,
+                return_type,
+                type_predicate,
+                is_constructor: func.is_constructor,
+                is_method: func.is_method,
+            });
+        }
+
+        if let Some(shape_id) = visitor::object_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.object_shape(shape_id)).clone();
+            for prop in &mut shape.properties {
+                let read_type = prop.type_id;
+                let write_type = prop.write_type;
+                prop.type_id =
+                    self.rename_recursive_function_type_params_inner(read_type, depth + 1);
+                prop.write_type = if write_type == read_type {
+                    prop.type_id
+                } else {
+                    self.rename_recursive_function_type_params_inner(write_type, depth + 1)
+                };
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.rename_recursive_function_type_params_inner(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.rename_recursive_function_type_params_inner(index.value_type, depth + 1);
+            }
+            return self
+                .interner
+                .object_with_flags_and_symbol(shape.properties, shape.flags, None);
+        }
+
+        if let Some(shape_id) = visitor::object_with_index_shape_id(self.interner, type_id) {
+            let mut shape = (*self.interner.object_shape(shape_id)).clone();
+            for prop in &mut shape.properties {
+                let read_type = prop.type_id;
+                let write_type = prop.write_type;
+                prop.type_id =
+                    self.rename_recursive_function_type_params_inner(read_type, depth + 1);
+                prop.write_type = if write_type == read_type {
+                    prop.type_id
+                } else {
+                    self.rename_recursive_function_type_params_inner(write_type, depth + 1)
+                };
+            }
+            if let Some(index) = &mut shape.string_index {
+                index.value_type =
+                    self.rename_recursive_function_type_params_inner(index.value_type, depth + 1);
+            }
+            if let Some(index) = &mut shape.number_index {
+                index.value_type =
+                    self.rename_recursive_function_type_params_inner(index.value_type, depth + 1);
+            }
+            return self.interner.object_with_index(shape);
+        }
+
+        if let Some(type_list_id) = visitor::intersection_list_id(self.interner, type_id) {
+            let members = self
+                .interner
+                .type_list(type_list_id)
+                .iter()
+                .map(|&member| self.rename_recursive_function_type_params_inner(member, depth + 1))
+                .collect();
+            return self.interner.intersection(members);
+        }
+
+        type_id
+    }
+
+    fn recursive_expansion_type_param_name(&self, name: Atom, reserved: &[String]) -> Atom {
+        let base = self.interner.resolve_atom(name);
+        let mut suffix = 1u32;
+        loop {
+            let candidate = format!("{base}_{suffix}");
+            if !self.type_param_scope_contains_name(&candidate)
+                && !reserved.iter().any(|name| name == &candidate)
+            {
+                return self.interner.intern_string(&candidate);
+            }
+            suffix += 1;
+        }
+    }
+
     pub(crate) fn print_tuple(&self, tuple_id: tsz_solver::types::TupleListId) -> String {
         let elements = self.interner.tuple_list(tuple_id);
 
@@ -1481,6 +1682,14 @@ impl<'a> TypePrinter<'a> {
         self.resolve_type_param_name(param_info.name)
     }
 
+    pub(crate) fn print_type_parameter_type(
+        &self,
+        type_id: TypeId,
+        param_info: &tsz_solver::types::TypeParamInfo,
+    ) -> String {
+        self.resolve_type_param_type_name(type_id, param_info.name)
+    }
+
     pub(crate) fn replace_type_param_name_with_any(text: &str, name: &str) -> String {
         let mut result = String::with_capacity(text.len());
         let bytes = text.as_bytes();
@@ -1523,7 +1732,8 @@ impl<'a> TypePrinter<'a> {
             result.push_str("const ");
         }
 
-        result.push_str(&self.resolve_type_param_name(param_info.name));
+        let param_type = self.interner.type_param(*param_info);
+        result.push_str(&self.resolve_type_param_type_name(param_type, param_info.name));
 
         if let Some(constraint) = param_info.constraint {
             result.push_str(" extends ");
@@ -2096,6 +2306,9 @@ impl<'a> TypePrinter<'a> {
         app_id: tsz_solver::types::TypeApplicationId,
     ) -> String {
         let app = self.interner.type_application(app_id);
+        if let Some(keyof_text) = self.print_keyof_alias_application(&app) {
+            return keyof_text;
+        }
         let base_text = if let Some(sym_ref) = visitor::type_query_symbol(self.interner, app.base) {
             let sym_id = SymbolId(sym_ref.0);
             self.print_named_symbol_reference(sym_id, false)
@@ -2126,6 +2339,23 @@ impl<'a> TypePrinter<'a> {
                 format!("{base_text}<{}>", args.join(", "))
             }
         }
+    }
+
+    fn print_keyof_alias_application(
+        &self,
+        app: &tsz_solver::types::TypeApplication,
+    ) -> Option<String> {
+        let def_id = visitor::lazy_def_id(self.interner, app.base)?;
+        let cache = self.type_cache?;
+        let body = cache.def_types.get(&def_id.0).copied()?;
+        let type_params = cache.def_type_params.get(&def_id.0)?;
+        if type_params.len() != app.args.len() {
+            return None;
+        }
+        let subst = TypeSubstitution::from_args(self.interner, type_params, &app.args);
+        let instantiated = instantiate_type_cached(self.interner, None, body, &subst);
+        visitor::keyof_inner_type(self.interner, instantiated)?;
+        Some(self.print_type(instantiated))
     }
 
     fn is_parameters_utility_name(type_text: &str) -> bool {
