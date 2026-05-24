@@ -821,6 +821,42 @@ fn test_await_using_in_async_body_lowers_to_generator_disposable_region() {
 }
 
 #[test]
+fn test_using_in_generator_body_lowers_to_generator_disposable_region() {
+    let output = transform_generator_and_print(
+        "function * g() { using d = { [Symbol.dispose]() {} }; yield; }",
+    );
+
+    assert!(
+        output.contains("function g()"),
+        "ES5 generator declarations should drop the native asterisk.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_1, d, e_1;"),
+        "Generator resource names should be hoisted before the state machine.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b.trys.push([1, 3, 4, 5]);"),
+        "Generator `using` should plan a try/finally region around the yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("d = __addDisposableResource(env_1"),
+        "Generator `using` declarations should register with __addDisposableResource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/];"),
+        "Bare generator yield should match tsc's no-operand tuple shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__disposeResources(env_1);"),
+        "Generator finally region should dispose the resource stack.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function*") && !output.contains("using d"),
+        "Native generator/using syntax must not leak into ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_for_in_parenthesized_await_object_lowers_without_raw_fallback() {
     let output = transform_and_print(
         "async function f() { for (var k in (await getObj())) { await h(k); } }",

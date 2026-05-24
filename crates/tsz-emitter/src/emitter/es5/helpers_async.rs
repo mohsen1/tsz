@@ -1081,7 +1081,14 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+        transformer
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
         let ir = transformer.transform_generator_function(function_node);
+        self.next_disposable_env_id = transformer.disposable_env_counter();
+        for generated_name in transformer.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
         if let Some(text) = self.source_text {

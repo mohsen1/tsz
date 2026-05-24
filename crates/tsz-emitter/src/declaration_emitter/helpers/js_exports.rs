@@ -142,6 +142,71 @@ impl<'a> DeclarationEmitter<'a> {
         Some((receiver_name, property_name, module_name))
     }
 
+    pub(in crate::declaration_emitter) fn js_require_property_import_alias_for_value_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, String, String)> {
+        if self.current_source_file_has_native_esm_syntax() {
+            return None;
+        }
+        self.js_require_property_import_alias_for_value_expression_inner(expr_idx, 0)
+    }
+
+    fn current_source_file_has_native_esm_syntax(&self) -> bool {
+        self.current_source_file_idx
+            .and_then(|root_idx| self.arena.get(root_idx))
+            .and_then(|root_node| self.arena.get_source_file(root_node))
+            .is_some_and(|source_file| self.source_file_has_native_esm_syntax(source_file))
+    }
+
+    fn js_require_property_import_alias_for_value_expression_inner(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u8,
+    ) -> Option<(String, String, String)> {
+        if depth > 4 {
+            return None;
+        }
+
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                let local_name = self.get_identifier_text(expr_idx)?;
+                let initializer = self.js_top_level_variable_initializer(&local_name)?;
+                self.js_require_property_import_alias_for_value_expression_inner(
+                    initializer,
+                    depth + 1,
+                )
+            }
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                let new_expr = self.arena.get_call_expr(expr_node)?;
+                let local_name = self.get_identifier_text(new_expr.expression)?;
+                if self.js_named_export_names.contains(&local_name) {
+                    return None;
+                }
+                let binder = self.binder?;
+                let sym_id = self.resolve_identifier_symbol(new_expr.expression, &local_name)?;
+                let symbol = binder.symbols.get(sym_id)?;
+                for decl_idx in symbol.declarations.iter().copied() {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some((module_name, export_name)) =
+                        self.require_property_initializer_parts(decl_node)
+                    else {
+                        continue;
+                    };
+                    return Some((local_name, module_name, export_name));
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
     pub(in crate::declaration_emitter) fn source_file_has_commonjs_export_equals_require_alias_property(
         &self,
         source_file: &tsz_parser::parser::node::SourceFileData,
@@ -1385,6 +1450,30 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let export_targets = self.collect_js_named_export_targets(source_file);
+        if !self.source_file_has_native_esm_syntax(source_file)
+            && self.js_export_equals_names.is_empty()
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let Some((name_idx, initializer)) =
+                    self.js_commonjs_named_export_for_statement_with_options(stmt_idx, true)
+                else {
+                    continue;
+                };
+                if self.js_commonjs_export_name_text(name_idx).is_none() {
+                    continue;
+                }
+                let Some(local_name) = self.get_identifier_text(initializer) else {
+                    continue;
+                };
+                let Some(&target_stmt_idx) = export_targets.get(&local_name) else {
+                    continue;
+                };
+                if self.js_function_declaration_has_signature_jsdoc(target_stmt_idx) {
+                    deferred.insert(target_stmt_idx);
+                }
+            }
+        }
+
         for &stmt_idx in &source_file.statements.nodes {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -3340,45 +3429,16 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         expr_idx: NodeIndex,
     ) {
-        let Some(expr_node) = self.arena.get(expr_idx) else {
+        let Some(alias) = self.js_require_property_import_alias_for_value_expression(expr_idx)
+        else {
             return;
         };
-        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
-            return;
-        }
-        let Some(new_expr) = self.arena.get_call_expr(expr_node) else {
-            return;
-        };
-        let Some(local_name) = self.get_identifier_text(new_expr.expression) else {
-            return;
-        };
-        let Some(binder) = self.binder else {
-            return;
-        };
-        let Some(sym_id) = self.resolve_identifier_symbol(new_expr.expression, &local_name) else {
-            return;
-        };
-        let Some(symbol) = binder.symbols.get(sym_id) else {
-            return;
-        };
-        for decl_idx in symbol.declarations.iter().copied() {
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some((module_name, export_name)) =
-                self.require_property_initializer_parts(decl_node)
-            else {
-                continue;
-            };
-            let alias = (local_name, module_name, export_name);
-            if !self
-                .js_require_property_import_aliases
-                .iter()
-                .any(|existing| existing == &alias)
-            {
-                self.js_require_property_import_aliases.push(alias);
-            }
-            return;
+        if !self
+            .js_require_property_import_aliases
+            .iter()
+            .any(|existing| existing == &alias)
+        {
+            self.js_require_property_import_aliases.push(alias);
         }
     }
 

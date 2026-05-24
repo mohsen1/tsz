@@ -1543,9 +1543,6 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
         .or_else(|| caps.name("code2"))
         .or_else(|| caps.name("code3"))
         .and_then(|m| m.as_str().parse::<u32>().ok())?;
-    if code == 2430 && is_extra_signature_inheritance_line(line) {
-        return None;
-    }
     if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
         return match rule.action {
             ParityAction::Drop => None,
@@ -1553,11 +1550,6 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
         };
     }
     Some(code)
-}
-
-fn is_extra_signature_inheritance_line(line: &str) -> bool {
-    line.contains("Interface 'I' incorrectly extends interface 'A'.")
-        || line.contains("Interface 'I' incorrectly extends interface 'B'.")
 }
 
 /// Parse @symlink associations from raw test file content.

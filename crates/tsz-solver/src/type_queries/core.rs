@@ -653,6 +653,50 @@ pub fn is_valid_spread_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     is_valid_spread_type_impl(db, type_id, 0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObjectSpreadDtsProjection {
+    InvalidSpread,
+    EmptyObject,
+    PreserveSource,
+}
+
+/// Classifies how declaration emit should spell `{ ...value }` when the object
+/// literal has no own members. This mirrors the same definitely-falsy filtering
+/// used by spread validity, while leaving generic operands nameable by source.
+pub fn classify_object_spread_dts_projection(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> ObjectSpreadDtsProjection {
+    if !is_valid_spread_type(db, type_id) {
+        return ObjectSpreadDtsProjection::InvalidSpread;
+    }
+    if is_object_intrinsic_type(db, type_id) {
+        return ObjectSpreadDtsProjection::EmptyObject;
+    }
+    let Some(TypeData::Union(members)) = db.lookup(type_id) else {
+        return ObjectSpreadDtsProjection::PreserveSource;
+    };
+    let non_falsy: Vec<TypeId> = db
+        .type_list(members)
+        .iter()
+        .copied()
+        .filter(|&member| !is_definitely_falsy_type(db, member))
+        .collect();
+    if non_falsy.len() == 1 && is_object_intrinsic_type(db, non_falsy[0]) {
+        ObjectSpreadDtsProjection::EmptyObject
+    } else {
+        ObjectSpreadDtsProjection::PreserveSource
+    }
+}
+
+fn is_object_intrinsic_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::OBJECT
+        || matches!(
+            db.lookup(type_id),
+            Some(TypeData::Intrinsic(IntrinsicKind::Object))
+        )
+}
+
 /// Check if a type is definitely falsy (always falsy at runtime).
 ///
 /// Definitely-falsy types: `null`, `undefined`, `void`, `never`,
