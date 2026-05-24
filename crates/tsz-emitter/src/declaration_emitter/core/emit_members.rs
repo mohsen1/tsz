@@ -2582,13 +2582,13 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         continue;
                     }
-                    // When an exported variable has a class expression initializer with no
-                    // explicit type annotation, tsc synthesizes a class declaration using the
-                    // binding name. Covers namespace-exported class expressions:
-                    // `export const C = class { }`, `export const C = class C { }`,
-                    // generic class expressions, and class expressions with heritage.
+                    // In JS declaration emit, an exported variable with a class expression
+                    // initializer and no explicit annotation is surfaced as an exported class.
+                    // TS source keeps the variable shape and emits a structural constructor
+                    // object type, including inside namespaces.
                     // (Top-level `export const` goes through emit_exported_variable instead.)
-                    if is_exported
+                    if self.source_is_js_file
+                        && is_exported
                         && decl.type_annotation.is_none()
                         && self.emit_js_named_class_expression_declaration(
                             decl.name,

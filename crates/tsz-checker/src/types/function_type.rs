@@ -479,14 +479,18 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
             let factory = self.ctx.types.factory();
+            let constraint_strs = Self::jsdoc_template_constraint_strings(&owner_jsdoc);
             for (name, is_const, default_str) in Self::jsdoc_template_type_params(&owner_jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
                 let default = default_str
                     .as_deref()
                     .and_then(|s| self.resolve_jsdoc_reference(s));
+                let constraint = constraint_strs
+                    .get(&name)
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 let info = TypeParamInfo {
                     name: atom,
-                    constraint: None,
+                    constraint,
                     default,
                     is_const,
                 };
@@ -503,14 +507,18 @@ impl<'a> CheckerState<'a> {
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
                 let factory = self.ctx.types.factory();
+                let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
                 for (name, is_const, default_str) in template_names {
                     let atom = self.ctx.types.intern_string(&name);
                     let default = default_str
                         .as_deref()
                         .and_then(|s| self.resolve_jsdoc_reference(s));
+                    let constraint = constraint_strs
+                        .get(&name)
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
                     let info = TypeParamInfo {
                         name: atom,
-                        constraint: None,
+                        constraint,
                         default,
                         is_const,
                     };

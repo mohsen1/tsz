@@ -54,14 +54,14 @@
 mod namespace_es5_ir_helpers;
 use namespace_es5_ir_helpers::*;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use crate::emitter::ScopedConstEnum;
 use crate::enums::evaluator::EnumValue;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use crate::transforms::class_es5_ir::{AstToIr, ES5ClassTransformer};
 use crate::transforms::enum_es5_ir::transform_enum_to_ir;
-use crate::transforms::ir::{EnumMemberValue, IRNode, IRParam, IRPropertyKey};
+use crate::transforms::ir::{EnumMemberValue, IRCatchClause, IRNode, IRParam, IRPropertyKey};
 use crate::transforms::ir_printer::IRPrinter;
 use rustc_hash::FxHashMap;
 use tsz_common::common::ModuleKind;
@@ -70,6 +70,30 @@ use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
+
+fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
+    text.strip_prefix(keyword).is_some_and(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    })
+}
+
+const fn is_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+}
+
+fn previous_identifier_token(text: &str, mut end: usize) -> Option<(&str, usize)> {
+    let bytes = text.as_bytes();
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        end -= 1;
+    }
+    let token_end = end;
+    while end > 0 && is_identifier_continue(bytes[end - 1]) {
+        end -= 1;
+    }
+    (end < token_end).then(|| (&text[end..token_end], end))
+}
 
 // =============================================================================
 // NamespaceES5Transformer - Main transformer struct
@@ -111,8 +135,11 @@ pub struct NamespaceES5Transformer<'a> {
     /// Hoisted temp variable names collected from expression conversions
     /// (e.g., from computed property lowering inside object literals)
     hoisted_temps: RefCell<Vec<String>>,
+    disposable_env_counter: Cell<u32>,
+    generated_disposable_env_names: RefCell<Vec<String>>,
+    active_namespace_using_env: RefCell<Option<(String, bool)>>,
     default_exported_func_names: std::collections::HashSet<String>,
-    commonjs_export_name: Option<String>,
+    commonjs_export_names: Vec<String>,
     const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
     const_enum_import_aliases: FxHashMap<String, String>,
     remove_comments: bool,
@@ -131,8 +158,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             legacy_decorators: false,
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
+            disposable_env_counter: Cell::new(1),
+            generated_disposable_env_names: RefCell::new(Vec::new()),
+            active_namespace_using_env: RefCell::new(None),
             default_exported_func_names: std::collections::HashSet::new(),
-            commonjs_export_name: None,
+            commonjs_export_names: Vec::new(),
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -151,8 +181,11 @@ impl<'a> NamespaceES5Transformer<'a> {
             legacy_decorators: false,
             emit_decorator_metadata: false,
             hoisted_temps: RefCell::new(Vec::new()),
+            disposable_env_counter: Cell::new(1),
+            generated_disposable_env_names: RefCell::new(Vec::new()),
+            active_namespace_using_env: RefCell::new(None),
             default_exported_func_names: std::collections::HashSet::new(),
-            commonjs_export_name: None,
+            commonjs_export_names: Vec::new(),
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -168,6 +201,21 @@ impl<'a> NamespaceES5Transformer<'a> {
     /// arrays for classes inside this namespace.
     pub const fn set_emit_decorator_metadata(&mut self, enabled: bool) {
         self.emit_decorator_metadata = enabled;
+    }
+
+    pub fn set_disposable_env_context(&self, next_env_id: u32) {
+        self.disposable_env_counter.set(next_env_id);
+    }
+
+    pub const fn disposable_env_counter(&self) -> u32 {
+        self.disposable_env_counter.get()
+    }
+
+    pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
+        self.generated_disposable_env_names
+            .borrow_mut()
+            .drain(..)
+            .collect()
     }
 
     /// Set source text for comment extraction
@@ -190,7 +238,11 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
-        self.commonjs_export_name = name;
+        self.commonjs_export_names = name.into_iter().collect();
+    }
+
+    pub fn set_commonjs_export_names(&mut self, names: Vec<String>) {
+        self.commonjs_export_names = names;
     }
 
     pub(crate) fn set_const_enum_facts(
@@ -578,8 +630,18 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&ns_data.modifiers, SyntaxKind::ExportKeyword);
 
+        let using_region = self.namespace_body_using_region(innermost_body);
+        if let Some((env_name, using_async, _, _)) = using_region.as_ref() {
+            self.active_namespace_using_env
+                .replace(Some((env_name.clone(), *using_async)));
+        }
+
         // Transform the innermost body - use the last name part for member exports
         let mut body = self.transform_namespace_body(innermost_body, &name_parts);
+        self.active_namespace_using_env.replace(None);
+        if let Some((env_name, _using_async, error_name, result_name)) = using_region {
+            body = self.wrap_namespace_using_region(body, env_name, error_name, result_name);
+        }
         self.rewrite_const_enum_accesses(&mut body, &name_parts);
 
         // Skip non-instantiated namespaces (only contain types).
@@ -611,7 +673,12 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs && !merges_with_default_func,
-            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            commonjs_export_names: self
+                .commonjs_export_names
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge,
@@ -621,7 +688,219 @@ impl<'a> NamespaceES5Transformer<'a> {
             trailing_comment: self
                 .extract_namespace_trailing_comment(innermost_body)
                 .map(Into::into),
+            invalid_namespace_static: self.has_invalid_namespace_static_modifier(ns_idx),
         })
+    }
+
+    fn namespace_body_using_region(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<(String, bool, String, String)> {
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_module_block(body_node)?;
+        let statements = block.statements.as_ref()?;
+        let mut has_using = false;
+        let mut using_async = false;
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let flags = self.variable_statement_source_using_flags(stmt_node);
+            if flags & node_flags::USING != 0 {
+                has_using = true;
+                using_async |= node_flags::is_await_using(flags);
+                continue;
+            }
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                let flags = decl_list
+                    .declarations
+                    .nodes
+                    .iter()
+                    .fold(decl_list_node.flags as u32, |flags, &decl_idx| {
+                        flags | self.arena.get_variable_declaration_flags(decl_idx)
+                    });
+                if flags & node_flags::USING != 0 {
+                    has_using = true;
+                    using_async |= node_flags::is_await_using(flags);
+                }
+            }
+        }
+        if !has_using {
+            return None;
+        }
+        let id = self.disposable_env_counter.get();
+        self.disposable_env_counter.set(id + 1);
+        let env_name = format!("env_{id}");
+        let error_name = format!("e_{id}");
+        let result_name = format!("result_{id}");
+        self.generated_disposable_env_names.borrow_mut().extend([
+            env_name.clone(),
+            error_name.clone(),
+            result_name.clone(),
+        ]);
+        Some((env_name, using_async, error_name, result_name))
+    }
+
+    fn variable_statement_source_using_flags(&self, node: &Node) -> u32 {
+        if node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return 0;
+        }
+        let Some(source_text) = self.source_text else {
+            return 0;
+        };
+        let start = (node.pos as usize).min(source_text.len());
+        let end = (node.end as usize).min(source_text.len());
+        let text = source_text[start..end].trim_start();
+        if text.starts_with("await using") {
+            return node_flags::AWAIT_USING;
+        }
+        if text.starts_with("using") {
+            return node_flags::USING;
+        }
+        0
+    }
+
+    fn disposable_env_initializer_ir() -> IRNode {
+        IRNode::ObjectLiteral {
+            properties: vec![
+                crate::transforms::ir::IRProperty {
+                    key: IRPropertyKey::Identifier("stack".into()),
+                    value: IRNode::ArrayLiteral(Vec::new()),
+                    kind: crate::transforms::ir::IRPropertyKind::Init,
+                },
+                crate::transforms::ir::IRProperty {
+                    key: IRPropertyKey::Identifier("error".into()),
+                    value: IRNode::Undefined,
+                    kind: crate::transforms::ir::IRPropertyKind::Init,
+                },
+                crate::transforms::ir::IRProperty {
+                    key: IRPropertyKey::Identifier("hasError".into()),
+                    value: IRNode::BooleanLiteral(false),
+                    kind: crate::transforms::ir::IRPropertyKind::Init,
+                },
+            ],
+            source_range: None,
+            extra_indent: 0,
+        }
+    }
+
+    fn wrap_namespace_using_region(
+        &self,
+        mut body: Vec<IRNode>,
+        env_name: String,
+        error_name: String,
+        result_name: String,
+    ) -> Vec<IRNode> {
+        let mut prefix = Vec::new();
+        while matches!(body.first(), Some(IRNode::VarDeclList(_))) {
+            prefix.push(body.remove(0));
+        }
+        prefix.push(IRNode::VarDecl {
+            name: env_name.clone().into(),
+            initializer: Some(Box::new(Self::disposable_env_initializer_ir())),
+        });
+        prefix.push(IRNode::TryStatement {
+            try_block: Box::new(IRNode::Block(body)),
+            catch_clause: Some(IRCatchClause {
+                param: Some(error_name.clone().into()),
+                body: vec![
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "error"),
+                        IRNode::id(error_name),
+                    )),
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+                        IRNode::BooleanLiteral(true),
+                    )),
+                ],
+            }),
+            finally_block: Some(Box::new(IRNode::Block(vec![IRNode::expr_stmt(
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                    arguments: vec![IRNode::id(env_name)],
+                },
+            )]))),
+        });
+        let _ = result_name;
+        prefix
+    }
+
+    fn has_invalid_namespace_static_modifier(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        let (modifiers, probe_pos) = match node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let Some(module) = self.arena.get_module(node) else {
+                    return false;
+                };
+                let probe_pos = self
+                    .arena
+                    .get(module.name)
+                    .map_or(node.pos, |name| name.pos);
+                (module.modifiers.as_ref(), probe_pos)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                let Some(enum_data) = self.arena.get_enum(node) else {
+                    return false;
+                };
+                let probe_pos = self
+                    .arena
+                    .get(enum_data.name)
+                    .map_or(node.pos, |name| name.pos);
+                (enum_data.modifiers.as_ref(), probe_pos)
+            }
+            _ => (None, node.pos),
+        };
+        if modifiers.is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|mod_node| mod_node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+        }) {
+            return true;
+        }
+
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let token_start = self.skip_trivia_forward(probe_pos, node.end) as usize;
+        let Some(remaining) =
+            source_text.get(token_start..(node.end as usize).min(source_text.len()))
+        else {
+            return false;
+        };
+        if starts_with_keyword_token(remaining, "static") {
+            return true;
+        }
+
+        let Some((previous, previous_start)) = previous_identifier_token(source_text, token_start)
+        else {
+            return false;
+        };
+        if previous == "static" {
+            return true;
+        }
+        if matches!(previous, "namespace" | "module" | "enum")
+            && let Some((before_keyword, _)) =
+                previous_identifier_token(source_text, previous_start)
+        {
+            return before_keyword == "static";
+        }
+        false
     }
 
     fn source_file_has_default_exported_function(&self, ns_idx: NodeIndex, name: &str) -> bool {
@@ -959,12 +1238,19 @@ impl<'a> NamespaceES5Transformer<'a> {
             // Start after the opening brace of the module block.
             let mut prev_end = body_node.pos + 1; // skip past '{'
             let mut prev_stmt_pos = body_node.pos + 1;
+            let mut pending_static_modifier = false;
 
             for &stmt_idx in &stmts.nodes {
                 let stmt_node = match self.arena.get(stmt_idx) {
                     Some(n) => n,
                     None => continue,
                 };
+                if stmt_node.kind == SyntaxKind::StaticKeyword as u16 {
+                    pending_static_modifier = true;
+                    prev_end = stmt_node.end;
+                    prev_stmt_pos = stmt_node.pos;
+                    continue;
+                }
 
                 // Some statements have trailing trivia that includes standalone comments
                 // before the next declaration. Capture those comments here so they can
@@ -1008,11 +1294,17 @@ impl<'a> NamespaceES5Transformer<'a> {
                     Vec::new()
                 };
 
-                let ir = self.transform_namespace_member_with_declared(
+                let mut ir = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
                     &declared_names,
                 );
+                if pending_static_modifier {
+                    if let Some(ir_node) = ir.as_mut() {
+                        mark_invalid_namespace_static(ir_node);
+                    }
+                    pending_static_modifier = false;
+                }
                 if ir.is_some() {
                     for c in leading_comments {
                         result.push(c);
@@ -1527,6 +1819,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             }
             IRNode::CommaExpr(items)
             | IRNode::CommaExprMultiline(items)
+            | IRNode::CommaExprMultilineFlat(items)
             | IRNode::ArrayLiteral(items)
             | IRNode::VarDeclList(items)
             | IRNode::Block(items)
@@ -2049,6 +2342,66 @@ impl<'a> NamespaceES5Transformer<'a> {
                 .arena
                 .has_modifier(&var_data.modifiers, SyntaxKind::ExportKeyword);
 
+        if let Some((env_name, using_async)) = self.active_namespace_using_env.borrow().clone() {
+            let source_flags = self
+                .arena
+                .get(var_idx)
+                .map_or(0, |node| self.variable_statement_source_using_flags(node));
+            let mut decls = Vec::new();
+            let mut temps = Vec::new();
+            for &decl_list_idx in &var_data.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                let flags = source_flags
+                    | decl_list.declarations.nodes.iter().fold(
+                        decl_list_node.flags as u32,
+                        |flags, &decl_idx| {
+                            flags | self.arena.get_variable_declaration_flags(decl_idx)
+                        },
+                    );
+                if flags & node_flags::USING == 0 {
+                    continue;
+                }
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl) = self.arena.get_variable_declaration_at(decl_idx) else {
+                        continue;
+                    };
+                    let Some(name) = get_identifier_text(self.arena, decl.name) else {
+                        continue;
+                    };
+                    let initializer = if decl.initializer.is_some() {
+                        let converter = AstToIr::new(self.arena);
+                        let expr = converter.convert_expression(decl.initializer);
+                        temps.extend(converter.take_hoisted_temps());
+                        expr
+                    } else {
+                        IRNode::void_0()
+                    };
+                    decls.push(IRNode::VarDecl {
+                        name: name.into(),
+                        initializer: Some(Box::new(IRNode::CallExpr {
+                            callee: Box::new(IRNode::RuntimeHelper(
+                                "__addDisposableResource".into(),
+                            )),
+                            arguments: vec![
+                                IRNode::id(env_name.clone()),
+                                initializer,
+                                IRNode::BooleanLiteral(using_async),
+                            ],
+                        })),
+                    });
+                }
+            }
+            if !decls.is_empty() {
+                self.hoisted_temps.borrow_mut().extend(temps);
+                return Some(IRNode::Sequence(decls));
+            }
+        }
+
         if is_exported {
             // For exported variables, emit directly as namespace property assignments:
             // `Namespace.X = initializer;` instead of `var X = initializer; Namespace.X = X;`
@@ -2115,6 +2468,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         };
 
         let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
+        let invalid_namespace_static = self.has_invalid_namespace_static_modifier(enum_idx);
 
         // For exported enums, fold the namespace export into the IIFE closing:
         // `(Color = A.Color || (A.Color = {}))` instead of separate `A.Color = Color;`
@@ -2124,6 +2478,14 @@ impl<'a> NamespaceES5Transformer<'a> {
             } = &mut enum_ir
         {
             *namespace_export = Some(ns_name.to_string().into());
+        }
+        if invalid_namespace_static
+            && let IRNode::EnumIIFE {
+                invalid_namespace_static,
+                ..
+            } = &mut enum_ir
+        {
+            *invalid_namespace_static = true;
         }
 
         Some(enum_ir)
@@ -2180,7 +2542,12 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            commonjs_export_names: self
+                .commonjs_export_names
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge: false,
@@ -2190,7 +2557,27 @@ impl<'a> NamespaceES5Transformer<'a> {
             trailing_comment: self
                 .extract_namespace_trailing_comment(ns_data.body)
                 .map(Into::into),
+            invalid_namespace_static: self.has_invalid_namespace_static_modifier(ns_idx),
         })
+    }
+}
+
+fn mark_invalid_namespace_static(node: &mut IRNode) {
+    match node {
+        IRNode::EnumIIFE {
+            invalid_namespace_static,
+            ..
+        }
+        | IRNode::NamespaceIIFE {
+            invalid_namespace_static,
+            ..
+        } => *invalid_namespace_static = true,
+        IRNode::Sequence(items) => {
+            if let Some(first) = items.first_mut() {
+                mark_invalid_namespace_static(first);
+            }
+        }
+        _ => {}
     }
 }
 

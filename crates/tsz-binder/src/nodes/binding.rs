@@ -2165,23 +2165,33 @@ impl BinderState {
                 ContainerKind::Module => {
                     // Find the symbol for this module/namespace
                     if let Some(sym_id) = self.node_symbols.get(&ctx.container_node.0) {
-                        let export_all = self
-                            .scope_chain
-                            .get(self.current_scope_idx)
-                            .and_then(|ctx| arena.get(ctx.container_node))
-                            .and_then(|node| arena.get_module(node))
-                            .is_some_and(|module| {
-                                let is_external = arena.get(module.name).is_some_and(|name_node| {
-                                    name_node.kind == SyntaxKind::StringLiteral as u16
-                                        || name_node.kind
-                                            == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        let export_all = self.in_global_augmentation
+                            || self
+                                .scope_chain
+                                .get(self.current_scope_idx)
+                                .and_then(|ctx| arena.get(ctx.container_node))
+                                .and_then(|node| arena.get_module(node))
+                                .is_some_and(|module| {
+                                    let is_external =
+                                        arena.get(module.name).is_some_and(|name_node| {
+                                            name_node.kind == SyntaxKind::StringLiteral as u16
+                                                || name_node.kind
+                                                    == SyntaxKind::NoSubstitutionTemplateLiteral
+                                                        as u16
+                                        });
+                                    let is_ambient = arena.has_modifier_ref(
+                                        module.modifiers.as_ref(),
+                                        SyntaxKind::DeclareKeyword,
+                                    ) || is_external;
+                                    // Implicit export only applies while the ambient body
+                                    // is still an export context (no explicit export
+                                    // declaration/assignment); see the helper for the rule.
+                                    is_ambient
+                                        && !Self::ambient_module_body_disables_export_context(
+                                            arena,
+                                            module.body,
+                                        )
                                 });
-                                arena.has_modifier_ref(
-                                    module.modifiers.as_ref(),
-                                    SyntaxKind::DeclareKeyword,
-                                ) || is_external
-                            })
-                            || self.in_global_augmentation;
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
                         let mut exports = SymbolTable::new();

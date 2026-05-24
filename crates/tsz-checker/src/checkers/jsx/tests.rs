@@ -1,6 +1,6 @@
 //! JSX unit tests.
 
-use crate::test_utils::{check_source, check_source_diagnostics};
+use crate::test_utils::{check_multi_file, check_source, check_source_diagnostics};
 
 fn check_jsx(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     use crate::context::CheckerOptions;
@@ -3500,5 +3500,160 @@ let k = <Comp>hello<A /></Comp>;
         !ts2747.message_text.contains("Element;"),
         "TS2747 message must NOT include a trailing semicolon; got: {}",
         ts2747.message_text
+    );
+}
+
+fn cross_file_jsx_opts() -> crate::context::CheckerOptions {
+    use tsz_common::checker_options::JsxMode;
+    crate::context::CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        strict_null_checks: true,
+        ..Default::default()
+    }
+}
+
+// Plain project file (not a lib), so its binder is in `all_binders` but not `lib_binders`.
+const REACT_DECL: &str = r#"
+declare namespace React {
+    type ReactNode = ReactElement<any> | string | number | null;
+    interface ReactElement<P> { props: P; }
+    type ComponentState = any;
+    interface Component<P = {}, S = ComponentState> {
+        readonly props: P;
+        state: S;
+        render(): ReactNode;
+    }
+    interface ComponentClass<P = {}, S = ComponentState> {
+        new(props: P, context?: any): Component<P, S>;
+        defaultProps?: Partial<P>;
+    }
+    interface StatelessComponent<P = {}> {
+        (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+        defaultProps?: Partial<P>;
+    }
+    type ComponentType<P = {}> = ComponentClass<P> | StatelessComponent<P>;
+    type ReactType<P = any> = string | ComponentType<P>;
+}
+declare namespace JSX {
+    interface Element extends React.ReactElement<any> {}
+    interface ElementClass extends React.Component<any> {
+        render(): React.ReactNode;
+    }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements {
+        a: {};
+        button: {};
+    }
+}
+"#;
+
+#[test]
+fn cross_file_component_type_union_no_ts2786() {
+    // `React.ComponentType<P1> | React.ComponentType<P2>` where `ComponentType`
+    // lives in a separate project file (not a lib binder).
+    let entry = r#"
+interface P1 { p?: boolean; c?: string; }
+interface P2 { p?: boolean; c?: any; d?: any; }
+var C: React.ComponentType<P1> | React.ComponentType<P2>;
+const a = <C p={true} />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentType union from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_react_type_union_with_string_no_ts2786() {
+    // `React.ReactType` (= `string | ComponentType<P>`) from a cross-file binder.
+    let entry = r#"
+declare const props: { component: React.ReactType };
+const Comp: React.ReactType = props.component;
+const elem = <Comp />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ReactType from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_component_class_generic_no_ts2786() {
+    // `React.ComponentClass<P>` used directly as a JSX component type from a
+    // cross-file binder — also exercises the `react_component_alias_application_props_arg`
+    // path that calls `react_component_alias_def_has_react_origin`.
+    let entry = r#"
+interface Props { x?: number; }
+declare const Widget: React.ComponentClass<Props>;
+const elem = <Widget x={1} />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentClass from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_component_type_alias_renamed_param_no_ts2786() {
+    // Same as `cross_file_component_type_union_no_ts2786` but with a renamed
+    // type-parameter to prove the fix is not keyed on the name "P".
+    let entry = r#"
+interface Foo { a?: string; }
+interface Bar { a?: number; }
+var C: React.ComponentType<Foo> | React.ComponentType<Bar>;
+const elem = <C />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentType union with renamed type arg must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_non_react_namespace_component_type_still_emits_ts2786() {
+    // Cross-file React alias detection must not over-eagerly skip TS2786 for
+    // function components with invalid return types.
+    //
+    // Setup: the cross-file React lib (REACT_DECL) is present as file 0.  The
+    // entry file declares a function with an incompatible return type.  TS2786
+    // must still fire because `BadComp` is not a React alias type.
+    let entry = r#"
+declare namespace JSX {
+    interface Element { ok: true; }
+    interface ElementClass { render(): Element; }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements {}
+}
+declare function BadComp(props: {}): number;
+const elem = <BadComp />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2786),
+        "Function component returning non-JSX type must still emit TS2786 when cross-file React lib is present; got: {diags:?}"
     );
 }
