@@ -124,6 +124,84 @@ pub fn contains_index_access_with_variadic_tuple_object(
     })
 }
 
+/// Returns true when a type's structural or display-alias surface contains an
+/// indexed access whose object operand is `never`.
+pub fn contains_never_index_access_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    max_depth: usize,
+) -> bool {
+    let mut visited = FxHashSet::default();
+    contains_never_index_access_surface_inner(
+        db,
+        def_store,
+        type_id,
+        max_depth.saturating_add(1),
+        &mut visited,
+    )
+}
+
+fn contains_never_index_access_surface_inner(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    remaining_depth: usize,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if remaining_depth == 0 || type_id.is_intrinsic() || !visited.insert(type_id) {
+        return false;
+    }
+
+    if let Some(TypeData::IndexAccess(object, _)) = db.lookup(type_id)
+        && object == TypeId::NEVER
+    {
+        return true;
+    }
+
+    if let Some(alias) = db.get_display_alias(type_id)
+        && alias != type_id
+        && contains_never_index_access_surface_inner(
+            db,
+            def_store,
+            alias,
+            remaining_depth - 1,
+            visited,
+        )
+    {
+        return true;
+    }
+
+    if let Some(def_id) = crate::type_queries::get_application_lazy_def_id(db, type_id)
+        && let Some(def) = def_store.get(def_id)
+        && def.kind == crate::def::DefKind::TypeAlias
+        && let Some(body) = def.body
+        && contains_never_index_access_surface_inner(
+            db,
+            def_store,
+            body,
+            remaining_depth - 1,
+            visited,
+        )
+    {
+        return true;
+    }
+
+    let mut found = false;
+    crate::visitors::visitor::for_each_child_by_id(db, type_id, |child| {
+        if !found {
+            found = contains_never_index_access_surface_inner(
+                db,
+                def_store,
+                child,
+                remaining_depth - 1,
+                visited,
+            );
+        }
+    });
+    found
+}
+
 fn variadic_tuple_object_contains_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     get_tuple_elements(db, type_id).is_some_and(|elems| {
         elems

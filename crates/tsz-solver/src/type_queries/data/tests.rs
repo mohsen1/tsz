@@ -1,5 +1,6 @@
 use super::*;
 use crate::construction::TypeInterner;
+use crate::def::{DefinitionInfo, DefinitionStore};
 use crate::types::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo};
 
 fn make_callable_with_construct_sig(
@@ -126,6 +127,54 @@ fn get_call_signatures_intersection_no_call_sigs() {
     let intersection = interner.intersection2(TypeId::STRING, TypeId::NUMBER);
     let sigs = get_call_signatures(&interner, intersection);
     assert!(sigs.is_none());
+}
+
+#[test]
+fn contains_never_index_access_surface_matches_direct_index_access() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let direct = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    let other = interner.index_access(TypeId::OBJECT, TypeId::STRING);
+
+    assert!(contains_never_index_access_surface(
+        &interner, &def_store, direct, 8,
+    ));
+    assert!(!contains_never_index_access_surface(
+        &interner, &def_store, other, 8,
+    ));
+}
+
+#[test]
+fn contains_never_index_access_surface_follows_display_alias() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let structural = interner.object(vec![]);
+    let display_alias = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    interner.store_display_alias(structural, display_alias);
+
+    assert!(contains_never_index_access_surface(
+        &interner, &def_store, structural, 8,
+    ));
+}
+
+#[test]
+fn contains_never_index_access_surface_follows_alias_application_body() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let body = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    let alias_id = def_store.register(DefinitionInfo::type_alias(
+        interner.intern_string("Boxed"),
+        vec![],
+        body,
+    ));
+    let application = interner.application(interner.lazy(alias_id), vec![]);
+
+    assert!(contains_never_index_access_surface(
+        &interner,
+        &def_store,
+        application,
+        8,
+    ));
 }
 
 #[test]

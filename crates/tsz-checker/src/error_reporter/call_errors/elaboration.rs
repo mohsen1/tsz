@@ -2182,7 +2182,12 @@ impl<'a> CheckerState<'a> {
     }
 
     fn target_has_never_indexed_access_surface(&self, target_type: TypeId) -> bool {
-        self.type_has_never_indexed_access_surface(target_type, 0)
+        crate::query_boundaries::diagnostics::contains_never_index_access_surface(
+            self.ctx.types.as_type_database(),
+            &self.ctx.definition_store,
+            target_type,
+            8,
+        )
     }
 
     fn target_has_indexed_access_surface(&self, target_type: TypeId) -> bool {
@@ -2243,54 +2248,6 @@ impl<'a> CheckerState<'a> {
             && let Some(body) = def.body
         {
             return self.type_has_indexed_access_surface(body, depth + 1);
-        }
-
-        false
-    }
-
-    fn type_has_never_indexed_access_surface(&self, target_type: TypeId, depth: usize) -> bool {
-        if depth > 8 {
-            return false;
-        }
-        let db = self.ctx.types.as_type_database();
-        if let Some((object_type, _)) =
-            crate::query_boundaries::common::index_access_types(db, target_type)
-            && object_type == TypeId::NEVER
-        {
-            return true;
-        }
-        if let Some(members) = crate::query_boundaries::common::union_members(db, target_type)
-            && members
-                .iter()
-                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
-        {
-            return true;
-        }
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(db, target_type)
-            && members
-                .iter()
-                .any(|&member| self.type_has_never_indexed_access_surface(member, depth + 1))
-        {
-            return true;
-        }
-        if crate::query_boundaries::common::is_generic_application(self.ctx.types, target_type)
-            && let Some(def_id) = crate::query_boundaries::common::get_application_lazy_def_id(
-                self.ctx.types,
-                target_type,
-            )
-            && let Some(def) = self.ctx.definition_store.get(def_id)
-            && def.kind == tsz_solver::def::DefKind::TypeAlias
-            && let Some(body) = def.body
-        {
-            return self.type_has_never_indexed_access_surface(body, depth + 1);
-        }
-
-        if depth == 0 {
-            let display = self.format_type_diagnostic(target_type);
-            if display.contains("never[") {
-                return true;
-            }
         }
 
         false

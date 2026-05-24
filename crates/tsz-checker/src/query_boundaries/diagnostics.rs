@@ -106,6 +106,15 @@ pub(crate) fn contains_index_access_type(
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
 
+pub(crate) fn contains_never_index_access_surface(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+    max_depth: usize,
+) -> bool {
+    tsz_solver::type_queries::contains_never_index_access_surface(db, def_store, type_id, max_depth)
+}
+
 pub(crate) fn application_base_has_conditional_alias_body(
     db: &dyn tsz_solver::construction::TypeDatabase,
     def_store: &tsz_solver::def::DefinitionStore,
