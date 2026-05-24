@@ -1966,11 +1966,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     extends_elem.optional.then_some(TypeId::UNDEFINED)
                 } else if check_elements.len() == 1 && !check_elements[0].rest {
                     let elem = &check_elements[0];
-                    Some(if elem.optional {
-                        self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                    // Optional source cannot fill a required pattern slot.
+                    if elem.optional && !extends_elem.optional {
+                        None
                     } else {
-                        elem.type_id
-                    })
+                        let ty = if elem.optional {
+                            self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                        } else {
+                            elem.type_id
+                        };
+                        Some(ty)
+                    }
                 } else {
                     None
                 }
@@ -1995,6 +2001,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             if check_elements.len() == 1 && !check_elements[0].rest {
                                 let elem = &check_elements[0];
+                                if elem.optional && !extends_elem.optional {
+                                    return self.evaluate(cond.false_type);
+                                }
                                 let elem_type = if elem.optional {
                                     self.interner().union2(elem.type_id, TypeId::UNDEFINED)
                                 } else {
