@@ -47,13 +47,13 @@
 //!
 //! The fix replaces the single `evaluate_type_with_env` step with a
 //! full resolution chain (`resolve_lazy_type` → `evaluate_application_type`
-//! → `evaluate_type_with_env`) so the guard sees the substituted Object
+//! → `evaluate_type_with_env`) so the guard sees the substituted `Object`
 //! body regardless of how lazy the environment happens to be at that
 //! call site.
 //!
 //! These tests pin the structural rule across the matrix of cases laid
 //! out in the issue. The tests do not depend on `Array<T>` being
-//! recognised as `Iterable<T>` by the test-framework's lib loader
+//! recognised as `Iterable<T>` by the test framework's lib loader
 //! (which it currently isn't, independently of this fix). Instead they
 //! anchor the contextual substitution outcome by binding the call's
 //! result to a concrete annotation and asserting that the *only*
@@ -94,7 +94,7 @@ fn diagnostics(source: &str) -> Vec<(u32, String)> {
 /// `Iterable<(1 | 2 | 3 | 4)[]>`.
 ///
 /// Element-type-shaped targets like `Iterable<number>` would signal an
-/// unrelated test-framework gap in Array-to-Iterable bridge resolution
+/// unrelated test-framework gap in array-to-iterable bridge resolution
 /// and are not what this issue is about — so this predicate matches
 /// only on the structural fingerprint (any `[` inside the iterator
 /// wrapper's first type argument) rather than on the exact rendered

@@ -1,6 +1,7 @@
 //! Generic-call inference and round-2 contextual typing helpers.
 
 mod indexed_callback;
+mod iterable_substitution;
 mod return_context;
 mod unknown_callback;
 
@@ -816,77 +817,6 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(arg_type)
             })
             .collect()
-    }
-
-    /// Check whether an evaluated type is iterable-like (has a `[Symbol.iterator]`
-    /// property or a number index signature). Used to detect `Iterable<T>`,
-    /// `ArrayLike<T>`, etc. during contextual substitution so that when matching
-    /// against an Array target, we extract the element type rather than using the
-    /// full array type.
-    fn is_iterable_like_for_substitution(&self, type_id: TypeId) -> bool {
-        let has_iterator_in_props = |props: &[tsz_solver::type_handles::PropertyInfo]| {
-            props.iter().any(|prop| {
-                let name = self.ctx.types.resolve_atom(prop.name);
-                name == "__@iterator" || name == "[Symbol.iterator]"
-            })
-        };
-        if let Some(shape_id) = crate::query_boundaries::common::object_shape_id(
-            self.ctx.types,
-            type_id,
-        )
-        .or_else(|| {
-            crate::query_boundaries::common::object_with_index_shape_id(self.ctx.types, type_id)
-        }) {
-            let shape = self.ctx.types.object_shape(shape_id);
-            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
-        }
-        if let Some(shape_id) =
-            crate::query_boundaries::common::callable_shape_id(self.ctx.types, type_id)
-        {
-            let shape = self.ctx.types.callable_shape(shape_id);
-            return shape.number_index.is_some() || has_iterator_in_props(&shape.properties);
-        }
-        false
-    }
-
-    /// Robustly detect whether `source` is an iterable-like type for
-    /// contextual return-context substitution.
-    ///
-    /// The naive `is_iterable_like_for_substitution(evaluate_type_with_env(source))`
-    /// fails when `source` is `Application(Iterable_DefId, [T])` and the
-    /// type environment has not yet registered Iterable's resolved body —
-    /// `evaluate_type_with_env` returns the Application unchanged, which
-    /// has no object shape, so the iterable check returns false. That
-    /// sends `Iterable<T>` matched against an array source through the
-    /// naive "T = whole array" decomposition further down, corrupting
-    /// later rounds of inference.
-    ///
-    /// The fix is targeted: only when `evaluate_type_with_env` returned
-    /// an Application (the symptom of unfinished evaluation) do we force
-    /// one extra round through `evaluate_application_type` before
-    /// checking the shape. For any other shape we trust the original
-    /// result and avoid unnecessary work that could surface caching
-    /// side-effects in other inference paths. The sibling helper
-    /// `array_or_number_index_element_type` immediately below runs an
-    /// unconditional resolution chain; the asymmetry is deliberate
-    /// because that one feeds an extraction (read-only) for the target
-    /// side of a substitution, while this one feeds a decision gate on
-    /// the source side where over-eager resolution risks disturbing peer
-    /// inference state.
-    fn source_is_iterable_like_for_substitution(&mut self, source: TypeId) -> bool {
-        let evaluated = self.evaluate_type_with_env(source);
-        if self.is_iterable_like_for_substitution(evaluated) {
-            return true;
-        }
-        if common::application_info(self.ctx.types, evaluated).is_none() {
-            return false;
-        }
-        let resolved = self.evaluate_application_type(evaluated);
-        if resolved == evaluated {
-            return false;
-        }
-        let resolved = self.evaluate_type_with_env(resolved);
-        self.is_iterable_like_for_substitution(resolved)
     }
 
     fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
