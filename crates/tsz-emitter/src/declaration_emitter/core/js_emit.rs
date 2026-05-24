@@ -1197,6 +1197,13 @@ impl<'a> DeclarationEmitter<'a> {
         if is_exported
             && jsdoc
                 .as_deref()
+                .is_some_and(Self::jsdoc_has_function_signature_tags)
+        {
+            self.suppress_current_statement_jsdoc_comments = true;
+        }
+        if is_exported
+            && jsdoc
+                .as_deref()
                 .is_some_and(|jsdoc| jsdoc.contains("@constructor"))
             && self.emit_js_commonjs_constructor_prototype_class(name_idx)
         {
