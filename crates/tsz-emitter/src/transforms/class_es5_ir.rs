@@ -2564,6 +2564,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut trailing_comment = None;
         let mut leading_comment = None;
         let has_private_fields = self.private_fields.iter().any(|f| !f.is_static);
+        let constructor_temps_before = self.extra_hoisted_temps.borrow().len();
 
         if let Some(ctor) = constructor_data {
             // Extract parameters
@@ -2691,6 +2692,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+
+        self.insert_constructor_hoisted_temps(&mut ctor_body, constructor_temps_before);
 
         let ctor_fn = IRNode::FunctionDecl {
             name: self.class_name.clone().into(),
@@ -2863,22 +2866,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         // Hoist temps generated during constructor body to the top of the
         // constructor function, not the class IIFE.
-        let temps_after = self.extra_hoisted_temps.borrow().len();
-        if temps_after > temps_before {
-            let ctor_temps: Vec<String> = self
-                .extra_hoisted_temps
-                .borrow_mut()
-                .drain(temps_before..)
-                .collect();
-            let var_decls: Vec<IRNode> = ctor_temps
-                .into_iter()
-                .map(|name| IRNode::VarDecl {
-                    name: name.into(),
-                    initializer: None,
-                })
-                .collect();
-            body.insert(0, IRNode::VarDeclList(var_decls));
-        }
+        self.insert_constructor_hoisted_temps(body, temps_before);
 
         let remaining_can_complete_normally = if super_stmt_idx.is_some() {
             self.statements_can_complete_normally(
@@ -2940,6 +2928,8 @@ impl<'a> ES5ClassTransformer<'a> {
         params: &NodeList,
         instance_props: &[NodeIndex],
     ) {
+        let temps_before = self.extra_hoisted_temps.borrow().len();
+
         // Check if constructor body or instance property initializers contain
         // arrow functions that capture `this`.
         // TSC emits `var _this = this;` as the FIRST statement in the constructor.
@@ -2990,6 +2980,29 @@ impl<'a> ES5ClassTransformer<'a> {
                 }
             }
         }
+
+        self.insert_constructor_hoisted_temps(body, temps_before);
+    }
+
+    fn insert_constructor_hoisted_temps(&self, body: &mut Vec<IRNode>, temps_before: usize) {
+        let temps_after = self.extra_hoisted_temps.borrow().len();
+        if temps_after <= temps_before {
+            return;
+        }
+
+        let ctor_temps: Vec<String> = self
+            .extra_hoisted_temps
+            .borrow_mut()
+            .drain(temps_before..)
+            .collect();
+        let var_decls: Vec<IRNode> = ctor_temps
+            .into_iter()
+            .map(|name| IRNode::VarDecl {
+                name: name.into(),
+                initializer: None,
+            })
+            .collect();
+        body.insert(0, IRNode::VarDeclList(var_decls));
     }
 
     /// Check if a statement is a `super()` call
