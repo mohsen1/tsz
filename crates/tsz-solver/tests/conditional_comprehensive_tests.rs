@@ -3868,3 +3868,54 @@ fn infer_callable_unmatched_param_defaults_nested_object_infer() {
          still default to unknown, not leak an unresolved infer"
     );
 }
+
+#[test]
+fn infer_callable_unmatched_param_defaults_deferred_application_infer() {
+    // `(() => void) extends (x: Box<infer A>) => any ? A : never` → unknown.
+    // The unmatched parameter's infer is inside a generic application shell
+    // (a deferred shape). The default-fill walk must descend into application
+    // arguments too, otherwise `A` leaks unresolved into the true branch.
+    let interner = TypeInterner::new();
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    // Base `Box` is an ordinary (non-infer) shell; the infer lives only in the
+    // application argument, so this exercises the Application-arg traversal.
+    let box_base = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("inner"),
+        TypeId::UNKNOWN,
+    )]);
+    let box_of_infer = interner.application(box_base, vec![infer_a]);
+    let pattern = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: box_of_infer,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        TypeId::UNKNOWN,
+        "an unmatched parameter whose infer is nested in a generic application \
+         shell must still default to unknown"
+    );
+}
