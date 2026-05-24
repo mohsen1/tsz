@@ -803,6 +803,14 @@ impl<'a> CheckerState<'a> {
         let display_target = self
             .strip_nullish_for_assignability_display(target, source)
             .unwrap_or(target);
+        // A deferred conditional type renders verbatim in tsc diagnostics: the
+        // exact `C extends E ? X : Y` form with its literal branches intact. The
+        // annotation/alias heuristics below would otherwise collapse a conditional
+        // with concrete branches into a branch union (e.g. `"yes" | "no"`); emit
+        // the structural form directly instead.
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, display_target) {
+            return self.format_type_diagnostic(display_target);
+        }
         if crate::query_boundaries::common::is_index_access_type(self.ctx.types, display_target)
             && crate::query_boundaries::common::contains_type_parameters(
                 self.ctx.types,

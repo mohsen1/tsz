@@ -60,55 +60,101 @@ pub fn enabled_fast() -> bool {
     *ENABLED_FAST.get_or_init(|| std::env::var_os("TSZ_PERF_COUNTERS").is_some())
 }
 
-/// Why a `CheckerState::with_parent_cache` (and the matching
-/// `copy_symbol_file_targets_to`) call fired. Each variant pins one specific
-/// call site so the counter dump shows attribution: "X of the 17,329
-/// constructions came from `delegate_cross_arena_symbol_resolution`,
-/// Y came from `jsdoc_type_construction`, ...".
-///
-/// Adding a new reason: add the variant, update `REASON_NAMES` to keep them
-/// aligned, and increase `CHECKER_CREATION_REASON_COUNT`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CheckerCreationReason {
-    /// `cross_file.rs::delegate_cross_arena_symbol_resolution` — the headline
-    /// hot path; deep recursion through cross-file type queries.
-    DelegateCrossArenaSymbol = 0,
-    /// `cross_file.rs::delegate_cross_arena_class_instance_type`.
-    DelegateCrossArenaClass = 1,
-    /// `cross_file.rs::delegate_cross_arena_interface_type`.
-    DelegateCrossArenaInterface = 2,
-    /// Other `cross_file.rs` delegate variants (heritage, etc).
-    DelegateCrossArenaOther = 3,
-    /// JSDoc namespace-typedef lookups crossing arenas.
-    JsDocLookup = 4,
-    /// JSDoc type-construction (synthesized object/function shapes).
-    JsDocTypeConstruction = 5,
-    /// CommonJS `module.exports` / `exports.x` resolution + collection.
-    CjsExports = 6,
-    /// Cross-file type alias resolution.
-    AliasResolution = 7,
-    /// `import("…").Foo` indirect import-type resolution.
-    ImportType = 8,
-    /// Type-environment `core.rs` deep resolution helpers.
-    TypeEnvironmentCore = 9,
-    /// `types::queries::callable_truthiness` cross-file fall-through.
-    CallableTruthiness = 10,
-    /// Expando property assignments crossing files.
-    ExpandoProperty = 11,
-    /// `identifier::resolution` cross-file fallback.
-    IdentifierResolution = 12,
-    /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
-    CallHelpers = 13,
-    /// `computed_helpers_binding` deep alias resolution.
-    BindingHelpers = 14,
-    /// `class_abstract_checker` cross-file abstract-method check.
-    ClassAbstract = 15,
-    /// Anything not explicitly classified above.
-    Other = 16,
+// Declarative manifest for enum-backed counter families. Each entry owns the
+// Rust variant, stable numeric index, and dump/JSON display name together so
+// adding a bucket does not require editing parallel count/name tables by hand.
+macro_rules! perf_counter_enum {
+    (
+        $(#[$enum_meta:meta])*
+        pub enum $enum_name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident = $index:expr => $name:literal,
+            )+
+        }
+
+        pub const $count_name:ident;
+        pub const $names_name:ident;
+    ) => {
+        $(#[$enum_meta])*
+        #[repr(usize)]
+        pub enum $enum_name {
+            $(
+                $(#[$variant_meta])*
+                $variant = $index,
+            )+
+        }
+
+        pub const $count_name: usize = [$($name),+].len();
+
+        pub const $names_name: [&str; $count_name] = [
+            $($name,)+
+        ];
+
+        impl $enum_name {
+            #[inline(always)]
+            pub const fn as_index(self) -> usize {
+                self as usize
+            }
+
+            pub const fn name(self) -> &'static str {
+                $names_name[self as usize]
+            }
+        }
+    };
 }
 
-pub const CHECKER_CREATION_REASON_COUNT: usize = 17;
+perf_counter_enum! {
+    /// Why a `CheckerState::with_parent_cache` (and the matching
+    /// `copy_symbol_file_targets_to`) call fired. Each variant pins one specific
+    /// call site so the counter dump shows attribution: "X of the 17,329
+    /// constructions came from `delegate_cross_arena_symbol_resolution`,
+    /// Y came from `jsdoc_type_construction`, ...".
+    ///
+    /// Adding a new reason: add one manifest entry below. The enum variant, stable
+    /// display name, count, and `REASON_NAMES` order are generated together.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CheckerCreationReason {
+        /// `cross_file.rs::delegate_cross_arena_symbol_resolution` — the headline
+        /// hot path; deep recursion through cross-file type queries.
+        DelegateCrossArenaSymbol = 0 => "DelegateCrossArenaSymbol",
+        /// `cross_file.rs::delegate_cross_arena_class_instance_type`.
+        DelegateCrossArenaClass = 1 => "DelegateCrossArenaClass",
+        /// `cross_file.rs::delegate_cross_arena_interface_type`.
+        DelegateCrossArenaInterface = 2 => "DelegateCrossArenaInterface",
+        /// Other `cross_file.rs` delegate variants (heritage, etc).
+        DelegateCrossArenaOther = 3 => "DelegateCrossArenaOther",
+        /// JSDoc namespace-typedef lookups crossing arenas.
+        JsDocLookup = 4 => "JsDocLookup",
+        /// JSDoc type-construction (synthesized object/function shapes).
+        JsDocTypeConstruction = 5 => "JsDocTypeConstruction",
+        /// CommonJS `module.exports` / `exports.x` resolution + collection.
+        CjsExports = 6 => "CjsExports",
+        /// Cross-file type alias resolution.
+        AliasResolution = 7 => "AliasResolution",
+        /// `import("…").Foo` indirect import-type resolution.
+        ImportType = 8 => "ImportType",
+        /// Type-environment `core.rs` deep resolution helpers.
+        TypeEnvironmentCore = 9 => "TypeEnvironmentCore",
+        /// `types::queries::callable_truthiness` cross-file fall-through.
+        CallableTruthiness = 10 => "CallableTruthiness",
+        /// Expando property assignments crossing files.
+        ExpandoProperty = 11 => "ExpandoProperty",
+        /// `identifier::resolution` cross-file fallback.
+        IdentifierResolution = 12 => "IdentifierResolution",
+        /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
+        CallHelpers = 13 => "CallHelpers",
+        /// `computed_helpers_binding` deep alias resolution.
+        BindingHelpers = 14 => "BindingHelpers",
+        /// `class_abstract_checker` cross-file abstract-method check.
+        ClassAbstract = 15 => "ClassAbstract",
+        /// Anything not explicitly classified above.
+        Other = 16 => "Other",
+    }
+
+    pub const CHECKER_CREATION_REASON_COUNT;
+    pub const REASON_NAMES;
+}
 
 /// Number of log-spaced buckets in the interner lock-wait histogram.
 /// See `LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS` for the bucket boundaries.
@@ -132,38 +178,6 @@ pub const LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS: [u64; LOCK_WAIT_BUCKET_COUNT] = [
     100_000_000, // < 100 ms
     u64::MAX,    // overflow
 ];
-
-/// Human-readable names, one entry per `CheckerCreationReason` variant.
-/// MUST stay in sync with the enum.
-pub const REASON_NAMES: [&str; CHECKER_CREATION_REASON_COUNT] = [
-    "DelegateCrossArenaSymbol",
-    "DelegateCrossArenaClass",
-    "DelegateCrossArenaInterface",
-    "DelegateCrossArenaOther",
-    "JsDocLookup",
-    "JsDocTypeConstruction",
-    "CjsExports",
-    "AliasResolution",
-    "ImportType",
-    "TypeEnvironmentCore",
-    "CallableTruthiness",
-    "ExpandoProperty",
-    "IdentifierResolution",
-    "CallHelpers",
-    "BindingHelpers",
-    "ClassAbstract",
-    "Other",
-];
-
-impl CheckerCreationReason {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
-    }
-    pub const fn name(self) -> &'static str {
-        REASON_NAMES[self as usize]
-    }
-}
 
 /// How `delegate_cross_arena_symbol_resolution` found the target arena for
 /// a cache miss that must construct a child checker.
