@@ -458,6 +458,13 @@ pub struct Printer<'a> {
     /// function declarations are emitted.
     pub(crate) reserved_disposable_env_names: FxHashMap<NodeIndex, (String, String, String)>,
 
+    /// Result temps reserved for ES5 class assignments with deferred static
+    /// blocks inside top-level using scopes.
+    pub(crate) reserved_top_level_using_class_result_temps: FxHashMap<NodeIndex, String>,
+    /// Result temps that should be emitted as their own file-level hoist after
+    /// shared resource initializer temps.
+    pub(crate) hoisted_deferred_static_class_result_temps: Vec<String>,
+
     /// When set, a block-level using-lowering try/catch is active. `using` variable
     /// statements should emit `const x = __addDisposableResource(env, expr, async)`
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
@@ -466,6 +473,11 @@ pub struct Printer<'a> {
     /// True while emitting statements inside a wrapped top-level using region.
     /// This distinguishes post-`using` lowered statements from pre-`using` ones.
     pub(crate) in_top_level_using_scope: bool,
+
+    /// True while emitting System statements before the wrapped top-level using region.
+    /// Those statements share the wrapper's export scheduler but are outside the
+    /// disposable-resource try/catch.
+    pub(crate) in_system_top_level_using_prelude: bool,
 
     /// Type parameter names of the class currently being decorated (for metadata serialization).
     /// Set during `emit_legacy_member_decorator_calls` so `serialize_type_for_metadata` can
@@ -1151,8 +1163,11 @@ impl<'a> Printer<'a> {
             next_dynamic_import_promise_id: 1,
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
+            reserved_top_level_using_class_result_temps: FxHashMap::default(),
+            hoisted_deferred_static_class_result_temps: Vec::new(),
             block_using_env: None,
             in_top_level_using_scope: false,
+            in_system_top_level_using_prelude: false,
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
