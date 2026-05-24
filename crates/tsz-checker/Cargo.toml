@@ -458,6 +458,10 @@ name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
 [[test]]
+name = "spread_rest_diagnostics_tests"
+path = "tests/spread_rest_diagnostics_tests.rs"
+
+[[test]]
 name = "thisless_functions_not_context_sensitive_tests"
 path = "tests/thisless_functions_not_context_sensitive_tests.rs"
 
