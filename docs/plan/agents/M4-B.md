@@ -30,17 +30,20 @@ scripts/agents/list-owned-work.sh M4-B
     PR because auto-merge remains off by lane rule. Do not churn this PR just
     to update its own head SHA.
   - `#10058` ready/off-auto on rebased head
-    `171fc3620611a4ba128b1d156f1ee8d739372bf1`; fresh CI is running to
-    determine whether the earlier `conformance-aggregate` coverage gap
-    (`11844 < 11865` tolerance 5) was stale-base/cache-related.
-  - `#9945` ready/off-auto; exact-head ready-review CI is still running.
+    `171fc3620611a4ba128b1d156f1ee8d739372bf1`; exact-head ready-review CI is
+    green, but required `Queue Tested` remains pending.
+  - `#9945` ready/off-auto; exact-head ready-review CI is green, but required
+    `Queue Tested` remains pending. If auto-merge is re-enabled while
+    `Queue Tested` is pending, disable it and leave a signed blocker comment.
   - `#9807` ready/off-auto; follow-up head
     `023ac1dde31e330514196d178b11d3515f832814` splits visitor predicates below
-    2000 LOC. Exact-head draft-light CI is clean, `WIP` has been removed, and
-    M4-B marked the PR ready for heavy CI.
+    2000 LOC. Exact-head ready-review CI is waiting on queued
+    `conformance-aggregate` and `fourslash-aggregate` jobs.
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
-    `dd48ce95538d367106e470ac025fa0bb8bd6f141`.
+    `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
+    `26373943878` attempt 2 is in progress/queued after the earlier
+    `conformance-aggregate` incomplete-coverage failure was rerun.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
   merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
   reason.
@@ -64,7 +67,8 @@ scripts/agents/list-owned-work.sh M4-B
   landed only after exact-head required checks are complete and green. For
   `#10078`, required `Queue Tested` is still pending because auto-merge is not
   armed; do not arm it under the lane rules while a required status is pending.
-  `#10058` is waiting on fresh CI after its rebase.
+  `#10058` and `#9945` have green exact-head ready-review CI but are still
+  blocked by required `Queue Tested`.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
   ownership unless explicitly handed off.
