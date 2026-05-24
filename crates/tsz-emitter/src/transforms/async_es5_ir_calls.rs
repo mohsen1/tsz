@@ -6,6 +6,324 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl<'a> AsyncES5Transformer<'a> {
+    pub(super) fn lower_array_literal_before_suspension(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                self.lower_suspended_array_literal(idx, cases, current_statements, current_label)
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(node)?;
+                if self.get_operator_text(binary.operator_token) != "=" {
+                    return None;
+                }
+                let left = self.arena.get(binary.left)?;
+                if left.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let right = self.lower_array_literal_before_suspension(
+                    binary.right,
+                    cases,
+                    current_statements,
+                    current_label,
+                )?;
+                Some(IRNode::assign(self.expression_to_ir(binary.left), right))
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let paren = self.arena.get_parenthesized(node)?;
+                self.lower_array_literal_before_suspension(
+                    paren.expression,
+                    cases,
+                    current_statements,
+                    current_label,
+                )
+                .map(|expr| IRNode::Parenthesized(Box::new(expr)))
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let assertion = self.arena.get_type_assertion(node)?;
+                self.lower_array_literal_before_suspension(
+                    assertion.expression,
+                    cases,
+                    current_statements,
+                    current_label,
+                )
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
+                let unary = self.arena.get_unary_expr_ex(node)?;
+                self.lower_array_literal_before_suspension(
+                    unary.expression,
+                    cases,
+                    current_statements,
+                    current_label,
+                )
+            }
+            _ => None,
+        }
+    }
+
+    fn lower_suspended_array_literal(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        let array = self.arena.get_literal_expr(node)?;
+        let elements = &array.elements.nodes;
+        let first_suspension_index = elements
+            .iter()
+            .position(|&element| self.contains_await_recursive(element))?;
+
+        if self.args_contain_spread(elements) {
+            return self.lower_suspended_spread_array_literal(
+                elements,
+                first_suspension_index,
+                cases,
+                current_statements,
+                current_label,
+            );
+        }
+
+        self.lower_suspended_plain_array_literal(
+            elements,
+            first_suspension_index,
+            cases,
+            current_statements,
+            current_label,
+        )
+    }
+
+    fn lower_suspended_plain_array_literal(
+        &mut self,
+        elements: &[NodeIndex],
+        first_suspension_index: usize,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let suspension_indices = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &element)| self.contains_await_recursive(element).then_some(index))
+            .collect::<Vec<_>>();
+        if suspension_indices.len() == 1 && first_suspension_index == 0 {
+            self.emit_nested_suspension(
+                elements[first_suspension_index],
+                cases,
+                current_statements,
+                current_label,
+            );
+            return Some(IRNode::ArrayLiteral(
+                elements
+                    .iter()
+                    .map(|&element| self.expression_to_ir(element))
+                    .collect(),
+            ));
+        }
+
+        let temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: temp.clone().into(),
+            initializer: None,
+        });
+        let mut temp_initialized = false;
+        if first_suspension_index > 0 {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                IRNode::ArrayLiteral(
+                    elements[..first_suspension_index]
+                        .iter()
+                        .map(|&element| self.expression_to_ir(element))
+                        .collect(),
+                ),
+            ))));
+            temp_initialized = true;
+        }
+
+        for (position, &suspension_index) in suspension_indices.iter().enumerate() {
+            self.emit_nested_suspension(
+                elements[suspension_index],
+                cases,
+                current_statements,
+                current_label,
+            );
+
+            let next_suspension_index = suspension_indices.get(position + 1).copied();
+            let segment_end = next_suspension_index.unwrap_or(elements.len());
+            let segment = IRNode::ArrayLiteral(
+                elements[suspension_index..segment_end]
+                    .iter()
+                    .map(|&element| self.expression_to_ir(element))
+                    .collect(),
+            );
+
+            if next_suspension_index.is_some() {
+                let value = if temp_initialized {
+                    IRNode::call(
+                        IRNode::prop(IRNode::id(temp.clone()), "concat"),
+                        vec![segment],
+                    )
+                } else {
+                    segment
+                };
+                current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                    IRNode::id(temp.clone()),
+                    value,
+                ))));
+                temp_initialized = true;
+            } else if temp_initialized {
+                return Some(IRNode::call(
+                    IRNode::prop(IRNode::id(temp), "concat"),
+                    vec![segment],
+                ));
+            } else {
+                return Some(segment);
+            }
+        }
+
+        None
+    }
+
+    fn lower_suspended_spread_array_literal(
+        &mut self,
+        elements: &[NodeIndex],
+        first_suspension_index: usize,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let suspension_indices = elements
+            .iter()
+            .enumerate()
+            .filter_map(|(index, &element)| self.contains_await_recursive(element).then_some(index))
+            .collect::<Vec<_>>();
+        if suspension_indices.len() != 1 {
+            return None;
+        }
+
+        self.helpers_needed.mark_spread_array();
+        let suspension_is_spread = self.is_spread_arg(elements[first_suspension_index]);
+        let needs_prefix_temp = first_suspension_index > 0 || suspension_is_spread;
+        let prefix_temp = needs_prefix_temp.then(|| self.generate_hoisted_temp());
+
+        if let Some(temp) = &prefix_temp {
+            current_statements.push(IRNode::VarDecl {
+                name: temp.clone().into(),
+                initializer: None,
+            });
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                IRNode::ArrayLiteral(vec![
+                    self.spread_array_base_array(&elements[..first_suspension_index]),
+                ]),
+            ))));
+        }
+
+        self.emit_nested_suspension(
+            elements[first_suspension_index],
+            cases,
+            current_statements,
+            current_label,
+        );
+
+        let current = if let Some(temp) = prefix_temp {
+            let resumed = if suspension_is_spread {
+                IRNode::Parenthesized(Box::new(IRNode::GeneratorSent))
+            } else {
+                IRNode::ArrayLiteral(vec![IRNode::GeneratorSent])
+            };
+            let pack = IRNode::BooleanLiteral(suspension_is_spread);
+            self.spread_array_apply(IRNode::CallExpr {
+                callee: Box::new(IRNode::prop(IRNode::id(temp), "concat")),
+                arguments: vec![IRNode::ArrayLiteral(vec![resumed, pack])],
+            })
+        } else {
+            IRNode::ArrayLiteral(vec![IRNode::GeneratorSent])
+        };
+
+        Some(self.append_spread_array_suffix(current, &elements[first_suspension_index + 1..]))
+    }
+
+    fn append_spread_array_suffix(&mut self, mut current: IRNode, suffix: &[NodeIndex]) -> IRNode {
+        let mut segment = Vec::new();
+        for &element in suffix {
+            if self.is_spread_arg(element) {
+                if !segment.is_empty() {
+                    current = self.spread_array_apply(IRNode::ArrayLiteral(vec![
+                        current,
+                        IRNode::ArrayLiteral(std::mem::take(&mut segment)),
+                        IRNode::BooleanLiteral(false),
+                    ]));
+                }
+                current = self.spread_array_apply(IRNode::ArrayLiteral(vec![
+                    current,
+                    self.spread_arg_expression_to_ir(element),
+                    IRNode::BooleanLiteral(true),
+                ]));
+            } else {
+                segment.push(self.expression_to_ir(element));
+            }
+        }
+        if !segment.is_empty() {
+            current = self.spread_array_apply(IRNode::ArrayLiteral(vec![
+                current,
+                IRNode::ArrayLiteral(segment),
+                IRNode::BooleanLiteral(false),
+            ]));
+        }
+        current
+    }
+
+    fn spread_array_base_array(&mut self, elements: &[NodeIndex]) -> IRNode {
+        if elements.is_empty() || !self.args_contain_spread(elements) {
+            return IRNode::ArrayLiteral(
+                elements
+                    .iter()
+                    .map(|&element| self.expression_to_ir(element))
+                    .collect(),
+            );
+        }
+
+        let mut current = IRNode::ArrayLiteral(Vec::new());
+        let mut segment = Vec::new();
+        for &element in elements {
+            if self.is_spread_arg(element) {
+                if !segment.is_empty() {
+                    current = self.spread_array_apply(IRNode::ArrayLiteral(vec![
+                        current,
+                        IRNode::ArrayLiteral(std::mem::take(&mut segment)),
+                        IRNode::BooleanLiteral(false),
+                    ]));
+                }
+                current = self.spread_array_call(
+                    current,
+                    self.spread_arg_expression_to_ir(element),
+                    true,
+                );
+            } else {
+                segment.push(self.expression_to_ir(element));
+            }
+        }
+        if !segment.is_empty() {
+            current = self.spread_array_apply(IRNode::ArrayLiteral(vec![
+                current,
+                IRNode::ArrayLiteral(segment),
+                IRNode::BooleanLiteral(false),
+            ]));
+        }
+        current
+    }
+
     pub(super) fn lower_call_callee_before_suspension(
         &mut self,
         idx: NodeIndex,
@@ -821,15 +1139,17 @@ impl<'a> AsyncES5Transformer<'a> {
                     current = self.spread_array_call(
                         current,
                         IRNode::ArrayLiteral(std::mem::take(&mut segment)),
+                        false,
                     );
                 }
-                current = self.spread_array_call(current, self.spread_arg_expression_to_ir(arg));
+                current =
+                    self.spread_array_call(current, self.spread_arg_expression_to_ir(arg), false);
             } else {
                 segment.push(self.expression_to_ir(arg));
             }
         }
         if !segment.is_empty() {
-            current = self.spread_array_call(current, IRNode::ArrayLiteral(segment));
+            current = self.spread_array_call(current, IRNode::ArrayLiteral(segment), false);
         }
         current
     }
@@ -947,24 +1267,26 @@ impl<'a> AsyncES5Transformer<'a> {
                     current = self.spread_array_call(
                         current,
                         IRNode::ArrayLiteral(std::mem::take(&mut segment)),
+                        false,
                     );
                 }
-                current = self.spread_array_call(current, self.spread_arg_expression_to_ir(arg));
+                current =
+                    self.spread_array_call(current, self.spread_arg_expression_to_ir(arg), false);
             } else {
                 segment.push(self.expression_to_ir(arg));
             }
         }
         if !segment.is_empty() {
-            current = self.spread_array_call(current, IRNode::ArrayLiteral(segment));
+            current = self.spread_array_call(current, IRNode::ArrayLiteral(segment), false);
         }
         current
     }
 
-    fn spread_array_call(&mut self, to: IRNode, from: IRNode) -> IRNode {
+    fn spread_array_call(&mut self, to: IRNode, from: IRNode, pack: bool) -> IRNode {
         self.helpers_needed.mark_spread_array();
         IRNode::CallExpr {
             callee: Box::new(IRNode::RuntimeHelper("__spreadArray".into())),
-            arguments: vec![to, from, IRNode::BooleanLiteral(false)],
+            arguments: vec![to, from, IRNode::BooleanLiteral(pack)],
         }
     }
 

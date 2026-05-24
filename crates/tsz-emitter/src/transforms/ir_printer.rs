@@ -856,6 +856,24 @@ impl<'a> IRPrinter<'a> {
                 self.indent_level -= 1;
                 self.write(")");
             }
+            IRNode::CommaExprMultilineFlat(exprs) => {
+                self.write("(");
+                for (i, expr) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        if self.last_emit_ended_with_line_comment {
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
+                        self.write(",");
+                        self.write_line();
+                        self.write_indent();
+                    }
+                    self.last_emit_ended_with_line_comment = false;
+                    self.emit_node(expr);
+                }
+                self.write(")");
+            }
             IRNode::ArrayLiteral(elements) => {
                 self.write("[");
                 self.emit_comma_separated(elements);
@@ -868,6 +886,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::ObjectLiteral {
                 properties,
                 source_range,
+                extra_indent,
             } => {
                 if properties.is_empty() {
                     self.write("{}");
@@ -885,7 +904,8 @@ impl<'a> IRPrinter<'a> {
                     // Multiline format
                     self.write("{");
                     self.write_line();
-                    self.indent_level += 1;
+                    let extra_indent = u32::from(*extra_indent);
+                    self.indent_level += 1 + extra_indent;
                     for (i, prop) in properties.iter().enumerate() {
                         self.write_indent();
                         self.emit_property(prop);
@@ -897,6 +917,7 @@ impl<'a> IRPrinter<'a> {
                     self.indent_level -= 1;
                     self.write_indent();
                     self.write("}");
+                    self.indent_level -= extra_indent;
                 } else {
                     // Single-line format
                     self.write("{ ");
@@ -1058,6 +1079,27 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
+                if let IRNode::CommaExprMultiline(exprs) = expr.as_ref() {
+                    self.indent_level += 1;
+                    for (i, expr) in exprs.iter().enumerate() {
+                        if i > 0 {
+                            if self.last_emit_ended_with_line_comment {
+                                self.write_line();
+                                self.write_indent_level(self.indent_level.saturating_sub(1));
+                            }
+                            self.last_emit_ended_with_line_comment = false;
+                            self.write(",");
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
+                        self.emit_node(expr);
+                    }
+                    self.indent_level -= 1;
+                    self.write(";");
+                    return;
+                }
+
                 // Wrap function/object expressions in parens when in statement
                 // position to prevent declaration/block ambiguity.
                 let needs_paren = matches!(
@@ -1084,6 +1126,7 @@ impl<'a> IRPrinter<'a> {
                     if let IRNode::ObjectLiteral {
                         properties,
                         source_range: None,
+                        extra_indent: 0,
                     } = &**e
                         && Self::is_done_value_object_literal(properties)
                     {

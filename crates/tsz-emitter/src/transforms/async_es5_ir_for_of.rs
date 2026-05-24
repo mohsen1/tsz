@@ -598,6 +598,7 @@ impl<'a> AsyncES5Transformer<'a> {
                     kind: crate::transforms::ir::IRPropertyKind::Init,
                 }],
                 source_range: None,
+                extra_indent: 0,
             },
         )));
         current_statements.push(Self::generator_break_statement(end_label));

@@ -1059,6 +1059,7 @@ pub(super) fn rewrite_exported_var_refs(
         }
         IRNode::CommaExpr(exprs)
         | IRNode::CommaExprMultiline(exprs)
+        | IRNode::CommaExprMultilineFlat(exprs)
         | IRNode::ArrayLiteral(exprs) => {
             for expr in exprs.iter_mut() {
                 rewrite_exported_var_refs(expr, ns_name, names);

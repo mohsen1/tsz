@@ -924,6 +924,13 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             ) {
                 lowered_call
+            } else if let Some(lowered_array) = self.lower_array_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_array
             } else if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
                 idx,
                 cases,
@@ -2639,6 +2646,15 @@ impl<'a> AsyncES5Transformer<'a> {
                                 current_label,
                             ) {
                             lowered_call
+                        } else if let Some(lowered_array) = self
+                            .lower_array_literal_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_array
                         } else if let Some(lowered_access) = self
                             .lower_element_access_object_before_suspension(
                                 ret.expression,
@@ -2884,6 +2900,15 @@ impl<'a> AsyncES5Transformer<'a> {
             ) {
                 return;
             }
+            if let Some(lowered_array) = self.lower_array_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_array)));
+                return;
+            }
             if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
                 idx,
                 cases,
@@ -3058,7 +3083,7 @@ impl<'a> AsyncES5Transformer<'a> {
         None
     }
 
-    fn emit_nested_suspension(
+    pub(super) fn emit_nested_suspension(
         &mut self,
         idx: NodeIndex,
         cases: &mut Vec<IRGeneratorCase>,
@@ -3309,24 +3334,12 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
-                if let Some((temp, initial_obj, lowered_init)) =
-                    self.lower_object_literal_es5_after_computed_suspension(decl.initializer)
-                {
-                    current_statements.push(IRNode::HoistedVarGroupBreak);
-                    current_statements.push(IRNode::VarDecl {
-                        name: temp.clone().into(),
-                        initializer: None,
-                    });
-                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-                        IRNode::id(temp),
-                        initial_obj,
-                    ))));
-                    self.emit_nested_suspension(
-                        decl.initializer,
-                        cases,
-                        current_statements,
-                        current_label,
-                    );
+                if let Some(lowered_init) = self.lower_object_literal_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
                     current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
                         IRNode::Identifier(name.into()),
                         lowered_init,
@@ -3336,6 +3349,22 @@ impl<'a> AsyncES5Transformer<'a> {
 
                 // Emit the yield for the nested await
                 if let Some(lowered_init) = self.lower_call_callee_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(
+                        IRNode::BinaryExpr {
+                            left: Box::new(IRNode::Identifier(name.into())),
+                            operator: "=".to_string().into(),
+                            right: Box::new(lowered_init),
+                        },
+                    )));
+                    return;
+                }
+
+                if let Some(lowered_init) = self.lower_array_literal_before_suspension(
                     decl.initializer,
                     cases,
                     current_statements,
@@ -4402,7 +4431,8 @@ impl<'a> AsyncES5Transformer<'a> {
             | IRNode::LogicalAnd { .. }
             | IRNode::ConditionalExpr { .. }
             | IRNode::CommaExpr(_)
-            | IRNode::CommaExprMultiline(_) => IRNode::Parenthesized(Box::new(condition)),
+            | IRNode::CommaExprMultiline(_)
+            | IRNode::CommaExprMultilineFlat(_) => IRNode::Parenthesized(Box::new(condition)),
             _ => condition,
         };
         IRNode::PrefixUnaryExpr {

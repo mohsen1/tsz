@@ -218,6 +218,56 @@ fn new_expression_with_suspended_element_constructor_index_captures_object() {
     );
 }
 
+#[test]
+fn array_literal_prefix_before_await_is_captured_before_yield() {
+    let output = transform_and_print("async function f() { x = [head, await tail, after]; }");
+
+    assert!(
+        output.contains("var _a;"),
+        "A prefix temp should be hoisted before the generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [head];\n                    return [4 /*yield*/, tail];"),
+        "Array elements before the suspending element must be evaluated before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent(), after]);"),
+        "After resume, the saved prefix should be concatenated with the sent value and suffix.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_literal_multiple_awaits_accumulates_prefix_between_yields() {
+    let output =
+        transform_and_print("async function f() { x = [await first, middle, await last]; }");
+
+    assert!(
+        output
+            .contains("_a = [_b.sent(), middle];\n                    return [4 /*yield*/, last];"),
+        "The resumed first await and intervening elements should be captured before the second yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent()]);"),
+        "The final resume should append to the accumulated prefix temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn spread_array_literal_with_suspending_spread_uses_spread_array_apply() {
+    let output = transform_and_print("async function f() { x = [...(await values), z]; }");
+
+    assert!(
+        output.contains("_a = [[]];\n                    return [4 /*yield*/, values];"),
+        "A suspending first spread still needs a captured spread-argument prefix.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "x = __spreadArray.apply(void 0, [__spreadArray.apply(void 0, _a.concat([(_b.sent()), true])), [z], false]);"
+        ),
+        "Spread array recomposition after resume should use the ES5 __spreadArray helper shape.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
@@ -551,6 +601,61 @@ fn if_break_target_after(output: &str, needle: &str) -> String {
 
 fn count_substring(haystack: &str, needle: &str) -> usize {
     haystack.matches(needle).count()
+}
+
+#[test]
+fn generator_object_literal_prefix_before_yield_is_captured_before_resume() {
+    let output = transform_generator_and_print(
+        "function* f() { var x = { before: 1, value: yield 2, after: 3 }; }",
+    );
+
+    assert!(
+        output.contains("var x, _a;"),
+        "The object temp should be hoisted with the local declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { before: 1 };") && output.contains("return [4 /*yield*/, 2];"),
+        "Properties before the suspending value must be assigned before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_a.value = _b.sent(),\n                    _a.after = 3,\n                    _a);"),
+        "After resume, the saved object should be mutated and returned from the comma expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_object_literal_computed_key_before_yield_is_captured() {
+    let output =
+        transform_generator_and_print("function* f() { var x = { before: 1, [key()]: yield 2 }; }");
+
+    assert!(
+        output.contains("var x, _a;\n    var _b;"),
+        "A computed key temp and object temp should use tsc's split hoist groups.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b = { before: 1 };\n                _a = key();\n                return [4 /*yield*/, 2];"),
+        "The computed key must be evaluated before yielding the property value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_b[_a] = _c.sent(),\n                    _b);"),
+        "The resumed value should assign through the captured computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_object_literal_computed_suffix_uses_result_temp_after_resume() {
+    let output = transform_generator_and_print(
+        "function* f() { var x = { before: 1, value: yield 2, [key()]: 3 }; }",
+    );
+
+    assert!(
+        output.contains("var x, _a;\n    var _b;"),
+        "A suffix computed property should allocate a result temp after the saved object temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_b = (_a.value = _c.sent(),\n                    _a),\n                    _b[key()] = 3,\n                    _b);"),
+        "The computed suffix should operate on the resumed object temp, matching tsc's comma expression shape.\nOutput:\n{output}"
+    );
 }
 
 #[test]

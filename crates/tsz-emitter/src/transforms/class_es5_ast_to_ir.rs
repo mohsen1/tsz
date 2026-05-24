@@ -1807,6 +1807,7 @@ impl<'a> AstToIr<'a> {
             IRNode::ObjectLiteral {
                 properties: props,
                 source_range: Some((node.pos, node.end)),
+                extra_indent: 0,
             }
         } else {
             IRNode::ASTRef(idx)
@@ -2029,6 +2030,7 @@ impl<'a> AstToIr<'a> {
             IRNode::ObjectLiteral {
                 properties: Vec::new(),
                 source_range: None,
+                extra_indent: 0,
             }
         };
         comma_parts.push(IRNode::BinaryExpr {
@@ -2122,6 +2124,7 @@ impl<'a> AstToIr<'a> {
                         IRNode::ObjectLiteral {
                             properties: descriptor_props,
                             source_range: None,
+                            extra_indent: 0,
                         },
                     ],
                 })
