@@ -8,7 +8,7 @@ use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_common::common::Visibility;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::AccessExprData;
+use tsz_parser::parser::node::{AccessExprData, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -299,9 +299,7 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
                     && var_decl.type_annotation.is_some()
-                    && self
-                        .node_text(var_decl.type_annotation)
-                        .is_some_and(|text| text.contains("['"))
+                    && self.type_node_contains_string_indexed_access(var_decl.type_annotation)
                 {
                     return true;
                 }
@@ -315,6 +313,47 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         false
+    }
+
+    fn type_node_contains_string_indexed_access(&self, type_node: NodeIndex) -> bool {
+        let mut stack = vec![type_node];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+                && self.is_string_literal_type_node(indexed.index_type)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+        false
+    }
+
+    fn is_string_literal_type_node(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return true;
+        }
+        if node.kind != syntax_kind_ext::LITERAL_TYPE {
+            return false;
+        }
+        let Some(literal_type) = self.ctx.arena.get_literal_type(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(literal_type.literal)
+            .is_some_and(|literal| {
+                literal.kind == SyntaxKind::StringLiteral as u16
+                    || literal.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            })
     }
 
     fn type_reference_class_declares_public_instance_member(
