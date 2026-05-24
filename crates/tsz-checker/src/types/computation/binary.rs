@@ -53,6 +53,33 @@ impl<'a> CheckerState<'a> {
             .unwrap_or(widened)
     }
 
+    /// True when `idx` (looking through parentheses) is a `&&`/`||`/`??` logical
+    /// binary expression. Used to scope `preserve_logical_operand_literals` to
+    /// `const` initializers that are *themselves* a logical expression, so the
+    /// flag never enters nested array/object/call initializer contexts (which
+    /// keep their existing widening).
+    pub(crate) fn is_logical_binary_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+            return self
+                .ctx
+                .arena
+                .get_parenthesized(node)
+                .is_some_and(|paren| self.is_logical_binary_expression(paren.expression));
+        }
+        if node.kind == syntax_kind_ext::BINARY_EXPRESSION
+            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
+        {
+            let op = binary.operator_token;
+            return op == SyntaxKind::AmpersandAmpersandToken as u16
+                || op == SyntaxKind::BarBarToken as u16
+                || op == SyntaxKind::QuestionQuestionToken as u16;
+        }
+        false
+    }
+
     pub(crate) fn resolve_literal_index_access_property_type(
         &mut self,
         type_id: TypeId,

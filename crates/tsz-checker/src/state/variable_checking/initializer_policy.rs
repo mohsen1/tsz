@@ -752,12 +752,16 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .preserve_destructuring_initializer_overload_diagnostics =
                 prev_preserve_overloads || preserve_initializer_overload_diagnostics;
-            // For `const` initializers, keep logical-operator operands' literal
-            // types in the result (tsc only widens them at mutable binding
-            // sites). `let`/`var` keep the widened operand types.
+            // For `const` initializers that are *themselves* a logical
+            // (`&&`/`||`/`??`) expression, keep the operands' literal types in
+            // the result (tsc only widens them at mutable binding sites).
+            // Scope it to top-level logical initializers so the flag never
+            // enters nested array/object/call contexts, which keep their
+            // existing widening. `let`/`var` keep the widened operand types.
             let prev_preserve_logical = self.ctx.preserve_logical_operand_literals;
-            self.ctx.preserve_logical_operand_literals =
-                self.is_const_variable_declaration(facts.decl_idx);
+            self.ctx.preserve_logical_operand_literals = self
+                .is_const_variable_declaration(facts.decl_idx)
+                && self.is_logical_binary_expression(facts.initializer);
             let mut init_type = self.get_type_of_node_with_request(facts.initializer, &request);
             self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
             self.ctx

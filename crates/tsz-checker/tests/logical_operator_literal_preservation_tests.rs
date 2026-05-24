@@ -288,3 +288,62 @@ const probe: 0 | "yes" = x;
         "expected TS2322: `let` widens `\"yes\"` to `string` (result `0 | string`), got: {codes:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Scope controls (review follow-up): the const literal-preservation flag is
+// scoped to `const` initializers that are *themselves* a logical expression,
+// so it does not enter nested array/object/call initializer contexts. Those
+// keep their existing widening. (The outcome is widened either way because
+// array/object literal widening re-widens coarsely; these pin that behavior.)
+// ---------------------------------------------------------------------------
+
+/// `const arr = [flag && "yes"]` keeps array-element widening — the element is
+/// not preserved as the literal `0 | "yes"`, so assigning to `(0 | "yes")[]`
+/// still reports TS2322.
+#[test]
+fn const_array_element_logical_keeps_widening() {
+    let source = r#"
+declare const flag: 0 | 1;
+const arr = [flag && "yes"];
+const probe: (0 | "yes")[] = arr;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2322),
+        "nested array element must keep widening (not preserve `0 | \"yes\"`), got: {codes:?}"
+    );
+}
+
+/// `const o = { value: flag && "yes" }` keeps object-property widening — the
+/// property is not preserved as `0 | "yes"`, so assigning to
+/// `{ value: 0 | "yes" }` still reports TS2322.
+#[test]
+fn const_object_property_logical_keeps_widening() {
+    let source = r#"
+declare const flag: 0 | 1;
+const o = { value: flag && "yes" };
+const probe: { value: 0 | "yes" } = o;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        codes.contains(&2322),
+        "nested object property must keep widening (not preserve), got: {codes:?}"
+    );
+}
+
+/// Positive contrast: the *top-level* `const x = flag && "yes"` initializer
+/// (a logical expression) does preserve the literal, so `0 | "yes"` assigns
+/// cleanly. Guards that the scope restriction did not disable the fix itself.
+#[test]
+fn const_top_level_logical_still_preserves_after_scoping() {
+    let source = r#"
+declare const flag: 0 | 1;
+const x = flag && "yes";
+const probe: 0 | "yes" = x;
+"#;
+    let codes = check_strict(source);
+    assert!(
+        !codes.contains(&2322),
+        "top-level logical const must still preserve `0 | \"yes\"`, got: {codes:?}"
+    );
+}
