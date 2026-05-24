@@ -569,7 +569,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 {
                     return parent_enum_type;
                 }
+                // Returning `evaluated` for the bare `typeof X[K]` shape
+                // (but not for `(typeof X)[K]`) gives an alias body a
+                // concrete display in diagnostics. The shortcut is only
+                // sound when the typeof receiver materialized into a
+                // concrete type — if `get_type_from_type_query` returned a
+                // deferred `TypeQuery` because the value's type was not
+                // yet in `TypeEnvironment` at alias-body check time, the
+                // eager evaluation collapses `IndexAccess(typeof x, K)` to
+                // `undefined` and the alias would inherit that bogus
+                // resolution. Filtering on `evaluated != UNDEFINED` is the
+                // structural discriminator: a legitimate eager-eval result
+                // is the actual property type, never the degenerate
+                // `undefined` that signals a failed-to-materialize
+                // receiver. When the property is genuinely `undefined`,
+                // the deferred `indexed_type` re-evaluates to the same
+                // `undefined` at use sites where the environment is
+                // complete, so no precision is lost (see #9787).
                 if evaluated != TypeId::ERROR
+                    && evaluated != TypeId::UNDEFINED
                     && evaluated != indexed_type
                     && object_is_type_query_node
                 {
