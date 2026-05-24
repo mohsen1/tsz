@@ -40,7 +40,7 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
-    commonjs_export_name: Option<&'a str>,
+    commonjs_export_names: &'a [Cow<'static, str>],
     system_export_names: &'a [Cow<'static, str>],
     should_declare_var: bool,
     default_export_merge: bool,
@@ -2569,7 +2569,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
-                commonjs_export_name,
+                commonjs_export_names,
                 system_export_names,
                 should_declare_var,
                 parent_name,
@@ -2586,7 +2586,7 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
-                        commonjs_export_name: commonjs_export_name.as_deref(),
+                        commonjs_export_names,
                         system_export_names,
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
@@ -2672,6 +2672,23 @@ impl<'a> IRPrinter<'a> {
         self.write("\", ");
         self.emit_system_export_folded_namespace_assignment(inner_names, current_name);
         self.write(")");
+    }
+
+    fn emit_commonjs_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[Cow<'static, str>],
+        current_name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(current_name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports.");
+        self.write(export_name);
+        self.write(" = ");
+        self.emit_commonjs_export_folded_namespace_assignment(inner_names, current_name);
     }
 
     fn emit_namespace_iife(
@@ -2796,7 +2813,7 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
-                    commonjs_export_name: context.commonjs_export_name,
+                    commonjs_export_names: context.commonjs_export_names,
                     system_export_names: &[],
                     should_declare_var: true,
                     default_export_merge: false,
@@ -2827,13 +2844,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(current_name);
                 self.write(" = {})");
             } else if context.is_exported && context.attach_to_exports {
-                let export_name = context.commonjs_export_name.unwrap_or(current_name);
                 self.write(current_name);
-                self.write(" || (exports.");
-                self.write(export_name);
-                self.write(" = ");
-                self.write(current_name);
-                self.write(" = {})");
+                self.write(" || (");
+                self.emit_commonjs_export_folded_namespace_assignment(
+                    context.commonjs_export_names,
+                    current_name,
+                );
+                self.write(")");
             } else if !context.system_export_names.is_empty() {
                 self.write(current_name);
                 self.write(" || (");

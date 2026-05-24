@@ -2834,11 +2834,54 @@ export { m as secondAlias };
     let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
 
     assert!(
-        output.contains("})(m || (exports.firstAlias = m = {}));"),
-        "The first namespace alias should be folded into the IIFE tail.\nOutput:\n{output}"
+        output.contains("})(m || (exports.secondAlias = exports.firstAlias = m = {}));"),
+        "Namespace aliases should fold into the IIFE tail in source order.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("exports.secondAlias = m;"),
-        "Aliases not folded into the IIFE tail still need a later live export assignment.\nOutput:\n{output}"
+        !output.contains("exports.secondAlias = m;"),
+        "Aliases folded into the IIFE tail should not emit later duplicate assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_exported_namespace_and_alias_fold_through_direct_export() {
+    let source = r#"export namespace M {
+    export var x;
+}
+
+export { M as M1 };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("})(M || (exports.M1 = exports.M = M = {}));"),
+        "A direct namespace export plus alias should fold both export bindings into the IIFE tail.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_exported_import_alias_reexport_reads_live_export_binding() {
+    let source = r#"export namespace M {
+    export var x;
+}
+export import a = M.x;
+
+export { a as a1 };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("exports.a = M.x;"),
+        "The direct import alias export should initialize the live export binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.a1 = exports.a;"),
+        "A renamed export of an already-exported import alias should read through exports.a.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.a1 = a;"),
+        "The renamed export should not read the erased local alias.\nOutput:\n{output}"
     );
 }

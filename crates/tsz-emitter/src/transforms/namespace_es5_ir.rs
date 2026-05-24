@@ -139,7 +139,7 @@ pub struct NamespaceES5Transformer<'a> {
     generated_disposable_env_names: RefCell<Vec<String>>,
     active_namespace_using_env: RefCell<Option<(String, bool)>>,
     default_exported_func_names: std::collections::HashSet<String>,
-    commonjs_export_name: Option<String>,
+    commonjs_export_names: Vec<String>,
     const_enum_values: FxHashMap<String, Vec<ScopedConstEnum>>,
     const_enum_import_aliases: FxHashMap<String, String>,
     remove_comments: bool,
@@ -162,7 +162,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             generated_disposable_env_names: RefCell::new(Vec::new()),
             active_namespace_using_env: RefCell::new(None),
             default_exported_func_names: std::collections::HashSet::new(),
-            commonjs_export_name: None,
+            commonjs_export_names: Vec::new(),
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -185,7 +185,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             generated_disposable_env_names: RefCell::new(Vec::new()),
             active_namespace_using_env: RefCell::new(None),
             default_exported_func_names: std::collections::HashSet::new(),
-            commonjs_export_name: None,
+            commonjs_export_names: Vec::new(),
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
             remove_comments: false,
@@ -238,7 +238,11 @@ impl<'a> NamespaceES5Transformer<'a> {
     }
 
     pub fn set_commonjs_export_name(&mut self, name: Option<String>) {
-        self.commonjs_export_name = name;
+        self.commonjs_export_names = name.into_iter().collect();
+    }
+
+    pub fn set_commonjs_export_names(&mut self, names: Vec<String>) {
+        self.commonjs_export_names = names;
     }
 
     pub(crate) fn set_const_enum_facts(
@@ -669,7 +673,12 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs && !merges_with_default_func,
-            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            commonjs_export_names: self
+                .commonjs_export_names
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge,
@@ -2531,7 +2540,12 @@ impl<'a> NamespaceES5Transformer<'a> {
             body,
             is_exported,
             attach_to_exports: is_exported && self.is_commonjs,
-            commonjs_export_name: self.commonjs_export_name.clone().map(Into::into),
+            commonjs_export_names: self
+                .commonjs_export_names
+                .iter()
+                .cloned()
+                .map(Into::into)
+                .collect(),
             system_export_names: Vec::new(),
             should_declare_var,
             default_export_merge: false,
