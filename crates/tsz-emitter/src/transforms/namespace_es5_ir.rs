@@ -1550,9 +1550,16 @@ impl<'a> NamespaceES5Transformer<'a> {
             {
                 true
             }
-            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => {
-                self.import_equals_uses_external_module_ref(member_idx)
-            }
+            k if k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION => self
+                .arena
+                .get_import_decl_at(member_idx)
+                .is_none_or(|import| {
+                    self.import_equals_uses_external_module_ref(member_idx)
+                        || !self.import_equals_target_has_runtime_value(
+                            member_idx,
+                            import.module_specifier,
+                        )
+                }),
             _ => false,
         }
     }

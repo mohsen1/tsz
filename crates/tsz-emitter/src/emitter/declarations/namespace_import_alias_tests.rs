@@ -1,5 +1,5 @@
 use crate::output::printer::{PrintOptions, Printer};
-use tsz_common::common::ScriptTarget;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::ParserState;
 
 /// When the same `import X = ...` alias is re-declared (e.g., a duplicate
@@ -114,6 +114,38 @@ fn namespace_relative_const_enum_aliases_inline_and_elide_es5() {
     assert!(
         output.contains("var a = 1 /* Local.B */;")
             && output.contains("var b = 0 /* ReExported.A */;"),
+        "ES5 const enum aliases should still inline at usage sites.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn reopened_dotted_namespace_const_enum_alias_comments_are_erased_es5() {
+    let source = "namespace Root.View.Child {\n    export const enum E { A, B }\n    export function keep() {}\n}\nnamespace Root.View {\n    /** erased alias */\n    import Local = Child.E;\n    export class Use {\n        m() {\n            const a = Local.B;\n        }\n    }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        module: ModuleKind::AMD,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert_eq!(
+        output.matches("var Root;").count(),
+        1,
+        "Reopened dotted namespaces should share the root `var` declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("erased alias"),
+        "Comments attached to erased const-enum import aliases should be erased with the alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = 1 /* Local.B */;"),
         "ES5 const enum aliases should still inline at usage sites.\nOutput:\n{output}"
     );
 }

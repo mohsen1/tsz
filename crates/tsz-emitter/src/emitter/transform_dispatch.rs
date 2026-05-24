@@ -322,17 +322,18 @@ impl<'a> Printer<'a> {
 
             EmitDirective::ES5Namespace {
                 namespace_node,
-                should_declare_var,
+                mut should_declare_var,
             } => {
                 let mut ns_name_for_exports = String::new();
                 if let Some(ns_node) = self.arena.get(namespace_node)
                     && let Some(ns_data) = self.arena.get_module(ns_node)
+                    && let Some(ns_name) = self.get_module_root_name(ns_data.name)
                 {
-                    let ns_name = self.get_identifier_text_idx(ns_data.name);
-                    if !ns_name.is_empty() {
-                        ns_name_for_exports = ns_name.clone();
-                        self.declared_namespace_names.insert(ns_name);
+                    if self.declared_namespace_names.contains(&ns_name) {
+                        should_declare_var = false;
                     }
+                    ns_name_for_exports = ns_name.clone();
+                    self.declared_namespace_names.insert(ns_name);
                 }
                 let use_cjs = self.pending_cjs_namespace_export_fold;
                 if use_cjs {
