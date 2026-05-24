@@ -265,6 +265,9 @@ mod ts2320_tests;
 #[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
 mod ts2322_destructuring_obj_literal_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_indexed_access_type_param_tests.rs"]
+mod ts2322_indexed_access_type_param_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
