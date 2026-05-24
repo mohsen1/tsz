@@ -2819,6 +2819,143 @@ class DerivedFromAbstract extends MixedBase {
         );
     }
 
+    /// Rule: a get/set accessor pair (two declarations, one member name) is a
+    /// single inherited abstract member. The missing-member set must dedup by
+    /// name so the count stays 1 (TS2515 singular), not 2 (TS2654 plural with a
+    /// duplicated name).
+    #[test]
+    fn abstract_get_set_pair_counted_as_one_member_ts2515() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class A { abstract get x(): number; abstract set x(v: number); }
+class B extends A {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2515),
+            "Abstract get/set pair missing in subclass must emit singular TS2515, got: {codes:?}"
+        );
+        assert!(
+            !codes.contains(&2654),
+            "Abstract get/set pair must not be counted as two members (TS2654), got: {codes:?}"
+        );
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2515)
+            .expect("expected a TS2515 diagnostic")
+            .message_text;
+        assert!(
+            !msg.contains("'x', 'x'") && !msg.contains("x, x"),
+            "TS2515 message must name member 'x' once, got: {msg}"
+        );
+    }
+
+    /// Same rule, different identifiers — proves the dedup is structural, not
+    /// keyed to the spelling `x`.
+    #[test]
+    fn abstract_get_set_pair_renamed_counted_as_one_member_ts2515() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class Shape { abstract get area(): number; abstract set area(v: number); }
+class Square extends Shape {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2515) && !codes.contains(&2654),
+            "Renamed abstract get/set pair must emit singular TS2515, got: {codes:?}"
+        );
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2515)
+            .expect("expected a TS2515 diagnostic")
+            .message_text;
+        assert!(
+            !msg.contains("'area', 'area'") && !msg.contains("area, area"),
+            "TS2515 message must name member 'area' once, got: {msg}"
+        );
+    }
+
+    /// Generalization: abstract method overload signatures share one member
+    /// name across two declarations and likewise collapse to a single missing
+    /// member.
+    #[test]
+    fn abstract_method_overload_signatures_counted_as_one_member_ts2515() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class A {
+    abstract f(): void;
+    abstract f(x: number): void;
+}
+class B extends A {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2515) && !codes.contains(&2654),
+            "Abstract method overload signatures must collapse to one missing member (TS2515), got: {codes:?}"
+        );
+    }
+
+    /// tsc accepts implementing only the getter of an abstract get/set pair.
+    #[test]
+    fn abstract_get_set_pair_satisfied_by_getter_only() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class A { abstract get x(): number; abstract set x(v: number); }
+class B extends A { get x(): number { return 0; } }
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            !codes.contains(&2515) && !codes.contains(&2654),
+            "Implementing the getter of an abstract get/set pair must satisfy it, got: {codes:?}"
+        );
+    }
+
+    /// Negative control: two genuinely distinct abstract members stay TS2654
+    /// listing both names.
+    #[test]
+    fn two_distinct_abstract_members_stay_ts2654() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class A { abstract a(): void; abstract b(): void; }
+class B extends A {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2654) && !codes.contains(&2515),
+            "Two distinct missing abstract members must emit TS2654, got: {codes:?}"
+        );
+        let msg = &diags
+            .iter()
+            .find(|d| d.code == 2654)
+            .expect("expected a TS2654 diagnostic")
+            .message_text;
+        assert!(
+            msg.contains("'a'") && msg.contains("'b'"),
+            "TS2654 must list both 'a' and 'b', got: {msg}"
+        );
+    }
+
+    /// Negative control: a single missing abstract method stays TS2515.
+    #[test]
+    fn single_abstract_method_stays_ts2515() {
+        let diags = check_source_diagnostics(
+            r#"
+abstract class A { abstract a(): void; }
+class B extends A {}
+"#,
+        );
+        let codes: Vec<_> = diags.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&2515) && !codes.contains(&2654),
+            "A single missing abstract method must emit TS2515, got: {codes:?}"
+        );
+    }
+
     #[test]
     fn double_mixin_conditional_type_base_class_has_no_extra_ts2345() {
         let diags = check_source_diagnostics(

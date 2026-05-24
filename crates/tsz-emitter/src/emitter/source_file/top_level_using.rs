@@ -4,8 +4,9 @@ use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::NodeList;
-use tsz_parser::parser::node::{Node, NodeAccess};
+use tsz_parser::parser::node::{ClassData, Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
@@ -524,6 +525,7 @@ impl<'a> Printer<'a> {
         if resource_temp_count > 0 {
             self.preallocate_hoisted_temp_names(resource_temp_count);
         }
+        self.reserve_top_level_using_deferred_static_class_result_temps(statements, start_idx);
         let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
 
         if is_es_module_output {
@@ -656,6 +658,7 @@ impl<'a> Printer<'a> {
         self.decrease_indent();
         self.write("}");
         self.write_line();
+        self.reserved_top_level_using_class_result_temps.clear();
 
         if !is_es_module_output
             && statements.nodes[start_idx..].iter().any(|&stmt_idx| {
@@ -1198,10 +1201,11 @@ impl<'a> Printer<'a> {
         let Some(name) = name else {
             return;
         };
-        let skip_legacy_default_temp = uses_lowered_default_tracker
+        let skip_lowered_default_temp = uses_lowered_default_tracker
+            && !self.ctx.target_es5
             && !self.ctx.options.legacy_decorators
             && name == "default_1";
-        if !skip_legacy_default_temp && seen_local.insert(name.clone()) {
+        if !skip_lowered_default_temp && seen_local.insert(name.clone()) {
             local_names.push(name.clone());
         }
         if uses_lowered_default_tracker {
@@ -1860,6 +1864,105 @@ impl<'a> Printer<'a> {
         emitted
     }
 
+    fn top_level_using_es5_class_has_deferred_static_blocks(&self, class: &ClassData) -> bool {
+        let mut has_static_block = false;
+        let mut has_non_block_static_member = false;
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                has_static_block = true;
+                continue;
+            }
+
+            if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                if let Some(prop_data) = self.arena.get_property_decl(member_node) {
+                    has_non_block_static_member |= self
+                        .arena
+                        .has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::DeclareKeyword)
+                        && !is_private_identifier(self.arena, prop_data.name)
+                        && !self
+                            .arena
+                            .has_modifier(&prop_data.modifiers, SyntaxKind::AccessorKeyword)
+                        && prop_data.initializer.is_some();
+                }
+            } else if (member_node.kind == syntax_kind_ext::GET_ACCESSOR
+                || member_node.kind == syntax_kind_ext::SET_ACCESSOR)
+                && let Some(acc_data) = self.arena.get_accessor(member_node)
+            {
+                has_non_block_static_member |= self
+                    .arena
+                    .has_modifier(&acc_data.modifiers, SyntaxKind::StaticKeyword)
+                    && !(self
+                        .arena
+                        .has_modifier(&acc_data.modifiers, SyntaxKind::AbstractKeyword)
+                        && acc_data.body.is_none())
+                    && !is_private_identifier(self.arena, acc_data.name);
+            }
+        }
+
+        has_static_block && !has_non_block_static_member
+    }
+
+    fn reserve_top_level_using_deferred_static_class_result_temps(
+        &mut self,
+        statements: &NodeList,
+        start_idx: usize,
+    ) -> Vec<String> {
+        self.reserved_top_level_using_class_result_temps.clear();
+        if !self.ctx.target_es5 {
+            return Vec::new();
+        }
+
+        let mut temps = Vec::new();
+        for &stmt_idx in &statements.nodes[start_idx..] {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let class_idx = if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                Some(stmt_idx)
+            } else if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena.get_export_decl(stmt_node).and_then(|export| {
+                    self.arena.get(export.export_clause).and_then(|clause| {
+                        (clause.kind == syntax_kind_ext::CLASS_DECLARATION)
+                            .then_some(export.export_clause)
+                    })
+                })
+            } else {
+                None
+            };
+            let Some(class_idx) = class_idx else {
+                continue;
+            };
+            let Some(class_node) = self.arena.get(class_idx) else {
+                continue;
+            };
+            let Some(class) = self.arena.get_class(class_node) else {
+                continue;
+            };
+            if !self.top_level_using_es5_class_has_deferred_static_blocks(class) {
+                continue;
+            }
+
+            let temp = self.make_unique_name_fresh();
+            self.reserved_top_level_using_class_result_temps
+                .insert(class_idx, temp.clone());
+            self.hoisted_deferred_static_class_result_temps
+                .push(temp.clone());
+            temps.push(temp);
+        }
+
+        temps
+    }
+
     pub(in crate::emitter) fn emit_top_level_using_class_assignment(
         &mut self,
         node: &Node,
@@ -1974,6 +2077,30 @@ impl<'a> Printer<'a> {
             && !self.ctx.options.legacy_decorators
             && !self.ctx.options.target.supports_es2025()
         {
+            if self.in_system_top_level_using_prelude
+                && let Some(export_name) = export_name.as_ref()
+                && let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name)
+            {
+                if export_name == "default" && class.name.is_none() {
+                    self.write_export_binding_start(export_name);
+                    self.write(&expr);
+                    self.write_export_binding_end();
+                } else {
+                    self.write(&binding_name);
+                    self.write(" = ");
+                    self.write(&expr);
+                    self.write(";");
+                    self.write_line();
+                    self.write_export_binding_start(export_name);
+                    self.write(&binding_name);
+                    self.write_export_binding_end();
+                }
+                self.mark_top_level_using_inline_cjs_export(Some(export_name), is_es_module_output);
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                return true;
+            }
             if let Some(expr) = self.capture_tc39_decorated_class_expression(idx, &display_name) {
                 if let Some(export_name) = export_name.as_ref() {
                     if !is_es_module_output {
@@ -2138,6 +2265,55 @@ impl<'a> Printer<'a> {
                 return true;
             }
         }
+        if export_name.is_none()
+            && self.ctx.target_es5
+            && !has_decorators
+            && self.top_level_using_es5_class_has_deferred_static_blocks(class)
+        {
+            let result_temp = self
+                .reserved_top_level_using_class_result_temps
+                .get(&idx)
+                .cloned()
+                .unwrap_or_else(|| self.make_unique_name_file_hoisted());
+            let mut es5_emitter = ClassES5Emitter::new(self.arena);
+            es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+            es5_emitter.set_async_generator_inner_name_counts(
+                self.async_generator_inner_name_counts.clone(),
+            );
+            self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+            es5_emitter.set_indent_level(self.writer.indent_level());
+            es5_emitter.set_transforms(self.transforms.clone());
+            es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+            es5_emitter.set_printer_options(self.ctx.options.clone());
+            es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+            if let Some(text) = self.source_text_for_map() {
+                es5_emitter.set_source_text(text);
+            }
+            es5_emitter
+                .set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+
+            if let Some(mut output) = es5_emitter.emit_class_assignment_with_deferred_static_result(
+                idx,
+                &binding_name,
+                &result_temp,
+            ) {
+                self.sync_es5_class_emitter_state(&mut es5_emitter);
+                let leading_indent = "    ".repeat(self.writer.indent_level() as usize);
+                if let Some(stripped) = output.strip_prefix(&leading_indent) {
+                    output = stripped.to_string();
+                }
+                self.write(&output);
+                if !output.trim_end().ends_with(';') {
+                    self.write(";");
+                }
+                if let Some(prev) = prev_anon_default_name {
+                    self.anonymous_default_export_name = prev;
+                }
+                self.mark_top_level_using_inline_cjs_export(None, is_es_module_output);
+                return true;
+            }
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+        }
         let before_len = self.writer.len();
         self.emit(idx);
         let after_len = self.writer.len();
@@ -2172,6 +2348,7 @@ impl<'a> Printer<'a> {
         if let Some(export_name) = export_name.as_ref() {
             if rewrite_as_direct_export
                 && export_name != "default"
+                && !self.in_system_top_level_using_prelude
                 && !(self.in_system_execute_body
                     && self.ctx.options.target.supports_es2025()
                     && self.ctx.options.legacy_decorators
@@ -2204,22 +2381,46 @@ impl<'a> Printer<'a> {
                         rewritten = stripped.to_string();
                     }
                 }
-                if self.in_system_execute_body && export_name == "default" && class.name.is_none() {
+                if self.in_system_top_level_using_prelude {
                     self.write(&rewritten);
                     if !rewritten.trim_end().ends_with(';') {
                         self.write(";");
                     }
                     self.write_line();
                     self.write_export_binding_start(export_name);
-                    // Inside a top-level using-block, the export must hop
-                    // through the closure's `_default` tracker so re-exports
-                    // observe the post-decorator value
-                    // (`exports_1("default", _default = default_1);`).
-                    if self.in_top_level_using_scope {
+                    self.write(&binding_name);
+                    self.write_export_binding_end();
+                } else if self.in_system_execute_body
+                    && self.in_top_level_using_scope
+                    && self.ctx.target_es5
+                    && export_name != "default"
+                    && !has_explicit_export_modifier
+                {
+                    let trimmed = rewritten.strip_suffix(';').unwrap_or(&rewritten);
+                    self.write_export_binding_start(export_name);
+                    self.write(trimmed);
+                    self.write_export_binding_end();
+                } else if self.in_top_level_using_scope
+                    && export_name == "default"
+                    && !self.ctx.options.target.supports_es2025()
+                {
+                    self.write(&rewritten);
+                    if !rewritten.trim_end().ends_with(';') {
+                        self.write(";");
+                    }
+                    self.write_line();
+                    if !is_es_module_output {
+                        self.write_export_binding_start(export_name);
+                    }
+                    if class.name.is_some() || !self.ctx.options.legacy_decorators {
                         self.write("_default = ");
                     }
                     self.write(&binding_name);
-                    self.write_export_binding_end();
+                    if !is_es_module_output {
+                        self.write_export_binding_end();
+                    } else {
+                        self.write(";");
+                    }
                 } else if self.in_system_execute_body
                     && (has_explicit_export_modifier || export_name == "default")
                 {

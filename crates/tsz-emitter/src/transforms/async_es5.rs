@@ -133,6 +133,10 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
+        self.transformer.set_downlevel_iteration(enabled);
+    }
+
     pub fn set_temp_var_counter(&mut self, counter: u32) {
         self.transformer.set_temp_var_counter(counter);
     }

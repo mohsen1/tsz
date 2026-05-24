@@ -116,10 +116,14 @@ impl CheckerState<'_> {
                     return template_types;
                 };
 
+                let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
                 for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                     let atom = self.ctx.types.intern_string(&name);
                     let default = default_str
                         .as_deref()
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
+                    let constraint = constraint_strs
+                        .get(&name)
                         .and_then(|s| self.resolve_jsdoc_reference(s));
                     template_types.entry(name).or_insert_with(|| {
                         self.ctx
@@ -127,7 +131,7 @@ impl CheckerState<'_> {
                             .factory()
                             .type_param(tsz_solver::TypeParamInfo {
                                 name: atom,
-                                constraint: None,
+                                constraint,
                                 default,
                                 is_const,
                             })
@@ -182,10 +186,14 @@ impl CheckerState<'_> {
         let class_template_types = self.enclosing_jsdoc_class_template_types(parent_idx);
         let mut function_template_types = FxHashMap::default();
         if let Some(jsdoc) = jsdoc.as_ref() {
+            let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
             for (name, is_const, default_str) in Self::jsdoc_template_type_params(jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
                 let default = default_str
                     .as_deref()
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
+                let constraint = constraint_strs
+                    .get(&name)
                     .and_then(|s| self.resolve_jsdoc_reference(s));
                 function_template_types.entry(name).or_insert_with(|| {
                     self.ctx
@@ -193,7 +201,7 @@ impl CheckerState<'_> {
                         .factory()
                         .type_param(tsz_solver::TypeParamInfo {
                             name: atom,
-                            constraint: None,
+                            constraint,
                             default,
                             is_const,
                         })
@@ -401,16 +409,20 @@ impl CheckerState<'_> {
                 }
 
                 if let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                    let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
                     for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                         if name == normalized {
                             let atom = self.ctx.types.intern_string(&name);
                             let default = default_str
                                 .as_deref()
                                 .and_then(|s| self.resolve_jsdoc_reference(s));
+                            let constraint = constraint_strs
+                                .get(&name)
+                                .and_then(|s| self.resolve_jsdoc_reference(s));
                             return Some(self.ctx.types.factory().type_param(
                                 tsz_solver::TypeParamInfo {
                                     name: atom,
-                                    constraint: None,
+                                    constraint,
                                     default,
                                     is_const,
                                 },
@@ -476,15 +488,19 @@ impl CheckerState<'_> {
                     || k == syntax_kind_ext::ARROW_FUNCTION
             );
             if is_function && let Some(jsdoc) = self.get_jsdoc_for_function(parent_idx) {
+                let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
                 for (name, is_const, default_str) in Self::jsdoc_template_type_params(&jsdoc) {
                     if name == normalized {
                         let atom = self.ctx.types.intern_string(&name);
                         let default = default_str
                             .as_deref()
                             .and_then(|s| self.resolve_jsdoc_reference(s));
+                        let constraint = constraint_strs
+                            .get(&name)
+                            .and_then(|s| self.resolve_jsdoc_reference(s));
                         return Some(self.ctx.types.factory().type_param(TypeParamInfo {
                             name: atom,
-                            constraint: None,
+                            constraint,
                             default,
                             is_const,
                         }));

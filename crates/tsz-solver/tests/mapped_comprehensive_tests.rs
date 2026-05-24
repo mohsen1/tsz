@@ -433,6 +433,113 @@ fn test_mapped_type_remove_readonly() {
 }
 
 // =============================================================================
+// Readonly Mapped Type Over Tuple Tests (issue #9707)
+// =============================================================================
+
+fn num_str_tuple_elements() -> Vec<crate::types::TupleElement> {
+    use crate::types::TupleElement;
+    vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ]
+}
+
+/// Build a homomorphic mapped type `{ <modifier>readonly [K in keyof source]: source[K] }`
+/// over `source` and return the evaluated result.
+fn eval_readonly_mapped_over(
+    interner: &TypeInterner,
+    source: TypeId,
+    readonly_modifier: Option<MappedModifier>,
+) -> TypeId {
+    let keyof_t = interner.keyof(source);
+    let type_param_info = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let type_param = interner.intern(TypeData::TypeParameter(type_param_info));
+    let template = interner.index_access(source, type_param);
+    let mapped = MappedType {
+        type_param: type_param_info,
+        constraint: keyof_t,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier,
+    };
+    let mapped_id = interner.mapped(mapped);
+    evaluate_type(interner, mapped_id)
+}
+
+fn assert_is_readonly_tuple(interner: &TypeInterner, result: TypeId) {
+    match interner.lookup(result) {
+        Some(TypeData::ReadonlyType(inner)) => {
+            assert!(
+                matches!(interner.lookup(inner), Some(TypeData::Tuple(_))),
+                "ReadonlyType inner should be a Tuple, got {:?}",
+                interner.lookup(inner)
+            );
+        }
+        other => panic!("Expected ReadonlyType(Tuple), got {other:?}"),
+    }
+}
+
+#[test]
+fn test_add_readonly_mapped_over_mutable_tuple_yields_readonly_tuple() {
+    // type RO<T> = { readonly [K in keyof T]: T[K] }; RO<[number, string]>
+    let interner = TypeInterner::new();
+    let source = interner.tuple(num_str_tuple_elements());
+    let result = eval_readonly_mapped_over(&interner, source, Some(MappedModifier::Add));
+    assert_is_readonly_tuple(&interner, result);
+}
+
+#[test]
+fn test_no_modifier_mapped_over_mutable_tuple_stays_mutable() {
+    // Identity mapped type over a mutable tuple stays a mutable tuple.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(num_str_tuple_elements());
+    let result = eval_readonly_mapped_over(&interner, source, None);
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "Expected mutable Tuple, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+#[test]
+fn test_no_modifier_mapped_over_readonly_tuple_preserves_readonly() {
+    // Homomorphic preservation: no modifier over a readonly tuple stays readonly.
+    let interner = TypeInterner::new();
+    let source = interner.readonly_type(interner.tuple(num_str_tuple_elements()));
+    let result = eval_readonly_mapped_over(&interner, source, None);
+    assert_is_readonly_tuple(&interner, result);
+}
+
+#[test]
+fn test_remove_readonly_mapped_over_readonly_tuple_yields_mutable_tuple() {
+    // type Mut<T> = { -readonly [K in keyof T]: T[K] }; Mut<readonly [number, string]>
+    let interner = TypeInterner::new();
+    let source = interner.readonly_type(interner.tuple(num_str_tuple_elements()));
+    let result = eval_readonly_mapped_over(&interner, source, Some(MappedModifier::Remove));
+    assert!(
+        matches!(interner.lookup(result), Some(TypeData::Tuple(_))),
+        "Expected mutable Tuple after -readonly, got {:?}",
+        interner.lookup(result)
+    );
+}
+
+// =============================================================================
 // Key Remapping Tests
 // =============================================================================
 
@@ -1583,4 +1690,238 @@ fn test_mapped_type_string_filter_as_clause_removes_symbol_keys() {
         find_symbol_property(&interner, result, sym1).is_none(),
         "as K extends string ? K : never should filter out symbol key"
     );
+}
+
+// =============================================================================
+// Homomorphic Mapped Types Over Variadic Tuples (issue #9699)
+//
+// Rule: a homomorphic mapped type `{ [I in keyof X]: F<X[I]> }` over a tuple
+// binds `I` to each position's index, including the rest position, so `X[I]`
+// resolves to that position's *own* element type. The rest slot stays a rest
+// (array) element of the mapped element type, never `X[number]` (the union of
+// every tuple element).
+// =============================================================================
+
+fn req_elem(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: false,
+    }
+}
+
+fn rest_elem(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+/// Build and evaluate the post-instantiation form of the identity homomorphic
+/// mapping `{ [<iter> in keyof X]: X[<iter>] }` with `X` = `source`.
+fn eval_identity_mapped(interner: &TypeInterner, iter: &str, source: TypeId) -> TypeId {
+    let keyof = interner.keyof(source);
+    let tp_info = TypeParamInfo {
+        name: interner.intern_string(iter),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let tp = interner.intern(TypeData::TypeParameter(tp_info));
+    let template = interner.index_access(source, tp);
+    let mapped = MappedType {
+        type_param: tp_info,
+        constraint: keyof,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    evaluate_type(interner, interner.mapped(mapped))
+}
+
+#[test]
+fn identity_mapped_over_variadic_tuple_roundtrips() {
+    // Identity<[string, ...number[]]> === [string, ...number[]].
+    // Renaming the iteration variable must not change the result — the fix is
+    // structural, not keyed on the spelling `I`.
+    for iter in ["I", "Idx", "P"] {
+        let interner = TypeInterner::new();
+        let source = interner.tuple(vec![
+            req_elem(TypeId::STRING),
+            rest_elem(interner.array(TypeId::NUMBER)),
+        ]);
+
+        let result = eval_identity_mapped(&interner, iter, source);
+        assert_eq!(
+            result, source,
+            "identity over [string, ...number[]] should roundtrip (iter `{iter}`)"
+        );
+
+        // Pin the rest element type: it must be the rest element's own type
+        // (number[]), not `string | number`.
+        let Some(TypeData::Tuple(list_id)) = interner.lookup(result) else {
+            panic!("expected tuple result, got {:?}", interner.lookup(result));
+        };
+        let elements = interner.tuple_list(list_id);
+        assert_eq!(elements.len(), 2);
+        assert!(elements[1].rest, "second element must stay a rest element");
+        assert_eq!(
+            elements[1].type_id,
+            interner.array(TypeId::NUMBER),
+            "rest member must map to number[], not (string | number)[]"
+        );
+    }
+}
+
+#[test]
+fn identity_mapped_over_labeled_variadic_tuple_roundtrips() {
+    // [a: string, ...b: number[]] — labels must not change the per-position rule.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let source = interner.tuple(vec![
+        crate::types::TupleElement {
+            type_id: TypeId::STRING,
+            name: Some(a),
+            optional: false,
+            rest: false,
+        },
+        crate::types::TupleElement {
+            type_id: interner.array(TypeId::NUMBER),
+            name: Some(b),
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let result = eval_identity_mapped(&interner, "I", source);
+    let Some(TypeData::Tuple(list_id)) = interner.lookup(result) else {
+        panic!("expected tuple result, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(list_id);
+    assert_eq!(elements.len(), 2);
+    assert!(elements[1].rest);
+    assert_eq!(
+        elements[1].type_id,
+        interner.array(TypeId::NUMBER),
+        "labeled rest member must map to number[]"
+    );
+}
+
+#[test]
+fn identity_mapped_over_multi_prefix_variadic_tuple_roundtrips() {
+    // [string, symbol, ...number[]] — the rest member must be number, not the
+    // union of the whole tuple (string | symbol | number).
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        req_elem(TypeId::STRING),
+        req_elem(TypeId::SYMBOL),
+        rest_elem(interner.array(TypeId::NUMBER)),
+    ]);
+
+    let result = eval_identity_mapped(&interner, "I", source);
+    assert_eq!(
+        result, source,
+        "identity over [string, symbol, ...number[]] should roundtrip"
+    );
+}
+
+#[test]
+fn wrapping_mapped_over_variadic_tuple_wraps_per_position_element() {
+    // { [I in keyof X]: [X[I]] } over [string, ...number[]] should produce
+    // [[string], ...[number][]] — the rest member is [number], NOT [string | number].
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        req_elem(TypeId::STRING),
+        rest_elem(interner.array(TypeId::NUMBER)),
+    ]);
+
+    let keyof = interner.keyof(source);
+    let tp_info = TypeParamInfo {
+        name: interner.intern_string("I"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let tp = interner.intern(TypeData::TypeParameter(tp_info));
+    // template: [X[I]]
+    let template = interner.tuple(vec![req_elem(interner.index_access(source, tp))]);
+    let mapped = MappedType {
+        type_param: tp_info,
+        constraint: keyof,
+        name_type: None,
+        template,
+        optional_modifier: None,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(&interner, interner.mapped(mapped));
+
+    let expected_prefix = interner.tuple(vec![req_elem(TypeId::STRING)]); // [string]
+    let expected_rest_inner = interner.tuple(vec![req_elem(TypeId::NUMBER)]); // [number]
+    let expected = interner.tuple(vec![
+        req_elem(expected_prefix),
+        rest_elem(interner.array(expected_rest_inner)),
+    ]);
+    assert_eq!(
+        result, expected,
+        "wrapping mapper should give [[string], ...[number][]]"
+    );
+}
+
+#[test]
+fn identity_mapped_fixed_tuple_and_plain_array_controls_roundtrip() {
+    // CONTROLS: a fixed tuple and a plain array were never affected and must
+    // continue to roundtrip cleanly.
+    let interner = TypeInterner::new();
+
+    let fixed = interner.tuple(vec![req_elem(TypeId::STRING), req_elem(TypeId::NUMBER)]);
+    assert_eq!(
+        eval_identity_mapped(&interner, "I", fixed),
+        fixed,
+        "identity over fixed tuple [string, number] should roundtrip"
+    );
+
+    let plain = interner.array(TypeId::NUMBER);
+    assert_eq!(
+        eval_identity_mapped(&interner, "I", plain),
+        plain,
+        "identity over number[] should roundtrip"
+    );
+}
+
+#[test]
+fn identity_mapped_only_rewrites_first_rest_of_multi_rest_tuple() {
+    // GUARD: the per-position rule is only safe for the FIRST rest element,
+    // whose prefix is all fixed. A tuple with a second rest (e.g. from a
+    // generic variadic spread `[string, ...U, ...boolean[]]`) must NOT use
+    // positional indexing for the later rest, since `tuple_index_literal`
+    // short-circuits on the first rest it meets. Here we synthesize two
+    // array rests directly: the first must map precisely to `number[]`; the
+    // later rest must fall back to the original behavior (no crash, stays a
+    // rest element) rather than borrowing the first rest's index.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        req_elem(TypeId::STRING),
+        rest_elem(interner.array(TypeId::NUMBER)),
+        rest_elem(interner.array(TypeId::BOOLEAN)),
+    ]);
+
+    let result = eval_identity_mapped(&interner, "I", source);
+    let Some(TypeData::Tuple(list_id)) = interner.lookup(result) else {
+        panic!("expected tuple result, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(list_id);
+    assert_eq!(elements.len(), 3);
+    assert!(elements[1].rest && elements[2].rest);
+    assert_eq!(
+        elements[1].type_id,
+        interner.array(TypeId::NUMBER),
+        "first rest must map precisely to number[] via the per-position rule"
+    );
+    // The later rest keeps the original (union-based) behavior; we only assert
+    // it remains a rest element rather than pinning the legacy union shape.
 }
