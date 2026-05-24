@@ -718,7 +718,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let Some(mut current_sym_id) = exports_table.get(export_name).copied() else {
+        let Some(mut current_sym_id) = exports_table.get(export_name) else {
             return false;
         };
 
