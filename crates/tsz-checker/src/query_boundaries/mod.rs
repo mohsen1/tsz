@@ -23,6 +23,7 @@ pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
 pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
+pub(crate) mod enum_analysis;
 pub(crate) mod environment;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
