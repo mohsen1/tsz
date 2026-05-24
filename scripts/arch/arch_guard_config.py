@@ -525,6 +525,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "declaration.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_context.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "explicit_alias_constraint_helpers.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "iterable_checker.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "parameter_checker.rs",
             ROOT
