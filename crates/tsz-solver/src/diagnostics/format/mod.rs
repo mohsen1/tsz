@@ -1,6 +1,7 @@
 //! Type formatting for the solver.
 //! Centralizes logic for converting `TypeIds` and `TypeDatas` to human-readable strings.
 
+mod array;
 mod compound;
 mod display_simplification;
 mod intrinsic;
@@ -297,31 +298,6 @@ impl<'a> TypeFormatter<'a> {
             return arg;
         }
         resolved
-    }
-
-    /// Returns `true` when the element type of an array shorthand (`T[]` or
-    /// `readonly T[]`) must be wrapped in parentheses to render unambiguously.
-    ///
-    /// Per the TypeScript grammar, `T[]` requires `T` to be a `PrimaryType`.
-    /// The variants listed below all bind looser than the postfix `[]`, so
-    /// rendering them without parens would re-parse with the `[]` captured
-    /// by the inner form: `infer X[]` as `infer (X[])`, `keyof T[]` as
-    /// `keyof (T[])`, `A | B[]` as `A | (B[])`, `(args) => R[]` as a
-    /// function returning `R[]`, and `A extends B ? X : Y[]` as the
-    /// conditional with a `Y[]` false branch.
-    fn requires_array_element_parens(&self, elem: TypeId) -> bool {
-        matches!(
-            self.interner.lookup(elem),
-            Some(
-                TypeData::Union(_)
-                    | TypeData::Intersection(_)
-                    | TypeData::Function(_)
-                    | TypeData::Callable(_)
-                    | TypeData::Conditional(_)
-                    | TypeData::Infer(_)
-                    | TypeData::KeyOf(_)
-            )
-        )
     }
 
     /// If `obj` is a homomorphic identity mapped type
