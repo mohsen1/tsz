@@ -20,7 +20,8 @@ pub(crate) use super::assignability_type_helpers::{
 };
 pub(super) use super::assignability_type_helpers::{
     has_own_signature_type_params, is_builtin_wrapper_name, is_callable_application_type,
-    is_object_prototype_method, is_object_prototype_method_for_array_target,
+    is_function_like_for_literal_member_widening, is_object_prototype_method,
+    is_object_prototype_method_for_array_target,
 };
 
 impl<'a> CheckerState<'a> {
@@ -1307,7 +1308,9 @@ impl<'a> CheckerState<'a> {
 
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
-            || (source_display.contains("=>") && !target_is_constructor_like)
+            || ([source, evaluated_source].into_iter().any(|candidate| {
+                is_function_like_for_literal_member_widening(self.ctx.types, candidate)
+            }) && !target_is_constructor_like)
             || !Self::display_has_member_literals_assignability(&source_display)
         {
             return source_display;
@@ -1438,11 +1441,11 @@ impl<'a> CheckerState<'a> {
         // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
         // but these are parameter literals that should be preserved, not object property
         // literals that should be widened. Skip rewriting for callable types.
-        let is_callable_type =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
-                .is_some();
-        if target_display.contains("=>")
-            || is_callable_type
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let target_is_function_like = [target, evaluated].into_iter().any(|candidate| {
+            is_function_like_for_literal_member_widening(self.ctx.types, candidate)
+        });
+        if target_is_function_like
             || !Self::display_has_member_literals_assignability(&target_display)
         {
             return target_display;
@@ -1452,7 +1455,6 @@ impl<'a> CheckerState<'a> {
         if Self::type_displays_as_application(self.ctx.types, target) {
             return target_display;
         }
-        let evaluated = self.evaluate_type_for_assignability(target);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
         let widened_display = self
