@@ -24,7 +24,7 @@ solver_file_subtype_core 2862
 solver_file_type_queries_flow 2874
 solver_file_diag_format_compound 2763
 solver_file_eval_infer_pattern_helpers 2738
-solver_file_narrowing_core 2702
+solver_file_narrowing_core 2718
 solver_file_relations_compat 2950
 solver_file_constraints_walker 2348
 solver_file_diag_format_mod 2312

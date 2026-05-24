@@ -2136,3 +2136,158 @@ fn async_for_block_scoped_initializer_is_not_var_hoisted() {
 // is emitted verbatim, not a state machine) is covered end-to-end by the
 // `es5-asyncFunctionForStatements` emit baseline (`forStatement0`); the
 // standalone IR-printer test harness cannot render verbatim AST references.
+
+// Structural rule: when a `switch` statement's case block suspends (await in an
+// async function, yield in a generator) — in a case-clause expression or a
+// clause body — tsc lowers it into the `__generator` state machine: the
+// discriminant is cached into a hoisted temp, dispatch `switch`es compare the
+// temp against each clause expression and `return [3 /*break*/, L]` to the
+// matched clause-body label, and each clause body lives at its own label with
+// `break` rewritten to a jump to the switch-end label. This is independent of
+// identifier spelling, which clause holds the suspension, and whether/where a
+// `default` clause appears.
+
+#[test]
+fn switch_with_await_in_clause_expression_lowers_to_dispatch_state_machine() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case await y: a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;"),
+        "Discriminant must be cached into a hoisted temp before dispatch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, y];"),
+        "A suspending case expression must yield before the dispatch switch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 2];"),
+        "Dispatch must compare the cached discriminant against the resumed case value and jump to the clause body label, emitted inline.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 3];"),
+        "With a default clause, the post-dispatch fallthrough must target the default body label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2:")
+            && output.contains("case 3:")
+            && output.contains("case 4: return [2 /*return*/];"),
+        "Clause bodies and the end label must be laid out as sequential generator cases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_lowering_is_not_keyed_on_identifier_spelling() {
+    // Same shape as above with every identifier renamed; the lowering must be
+    // structural, not name-keyed.
+    let output = transform_and_print(
+        "async function f() { switch (disc) { case await chosen: hit; break; default: miss; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = disc;"),
+        "Discriminant caching must work for any discriminant spelling.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, chosen];"),
+        "Renamed suspending case expression must still yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 2];"),
+        "Renamed shape must still produce the dispatch jump.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_with_await_in_clause_body_keeps_dispatch_synchronous() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case y: await a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;") && output.contains("case y: return [3 /*break*/, 1];"),
+        "When only a clause body suspends, the discriminant is still cached and the dispatch compares it synchronously.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a];"),
+        "The clause body await must yield inside the clause's body label.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_without_default_falls_through_to_end_label() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case y: a; break; case await z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("case y: return [3 /*break*/, 2];"),
+        "Non-suspending leading clause must dispatch in its own group.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "Suspending clause expression must start a new dispatch group after a yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 3];"),
+        "Second dispatch group must compare the resumed value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 4];")
+            && output.contains("case 4: return [2 /*return*/];"),
+        "With no default, the post-dispatch fallthrough must target the switch-end label.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_default_fallthrough_without_break_sets_label() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { default: c; case y: a; break; case await z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("c;") && output.contains("_b.label = 3;"),
+        "A non-terminating clause (default without break) must set `_b.label` so it falls through to the next case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_discriminant_await_with_plain_body_keeps_switch_intact() {
+    let output = transform_and_print(
+        "async function f() { switch (await x) { case y: a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, x];"),
+        "A suspending discriminant must be yielded.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("switch (_a.sent()) {"),
+        "When only the discriminant suspends, the switch stays intact over the sent value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return [3 /*break*/"),
+        "A non-suspending case block must not be lowered into a dispatch state machine.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_switch_with_yield_lowers_like_async() {
+    let output = transform_generator_and_print(
+        "function* g() { switch (x) { case y: a; break; case yield z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;"),
+        "Generator-mode switch lowering must cache the discriminant just like async mode.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "A `yield` in a generator switch clause expression must yield before the dispatch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 3];"),
+        "Generator-mode dispatch must compare the resumed value identically to async mode.\nOutput:\n{output}"
+    );
+}

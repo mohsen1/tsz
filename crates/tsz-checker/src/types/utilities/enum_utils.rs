@@ -132,7 +132,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn enum_symbol_from_full_enum_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::enum_analysis::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         (symbol.has_any_flags(symbol_flags::ENUM)
@@ -141,7 +141,7 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn enum_symbol_from_enumish_type(&self, type_id: TypeId) -> Option<SymbolId> {
-        let def_id = crate::query_boundaries::common::enum_def_id(self.ctx.types, type_id)?;
+        let def_id = crate::query_boundaries::enum_analysis::enum_def_id(self.ctx.types, type_id)?;
         let sym_id = self.ctx.def_to_symbol_id_with_fallback(def_id)?;
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         if symbol.has_any_flags(symbol_flags::ENUM_MEMBER) {
@@ -151,13 +151,15 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn apparent_enum_instance_type(&self, type_id: TypeId) -> Option<TypeId> {
-        let enum_type =
-            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
-                .filter(|constraint| {
-                    crate::query_boundaries::common::enum_def_id(self.ctx.types, *constraint)
-                        .is_some()
-                })
-                .unwrap_or(type_id);
+        let enum_type = crate::query_boundaries::enum_analysis::type_parameter_constraint(
+            self.ctx.types,
+            type_id,
+        )
+        .filter(|constraint| {
+            crate::query_boundaries::enum_analysis::enum_def_id(self.ctx.types, *constraint)
+                .is_some()
+        })
+        .unwrap_or(type_id);
         let sym_id = self.enum_symbol_from_enumish_type(enum_type)?;
         match self.enum_kind(sym_id)? {
             EnumKind::Numeric => Some(TypeId::NUMBER),
@@ -944,7 +946,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::dispatch as query;
         // Check direct object types
         if let Some(shape) =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
+            crate::query_boundaries::enum_analysis::object_shape_for_type(self.ctx.types, type_id)
             && !shape.properties.is_empty()
             && shape.properties.iter().all(|p| p.optional)
         {
