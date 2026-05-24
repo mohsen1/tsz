@@ -510,12 +510,13 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Matches the `main` baseline: this PR is count-neutral for direct
-        # `query_boundaries::common` references (the logical-assignment fix
-        # shares one `new_binary_op_evaluator` call site with the existing
-        # arithmetic-compound path rather than adding a new one), so it does
-        # not raise the quarantine ceiling.
-        3377,
+        # Bumped by 2 for the deferred-conditional diagnostic-display fix
+        # (`is_conditional_type` guards in the assignment-target display path,
+        # matching the existing direct-call pattern in type_display.rs).
+        #
+        # Ratcheted down by 5 after literal alias / literal widening
+        # diagnostic display probes moved through query_boundaries::diagnostics.
+        3372,
     ),
 ]
 
