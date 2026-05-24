@@ -69,7 +69,7 @@ impl<'a> Printer<'a> {
         inner_name: Option<String>,
     ) {
         let move_params_to_generator =
-            self.async_generator_params_need_forwarding(&func.parameters.nodes);
+            self.async_params_need_generator_forwarding(&func.parameters.nodes);
         if outer_name.is_empty() {
             self.write("function (");
         } else {
@@ -106,7 +106,7 @@ impl<'a> Printer<'a> {
         params: &[NodeIndex],
         body: NodeIndex,
     ) {
-        let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+        let move_params_to_generator = self.async_params_need_generator_forwarding(params);
         self.write(property_name);
         self.write(": function (");
         if move_params_to_generator {
@@ -139,7 +139,7 @@ impl<'a> Printer<'a> {
         params: &[NodeIndex],
         body: NodeIndex,
     ) {
-        let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+        let move_params_to_generator = self.async_params_need_generator_forwarding(params);
         self.write("function (");
         if move_params_to_generator {
             self.emit_async_outer_parameter_placeholders(params);
@@ -175,7 +175,7 @@ impl<'a> Printer<'a> {
     ) {
         self.push_temp_scope();
         let move_params_to_generator =
-            self.async_generator_params_need_forwarding(&func.parameters.nodes);
+            self.async_params_need_generator_forwarding(&func.parameters.nodes);
         let inner_name =
             (!func_name.is_empty()).then(|| self.next_async_generator_inner_name(func_name));
         if self.ctx.target_es5 {
@@ -346,7 +346,7 @@ impl<'a> Printer<'a> {
         self.pop_temp_scope();
     }
 
-    pub(in crate::emitter) fn async_generator_params_need_forwarding(
+    pub(in crate::emitter) fn async_params_need_generator_forwarding(
         &self,
         params: &[NodeIndex],
     ) -> bool {

@@ -252,10 +252,21 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &class.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if emit_invalid_namespace_static
+                        && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                    {
+                        continue;
+                    }
                     // Skip export/default modifiers in CommonJS mode or namespace IIFE
                     if (self.ctx.is_commonjs() || self.in_namespace_iife)
                         && (mod_node.kind == SyntaxKind::ExportKeyword as u16
@@ -2386,7 +2397,12 @@ impl<'a> Printer<'a> {
 
             // Emit leading comments before this member
             if let Some(member_node) = self.arena.get(member_idx) {
+                let comments_end_with_line_break =
+                    self.pending_comments_before_pos_end_with_line_break(member_node.pos);
                 self.emit_comments_before_pos(member_node.pos);
+                if comments_end_with_line_break && !self.writer.is_at_line_start() {
+                    self.write_line();
+                }
             }
 
             let before_len = self.writer.len();

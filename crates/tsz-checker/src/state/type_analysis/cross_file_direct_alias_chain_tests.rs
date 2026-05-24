@@ -2,7 +2,7 @@ use crate::context::{CheckerContext, CheckerOptions};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use std::sync::Arc;
-use tsz_binder::BinderState;
+use tsz_binder::{BinderState, SymbolTable, symbol_flags};
 use tsz_parser::parser::ParserState;
 use tsz_solver::TypeId;
 
@@ -274,6 +274,205 @@ fn direct_source_file_type_alias_lowers_renamed_concrete_generic_alias_chain() {
             assert_ne!(ty, TypeId::UNKNOWN);
             assert_ne!(ty, TypeId::ERROR);
             assert!(params.is_empty(), "Result should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_mapped_type_with_own_key() {
+    with_two_file_state(
+        "type Keys<T> = keyof T;\nexport type Box<T> = { [P in Keys<T>]: T[P] };",
+        "import { Box } from './target';",
+        |state, target_binder| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(box_sym, Some(1), true)
+                .expect("mapped bodies over safe local alias constraints should lower");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Box should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_mapped_type_with_local_value_alias() {
+    with_two_file_state(
+        "type KeySet<X> = keyof X;\ntype Val<Obj, Key extends keyof Obj> = Obj[Key];\nexport type Remap<Obj> = { [Name in KeySet<Obj>]: Val<Obj, Name> };",
+        "import { Remap } from './target';",
+        |state, target_binder| {
+            let remap_sym = target_binder.file_locals.get("Remap").expect("Remap");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(remap_sym, Some(1), true)
+                .expect("renamed mapped type parameters should lower structurally");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Remap should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_same_binder_export_alias_symbol() {
+    let (arena, binder, types) =
+        parse_bound_source("type Leaf = string;\nexport type Result = Alias;");
+    let mut binder = (*binder).clone();
+    let leaf_sym = binder.file_locals.get("Leaf").expect("Leaf");
+    let alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::ALIAS, "Alias".to_string());
+    {
+        let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Alias symbol");
+        alias_symbol.import_module = Some("./target".to_string());
+        alias_symbol.import_name = Some("Leaf".to_string());
+        alias_symbol.is_type_only = true;
+    }
+    binder.file_locals.set("Alias".to_string(), alias_sym);
+    let mut exports = SymbolTable::new();
+    exports.set("Leaf".to_string(), leaf_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./target".to_string(), exports);
+
+    let binder = Arc::new(binder);
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Result } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&binder),
+    ]));
+
+    let result_sym = binder.file_locals.get("Result").expect("Result");
+    let (ty, params) = state
+        .direct_source_file_type_alias_result(result_sym, Some(1), true)
+        .expect("same-binder export aliases to safe local type aliases should lower");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert!(params.is_empty(), "Result should be non-generic");
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_same_binder_alias_with_type_args() {
+    let (arena, binder, types) =
+        parse_bound_source("type Wrap<X> = X | null;\nexport type Output<T> = Renamed<T>;");
+    let mut binder = (*binder).clone();
+    let wrap_sym = binder.file_locals.get("Wrap").expect("Wrap");
+    let alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::ALIAS, "Renamed".to_string());
+    {
+        let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Renamed symbol");
+        alias_symbol.import_module = Some("./target".to_string());
+        alias_symbol.import_name = Some("Wrap".to_string());
+        alias_symbol.is_type_only = true;
+    }
+    binder.file_locals.set("Renamed".to_string(), alias_sym);
+    let mut exports = SymbolTable::new();
+    exports.set("Wrap".to_string(), wrap_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./target".to_string(), exports);
+
+    let binder = Arc::new(binder);
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Output } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&binder),
+    ]));
+
+    let output_sym = binder.file_locals.get("Output").expect("Output");
+    let (ty, params) = state
+        .direct_source_file_type_alias_result(output_sym, Some(1), true)
+        .expect("renamed alias symbols with safe type args should lower structurally");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert_eq!(params.len(), 1, "Output should preserve its type parameter");
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_alias_symbol_to_typeof_body() {
+    let (arena, binder, types) = parse_bound_source(
+        "const value = 1;\ntype Flow = typeof value;\nexport type Result = Alias;",
+    );
+    let mut binder = (*binder).clone();
+    let flow_sym = binder.file_locals.get("Flow").expect("Flow");
+    let alias_sym = binder
+        .symbols
+        .alloc(symbol_flags::ALIAS, "Alias".to_string());
+    {
+        let alias_symbol = binder.symbols.get_mut(alias_sym).expect("Alias symbol");
+        alias_symbol.import_module = Some("./target".to_string());
+        alias_symbol.import_name = Some("Flow".to_string());
+        alias_symbol.is_type_only = true;
+    }
+    binder.file_locals.set("Alias".to_string(), alias_sym);
+    let mut exports = SymbolTable::new();
+    exports.set("Flow".to_string(), flow_sym);
+    Arc::make_mut(&mut binder.module_exports).insert("./target".to_string(), exports);
+
+    let binder = Arc::new(binder);
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Result } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&binder),
+    ]));
+
+    let result_sym = binder.file_locals.get("Result").expect("Result");
+    assert!(
+        state
+            .direct_source_file_type_alias_result(result_sym, Some(1), true)
+            .is_none(),
+        "alias symbols to flow-sensitive type aliases must stay on the child-checker path",
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_mapped_type_with_typeof_value() {
+    with_two_file_state(
+        "const value = 1;\nexport type Box<T> = { [P in keyof T]: typeof value };",
+        "import { Box } from './target';",
+        |state, target_binder| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(box_sym, Some(1), true)
+                    .is_none(),
+                "mapped types with flow-sensitive value types must stay on the child-checker path",
+            );
         },
     );
 }

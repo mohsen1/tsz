@@ -1476,7 +1476,7 @@ impl<'a> Printer<'a> {
                                 // `export = X` sets module.exports but named exports like
                                 // `export enum E` still get their own exports.E binding.
                                 self.pending_cjs_namespace_export_fold = true;
-                                self.pending_cjs_namespace_export_name = None;
+                                self.pending_cjs_namespace_export_names.clear();
                             }
                         }
                         self.emit_module_declaration(clause_node, export.export_clause);
@@ -1484,7 +1484,7 @@ impl<'a> Printer<'a> {
                         // no separate export needed. If still set, the namespace
                         // was non-instantiated/skipped, clear it.
                         self.pending_cjs_namespace_export_fold = false;
-                        self.pending_cjs_namespace_export_name = None;
+                        self.pending_cjs_namespace_export_names.clear();
                         self.pending_system_namespace_export_fold = None;
                     } else {
                         self.emit_module_declaration(clause_node, export.export_clause);
@@ -1592,16 +1592,18 @@ impl<'a> Printer<'a> {
 
                                 self.write_export_property_access(&export_name);
                                 self.write(" = ");
-                                // When the local name was inlined (no local var exists),
-                                // use exports.local_name. Otherwise use local name.
-                                if export_name != local_name
-                                    && self
+                                // When the local name is already represented by a live
+                                // CommonJS export binding, have aliases read that binding.
+                                if export_name != local_name {
+                                    let use_export_binding = self
                                         .ctx
                                         .module_state
                                         .inlined_var_exports
                                         .contains(&local_name)
-                                {
-                                    self.write("exports.");
+                                        || self.commonjs_exported_var_names.contains(&local_name);
+                                    if use_export_binding {
+                                        self.write("exports.");
+                                    }
                                 }
                                 self.write(&local_name);
                                 self.write(";");
@@ -1616,15 +1618,15 @@ impl<'a> Printer<'a> {
                 // export default <expression> - emit as exports.default = expr;
                 // In System modules, use exports_1("default", expr) instead.
                 _ => {
-                    // `export default X` — use `exports.X` only when the variable
-                    // was inlined (`exports.x = val;` with no local declaration),
-                    // otherwise use the local name (class/function/enum have local
-                    // declarations).
+                    // `export default X` — exported variables are lowered to the
+                    // `exports.X` binding in CommonJS, including recovered
+                    // no-initializer declarations that emit no local declaration.
+                    // Other values (classes/functions/enums) keep local bindings.
                     if let Some(expr_node) = self.arena.get(export.export_clause)
                         && expr_node.is_identifier()
                     {
                         let ident = self.get_identifier_text_idx(export.export_clause);
-                        if self.ctx.module_state.inlined_var_exports.contains(&ident) {
+                        if self.commonjs_exported_var_names.contains(ident.as_str()) {
                             self.write("exports.default = exports.");
                             self.write(&ident);
                             self.write(";");

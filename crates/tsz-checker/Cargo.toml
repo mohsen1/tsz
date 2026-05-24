@@ -582,6 +582,10 @@ name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
 
 [[test]]
+name = "keyof_well_known_symbol_key_tests"
+path = "tests/keyof_well_known_symbol_key_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 
@@ -620,6 +624,10 @@ path = "tests/recursive_conditional_mapped_infer_tests.rs"
 [[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
 path = "tests/in_chain_narrows_unconstrained_type_param_tests.rs"
+
+[[test]]
+name = "in_operator_lhs_key_type_tests"
+path = "tests/in_operator_lhs_key_type_tests.rs"
 
 [[test]]
 name = "no_lib_async_promise_tests"
@@ -956,6 +964,10 @@ path = "tests/jsdoc_augments_empty_tests.rs"
 [[test]]
 name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
+
+[[test]]
+name = "jsdoc_template_constraint_enforcement_tests"
+path = "tests/jsdoc_template_constraint_enforcement_tests.rs"
 
 [[test]]
 name = "jsdoc_template_in_body_scope_tests"
@@ -1392,6 +1404,10 @@ path = "tests/template_literal_record_key_tests.rs"
 [[test]]
 name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
+
+[[test]]
+name = "ts7053_unconstrained_type_param_index_tests"
+path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
 
 [[test]]
 name = "tuple_union_contextual_typing_tests"

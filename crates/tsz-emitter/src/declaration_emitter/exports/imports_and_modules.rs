@@ -413,6 +413,17 @@ impl<'a> DeclarationEmitter<'a> {
         //   - it's referenced by an exported import alias (e.g.
         //     aliasInaccessibleModule: `export import X = N` keeps `namespace N`)
         if !is_exported
+            && self.inside_non_ambient_namespace
+            && self.arena.is_declare(&module.modifiers)
+            && self
+                .arena
+                .get(module.name)
+                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return;
+        }
+
+        if !is_exported
             && !self.arena.is_declare(&module.modifiers)
             && self.inside_non_ambient_namespace
         {
@@ -500,7 +511,7 @@ impl<'a> DeclarationEmitter<'a> {
             if is_empty_body {
                 // tsc uses single-line `{ }` for empty namespaces nested inside
                 // another declare namespace, but multi-line `{\n}` for top-level.
-                if self.inside_declare_namespace {
+                if self.inside_declare_namespace && !use_module_keyword {
                     self.write(" { }");
                     self.write_line();
                 } else {
@@ -1350,7 +1361,19 @@ impl<'a> DeclarationEmitter<'a> {
 
         // Elide non-exported import equals declarations that are not used by the public API
         if !is_exported && !already_exported {
-            if self.inside_non_ambient_namespace {
+            let is_require_import = self
+                .arena
+                .get(import_eq.module_specifier)
+                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
+
+            if self.current_ambient_module_specifier.is_some() {
+                if self.used_symbols.is_some() && !self.is_ns_member_used_by_exports(import_idx) {
+                    return;
+                }
+            } else if self.inside_non_ambient_namespace {
+                if is_require_import {
+                    return;
+                }
                 // Inside a non-ambient namespace: if usage analysis is available, check
                 // if the alias is referenced by an exported/emitted member.
                 // If usage analysis is not available, fall through to the type-entity
@@ -1377,10 +1400,6 @@ impl<'a> DeclarationEmitter<'a> {
             // (class, interface, enum, namespace, type alias, function). If the target is
             // a value-only entity (e.g., a variable), the emitted type resolves directly
             // to the underlying type (e.g., `number`) without needing the alias.
-            let is_require_import = self
-                .arena
-                .get(import_eq.module_specifier)
-                .is_some_and(|n| n.kind == SyntaxKind::StringLiteral as u16);
             if !is_require_import
                 && !self.import_alias_targets_type_entity(import_eq.module_specifier)
             {
