@@ -67,6 +67,8 @@ mod bindings;
 mod condition_await;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_element_access.rs"]
+mod element_access;
 #[path = "async_es5_ir_for_of.rs"]
 mod for_of;
 #[path = "async_es5_ir_loop_control.rs"]
@@ -913,6 +915,13 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             ) {
                 lowered_call
+            } else if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_access
             } else {
                 self.emit_nested_suspension(idx, cases, current_statements, current_label);
                 self.expression_to_ir(idx)
@@ -2566,6 +2575,15 @@ impl<'a> AsyncES5Transformer<'a> {
                                 current_label,
                             ) {
                             lowered_call
+                        } else if let Some(lowered_access) = self
+                            .lower_element_access_object_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_access
                         } else {
                             self.emit_nested_suspension(
                                 ret.expression,
@@ -2800,6 +2818,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements,
                 current_label,
             ) {
+                return;
+            }
+            if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_access)));
                 return;
             }
             if self.async_generator_mode
@@ -3213,6 +3240,22 @@ impl<'a> AsyncES5Transformer<'a> {
 
                 // Emit the yield for the nested await
                 if let Some(lowered_init) = self.lower_call_callee_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(
+                        IRNode::BinaryExpr {
+                            left: Box::new(IRNode::Identifier(name.into())),
+                            operator: "=".to_string().into(),
+                            right: Box::new(lowered_init),
+                        },
+                    )));
+                    return;
+                }
+
+                if let Some(lowered_init) = self.lower_element_access_object_before_suspension(
                     decl.initializer,
                     cases,
                     current_statements,
