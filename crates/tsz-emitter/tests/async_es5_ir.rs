@@ -368,6 +368,13 @@ fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
 }
 
 fn transform_generator_and_print(source: &str) -> String {
+    transform_generator_with_downlevel_iteration_and_print(source, false)
+}
+
+fn transform_generator_with_downlevel_iteration_and_print(
+    source: &str,
+    downlevel_iteration: bool,
+) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -377,11 +384,71 @@ fn transform_generator_and_print(source: &str) -> String {
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
         transformer.set_source_text(source);
+        transformer.set_downlevel_iteration(downlevel_iteration);
         let ir = transformer.transform_generator_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
         String::new()
     }
+}
+
+#[test]
+fn downlevel_iteration_captured_for_of_generator_uses_iterator_cleanup_and_loop_generator() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const i of [1,2,3]) { (() => i)(); yield i; } }",
+        true,
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (i)")
+            && output.contains("(function () { return i; })();")
+            && output.contains("return [4 /*yield*/, i];"),
+        "Captured block-scoped for-of iteration variables should get a per-iteration generator helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values([1, 2, 3])") && output.contains(".trys.push([1, 6, 7, 8]);"),
+        "Downlevel iteration inside the generator state machine must use iterator protocol setup and cleanup labels.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [5 /*yield**/, _loop_1(i)];"),
+        "The outer generator must delegate to the per-iteration helper so each captured `i` has its own binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (_b && !_b.done && (_c = _a.return)) _c.call(_a);"),
+        "Iterator cleanup must call the iterator return method when the state machine exits early.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn downlevel_iteration_captured_for_of_generator_uses_user_chosen_iteration_name() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const entry of list) { (() => entry)(); yield entry; } }",
+        true,
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (entry)")
+            && output.contains("return [5 /*yield**/, _loop_1(entry)];")
+            && output.contains("return [4 /*yield*/, entry];"),
+        "Captured for-of lowering must be structural over the iteration binding, not keyed to `i`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values(list)"),
+        "The iterable expression should flow through the iterator helper without relying on an array literal shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn downlevel_iteration_uncaptured_for_of_generator_does_not_synthesize_loop_helper() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const value of list) { yield value; } }",
+        true,
+    );
+
+    assert!(
+        !output.contains("_loop_1 = function"),
+        "The per-iteration helper is only needed when the iteration binding is captured by a nested function.\nOutput:\n{output}"
+    );
 }
 
 fn label_assignment_before(output: &str, needle: &str) -> String {

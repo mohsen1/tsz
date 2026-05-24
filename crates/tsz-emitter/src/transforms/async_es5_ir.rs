@@ -121,6 +121,8 @@ pub struct AsyncES5Transformer<'a> {
     /// When true, generator-mode yields feed `__await(...)` values to
     /// `__asyncGenerator`.
     pub(crate) async_generator_mode: bool,
+    /// Whether ES5 `for..of` lowering must use iterator protocol helpers.
+    pub(crate) downlevel_iteration: bool,
     temp_var_counter: Cell<u32>,
     blocked_temp_names: RefCell<FxHashSet<String>>,
     disposable_env_counter: Cell<u32>,
@@ -159,6 +161,7 @@ impl<'a> AsyncES5Transformer<'a> {
             helpers_needed: HelpersNeeded::default(),
             generator_mode: false,
             async_generator_mode: false,
+            downlevel_iteration: false,
             temp_var_counter: Cell::new(0),
             blocked_temp_names: RefCell::new(FxHashSet::default()),
             disposable_env_counter: Cell::new(1),
@@ -204,6 +207,10 @@ impl<'a> AsyncES5Transformer<'a> {
     /// body are lowered to the appropriate module-system form.
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.module_kind = kind;
+    }
+
+    pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
+        self.downlevel_iteration = enabled;
     }
 
     pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
