@@ -588,6 +588,12 @@ impl<'a> CheckerState<'a> {
                     {
                         return Some(kind);
                     }
+                    if self.is_intrinsic_type_only_export_across_binders(
+                        module_specifier,
+                        &export_name,
+                    ) {
+                        continue;
+                    }
                     // Record the hit but keep iterating other aliases. A
                     // later alias (e.g. a local `import type { ... }`)
                     // may expose a direct marker that we prefer.
@@ -671,6 +677,9 @@ impl<'a> CheckerState<'a> {
                 .get_symbol_with_libs(target_id, &lib_binders)
             && target_symbol.is_type_only
         {
+            if Self::symbol_is_intrinsic_type_only_without_value(target_symbol) {
+                return None;
+            }
             return Some(TypeOnlyKind::Export);
         }
 
@@ -684,6 +693,71 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn is_intrinsic_type_only_export_across_binders(
+        &self,
+        module_specifier: &str,
+        export_name: &str,
+    ) -> bool {
+        use tsz_binder::symbol_flags;
+
+        let Some(target_file_idx) = self.ctx.resolve_import_target(module_specifier) else {
+            return false;
+        };
+        let Some(target_binder) = self.ctx.get_binder_for_file(target_file_idx) else {
+            return false;
+        };
+        let target_arena = self.ctx.get_arena_for_file(target_file_idx as u32);
+        let Some(target_file_name) = target_arena.source_files.first().map(|f| &f.file_name) else {
+            return false;
+        };
+        let Some(exports_table) = self
+            .ctx
+            .module_exports_for_module(target_binder, target_file_name)
+        else {
+            return false;
+        };
+        let Some(mut current_sym_id) = exports_table.get(export_name).copied() else {
+            return false;
+        };
+
+        let mut visited = AliasCycleTracker::new();
+        while !visited.contains(&current_sym_id) {
+            visited.push(current_sym_id);
+
+            let Some(symbol) = target_binder
+                .get_symbol(current_sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(current_sym_id))
+            else {
+                return false;
+            };
+
+            if Self::symbol_is_intrinsic_type_only_without_value(symbol) {
+                return true;
+            }
+
+            if !symbol.has_any_flags(symbol_flags::ALIAS) {
+                return false;
+            }
+
+            let Some(next_sym_id) = target_binder.resolve_import_symbol(current_sym_id) else {
+                return false;
+            };
+            if next_sym_id == current_sym_id {
+                return false;
+            }
+            current_sym_id = next_sym_id;
+        }
+
+        false
+    }
+
+    fn symbol_is_intrinsic_type_only_without_value(symbol: &tsz_binder::Symbol) -> bool {
+        use tsz_binder::symbol_flags;
+
+        symbol.has_any_flags(symbol_flags::INTERFACE | symbol_flags::TYPE_ALIAS)
+            && !symbol.has_any_flags(symbol_flags::VALUE)
     }
 
     /// Prefer the nearest lexical alias's own `type` marker before following
@@ -848,11 +922,13 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            // Non-alias type-only symbol (e.g. a symbol cloned for
-            // `export type { X as Y }` — its declarations point at the
-            // original non-type-only source, so the walk cannot reach
-            // the `export type` specifier). Default to TS1362: the
-            // type-only-ness originated on the export side.
+            // Non-alias pure types (interface/type alias) use ordinary
+            // TS2693. Other non-alias type-only symbols may be clones for
+            // `export type { X as Y }` whose declarations point at the
+            // original value source, so default those to TS1362.
+            if Self::symbol_is_intrinsic_type_only_without_value(sym) {
+                return None;
+            }
             return Some(TypeOnlyKind::Export);
         }
 
