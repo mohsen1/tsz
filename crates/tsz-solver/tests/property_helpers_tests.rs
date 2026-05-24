@@ -2202,3 +2202,202 @@ fn test_nested_type_param_constraint_property_found() {
     );
     assert_property_not_found(&evaluator.resolve_property_access(t_param, "y"));
 }
+
+// =============================================================================
+// Deferred conditional type property access (issue #9734)
+// Rule: when `T extends U ? A : B` is deferred (type params in check/extends),
+// the apparent type for property access is `A | B`. Properties not on all
+// branches must produce PropertyNotFound; common properties succeed.
+// =============================================================================
+
+#[test]
+fn test_deferred_conditional_branch_only_property_not_found() {
+    // T extends string ? { a: 1 } : { b: 2 }
+    // Accessing `.a` → PropertyNotFound (not on { b: 2 } branch).
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let true_branch = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+    let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: true_branch,
+        false_type: false_branch,
+        is_distributive: true,
+    });
+
+    // .a exists only on the true branch → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "a"));
+    // .b exists only on the false branch → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "b"));
+    // .zzz exists on neither branch → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "zzz"));
+}
+
+#[test]
+fn test_deferred_conditional_common_property_succeeds() {
+    // T extends string ? { common: number; a: 1 } : { common: string; b: 2 }
+    // Accessing `.common` → Success (present on both branches, result is union).
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let common_name = interner.intern_string("common");
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let true_branch = interner.object(vec![
+        PropertyInfo::new(common_name, TypeId::NUMBER),
+        PropertyInfo::new(a_name, TypeId::NUMBER),
+    ]);
+    let false_branch = interner.object(vec![
+        PropertyInfo::new(common_name, TypeId::STRING),
+        PropertyInfo::new(b_name, TypeId::NUMBER),
+    ]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: true_branch,
+        false_type: false_branch,
+        is_distributive: true,
+    });
+
+    // .common exists on both branches → Success
+    let result = evaluator.resolve_property_access(cond, "common");
+    assert!(
+        matches!(result, PropertyAccessResult::Success { .. }),
+        "Expected Success for common property, got {result:?}"
+    );
+    // .a is branch-only → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "a"));
+}
+
+#[test]
+fn test_deferred_conditional_renamed_type_param_same_behavior() {
+    // Structural invariant: renaming T to P must not change property access behavior.
+    // P extends string ? { a: 1 } : { b: 2 }  (same shape as T version above)
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let p_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("P"), // renamed from T
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let true_branch = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+    let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: p_param,
+        extends_type: TypeId::STRING,
+        true_type: true_branch,
+        false_type: false_branch,
+        is_distributive: true,
+    });
+
+    // Same expectations regardless of type-param name
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "a"));
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "b"));
+    assert_property_not_found(&evaluator.resolve_property_access(cond, "zzz"));
+}
+
+#[test]
+fn test_deferred_conditional_with_any_branch_suppresses_error() {
+    // T extends string ? any : { b: 2 }
+    // One branch is `any` → apparent type is `any` → suppress TS2339.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let b_name = interner.intern_string("b");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let false_branch = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+    let cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: TypeId::ANY, // any branch → suppress errors
+        false_type: false_branch,
+        is_distributive: true,
+    });
+
+    // When a branch is `any`, property access must not report not-found
+    let result = evaluator.resolve_property_access(cond, "nonexistent");
+    assert!(
+        matches!(
+            result,
+            PropertyAccessResult::Success {
+                type_id: TypeId::ANY,
+                ..
+            }
+        ),
+        "Expected Success(any) when branch is any, got {result:?}"
+    );
+}
+
+#[test]
+fn test_deferred_conditional_nested_produces_not_found() {
+    // T extends string ? (U extends number ? { a: 1 } : { b: 2 }) : { c: 3 }
+    // .a is not on the false branch { b: 2 } of inner conditional or { c: 3 }.
+    let interner = TypeInterner::new();
+    let evaluator = PropertyAccessEvaluator::new(&interner);
+
+    let a_name = interner.intern_string("a");
+    let b_name = interner.intern_string("b");
+    let c_name = interner.intern_string("c");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: interner.intern_string("U"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let inner_true = interner.object(vec![PropertyInfo::new(a_name, TypeId::NUMBER)]);
+    let inner_false = interner.object(vec![PropertyInfo::new(b_name, TypeId::NUMBER)]);
+    let outer_false = interner.object(vec![PropertyInfo::new(c_name, TypeId::NUMBER)]);
+
+    // Inner deferred conditional: U extends number ? { a: 1 } : { b: 2 }
+    let inner_cond = interner.conditional(ConditionalType {
+        check_type: u_param,
+        extends_type: TypeId::NUMBER,
+        true_type: inner_true,
+        false_type: inner_false,
+        is_distributive: true,
+    });
+    // Outer deferred conditional: T extends string ? inner_cond : { c: 3 }
+    let outer_cond = interner.conditional(ConditionalType {
+        check_type: t_param,
+        extends_type: TypeId::STRING,
+        true_type: inner_cond,
+        false_type: outer_false,
+        is_distributive: true,
+    });
+
+    // .a is not on { b: 2 } (inner false branch) or { c: 3 } → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(outer_cond, "a"));
+    // .zzz is on none → PropertyNotFound
+    assert_property_not_found(&evaluator.resolve_property_access(outer_cond, "zzz"));
+}

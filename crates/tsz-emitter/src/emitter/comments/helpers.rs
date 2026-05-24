@@ -444,6 +444,44 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn pending_comments_before_pos_end_with_line_break(
+        &self,
+        pos: u32,
+    ) -> bool {
+        if self.ctx.options.remove_comments {
+            return false;
+        }
+        let actual_start = self.skip_trivia_forward(pos, pos + 1024);
+        let mut scan_idx = self.comment_emit_idx;
+        let mut last_comment_end = None;
+        let mut last_has_trailing_newline = false;
+        while scan_idx < self.all_comments.len() {
+            let comment = &self.all_comments[scan_idx];
+            if comment.end > actual_start {
+                break;
+            }
+            last_comment_end = Some(comment.end);
+            last_has_trailing_newline = comment.has_trailing_new_line;
+            scan_idx += 1;
+        }
+
+        if last_has_trailing_newline {
+            return true;
+        }
+
+        let Some(last_comment_end) = last_comment_end else {
+            return false;
+        };
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let start = last_comment_end as usize;
+        let end = actual_start as usize;
+        text.as_bytes()
+            .get(start..end)
+            .is_some_and(|trivia| trivia.iter().any(|&byte| byte == b'\n' || byte == b'\r'))
+    }
+
     /// Returns whether the final pending comment before `pos` has a trailing
     /// newline, without advancing the global comment cursor.
     pub(in crate::emitter) fn last_pending_comment_before_pos_has_trailing_newline(

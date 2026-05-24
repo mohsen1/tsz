@@ -397,6 +397,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self
     }
 
+    /// True when this evaluator is running the TS2589 depth-detection pass
+    /// (see `with_flag_depth_on_app_cycle`). Callers in other modules use this
+    /// to drive self-referential recursion that normal evaluation defers.
+    pub(crate) const fn is_depth_detection_pass(&self) -> bool {
+        self.flag_depth_on_app_cycle
+    }
+
     /// Preserve evaluated application display aliases with already-expanded
     /// type arguments. This is declaration-emitter-only behavior; checker
     /// diagnostics keep the original alias origin to avoid recursive display
