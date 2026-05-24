@@ -510,9 +510,12 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Current post-merge count on the logical-assignment typeof query PR.
-        # Keep this ratchet exact when the broad boundary debt shrinks.
-        3378,
+        # Matches the `main` baseline: this PR is count-neutral for direct
+        # `query_boundaries::common` references (the logical-assignment fix
+        # shares one `new_binary_op_evaluator` call site with the existing
+        # arithmetic-compound path rather than adding a new one), so it does
+        # not raise the quarantine ceiling.
+        3377,
     ),
 ]
 
