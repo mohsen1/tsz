@@ -1892,3 +1892,36 @@ fn identity_mapped_fixed_tuple_and_plain_array_controls_roundtrip() {
         "identity over number[] should roundtrip"
     );
 }
+
+#[test]
+fn identity_mapped_only_rewrites_first_rest_of_multi_rest_tuple() {
+    // GUARD: the per-position rule is only safe for the FIRST rest element,
+    // whose prefix is all fixed. A tuple with a second rest (e.g. from a
+    // generic variadic spread `[string, ...U, ...boolean[]]`) must NOT use
+    // positional indexing for the later rest, since `tuple_index_literal`
+    // short-circuits on the first rest it meets. Here we synthesize two
+    // array rests directly: the first must map precisely to `number[]`; the
+    // later rest must fall back to the original behavior (no crash, stays a
+    // rest element) rather than borrowing the first rest's index.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        req_elem(TypeId::STRING),
+        rest_elem(interner.array(TypeId::NUMBER)),
+        rest_elem(interner.array(TypeId::BOOLEAN)),
+    ]);
+
+    let result = eval_identity_mapped(&interner, "I", source);
+    let Some(TypeData::Tuple(list_id)) = interner.lookup(result) else {
+        panic!("expected tuple result, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(list_id);
+    assert_eq!(elements.len(), 3);
+    assert!(elements[1].rest && elements[2].rest);
+    assert_eq!(
+        elements[1].type_id,
+        interner.array(TypeId::NUMBER),
+        "first rest must map precisely to number[] via the per-position rule"
+    );
+    // The later rest keeps the original (union-based) behavior; we only assert
+    // it remains a rest element rather than pinning the legacy union shape.
+}

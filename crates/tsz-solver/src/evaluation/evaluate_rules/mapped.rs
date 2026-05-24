@@ -2064,38 +2064,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let tuple_elements = self.interner().tuple_list(tuple_id);
         let mut mapped_elements = Vec::new();
+        let mut seen_rest = false;
 
         for (i, elem) in tuple_elements.iter().enumerate() {
             if elem.rest {
-                // A homomorphic mapped type `{ [I in keyof X]: F<X[I]> }` binds
-                // `I` to each position's index, including the rest position, so
-                // `X[I]` resolves to that position's own element type. Binding
-                // `I` to `X[number]` instead would wrongly yield the union of
-                // every tuple element.
+                let is_first_rest = !seen_rest;
+                seen_rest = true;
                 let rest_type = elem.type_id;
                 let mapped_rest_type = match self.interner().lookup(rest_type) {
+                    Some(TypeData::Array(_)) if is_first_rest => {
+                        // `...E[]` as the first rest: every position before it is
+                        // fixed, so `X[i]` (this position's index) unambiguously
+                        // resolves to the rest element's own type. Binding `I` to
+                        // `X[number]` instead — as `evaluate_mapped_array` does —
+                        // would wrongly yield the union of every tuple element
+                        // (e.g. `Identity<[string, ...number[]]>` rest member
+                        // `string | number` rather than `number`). Re-wrap as an
+                        // array so the slot stays a rest element.
+                        //
+                        // A later rest cannot use this: `tuple_index_literal`
+                        // short-circuits on the first rest it meets, so positions
+                        // after an earlier rest/variadic spread are unreliable.
+                        let mapped_element = self.map_template_at_index(mapped, i);
+                        self.interner().array(mapped_element)
+                    }
+                    Some(TypeData::Array(inner_elem)) => {
+                        self.evaluate_mapped_array(mapped, inner_elem)
+                    }
                     Some(TypeData::Tuple(inner_tuple_id)) => {
-                        // `...[A, B]` spreads a fixed tuple across several
-                        // positions; recurse so each inner position keeps its
-                        // own mapped element type and the variadic shape.
+                        // Nested tuple spread (`...[A, B]`) - recurse.
                         self.evaluate_mapped_tuple(mapped, inner_tuple_id)
                     }
                     _ => {
-                        // `...E[]` (or any other single-slot rest): map the
-                        // rest element type via this position's index, apply
-                        // the optional modifier to the element, then re-wrap
-                        // as an array so the slot stays a rest element.
-                        let mut mapped_element = self.map_template_at_index(mapped, i);
-                        if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
-                            mapped_element =
-                                self.interner().union2(mapped_element, TypeId::UNDEFINED);
-                        }
-                        self.interner().array(mapped_element)
+                        // Generic/opaque rest (e.g. `...U`): index substitution.
+                        self.map_template_at_index(mapped, i)
                     }
                 };
 
+                let final_rest_type =
+                    if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                        self.interner().union2(mapped_rest_type, TypeId::UNDEFINED)
+                    } else {
+                        mapped_rest_type
+                    };
+
                 mapped_elements.push(TupleElement {
-                    type_id: mapped_rest_type,
+                    type_id: final_rest_type,
                     name: elem.name,
                     optional: elem.optional,
                     rest: true,
