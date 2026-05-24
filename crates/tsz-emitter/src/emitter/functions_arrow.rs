@@ -390,9 +390,13 @@ impl<'a> Printer<'a> {
         idx: NodeIndex,
         scan_end: u32,
     ) -> Option<(u32, u32)> {
-        let comment_start = self.rightmost_concise_arrow_body_comment_start(idx)?;
-        let comment_end = self.arrow_concise_body_deferred_comment_end(comment_start, scan_end)?;
-        Some((comment_start, comment_end))
+        if let Some(comment_start) = self.rightmost_concise_arrow_body_comment_start(idx) {
+            let comment_end =
+                self.arrow_concise_body_deferred_comment_end(comment_start, scan_end)?;
+            return Some((comment_start, comment_end));
+        }
+
+        self.direct_transformed_jsx_trailing_comment_range(idx)
     }
 
     fn arrow_concise_body_deferred_comment_end(
