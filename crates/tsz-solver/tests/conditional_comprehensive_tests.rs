@@ -3820,3 +3820,51 @@ fn infer_callable_non_function_source_takes_false_branch() {
         "a non-function source must still take the false branch"
     );
 }
+
+#[test]
+fn infer_callable_unmatched_param_defaults_nested_object_infer() {
+    // `(() => void) extends (x: { value: infer A }) => any ? A : never` → unknown.
+    // The unmatched parameter's infer is nested inside an object property, so a
+    // top-level-only collector would miss it and leak an unresolved `infer A`
+    // into the true branch. It must still default to `unknown`.
+    let interner = TypeInterner::new();
+    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let param_obj = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("value"),
+        infer_a,
+    )]);
+    let pattern = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![ParamInfo {
+            name: Some(interner.intern_string("x")),
+            type_id: param_obj,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::ANY,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+    let cond_id = interner.conditional(cond);
+    assert_eq!(
+        evaluate_type(&interner, cond_id),
+        TypeId::UNKNOWN,
+        "an unmatched parameter whose infer is nested in an object property must \
+         still default to unknown, not leak an unresolved infer"
+    );
+}

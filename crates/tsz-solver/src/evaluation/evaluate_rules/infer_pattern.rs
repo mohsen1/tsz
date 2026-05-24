@@ -387,41 +387,70 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         out: &mut FxHashSet<Atom>,
         visited: &mut FxHashSet<(TypeId, bool)>,
     ) {
+        self.collect_infer_names_inner(ty, contravariant, false, out, visited);
+    }
+
+    /// Shared traversal behind `collect_contravariant_infer_names` and
+    /// `fill_unbound_infer_defaults`. When `collect_all` is set every reachable
+    /// `infer` name is recorded regardless of variance; otherwise only names in
+    /// a contravariant position are recorded. The `visited` set is keyed by
+    /// `(type, variance)` so cyclic shapes terminate.
+    fn collect_infer_names_inner(
+        &self,
+        ty: TypeId,
+        contravariant: bool,
+        collect_all: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
         if ty.is_intrinsic() || !visited.insert((ty, contravariant)) {
             return;
         }
         match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) if contravariant => {
+            Some(TypeData::Infer(info)) if contravariant || collect_all => {
                 out.insert(info.name);
             }
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 for &m in self.interner().type_list(members).iter() {
-                    self.collect_variance_infer_names(m, contravariant, out, visited);
+                    self.collect_infer_names_inner(m, contravariant, collect_all, out, visited);
                 }
             }
             Some(TypeData::Array(elem)) => {
-                self.collect_variance_infer_names(elem, contravariant, out, visited);
+                self.collect_infer_names_inner(elem, contravariant, collect_all, out, visited);
             }
             Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
-                self.collect_variance_infer_names(inner, contravariant, out, visited);
+                self.collect_infer_names_inner(inner, contravariant, collect_all, out, visited);
             }
             Some(TypeData::Tuple(elements)) => {
                 for elem in self.interner().tuple_list(elements).iter() {
-                    self.collect_variance_infer_names(elem.type_id, contravariant, out, visited);
+                    self.collect_infer_names_inner(
+                        elem.type_id,
+                        contravariant,
+                        collect_all,
+                        out,
+                        visited,
+                    );
                 }
             }
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
-                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
+                    self.collect_infer_names_inner(
+                        prop.type_id,
+                        contravariant,
+                        collect_all,
+                        out,
+                        visited,
+                    );
                 }
                 for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
                     .into_iter()
                     .flatten()
                 {
-                    self.collect_variance_infer_names(
+                    self.collect_infer_names_inner(
                         index.value_type,
                         contravariant,
+                        collect_all,
                         out,
                         visited,
                     );
@@ -430,9 +459,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::Function(fn_id)) => {
                 let shape = self.interner().function_shape(fn_id);
                 for param in &shape.params {
-                    self.collect_variance_infer_names(param.type_id, !contravariant, out, visited);
+                    self.collect_infer_names_inner(
+                        param.type_id,
+                        !contravariant,
+                        collect_all,
+                        out,
+                        visited,
+                    );
                 }
-                self.collect_variance_infer_names(shape.return_type, contravariant, out, visited);
+                self.collect_infer_names_inner(
+                    shape.return_type,
+                    contravariant,
+                    collect_all,
+                    out,
+                    visited,
+                );
             }
             Some(TypeData::Callable(callable_id)) => {
                 let shape = self.interner().callable_shape(callable_id);
@@ -442,17 +483,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .chain(shape.construct_signatures.iter())
                 {
                     for param in &sig.params {
-                        self.collect_variance_infer_names(
+                        self.collect_infer_names_inner(
                             param.type_id,
                             !contravariant,
+                            collect_all,
                             out,
                             visited,
                         );
                     }
-                    self.collect_variance_infer_names(sig.return_type, contravariant, out, visited);
+                    self.collect_infer_names_inner(
+                        sig.return_type,
+                        contravariant,
+                        collect_all,
+                        out,
+                        visited,
+                    );
                 }
                 for prop in &shape.properties {
-                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
+                    self.collect_infer_names_inner(
+                        prop.type_id,
+                        contravariant,
+                        collect_all,
+                        out,
+                        visited,
+                    );
                 }
             }
             _ => {}
@@ -473,35 +527,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         bindings: &mut FxHashMap<Atom, TypeId>,
     ) {
         let mut names = FxHashSet::default();
-        self.collect_pattern_infer_names(pattern, &mut names);
+        let mut visited = FxHashSet::default();
+        // `collect_all = true` records every reachable `infer` name regardless
+        // of variance, covering nested object properties, function/callable
+        // members, and `readonly`/`NoInfer` wrappers — not just the top-level
+        // shapes — so an unmatched parameter like `(x: { value: infer A })`
+        // still defaults `A` to `unknown` instead of leaking an unresolved
+        // `infer` into the true branch.
+        self.collect_infer_names_inner(pattern, false, true, &mut names, &mut visited);
         for name in names {
             bindings.entry(name).or_insert(default_ty);
-        }
-    }
-
-    /// Collect the names of every `infer` variable reachable in `pattern`,
-    /// regardless of variance. `collect_variance_infer_names` only records
-    /// contravariant-position names, so it cannot be reused here: defaulting
-    /// unmatched parameter slots must cover every `infer` slot in the pattern.
-    fn collect_pattern_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
-        match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) => {
-                out.insert(info.name);
-            }
-            Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
-                for &m in self.interner().type_list(members).iter() {
-                    self.collect_pattern_infer_names(m, out);
-                }
-            }
-            Some(TypeData::Array(elem)) => {
-                self.collect_pattern_infer_names(elem, out);
-            }
-            Some(TypeData::Tuple(elements)) => {
-                for elem in self.interner().tuple_list(elements).iter() {
-                    self.collect_pattern_infer_names(elem.type_id, out);
-                }
-            }
-            _ => {}
         }
     }
 
