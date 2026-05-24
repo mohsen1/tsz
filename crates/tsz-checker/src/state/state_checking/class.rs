@@ -2155,17 +2155,15 @@ impl<'a> CheckerState<'a> {
                 return;
             }
 
-            // Surgical fix for #9729: when the constraint has a *single*
-            // construct signature with *zero* parameters, fire TS2545. tsc's
-            // `isMixinConstructorType` requires exactly one parameter that is
-            // rest-`any[]`, so a single-sig zero-parameter constraint trivially
-            // fails that contract. Every other shape (single non-rest, wrong
-            // rest element type, multiple sigs, etc.) goes through the
-            // pre-existing per-sig check verbatim — broadening the rule risks
-            // regressing tests where tsz's evaluated construct-signature list
-            // diverges from tsc's, and the issue only reports this one shape.
-            let single_sig_zero_param =
-                construct_sigs.len() == 1 && construct_sigs[0].params.is_empty();
+            // Surgical fix for #9729: a plain non-generic single signature
+            // with zero params fails tsc's mixin constructor contract. Other
+            // shapes stay on the pre-existing per-sig path; conditional mixin
+            // helper output can currently evaluate to a zero-param signature
+            // even though tsc accepts it.
+            let single_sig_zero_param = construct_sigs.len() == 1
+                && construct_sigs[0].type_params.is_empty()
+                && construct_sigs[0].params.is_empty()
+                && !class_query::contains_conditional_type(self.ctx.types, constraint_type);
             let has_invalid_sig = single_sig_zero_param
                 || construct_sigs.iter().any(|sig| {
                     !sig.params.is_empty() && !self.is_valid_mixin_construct_signature(sig)

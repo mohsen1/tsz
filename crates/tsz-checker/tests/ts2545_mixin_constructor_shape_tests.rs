@@ -7,11 +7,13 @@
 //! > parameter** whose element type is `any` (or whose parameter type is bare
 //! > `any`). Every other shape — zero parameters, multiple parameters, a single
 //! > non-rest parameter, an optional rest, or a rest of a non-`any` element
-//! > type — fails the mixin contract and produces TS2545.
+//! > type — fails the mixin contract and produces TS2545. Generic
+//! > constructor signatures inferred through conditional mixin helpers are
+//! > preserved as accepted by `tsc`.
 //!
 //! Reported in #9729: the zero-parameter case (`new () => object`) was silently
 //! accepted. tsc emits TS2545 in every "not a single `...any[]` rest" shape;
-//! tsz now matches.
+//! tsz now matches for the non-generic single-signature case.
 //!
 //! Adjacent matrix (verified against `tsc 6.0.2`):
 //!   1. zero params (reported bug)                       → TS2545
@@ -26,6 +28,7 @@
 //!  10. valid `...readonly any[]`                        → no TS2545 (control)
 //!  11. all-overloads-valid set                          → no TS2545 (control)
 //!  12. constraint with no construct sigs                → no TS2545 (control)
+//!  13. conditional-inferred generic mixin constructor    → no TS2545 (control)
 //!
 //! Out of scope (preserved pre-existing behavior): multi-sig constraints
 //! (overload sets, intersection-of-ctor) with a zero-param member. tsc
@@ -230,6 +233,31 @@ function m<T extends Ctor>(B: T) {
         count_ts2545(source),
         0,
         "all-overloads-valid set must not emit TS2545; got codes: {:?}",
+        codes(source)
+    );
+}
+
+#[test]
+fn no_ts2545_for_conditional_inferred_generic_mixin_constructor() {
+    // Regression witness from `doubleMixinConditionalTypeBaseClassWorks.ts`.
+    // The inferred constructor shape is generic mixin output, not the plain
+    // `new () => object` constraint reported in #9729.
+    let source = r#"
+type Constructor = new (...args: any[]) => {};
+
+const Mixin1 = <C extends Constructor>(Base: C) => class extends Base {
+    private _fooPrivate: {};
+};
+
+type FooConstructor = typeof Mixin1 extends (a: Constructor) => infer Cls ? Cls : never;
+const Mixin2 = <C extends FooConstructor>(Base: C) => class extends Base {};
+
+class C extends Mixin2(Mixin1(Object)) {}
+"#;
+    assert_eq!(
+        count_ts2545(source),
+        0,
+        "conditional-inferred generic mixin constructor must not emit TS2545; got codes: {:?}",
         codes(source)
     );
 }
