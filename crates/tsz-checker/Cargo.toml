@@ -414,6 +414,10 @@ name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
 [[test]]
+name = "typeof_chained_indexed_access_alias_tests"
+path = "tests/typeof_chained_indexed_access_alias_tests.rs"
+
+[[test]]
 name = "typeof_import_commonjs_object_literal_export_tests"
 path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
 
@@ -844,6 +848,10 @@ path = "tests/ts2344_literal_type_message.rs"
 [[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
+
+[[test]]
+name = "ts2344_keyof_constraint_display_tests"
+path = "tests/ts2344_keyof_constraint_display_tests.rs"
 
 [[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
