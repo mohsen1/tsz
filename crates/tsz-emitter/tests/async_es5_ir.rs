@@ -218,6 +218,56 @@ fn new_expression_with_suspended_element_constructor_index_captures_object() {
     );
 }
 
+#[test]
+fn array_literal_prefix_before_await_is_captured_before_yield() {
+    let output = transform_and_print("async function f() { x = [head, await tail, after]; }");
+
+    assert!(
+        output.contains("var _a;"),
+        "A prefix temp should be hoisted before the generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [head];\n                    return [4 /*yield*/, tail];"),
+        "Array elements before the suspending element must be evaluated before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent(), after]);"),
+        "After resume, the saved prefix should be concatenated with the sent value and suffix.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_literal_multiple_awaits_accumulates_prefix_between_yields() {
+    let output =
+        transform_and_print("async function f() { x = [await first, middle, await last]; }");
+
+    assert!(
+        output
+            .contains("_a = [_b.sent(), middle];\n                    return [4 /*yield*/, last];"),
+        "The resumed first await and intervening elements should be captured before the second yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent()]);"),
+        "The final resume should append to the accumulated prefix temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn spread_array_literal_with_suspending_spread_uses_spread_array_apply() {
+    let output = transform_and_print("async function f() { x = [...(await values), z]; }");
+
+    assert!(
+        output.contains("_a = [[]];\n                    return [4 /*yield*/, values];"),
+        "A suspending first spread still needs a captured spread-argument prefix.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "x = __spreadArray.apply(void 0, [__spreadArray.apply(void 0, _a.concat([(_b.sent()), true])), [z], false]);"
+        ),
+        "Spread array recomposition after resume should use the ES5 __spreadArray helper shape.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
