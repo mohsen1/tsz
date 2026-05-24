@@ -133,6 +133,90 @@ fn check_js_file_with_types(
 }
 
 #[test]
+fn jsdoc_import_type_object_typedef_checks_initializer_member_type() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ id: number }} User */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').User} */
+const u = { id: "wrong" };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected imported object typedef @type to check initializer member type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_object_typedef_checks_missing_initializer_property() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ id: number }} User */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').User} */
+const u = {};
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2741: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2741).collect();
+    assert_eq!(
+        ts2741.len(),
+        1,
+        "Expected imported object typedef @type to check missing initializer property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_object_typedef_checks_excess_initializer_property() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ id: number }} User */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').User} */
+const u = { id: 1, extra: true };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2353: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected imported object typedef @type to check excess initializer property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsdoc_type_assignment_binds_interface_this_to_source_instance() {
     let codes = check_js_file_with_types(
         "types.ts",
