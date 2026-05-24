@@ -842,6 +842,10 @@ name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
 
 [[test]]
+name = "homomorphic_mapped_empty_keyspace_tests"
+path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
+
+[[test]]
 name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 

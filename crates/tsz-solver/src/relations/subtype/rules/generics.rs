@@ -1796,7 +1796,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return None;
         }
 
-        // Get concrete keys from the constraint
+        // A constraint that *definitively* resolves to an empty key space denotes a
+        // homomorphic mapped type with no members, which reduces to the empty object
+        // type `{}` (and `{}` accepts any object source). This covers `keyof` of any
+        // type with no enumerable string/number/symbol keys — a bare function or
+        // constructor type, `{}`, etc. — all of which evaluate to `never`. It is
+        // distinct from a constraint we merely cannot resolve yet (a still-generic
+        // `keyof T` for a type parameter), which stays deferred (`KeyOf`, not `never`)
+        // and must remain unexpandable.
+        if self.evaluate_type(mapped.constraint) == TypeId::NEVER {
+            return Some(self.interner.object(Vec::new()));
+        }
+
+        // Get concrete keys from the constraint.
         let keys = self.try_evaluate_mapped_constraint(mapped.constraint)?;
         if keys.is_empty() {
             return None;
