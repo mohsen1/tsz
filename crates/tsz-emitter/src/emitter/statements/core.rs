@@ -736,12 +736,26 @@ impl<'a> Printer<'a> {
             return;
         };
         let deferred_export_bindings = self.deferred_local_export_bindings.clone();
+        let source_using_flags = self.variable_statement_source_using_flags(node);
 
         let has_using_declaration = var_stmt.declarations.nodes.iter().any(|decl_list_idx| {
             self.arena
                 .get(*decl_list_idx)
-                .is_some_and(|decl_list| (decl_list.flags as u32 & node_flags::USING) != 0)
-        });
+                .and_then(|decl_list_node| {
+                    self.arena
+                        .get_variable(decl_list_node)
+                        .map(|decl_list| (decl_list_node, decl_list))
+                })
+                .is_some_and(|(decl_list_node, decl_list)| {
+                    let flags = decl_list.declarations.nodes.iter().fold(
+                        decl_list_node.flags as u32,
+                        |flags, &decl_idx| {
+                            flags | self.arena.get_variable_declaration_flags(decl_idx)
+                        },
+                    );
+                    (flags & node_flags::USING) != 0
+                })
+        }) || source_using_flags != 0;
 
         // Skip ambient declarations (declare var/let/const)
         if self
@@ -815,7 +829,13 @@ impl<'a> Printer<'a> {
                     if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                         && let Some(decl_list) = self.arena.get_variable(decl_list_node)
                     {
-                        let flags = decl_list_node.flags as u32;
+                        let flags = source_using_flags
+                            | decl_list.declarations.nodes.iter().fold(
+                                decl_list_node.flags as u32,
+                                |flags, &decl_idx| {
+                                    flags | self.arena.get_variable_declaration_flags(decl_idx)
+                                },
+                            );
                         if (flags & node_flags::USING) != 0 {
                             self.emit_using_addresource_only(decl_list, env_name, using_async);
                         } else {
@@ -830,7 +850,13 @@ impl<'a> Printer<'a> {
                     if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                         && let Some(decl_list) = self.arena.get_variable(decl_list_node)
                     {
-                        let flags = decl_list_node.flags as u32;
+                        let flags = source_using_flags
+                            | decl_list.declarations.nodes.iter().fold(
+                                decl_list_node.flags as u32,
+                                |flags, &decl_idx| {
+                                    flags | self.arena.get_variable_declaration_flags(decl_idx)
+                                },
+                            );
                         if (flags & node_flags::USING) != 0 {
                             self.emit_using_declaration_lowered(decl_list, flags);
                         } else {

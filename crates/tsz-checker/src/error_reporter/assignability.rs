@@ -545,6 +545,17 @@ impl<'a> CheckerState<'a> {
         if source == target {
             return;
         }
+        // A type alias flagged as unconditionally-infinite (TS2589 at its
+        // definition) collapses to the error type in tsc, which is assignable in
+        // both directions. When either side involves such a poisoned alias, the
+        // structural relation is meaningless, so suppress the TS2322 cascade.
+        // Gated on the poison set so the common case pays nothing.
+        if self.ctx.definition_store.has_any_depth_poisoned()
+            && (self.ctx.type_involves_depth_poisoned_def(source)
+                || self.ctx.type_involves_depth_poisoned_def(target))
+        {
+            return;
+        }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if !self.has_exact_optional_property_mismatch(source, target)
             && self.should_suppress_assignability_diagnostic(source, target)
@@ -1414,6 +1425,13 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         target_display: String,
     ) -> String {
+        // Conditional types separate the false branch with `:` (`C extends E ? X : Y`),
+        // which the text-based member-literal widener mistakes for an object member and
+        // widens (`... : 2` → `... : number`, `... : "no"` → `... : string`). tsc renders
+        // deferred conditional branches verbatim, so never text-widen a conditional target.
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
+            return target_display;
+        }
         // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
         // but these are parameter literals that should be preserved, not object property
         // literals that should be widened. Skip rewriting for callable types.

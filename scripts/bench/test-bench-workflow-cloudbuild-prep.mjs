@@ -64,4 +64,13 @@ assert.doesNotMatch(
   "benchmark prep artifact polling must not source bench-prep.env because it can clobber BENCH_TARGET_SHA",
 );
 
+const prepArtifactJob = workflow.match(
+  /  bench-prep-artifact:[\s\S]+?  bench:/,
+)?.[0] ?? "";
+assert.doesNotMatch(
+  prepArtifactJob,
+  /bench-prep\/latest\/bench-prep\.(?:env|tar)|^\s*["']\/?bench-prep\.(?:env|tar)["'],?$/m,
+  "bench-prep-artifact must only trust SHA-scoped manifest paths; latest/root fallbacks can publish stale artifacts",
+);
+
 console.log("bench workflow Cloud Build prep artifact tests passed");
