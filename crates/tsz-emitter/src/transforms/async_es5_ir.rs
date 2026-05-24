@@ -2904,6 +2904,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_call)));
                 return;
             }
+            if let Some(lowered_new) = self.lower_new_expression_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_new)));
+                return;
+            }
             if self.async_generator_mode
                 && (node.kind == syntax_kind_ext::YIELD_EXPRESSION
                     || self.node_text_contains_yield(idx))
@@ -3092,6 +3101,7 @@ impl<'a> AsyncES5Transformer<'a> {
             } else {
                 let operand = self
                     .lower_es5_call_spread(await_expr.expression)
+                    .or_else(|| self.lower_es5_new_spread(await_expr.expression))
                     .unwrap_or_else(|| self.expression_to_ir(await_expr.expression));
                 if self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
                     Some(IRNode::CallExpr {
