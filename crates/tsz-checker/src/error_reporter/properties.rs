@@ -2458,7 +2458,18 @@ impl<'a> CheckerState<'a> {
                         object_type,
                     )
                 })
-                .unwrap_or(object_type);
+                // An unconstrained type parameter has the base constraint
+                // `unknown`; tsc displays "type 'unknown'", not the parameter name.
+                .unwrap_or_else(|| {
+                    if crate::query_boundaries::common::is_type_parameter(
+                        self.ctx.types,
+                        object_type,
+                    ) {
+                        TypeId::UNKNOWN
+                    } else {
+                        object_type
+                    }
+                });
         let object_str = self
             .object_literal_initializer_display_type_for_receiver(expr_idx)
             .map(|init_type| self.format_type_for_assignability_message(init_type))
