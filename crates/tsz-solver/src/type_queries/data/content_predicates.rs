@@ -540,8 +540,8 @@ pub fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     walk(db, type_id, &mut visiting, &mut memo)
 }
 
-/// Check whether a type (or any union/intersection/readonly/noinfer wrapper)
-/// contains an `Application` type.
+/// Check whether a type contains an `Application` type along structural paths
+/// where evaluating an alias application can affect the surrounding type.
 ///
 /// Used to decide whether contextual instantiation results should be preserved
 /// in their unevaluated form so that generic type argument structure is retained
@@ -566,6 +566,14 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
             contains_application_in_structure(db, inner)
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.get_mapped(mapped_id);
+            contains_application_in_structure(db, mapped.constraint)
+        }
+        Some(TypeData::IndexAccess(object_type, index_type)) => {
+            contains_application_in_structure(db, object_type)
+                || contains_application_in_structure(db, index_type)
         }
         _ => false,
     }

@@ -69,6 +69,22 @@ type H<T extends Un<T>> = T;
 }
 
 #[test]
+fn self_referential_alias_constraint_through_index_access_emits_ts2313() {
+    // Generalization: index access is on the base-constraint resolution path.
+    // `Id<T>["x"]` still contains a transparent alias application that reduces
+    // back to `T`, so the constraint is circular.
+    let source = r#"
+type Id<X> = X;
+type A<T extends Id<T>["x"]> = T;
+"#;
+    assert_eq!(
+        ts2313_count(source),
+        1,
+        "Expected TS2313 when index access reveals a transparent alias application"
+    );
+}
+
+#[test]
 fn mutual_two_parameter_circular_constraints_still_emit_ts2313() {
     // Regression guard for the pre-existing mutual-cycle detection.
     assert_eq!(
