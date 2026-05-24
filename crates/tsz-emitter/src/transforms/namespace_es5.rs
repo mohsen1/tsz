@@ -239,6 +239,10 @@ impl<'a> NamespaceES5Emitter<'a> {
         self.transformer.set_commonjs_export_name(name);
     }
 
+    pub fn set_commonjs_export_names(&mut self, names: Vec<String>) {
+        self.transformer.set_commonjs_export_names(names);
+    }
+
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.transformer.set_module_kind(kind);
     }

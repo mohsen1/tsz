@@ -46,38 +46,25 @@ impl<'a> LoweringPass<'a> {
     }
 
     /// Walk source-order statements once and record every export alias
-    /// attached to a local **enum** binding so the emitter can fold every
-    /// alias into the enum's IIFE tail.
-    ///
-    /// Only enums are recorded here today: the enum IIFE printer chains
-    /// every alias (`exports.EE = exports.E = E = {}`), so pre-populating
-    /// `iife_exported_bindings` for those aliases correctly suppresses the
-    /// stand-alone `exports.X = E;` lines that the re-export handler would
-    /// otherwise emit. Namespaces are intentionally skipped because the
-    /// namespace IIFE printer still folds only one alias, so recording every
-    /// namespace alias would over-suppress the trailing
-    /// `exports.secondAlias = m;` lines that tsz needs to keep.
+    /// attached to local enum/namespace IIFE bindings so the emitter can fold
+    /// every alias into the IIFE tail.
     fn collect_all_export_aliases_in_order(&mut self, statements: &tsz_parser::parser::NodeList) {
         let mut foldable_locals: rustc_hash::FxHashSet<String> = rustc_hash::FxHashSet::default();
         for &stmt_idx in &statements.nodes {
             let Some(node) = self.arena.get(stmt_idx) else {
                 continue;
             };
-            let foldable_enum_idx = if node.kind == syntax_kind_ext::ENUM_DECLARATION {
+            let foldable_iife_idx = if self.is_foldable_iife_declaration(node) {
                 Some(stmt_idx)
             } else if node.kind == syntax_kind_ext::EXPORT_DECLARATION {
-                self.export_decl_wraps_foldable_enum(node)
+                self.export_decl_wraps_foldable_iife(node)
             } else {
                 None
             };
-            if let Some(enum_idx) = foldable_enum_idx
-                && let Some(enum_node) = self.arena.get(enum_idx)
-                && let Some(enum_decl) = self.arena.get_enum(enum_node)
-                && !self.arena.is_declare(&enum_decl.modifiers)
-                && !self.has_const_modifier(&enum_decl.modifiers)
-                && let Some(local) = self.get_identifier_text_ref(enum_decl.name)
+            if let Some(iife_idx) = foldable_iife_idx
+                && let Some(local) = self.foldable_iife_local_name(iife_idx)
             {
-                foldable_locals.insert(local.to_string());
+                foldable_locals.insert(local);
             }
         }
 
@@ -88,12 +75,9 @@ impl<'a> LoweringPass<'a> {
         self.collect_foldable_export_aliases(statements, &foldable_locals);
     }
 
-    /// Return the inner `EnumData` and its `NodeIndex` when `export_decl_node`
-    /// is a non-default, non-type-only `EXPORT_DECLARATION` wrapping a
-    /// non-ambient, non-`const` enum (`export enum E { ... }`). Returns the
-    /// inner enum node index so callers can resolve names through the same
-    /// arena path the rest of lowering uses.
-    fn export_decl_wraps_foldable_enum(
+    /// Return the inner declaration index when `export_decl_node` wraps a
+    /// foldable enum or instantiated namespace IIFE declaration.
+    fn export_decl_wraps_foldable_iife(
         &self,
         export_decl_node: &tsz_parser::parser::node::Node,
     ) -> Option<NodeIndex> {
@@ -105,16 +89,78 @@ impl<'a> LoweringPass<'a> {
             return None;
         }
         let inner_node = self.arena.get(export_decl.export_clause)?;
-        if inner_node.kind != syntax_kind_ext::ENUM_DECLARATION {
-            return None;
+        self.is_foldable_iife_declaration(inner_node)
+            .then_some(export_decl.export_clause)
+    }
+
+    fn is_foldable_iife_declaration(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        match node.kind {
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).is_some_and(|enum_decl| {
+                    !self.arena.is_declare(&enum_decl.modifiers)
+                        && !self.has_const_modifier(&enum_decl.modifiers)
+                })
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(node).is_some_and(|module_decl| {
+                    !self.arena.is_declare(&module_decl.modifiers)
+                        && emit_utils::module_body_has_runtime_value_declarations(
+                            self.arena,
+                            module_decl.body,
+                        )
+                })
+            }
+            _ => false,
         }
-        let enum_decl = self.arena.get_enum(inner_node)?;
-        if self.arena.is_declare(&enum_decl.modifiers)
-            || self.has_const_modifier(&enum_decl.modifiers)
-        {
-            return None;
+    }
+
+    fn foldable_iife_local_name(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                let enum_decl = self.arena.get_enum(node)?;
+                self.get_identifier_text_ref(enum_decl.name)
+                    .map(str::to_string)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let module_decl = self.arena.get_module(node)?;
+                self.get_module_root_name_text(module_decl.name)
+            }
+            _ => None,
         }
-        Some(export_decl.export_clause)
+    }
+
+    fn foldable_iife_export_id(&self, idx: NodeIndex) -> Option<IdentifierId> {
+        let node = self.arena.get(idx)?;
+        match node.kind {
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                let enum_decl = self.arena.get_enum(node)?;
+                self.get_identifier_id(enum_decl.name)
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let module_decl = self.arena.get_module(node)?;
+                self.get_module_root_name(module_decl.name)
+            }
+            _ => None,
+        }
+    }
+
+    fn node_has_export_modifier(&self, node: &tsz_parser::parser::node::Node) -> bool {
+        match node.kind {
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                self.arena.get_enum(node).is_some_and(|decl| {
+                    self.arena
+                        .has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                self.arena.get_module(node).is_some_and(|decl| {
+                    self.arena
+                        .has_modifier(&decl.modifiers, SyntaxKind::ExportKeyword)
+                })
+            }
+            _ => false,
+        }
     }
 
     fn collect_foldable_export_aliases(
@@ -128,25 +174,16 @@ impl<'a> LoweringPass<'a> {
             };
 
             match node.kind {
-                k if k == syntax_kind_ext::ENUM_DECLARATION => {
-                    let Some(enum_decl) = self.arena.get_enum(node) else {
-                        continue;
-                    };
-                    if self.arena.is_declare(&enum_decl.modifiers) {
+                _ if self.is_foldable_iife_declaration(node) => {
+                    if !self.node_has_export_modifier(node) {
                         continue;
                     }
-                    if !self
-                        .arena
-                        .has_modifier(&enum_decl.modifiers, SyntaxKind::ExportKeyword)
-                    {
-                        continue;
-                    }
-                    if let Some(name_id) = self.get_identifier_id(enum_decl.name)
-                        && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                    if let Some(name_id) = self.foldable_iife_export_id(stmt_idx)
+                        && let Some(local_name) = self.foldable_iife_local_name(stmt_idx)
                     {
                         let entry = self
                             .all_export_aliases_in_order
-                            .entry(local_name.to_string())
+                            .entry(local_name)
                             .or_default();
                         if !entry.contains(&name_id) {
                             entry.push(name_id);
@@ -160,15 +197,13 @@ impl<'a> LoweringPass<'a> {
                     if export_decl.is_type_only {
                         continue;
                     }
-                    if let Some(inner_enum_idx) = self.export_decl_wraps_foldable_enum(node) {
-                        if let Some(inner_node) = self.arena.get(inner_enum_idx)
-                            && let Some(enum_decl) = self.arena.get_enum(inner_node)
-                            && let Some(name_id) = self.get_identifier_id(enum_decl.name)
-                            && let Some(local_name) = self.get_identifier_text_ref(enum_decl.name)
+                    if let Some(inner_iife_idx) = self.export_decl_wraps_foldable_iife(node) {
+                        if let Some(name_id) = self.foldable_iife_export_id(inner_iife_idx)
+                            && let Some(local_name) = self.foldable_iife_local_name(inner_iife_idx)
                         {
                             let entry = self
                                 .all_export_aliases_in_order
-                                .entry(local_name.to_string())
+                                .entry(local_name)
                                 .or_default();
                             if !entry.contains(&name_id) {
                                 entry.push(name_id);
