@@ -1394,6 +1394,10 @@ name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
+name = "ts7053_unconstrained_type_param_index_tests"
+path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
+
+[[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
