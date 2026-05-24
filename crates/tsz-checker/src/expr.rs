@@ -18,7 +18,7 @@
 //!
 //! ### Expressions handled directly:
 //! - Simple literals without contextual typing (null)
-//! - typeof expressions (always string)
+//! - typeof expressions (the well-known typeof string-literal union)
 //! - void expressions (always undefined)
 //! - Parenthesized expressions (pass through in TS files)
 //!
@@ -288,8 +288,11 @@ impl<'a, 'ctx> ExpressionChecker<'a, 'ctx> {
             // Null literal - always TypeId::NULL (context doesn't affect null)
             k if k == SyntaxKind::NullKeyword as u16 => ExprCheckResult::Type(TypeId::NULL),
 
-            // typeof expression always returns string (context doesn't affect typeof)
-            k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => ExprCheckResult::Type(TypeId::STRING),
+            // typeof expression always yields the well-known string-literal union
+            // (context doesn't affect typeof).
+            k if k == syntax_kind_ext::TYPE_OF_EXPRESSION => {
+                ExprCheckResult::Type(self.ctx.types.factory().typeof_result_union())
+            }
 
             // void expression always returns undefined (context doesn't affect void)
             k if k == syntax_kind_ext::VOID_EXPRESSION => ExprCheckResult::Type(TypeId::UNDEFINED),

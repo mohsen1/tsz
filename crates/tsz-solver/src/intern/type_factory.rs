@@ -56,6 +56,23 @@ impl<'db> TypeFactory<'db> {
         self.db.union(members)
     }
 
+    /// The canonical result type of the runtime `typeof` operator:
+    /// `"string" | "number" | "bigint" | "boolean" | "symbol" | "undefined" | "object" | "function"`.
+    /// Interning makes this O(1)-equal across call sites.
+    pub fn typeof_result_union(&self) -> TypeId {
+        let members = vec![
+            self.db.literal_string("string"),
+            self.db.literal_string("number"),
+            self.db.literal_string("bigint"),
+            self.db.literal_string("boolean"),
+            self.db.literal_string("symbol"),
+            self.db.literal_string("undefined"),
+            self.db.literal_string("object"),
+            self.db.literal_string("function"),
+        ];
+        self.db.union(members)
+    }
+
     #[inline]
     pub fn union_from_slice(&self, members: &[TypeId]) -> TypeId {
         self.db.union_from_slice(members)

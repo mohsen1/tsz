@@ -2500,18 +2500,7 @@ impl<'a> CheckerState<'a> {
         if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
             return None;
         }
-        let factory = self.ctx.types.factory();
-        let members = vec![
-            factory.literal_string("string"),
-            factory.literal_string("number"),
-            factory.literal_string("bigint"),
-            factory.literal_string("boolean"),
-            factory.literal_string("symbol"),
-            factory.literal_string("undefined"),
-            factory.literal_string("object"),
-            factory.literal_string("function"),
-        ];
-        Some(factory.union(members))
+        Some(self.ctx.types.factory().typeof_result_union())
     }
 
     /// Check if an identifier node's declared type overlaps with the given comparison type.

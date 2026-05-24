@@ -316,10 +316,11 @@ impl<'a> CheckerState<'a> {
                 }
                 TypeId::BOOLEAN
             }
-            // typeof returns string but still type-check operand for flow/node types.
+            // typeof yields the well-known string-literal union, not plain `string`.
+            // Still type-check the operand for flow/node types.
             k if k == SyntaxKind::TypeOfKeyword as u16 => {
                 self.get_type_of_node(unary.operand);
-                TypeId::STRING
+                self.ctx.types.factory().typeof_result_union()
             }
             // Unary + and - return number unless contextual typing expects a numeric literal.
             // Note: tsc does NOT validate operand types for unary +/- in general.

@@ -370,6 +370,9 @@ mod ts7057_yield_implicit_any;
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
 #[cfg(test)]
+#[path = "../tests/typeof_operator_result_union_tests.rs"]
+mod typeof_operator_result_union_tests;
+#[cfg(test)]
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
