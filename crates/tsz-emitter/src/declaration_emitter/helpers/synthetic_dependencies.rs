@@ -5,7 +5,6 @@ use tsz_binder::symbol_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::type_queries;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn synthetic_class_extends_alias_type_id(
@@ -507,7 +506,8 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(func_type_id) = func_type_id else {
                 continue;
             };
-            let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+            let Some(return_type_id) =
+                tsz_solver::type_queries::get_return_type(*interner, func_type_id)
             else {
                 continue;
             };
