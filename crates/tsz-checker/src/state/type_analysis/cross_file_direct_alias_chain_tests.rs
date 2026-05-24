@@ -279,6 +279,57 @@ fn direct_source_file_type_alias_lowers_renamed_concrete_generic_alias_chain() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_mapped_type_with_own_key() {
+    with_two_file_state(
+        "type Keys<T> = keyof T;\nexport type Box<T> = { [P in Keys<T>]: T[P] };",
+        "import { Box } from './target';",
+        |state, target_binder| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(box_sym, Some(1), true)
+                .expect("mapped bodies over safe local alias constraints should lower");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Box should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_mapped_type_with_local_value_alias() {
+    with_two_file_state(
+        "type KeySet<X> = keyof X;\ntype Val<Obj, Key extends keyof Obj> = Obj[Key];\nexport type Remap<Obj> = { [Name in KeySet<Obj>]: Val<Obj, Name> };",
+        "import { Remap } from './target';",
+        |state, target_binder| {
+            let remap_sym = target_binder.file_locals.get("Remap").expect("Remap");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(remap_sym, Some(1), true)
+                .expect("renamed mapped type parameters should lower structurally");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Remap should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_mapped_type_with_typeof_value() {
+    with_two_file_state(
+        "const value = 1;\nexport type Box<T> = { [P in keyof T]: typeof value };",
+        "import { Box } from './target';",
+        |state, target_binder| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(box_sym, Some(1), true)
+                    .is_none(),
+                "mapped types with flow-sensitive value types must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_generic_body_with_local_alias_application() {
     with_two_file_state(
         "type Box<X> = X | null;\nexport type Result<T> = Box<T>;",
