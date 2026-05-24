@@ -506,6 +506,7 @@ impl<'a> CheckerState<'a> {
             let template_names = Self::jsdoc_template_type_params(jsdoc);
             let mut updates = Vec::with_capacity(template_names.len());
             let factory = self.ctx.types.factory();
+            let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
             for (name, is_const, default_str) in template_names {
                 if self.ctx.type_parameter_scope.contains_key(&name) {
                     continue;
@@ -514,9 +515,12 @@ impl<'a> CheckerState<'a> {
                 let default = default_str
                     .as_deref()
                     .and_then(|s| self.resolve_jsdoc_reference(s));
+                let constraint = constraint_strs
+                    .get(&name)
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 let info = TypeParamInfo {
                     name: atom,
-                    constraint: None,
+                    constraint,
                     default,
                     is_const,
                 };

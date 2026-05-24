@@ -722,6 +722,17 @@ impl<'a> CheckerState<'a> {
                     ),
                 }]
             }
+            SubtypeFailureReason::AbstractConstructorAssignment => {
+                vec![DiagnosticRelatedInformation {
+                    category: DiagnosticCategory::Message,
+                    code: diagnostic_codes::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE,
+                    file: self.ctx.file_name.clone(),
+                    start,
+                    length,
+                    message_text: diagnostic_messages::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE
+                        .to_string(),
+                }]
+            }
             _ => return None,
         };
 
