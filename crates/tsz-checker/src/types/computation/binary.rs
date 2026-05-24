@@ -673,7 +673,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             if op_kind == SyntaxKind::InKeyword as u16 {
-                let result = self.check_in_operator(left_idx, right_idx, right_type);
+                let result = self.check_in_operator(left_idx, right_idx, left_type, right_type);
                 type_stack.push(result);
                 continue;
             }

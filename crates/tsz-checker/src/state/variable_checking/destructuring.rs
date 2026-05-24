@@ -232,6 +232,43 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|param| param.initializer.is_some())
     }
 
+    /// Whether a (possibly nested) binding pattern belongs to a `const`
+    /// declaration. Mirrors tsc's use of `getCombinedNodeFlags & Constant` in
+    /// `widenTypeInferredFromInitializer`: a binding element's default keeps its
+    /// literal type only under `const`/`readonly`; `let`/`var`/parameter
+    /// defaults widen. Nested patterns (`const [[a = 0]] = ...`) inherit the
+    /// outer declaration's const-ness, so we walk up through binding
+    /// elements/patterns to the owning `VariableDeclaration`.
+    fn binding_pattern_is_const_declaration(&self, pattern_idx: NodeIndex) -> bool {
+        let mut current = pattern_idx;
+        for _ in 0..16 {
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                return false;
+            };
+            let parent_idx = ext.parent;
+            if parent_idx.is_none() {
+                return false;
+            }
+            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION => {
+                    return self.ctx.arena.is_const_variable_declaration(parent_idx);
+                }
+                k if k == syntax_kind_ext::PARAMETER => return false,
+                k if k == syntax_kind_ext::BINDING_ELEMENT
+                    || k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    || k == syntax_kind_ext::OBJECT_BINDING_PATTERN =>
+                {
+                    current = parent_idx;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     pub(crate) fn normalize_parameter_binding_pattern_source_type(
         &self,
         pattern_idx: NodeIndex,
@@ -389,6 +426,19 @@ impl<'a> CheckerState<'a> {
 
         self.report_unknown_empty_binding_pattern(pattern_idx, parent_type);
 
+        // A binding default's literal type is only preserved (under `const`) when
+        // the destructuring source is a tuple — i.e. a fresh array literal or a
+        // tuple-typed value, where the positional element literal is meaningful
+        // (`const [first = 0] = [10, 20]` → `0 | 10`). For non-tuple sources
+        // (arrays, or unions like `RegExpMatchArray | never[]`) the default
+        // widens as usual, matching tsc once the source element is taken into
+        // account.
+        let source_is_tuple = query::tuple_elements(
+            self.ctx.types,
+            query::unwrap_readonly_deep(self.ctx.types, parent_type),
+        )
+        .is_some();
+
         let Some(pattern_node) = self.ctx.arena.get(pattern_idx) else {
             return;
         };
@@ -456,8 +506,20 @@ impl<'a> CheckerState<'a> {
                     request.read().contextual_opt(None)
                 };
                 self.invalidate_expression_for_contextual_retry(element_data.initializer);
+                // Under `const`/`readonly`, tsc does not widen the default's literal
+                // type (`widenTypeInferredFromInitializer` skips the `Constant` case),
+                // so `const [first = 0] = [10, 20]` yields `0 | 10`, not `number`.
+                // `let`/`var`/parameter defaults widen, matching the standard path.
+                // Gated to tuple sources so non-tuple sources (e.g. a `number[]` or a
+                // `RegExpMatchArray | never[]` union) keep their widening behavior.
+                let prev_preserve = self.ctx.preserve_literal_types;
+                if source_is_tuple && self.binding_pattern_is_const_declaration(pattern_idx) {
+                    self.ctx.preserve_literal_types = true;
+                }
                 let init_type =
                     self.get_type_of_node_with_request(element_data.initializer, &request);
+                self.ctx.preserve_literal_types = prev_preserve;
+
                 if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                     element_type = init_type;
                 } else if !self.is_assignable_to(init_type, element_type) {
@@ -2009,26 +2071,55 @@ impl<'a> CheckerState<'a> {
         if pattern_kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
             let mut tuple_elements = Vec::new();
             for &elem_idx in &elem_indices {
-                let elem_type = self
+                // Copy the Copy-able binding fields out so the immutable arena
+                // borrow is released before the mutable `self` calls below.
+                let binding = self
                     .ctx
                     .arena
                     .get(elem_idx)
                     .and_then(|elem_node| self.ctx.arena.get_binding_element(elem_node))
-                    .and_then(|elem_data| {
-                        let name_node = self.ctx.arena.get(elem_data.name)?;
-                        if name_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-                            || name_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
-                        {
-                            Some(elem_data.name)
-                        } else {
-                            None
-                        }
+                    .map(|elem_data| {
+                        (
+                            elem_data.name,
+                            elem_data.dot_dot_dot_token,
+                            elem_data.initializer,
+                        )
                     });
-                let elem_type = if let Some(pattern_name) = elem_type {
-                    self.build_contextual_type_from_pattern_with_request(pattern_name, request)
-                        .unwrap_or(TypeId::ANY)
-                } else {
-                    TypeId::ANY
+                let elem_type = match binding {
+                    Some((name, _, _))
+                        if matches!(
+                            self.ctx.arena.kind_at(name),
+                            Some(k) if k == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                || k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                        ) =>
+                    {
+                        self.build_contextual_type_from_pattern_with_request(name, request)
+                            .unwrap_or(TypeId::ANY)
+                    }
+                    // A non-rest element default contributes its (literal) type as the
+                    // contextual element type, mirroring tsc's `getTypeFromBindingElement`.
+                    // This is what makes a fresh array-literal initializer preserve the
+                    // positional literal element when the binding has a default
+                    // (`const [first = 0] = [10, 20]` → element context `0`, so the
+                    // source `10` stays `10` instead of widening to `number`). The
+                    // default's literal type must be preserved (not widened to `number`)
+                    // because tsc keeps the source literal only when its primitive kind
+                    // matches the default's. Elements without a default keep `any`, so
+                    // the source element widens as usual.
+                    Some((_, false, initializer)) if initializer.is_some() => {
+                        let init_request = request.read().contextual_opt(None);
+                        let prev_preserve = self.ctx.preserve_literal_types;
+                        self.ctx.preserve_literal_types = true;
+                        let init_type =
+                            self.get_type_of_node_with_request(initializer, &init_request);
+                        self.ctx.preserve_literal_types = prev_preserve;
+                        if init_type == TypeId::UNKNOWN || init_type == TypeId::ERROR {
+                            TypeId::ANY
+                        } else {
+                            init_type
+                        }
+                    }
+                    _ => TypeId::ANY,
                 };
                 tuple_elements.push(tsz_solver::TupleElement {
                     type_id: elem_type,
