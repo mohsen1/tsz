@@ -19,6 +19,38 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+#[test]
+fn labeled_while_continue_inside_nested_loop_targets_outer_async_case() {
+    let output = transform_and_print(
+        "async function f() { outer: while (x) { await y; while (z) { continue outer; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "Nested loops inside an async-lowered labeled loop must rewrite `continue outer` to the outer loop's generator continue target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue outer;"),
+        "The labeled continue must not remain as raw JS inside the generator body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn labeled_while_continue_rewrite_uses_user_chosen_label() {
+    let output = transform_and_print(
+        "async function f() { retry: while (x) { await y; while (z) { continue retry; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "The rewrite must be keyed by the active label target, not by a specific spelling.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue retry;"),
+        "The user-chosen label should be lowered to the generator jump.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
