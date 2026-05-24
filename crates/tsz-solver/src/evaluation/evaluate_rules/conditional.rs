@@ -316,10 +316,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
-                if matches!(
+                // A bare `infer X` extends clause always matches, so tsc takes the
+                // true branch with `X` bound to the check type. Normal evaluation
+                // defers when the check type is still a free type parameter (the
+                // conditional has no concrete input yet). During the TS2589
+                // depth-detection pass the alias body is evaluated with its type
+                // parameters left free, so deferring here hides unconditionally
+                // recursive aliases like `type A<T> = T extends infer X ? A<X & B>
+                // : never` from the recursion guard. In that pass, bind `X` to the
+                // free type parameter and follow the true branch so the guard can
+                // observe the re-applied alias and surface TS2589.
+                let check_is_unresolved_param = matches!(
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-                ) {
+                );
+                let drive_recursion_for_depth_check = self.is_depth_detection_pass()
+                    && matches!(
+                        self.interner().lookup(check_type),
+                        Some(TypeData::TypeParameter(_))
+                    );
+                if check_is_unresolved_param && !drive_recursion_for_depth_check {
                     return self.interner().conditional(*cond);
                 }
 

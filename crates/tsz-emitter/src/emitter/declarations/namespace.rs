@@ -94,6 +94,10 @@ impl<'a> Printer<'a> {
                 self.const_enum_values.clone(),
                 self.const_enum_import_aliases.clone(),
             );
+            if use_cjs {
+                let export_names = std::mem::take(&mut self.pending_cjs_namespace_export_names);
+                es5_emitter.set_commonjs_export_names(export_names);
+            }
             if let Some(export_names) = system_export_fold.as_deref() {
                 es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
             }
@@ -415,10 +419,10 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
-        let cjs_export_name = if parent_name.is_none() {
-            self.pending_cjs_namespace_export_name.take()
+        let cjs_export_names = if parent_name.is_none() {
+            std::mem::take(&mut self.pending_cjs_namespace_export_names)
         } else {
-            None
+            Vec::new()
         };
         let system_export_fold = if parent_name.is_none() {
             self.pending_system_namespace_export_fold.take()
@@ -571,14 +575,11 @@ impl<'a> Printer<'a> {
             self.emit_system_export_folded_namespace_assignment(export_names, &name);
             self.write("));");
         } else if cjs_export_fold {
-            // CJS export fold: (N || (exports.N = N = {}))
-            let export_name = cjs_export_name.as_deref().unwrap_or(&name);
+            // CJS export fold: (N || (exports.Alias = exports.N = N = {}))
             self.write(&name);
-            self.write(" || (exports.");
-            self.write(export_name);
-            self.write(" = ");
-            self.write(&name);
-            self.write(" = {}));");
+            self.write(" || (");
+            self.emit_commonjs_export_folded_namespace_assignment(&cjs_export_names, &name);
+            self.write("));");
         } else if !suppress_default_merge
             && self.ctx.is_commonjs()
             && self
@@ -622,6 +623,23 @@ impl<'a> Printer<'a> {
         self.write("\", ");
         self.emit_system_export_folded_namespace_assignment(inner_names, name);
         self.write(")");
+    }
+
+    fn emit_commonjs_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[String],
+        name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports.");
+        self.write(export_name);
+        self.write(" = ");
+        self.emit_commonjs_export_folded_namespace_assignment(inner_names, name);
     }
 
     /// Check if any declaration at any depth in the namespace body has the same
