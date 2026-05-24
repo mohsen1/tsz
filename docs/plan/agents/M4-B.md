@@ -24,11 +24,11 @@ scripts/agents/list-owned-work.sh M4-B
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
 - Current open PRs owned by `agent:M4-B`:
-  - `#10078` ready/off-auto; docs-only CI is green on
-    `094e074a0994a9a3684755b455471d3c090508f5`. Direct squash merge is
-    blocked by the protected-branch policy; the queue workflow invalidated
-    `Queue Tested` on synchronize and the follow-up queue run reported no
-    queue-ready auto-merge PR because auto-merge remains off by lane rule.
+  - `#10078` ready/off-auto; this lane-doc PR is docs-only. Direct squash
+    merge is blocked by the protected-branch policy; queue runs invalidate
+    `Queue Tested` after each synchronize and report no queue-ready auto-merge
+    PR because auto-merge remains off by lane rule. Do not churn this PR just
+    to update its own head SHA.
   - `#10058` ready/off-auto on rebased head
     `171fc3620611a4ba128b1d156f1ee8d739372bf1`; fresh CI is running to
     determine whether the earlier `conformance-aggregate` coverage gap
