@@ -19,6 +19,34 @@ pub enum RemappedMappedIndexAccessResult {
     Deferred(TypeId),
 }
 
+/// Whether an optional mapped type's display appends the implicit
+/// `| undefined` member for its template.
+pub fn optional_mapped_type_adds_implicit_undefined(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some(mapped) = super::data::get_mapped_type(db, type_id) else {
+        return false;
+    };
+    if mapped.optional_modifier != Some(MappedModifier::Add) {
+        return false;
+    }
+    !template_covers_optional_undefined_display(db, mapped.template)
+}
+
+fn template_covers_optional_undefined_display(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if matches!(type_id, TypeId::UNDEFINED | TypeId::ANY | TypeId::UNKNOWN) {
+        return true;
+    }
+    let Some(TypeData::Union(members)) = db.lookup(type_id) else {
+        return false;
+    };
+    db.type_list(members)
+        .as_ref()
+        .iter()
+        .any(|member| matches!(*member, TypeId::UNDEFINED | TypeId::ANY | TypeId::UNKNOWN))
+}
+
 // =============================================================================
 // Mapped Property Key Remapping and Value Specialization
 // =============================================================================
