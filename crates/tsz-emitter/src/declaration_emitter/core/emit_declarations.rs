@@ -1378,6 +1378,16 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.function_body_single_spread_object_literal_type_text(func_body)
+                        })
+                        .flatten()
+                        .filter(|type_text| !type_text.is_empty())
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some((type_text, substituted_parameter_type_query)) =
                         scoped_preferred_return.as_ref()
                         && let Some(func_name_text) = self.get_identifier_text(func_name)
