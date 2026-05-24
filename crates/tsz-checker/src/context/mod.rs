@@ -34,6 +34,7 @@ pub use parse_health::ParseHealth;
 mod import_extension_flags;
 mod lib_queries;
 mod module_entity;
+mod package_resolution;
 mod request_cache;
 mod resolver;
 mod source_file_symbol_type_cache_scope;
