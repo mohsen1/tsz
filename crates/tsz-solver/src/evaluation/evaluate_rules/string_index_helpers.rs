@@ -127,6 +127,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         })
     }
@@ -189,6 +190,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         // A numeric literal prefers the number index signature.
@@ -212,6 +214,7 @@ mod tests {
                 readonly: false,
                 param_name: None,
             }),
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -229,6 +232,7 @@ mod tests {
             properties: Vec::new(),
             string_index: None,
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
@@ -257,6 +261,7 @@ mod tests {
                 param_name: None,
             }),
             number_index: None,
+            symbol_index: None,
             symbol: None,
         });
         assert_eq!(
