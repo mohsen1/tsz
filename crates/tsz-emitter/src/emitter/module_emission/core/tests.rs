@@ -1108,6 +1108,68 @@ fn default_export_function_hoists_export_assignment() {
     );
 }
 
+#[test]
+fn commonjs_default_export_identifier_uses_export_binding_for_exported_var() {
+    let source = r#"export const cssExports = 1;
+export default cssExports;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("exports.default = exports.cssExports;"),
+        "Default export should read the CommonJS export binding for exported variables.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.default = cssExports;"),
+        "Default export should not read a missing or stale local variable binding.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_default_export_identifier_uses_recovered_nested_export_binding() {
+    let source = r#"type CssExports = {};
+if (true)
+export const cssExports: CssExports;
+export default cssExports;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("if (true) { }"),
+        "Recovered no-initializer export should leave an empty control-flow body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports.default = exports.cssExports;"),
+        "Default export should read the recovered CommonJS export binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.default = cssExports;"),
+        "Default export should not read a local binding omitted by CommonJS recovery.\nOutput:\n{output}"
+    );
+}
+
 /// `export namespace F` can merge with `export default function F`.
 /// The default export owns the CommonJS export binding, so the namespace IIFE
 /// must augment the local function binding rather than assigning `exports.F`.
