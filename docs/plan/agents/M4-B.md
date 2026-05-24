@@ -23,20 +23,37 @@ scripts/agents/list-owned-work.sh M4-B
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- `#9650` was ready earlier in the 2026-05-21 audit window, then moved back to
-  draft after CI/body blockers. Inspect it before reviving or replacing it.
-- Active relation-policy stack: `#9265`, `#9268`, `#9281`, `#9289`.
-- Current draft/new-issue cluster: `#9807`, `#9803`, `#9800`, `#9798`,
-  `#9650`, `#9230`, `#8207`, and `#8203`.
+- Current open PRs owned by `agent:M4-B`:
+  - `#10058` ready/off-auto; exact-head CI still had pending jobs in the
+    2026-05-24 M4-B audit.
+  - `#9945` draft/off-auto; draft-light CI was queued after the landing-shape
+    split.
+  - `#9807` ready/off-auto; ready CI shards were green but aggregate jobs were
+    still queued in the 2026-05-24 M4-B audit.
+  - `#9281` ready/off-auto; ready CI shards were green but aggregate jobs were
+    still queued in the 2026-05-24 M4-B audit.
+  - `#9230` draft/off-auto; follow-up head
+    `dd48ce95538d367106e470ac025fa0bb8bd6f141` fixed the focused
+    `coAndContraVariantInferences` and `intraExpressionInferences` blockers
+    locally, then left exact-head draft-light CI queued.
+- Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
+  merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
+  reason.
+- Older draft/new-issue cluster references to inspect only after the open PRs
+  above are landed, closed, or explicitly handed off: `#9803`, `#9800`,
+  `#9798`, `#8207`, and `#8203`.
 - Track: roadmap Tracks 3, 4, and 10.
-- Next concrete step: resolve why `#9650` is draft again, then collapse or
-  advance the relation-policy stack root-first. Do not start another
-  policy/cache branch until the stack has one clear next merge.
+- Next concrete step: inspect queued exact-head CI for the open PR set above.
+  If a PR is green and not draft/WIP/blocked, mark or keep it ready and land it
+  according to the TSZ CI rules. If a PR is draft but light CI is clean and the
+  body/comment handoff says its blocker is fixed, mark it ready for heavy CI
+  instead of adding more scope.
 
 ## Existing Work To Inspect First
 
-- `#9265` is the root relation engine flag routing PR.
-- `#9268`, `#9281`, and `#9289` are stacked on top of relation policy changes.
+- `#9281` is the remaining open relation-policy stack PR.
+- `#9230` and `#9945` are draft PRs that should be advanced or handed off
+  before taking issue backlog.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9803` is titled `[WIP]`; keep it WIP until the owner leaves a signed
   status comment and removes the title prefix.
