@@ -14,5 +14,6 @@
 //! - Generic instantiation (`resolve_jsdoc_generic_type`)
 //! - Import type resolution (`resolve_jsdoc_import_type_reference`)
 
+mod generic_typedef;
 mod name_resolution;
 mod type_construction;

@@ -102,6 +102,69 @@ declare module "observable" {
 }
 
 #[test]
+fn ambient_external_module_members_strip_redundant_export_keywords() {
+    let result = emit_dts_with_usage_analysis(
+        r#"
+declare module "pkg" {
+    export var publicValue: string;
+    var privateValue: number;
+    namespace Nested {
+        import Local = privateValue;
+    }
+}
+"#,
+    );
+
+    assert!(
+        result.contains("var publicValue: string;"),
+        "ambient module public variable should remain visible: {result}"
+    );
+    assert!(
+        !result.contains("export var publicValue"),
+        "ambient external module members should not re-emit redundant export keywords: {result}"
+    );
+    assert!(
+        !result.contains("import Local = privateValue;"),
+        "unused local import-equals aliases inside ambient modules should be elided: {result}"
+    );
+}
+
+#[test]
+fn namespace_local_require_aliases_do_not_become_public_type_names() {
+    let result = emit_dts_with_usage_analysis(
+        r#"
+namespace M {
+    export declare module "pkg" {
+        export class C {}
+        export function make(): C;
+    }
+    import Local = require("pkg");
+    export var value = Local.C;
+    export var instance = new Local.C();
+    export import Public = require("pkg");
+}
+"#,
+    );
+
+    assert!(
+        !result.contains("import Local = require(\"pkg\");"),
+        "non-exported namespace-local require aliases should be elided: {result}"
+    );
+    assert!(
+        result.contains("var value: any;"),
+        "exported variables initialized through elided require aliases should fall back to any: {result}"
+    );
+    assert!(
+        result.contains("var instance: any;"),
+        "new expressions through elided require aliases should fall back to any: {result}"
+    );
+    assert!(
+        result.contains("export import Public = require(\"pkg\");"),
+        "explicit exported require aliases should remain public: {result}"
+    );
+}
+
+#[test]
 fn test_complex_generic_constraints_with_defaults() {
     let result = emit_dts(
         r#"
