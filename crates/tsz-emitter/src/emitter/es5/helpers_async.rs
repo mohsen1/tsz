@@ -559,26 +559,8 @@ impl<'a> Printer<'a> {
         // ANY parameter has a default initializer or destructuring pattern.
         // The outer function forwards `arguments` to __awaiter. This ensures
         // parameter evaluation happens inside the generator context.
-        let any_param_needs_forwarding = use_native_generators
-            && params.iter().copied().any(|p| {
-                let Some(node) = self.arena.get(p) else {
-                    return false;
-                };
-                let Some(param) = self.arena.get_parameter(node) else {
-                    return false;
-                };
-                // Default initializer
-                if param.initializer.is_some() {
-                    return true;
-                }
-                // Destructuring pattern (name is not a simple identifier)
-                if let Some(name_node) = self.arena.get(param.name)
-                    && name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
-                {
-                    return true;
-                }
-                false
-            });
+        let any_param_needs_forwarding =
+            use_native_generators && self.async_params_need_generator_forwarding(params);
         let move_params_to_generator =
             use_native_generators && (params_have_top_level_await || any_param_needs_forwarding);
         let es5_await_param_recovery = !use_native_generators
