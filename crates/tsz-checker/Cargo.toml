@@ -934,6 +934,10 @@ name = "fresh_intersection_display_tests"
 path = "tests/fresh_intersection_display_tests.rs"
 
 [[test]]
+name = "rendered_decision_debt_tests"
+path = "tests/rendered_decision_debt_tests.rs"
+
+[[test]]
 name = "intersection_signatures"
 path = "tests/intersection_signatures.rs"
 
