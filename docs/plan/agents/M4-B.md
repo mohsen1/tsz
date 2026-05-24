@@ -24,13 +24,15 @@ scripts/agents/list-owned-work.sh M4-B
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
 - Current open PRs owned by `agent:M4-B`:
-  - `#10058` ready/off-auto; exact-head ready-review CI has green shards and is
-    waiting on aggregate/queue statuses.
+  - `#10058` draft/off-auto; exact-head ready-review CI produced green shards
+    but failed `conformance-aggregate` with a 21-test coverage accounting gap
+    (`11844 < 11865` tolerance 5). Keep draft until the aggregate/corpus
+    mismatch is understood or fixed.
   - `#9945` ready/off-auto; exact-head ready-review CI is still running.
   - `#9807` draft/WIP/off-auto; follow-up head
     `4058f3d4f0559c3755244d17496066638f784438` split
     `visitor_predicates.rs` below 2000 LOC, but exact-head draft-light jobs
-    are still queued.
+    are still running.
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`.
@@ -53,8 +55,9 @@ scripts/agents/list-owned-work.sh M4-B
   not as an M4-B lane PR.
 - `#9807` is the remaining draft/WIP PR that should be advanced or handed off
   before taking issue backlog.
-- `#9230`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
-  landed only after exact-head required checks are complete and green.
+- `#9230`, `#9945`, and `#10078` are ready/off-auto and should be landed only
+  after exact-head required checks are complete and green. `#10058` is draft
+  because of the conformance aggregate coverage gap described above.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
   ownership unless explicitly handed off.
