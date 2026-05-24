@@ -154,6 +154,70 @@ fn block_return_await_inside_async_body_stays_on_state_machine_path() {
     );
 }
 
+#[test]
+fn new_expression_with_suspended_constructor_yields_before_constructing() {
+    let output = transform_and_print("async function f() { new (await ctor)(arg); }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, ctor];")
+            && output.contains("case 1:")
+            && output.contains("new (_a.sent())(arg);"),
+        "A suspended constructor expression must yield the constructor before emitting the `new` call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_expression_with_suspended_argument_uses_bind_apply() {
+    let output = transform_and_print("async function f() { new Factory(prefix, await value); }");
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Suspended new-expression arguments should reserve temps for `.bind` and prefix args.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = Factory.bind;")
+            && output.contains("_b = [void 0, prefix];")
+            && output.contains("return [4 /*yield*/, value];"),
+        "The constructor bind and prefix arguments must be captured before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("new (_a.apply(Factory, _b.concat([_c.sent()])))();"),
+        "The resumed constructor call should use tsc's bind/apply new-expression shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn awaited_new_expression_with_spread_lowers_to_bind_apply() {
+    let output = transform_and_print("async function f() { await new Factory(...args, tail); }");
+
+    assert!(
+        output.contains("new (Factory.bind.apply(Factory, __spreadArray(__spreadArray([void 0], args, false), [tail], false)))()"),
+        "Awaited ES5 new expressions with spread arguments must lower through constructor bind/apply before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new Factory(...args"),
+        "Raw spread syntax must not survive in async ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_expression_with_suspended_element_constructor_index_captures_object() {
+    let output = transform_and_print("async function f() { new registry[await key](arg); }");
+
+    assert!(
+        output.contains("var _a;"),
+        "Suspended constructor element indexes should reserve a temp for the constructor object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = registry;") && output.contains("return [4 /*yield*/, key];"),
+        "The constructor object must be captured before yielding the computed key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("new _a[_b.sent()](arg);"),
+        "The resumed constructor should index into the captured object.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
