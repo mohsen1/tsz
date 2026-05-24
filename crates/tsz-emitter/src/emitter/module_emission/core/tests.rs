@@ -1003,6 +1003,112 @@ export const x = <span {...o} />;
 }
 
 #[test]
+fn es5_classic_jsx_spread_child_lowers_create_element_args() {
+    let source = r#"declare var React: any;
+declare var items: any;
+export const x = <div>{...items}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var __spreadArray = "),
+        "ES5 JSX spread children should request the __spreadArray helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "React.createElement.apply(React, __spreadArray([\"div\", null], items, false))"
+        ),
+        "Classic JSX spread children should lower createElement args through apply.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_classic_jsx_spread_child_preserves_adjacent_children() {
+    let source = r#"declare var React: any;
+declare var items: any;
+export const x = <div>{1}{...items}{2}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::React,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains(
+            "React.createElement.apply(React, __spreadArray(__spreadArray([\"div\", null, 1], items, false), [2], false))"
+        ),
+        "Classic JSX spread children should preserve regular children around the spread.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_automatic_jsx_spread_child_uses_jsxs_array_child() {
+    let source = r#"declare var items: any;
+export const x = <div>{...items}</div>;
+"#;
+
+    let mut parser = ParserState::new("test.tsx".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES5,
+        jsx: JsxEmit::ReactJsx,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_target_es5(ctx.target_es5);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("var jsx_runtime_1 = require(\"react/jsx-runtime\");"),
+        "ES5 automatic JSX runtime imports should be var declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(0, jsx_runtime_1.jsxs)(\"div\", { children: __spreadArray([], items, true) })"
+        ),
+        "Automatic JSX spread children should force jsxs with an ES5 array-spread child.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_exported_destructuring_uses_binding_access_paths() {
     let source = r#"'use strict'
 // exported destructuring should read from the pattern source

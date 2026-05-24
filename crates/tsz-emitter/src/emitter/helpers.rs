@@ -186,13 +186,6 @@ impl<'a> Printer<'a> {
         result
     }
 
-    pub(super) fn bracketed<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
-        self.open_bracket();
-        let result = emit(self);
-        self.close_bracket();
-        result
-    }
-
     pub(super) fn braced<R>(&mut self, emit: impl FnOnce(&mut Self) -> R) -> R {
         self.open_brace();
         let result = emit(self);
