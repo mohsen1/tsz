@@ -2384,6 +2384,45 @@ impl<'a> AsyncES5Transformer<'a> {
         (!name.is_empty()).then_some(name)
     }
 
+    fn block_to_ir_in_async(&self, block_idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(block_idx) else {
+            return IRNode::Block(Vec::new());
+        };
+        let Some(block) = self.arena.get_block(node) else {
+            return IRNode::Block(Vec::new());
+        };
+        IRNode::Block(
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&stmt| self.statement_to_ir_in_async_block(stmt))
+                .collect(),
+        )
+    }
+
+    fn statement_to_ir_in_async_block(&self, stmt_idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return IRNode::EmptyStatement;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let value = self.arena.get_return_statement(node).and_then(|ret| {
+                    ret.expression
+                        .into_option()
+                        .map(|expr| Box::new(self.expression_to_ir(expr)))
+                });
+                IRNode::ReturnStatement(Some(Box::new(IRNode::GeneratorOp {
+                    opcode: opcodes::RETURN,
+                    value,
+                    comment: Some("return".to_string().into()),
+                })))
+            }
+            k if k == syntax_kind_ext::BLOCK => self.block_to_ir_in_async(stmt_idx),
+            _ => self.statement_to_ir(stmt_idx),
+        }
+    }
+
     fn loop_body_to_ir(&self, statement: NodeIndex) -> IRNode {
         let Some(node) = self.arena.get(statement) else {
             return IRNode::EmptyStatement;
@@ -2538,6 +2577,22 @@ impl<'a> AsyncES5Transformer<'a> {
                         current_statements,
                         current_label,
                     );
+                }
+            }
+
+            k if k == syntax_kind_ext::BLOCK => {
+                if self.contains_await_recursive(idx) {
+                    if let Some(block) = self.arena.get_block(node) {
+                        self.process_async_statement_list(
+                            &block.statements.nodes,
+                            cases,
+                            current_statements,
+                            current_label,
+                            &[],
+                        );
+                    }
+                } else {
+                    current_statements.push(self.block_to_ir_in_async(idx));
                 }
             }
 

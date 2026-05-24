@@ -54,6 +54,20 @@ fn element_access_with_suspended_index_captures_object_before_yield() {
 }
 
 #[test]
+fn block_return_inside_async_body_lowers_to_generator_return() {
+    let output = transform_and_print("async function f() { { return; } }");
+
+    assert!(
+        output.contains("{\n            return [2 /*return*/];\n        }"),
+        "Nested blocks in async ES5 bodies should preserve braces but lower bare returns to generator return ops.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return;\n            }"),
+        "Raw JS returns inside the generator callback would bypass the __generator protocol.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn labeled_while_continue_rewrite_uses_user_chosen_label() {
     let output = transform_and_print(
         "async function f() { retry: while (x) { await y; while (z) { continue retry; } } }",
@@ -84,6 +98,20 @@ fn return_element_access_with_suspended_index_captures_user_chosen_object() {
 }
 
 #[test]
+fn block_return_expression_inside_async_body_keeps_return_value() {
+    let output = transform_and_print("async function f() { { return value; } }");
+
+    assert!(
+        output.contains("return [2 /*return*/, value];"),
+        "Nested block returns with values should lower to generator return ops with that value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return value;"),
+        "The original return expression must not be emitted raw inside the generator callback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn variable_initializer_element_access_with_suspended_index_captures_object() {
     let output = transform_and_print("async function f() { var result = obj[await key]; }");
 
@@ -108,6 +136,21 @@ fn non_assignment_binary_with_suspended_element_index_keeps_normal_fallback() {
     assert!(
         output.contains("lhs() + obj[") && output.contains(".sent()]"),
         "Unsupported binary shapes should keep the existing expression fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn block_return_await_inside_async_body_stays_on_state_machine_path() {
+    let output = transform_and_print("async function f() { { return await value; } }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, value];")
+            && output.contains("case 1: return [2 /*return*/, _a.sent()];"),
+        "Blocks containing suspending returns should be lowered through the async state machine.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return await value;"),
+        "Suspending block returns must not fall back to raw JS block emission.\nOutput:\n{output}"
     );
 }
 
