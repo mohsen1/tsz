@@ -2052,23 +2052,67 @@ impl<'a> CheckerState<'a> {
         declarations: &[(NodeIndex, u32)],
     ) {
         use crate::diagnostics::diagnostic_codes;
-        use rustc_hash::FxHashMap;
+        use rustc_hash::{FxHashMap, FxHashSet};
 
-        let enum_declarations: Vec<NodeIndex> = declarations
+        // Enum declarations of this symbol, paired with their const-ness, in
+        // source (binding) order. Order matters: tsc's binder keeps the first
+        // declaration's const-ness as the merged symbol's kind and splits every
+        // later declaration that disagrees into its own symbol.
+        let mut enum_declarations: Vec<(NodeIndex, bool)> = declarations
             .iter()
             .filter(|&(_decl_idx, flags)| (flags & symbol_flags::ENUM) != 0)
-            .map(|(decl_idx, _flags)| *decl_idx)
+            .map(|&(decl_idx, flags)| (decl_idx, (flags & symbol_flags::CONST_ENUM) != 0))
             .collect();
 
         if enum_declarations.len() <= 1 {
             return;
         }
 
+        enum_declarations
+            .sort_by_key(|&(decl_idx, _)| self.ctx.arena.get(decl_idx).map_or(0, |node| node.pos));
+
+        // TS2567: a `const enum` and a non-const `enum` of the same name cannot
+        // merge. The merged symbol takes the first declaration's const-ness (the
+        // "primary" group); any later declaration whose const-ness differs is
+        // reported together with every primary declaration bound before it
+        // (matching tsc's binder, which splits the conflicting declaration into a
+        // fresh symbol at the point of conflict). Only the primary group actually
+        // merges, so the initializer / member-duplicate checks below run over it
+        // rather than over the split-off declarations.
+        let primary_is_const = enum_declarations[0].1;
+        let mut primary_group: Vec<NodeIndex> = Vec::new();
+        let mut reported: FxHashSet<NodeIndex> = FxHashSet::default();
+        for &(decl_idx, is_const) in &enum_declarations {
+            if is_const == primary_is_const {
+                primary_group.push(decl_idx);
+                continue;
+            }
+            // const-ness conflict: report it together with every primary
+            // declaration bound before it (output diagnostics are sorted by
+            // position, so emission order here is irrelevant).
+            for &target in primary_group.iter().chain(std::iter::once(&decl_idx)) {
+                if reported.insert(target)
+                    && let Some(name_idx) = self
+                        .ctx
+                        .arena
+                        .get(target)
+                        .and_then(|node| self.ctx.arena.get_enum(node))
+                        .map(|enum_decl| enum_decl.name)
+                {
+                    self.error_at_node_msg(
+                        name_idx,
+                        diagnostic_codes::ENUM_DECLARATIONS_CAN_ONLY_MERGE_WITH_NAMESPACE_OR_OTHER_ENUM_DECLARATIONS,
+                        &[],
+                    );
+                }
+            }
+        }
+
         let mut first_member_without_initializer = Vec::new();
         let mut first_member_by_name: FxHashMap<String, (NodeIndex, NodeIndex, bool)> =
             FxHashMap::default();
 
-        for &enum_decl_idx in &enum_declarations {
+        for &enum_decl_idx in &primary_group {
             let Some(enum_decl_node) = self.ctx.arena.get(enum_decl_idx) else {
                 continue;
             };
@@ -2144,6 +2188,127 @@ impl<'a> CheckerState<'a> {
                     member_idx,
                     diagnostic_codes::IN_AN_ENUM_WITH_MULTIPLE_DECLARATIONS_ONLY_ONE_DECLARATION_CAN_OMIT_AN_INITIALIZ,
                     &[],
+                );
+            }
+        }
+    }
+
+    /// TS2300 for an enum member whose name collides with an export of a
+    /// namespace it merges with.
+    ///
+    /// When an enum and a same-named namespace merge (a valid merge) and the
+    /// enum declares member `A` while the namespace `export`s `A`, both `A`s
+    /// occupy one slot in the merged symbol's export table and `tsc` reports
+    /// "Duplicate identifier" on each. The collision rule is the binder's own
+    /// exclusion set: an enum member excludes everything in `VALUE | TYPE`
+    /// (`ENUM_MEMBER_EXCLUDES`), so any *exported* namespace member that carries
+    /// a value or type meaning conflicts (`const`/`var`, `function`, `class`,
+    /// nested namespace, `type`, `interface`). Non-exported namespace locals
+    /// live in a different table and never collide, and distinct names merge
+    /// cleanly.
+    pub(super) fn check_enum_namespace_export_collisions(
+        &mut self,
+        declarations: &[(NodeIndex, u32)],
+    ) {
+        use crate::diagnostics::diagnostic_codes;
+        use rustc_hash::FxHashMap;
+
+        // One pass over the merged symbol's declarations: collect the namespace
+        // blocks and map each enum member name to its name node.
+        let mut module_decls: Vec<NodeIndex> = Vec::new();
+        let mut enum_member_name_nodes: FxHashMap<String, NodeIndex> = FxHashMap::default();
+        for &(decl_idx, flags) in declarations {
+            if (flags & symbol_flags::MODULE) != 0 {
+                module_decls.push(decl_idx);
+                continue;
+            }
+            if (flags & symbol_flags::ENUM) == 0 {
+                continue;
+            }
+            let Some(enum_decl) = self
+                .ctx
+                .arena
+                .get(decl_idx)
+                .and_then(|node| self.ctx.arena.get_enum(node))
+            else {
+                continue;
+            };
+            for &member_idx in &enum_decl.members.nodes {
+                let Some(name_node) = self
+                    .ctx
+                    .arena
+                    .get(member_idx)
+                    .and_then(|node| self.ctx.arena.get_enum_member(node))
+                    .map(|member| member.name)
+                else {
+                    continue;
+                };
+                let Some(name_data) = self.ctx.arena.get(name_node) else {
+                    continue;
+                };
+                let name = if let Some(ident) = self.ctx.arena.get_identifier(name_data) {
+                    ident.escaped_text.clone()
+                } else if let Some(literal) = self.ctx.arena.get_literal(name_data) {
+                    literal.text.clone()
+                } else {
+                    continue;
+                };
+                enum_member_name_nodes.entry(name).or_insert(name_node);
+            }
+        }
+        if module_decls.is_empty() || enum_member_name_nodes.is_empty() {
+            return;
+        }
+
+        for module_decl_idx in module_decls {
+            // Snapshot only the namespace exports whose name matches an enum
+            // member, so the `scopes` borrow is released before we emit.
+            let candidates: Vec<(String, SymbolId)> =
+                match self.ctx.binder.scopes.iter().find(|scope| {
+                    scope.kind == ContainerKind::Module && scope.container_node == module_decl_idx
+                }) {
+                    Some(scope) => scope
+                        .table
+                        .iter()
+                        .filter(|(name, _)| enum_member_name_nodes.contains_key(name.as_str()))
+                        .map(|(name, &sym_id)| (name.clone(), sym_id))
+                        .collect(),
+                    None => continue,
+                };
+            for (name, sym_id) in candidates {
+                let enum_name_node = enum_member_name_nodes[&name];
+                // An enum member excludes everything in `VALUE | TYPE`, so only
+                // an *exported* namespace member that carries a value or type
+                // meaning collides; the guard skips non-exported locals.
+                let export_decl = match self.ctx.binder.get_symbol(sym_id) {
+                    Some(sym)
+                        if sym.is_exported
+                            && (sym.flags & symbol_flags::ENUM_MEMBER_EXCLUDES) != 0 =>
+                    {
+                        if sym.value_declaration.is_some() {
+                            sym.value_declaration
+                        } else if let Some(&decl) = sym.declarations.first() {
+                            decl
+                        } else {
+                            continue;
+                        }
+                    }
+                    _ => continue,
+                };
+                let export_name_node = self
+                    .get_declaration_name_node(export_decl)
+                    .unwrap_or(export_decl);
+                // `error_at_node` dedupes by (start, code), so repeating the
+                // enum member node across several colliding exports is harmless.
+                self.error_at_node_msg(
+                    enum_name_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name],
+                );
+                self.error_at_node_msg(
+                    export_name_node,
+                    diagnostic_codes::DUPLICATE_IDENTIFIER,
+                    &[&name],
                 );
             }
         }

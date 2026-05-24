@@ -142,16 +142,17 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             //   1. Mapping(s) == s (the literal is at the fixed-point of the mapping), AND
             //   2. s is in the pattern set of T.
             //
-            // For T == string, condition 2 is trivially true (any literal is in string).
-            // For T == number / bigint / boolean (pattern-literal placeholders), we check
-            // that s matches the stringification template `\`${T}\``. This mirrors tsc,
-            // which represents `Mapping<\`${number}\`>` as a StringMapping over a
-            // TemplateLiteral and accepts e.g. `"1"` for `Uppercase<\`${number}\`>`.
+            // For T == string or T == any, condition 2 is trivially true (any literal is
+            // in `string`/`any`). For T == number / bigint / boolean (pattern-literal
+            // placeholders), we check that s matches the stringification template
+            // `\`${T}\``. This mirrors tsc, which represents `Mapping<\`${number}\`>` as a
+            // StringMapping over a TemplateLiteral and accepts e.g. `"1"` for
+            // `Uppercase<\`${number}\`>`.
             let transformed = self
                 .checker
                 .evaluate_type(self.checker.interner.string_intrinsic(kind, self.source));
             if transformed == self.source {
-                if type_arg == TypeId::STRING {
+                if type_arg == TypeId::STRING || type_arg == TypeId::ANY {
                     return SubtypeResult::True;
                 }
 
