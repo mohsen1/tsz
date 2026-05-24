@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   formatResult,
+  pendingQueueRun,
   parseArgs,
   queueSkipReason,
   requiredCheckState,
@@ -51,6 +52,34 @@ assert.equal(requiredCheckState([check({ conclusion: "FAILURE" })], ["CI Summary
 assert.equal(requiredCheckState([], ["CI Summary"]).kind, "missing");
 assert.equal(requiredCheckState([{ context: "Queue Tested", state: "SUCCESS" }], ["Queue Tested"]).kind, "passed");
 assert.equal(requiredCheckState([{ context: "Queue Tested", state: "PENDING" }], ["Queue Tested"]).kind, "pending");
+assert.deepEqual(
+  pendingQueueRun(pr({
+    statusCheckRollup: [
+      {
+        __typename: "StatusContext",
+        context: "Queue Tested",
+        state: "PENDING",
+        targetUrl: "https://github.com/owner/repo/actions/runs/123456789",
+      },
+    ],
+  }), "Queue Tested"),
+  {
+    runId: "123456789",
+    targetUrl: "https://github.com/owner/repo/actions/runs/123456789",
+  },
+);
+assert.equal(
+  pendingQueueRun(pr({
+    statusCheckRollup: [
+      {
+        __typename: "StatusContext",
+        context: "Queue Tested",
+        state: "PENDING",
+      },
+    ],
+  }), "Queue Tested"),
+  null,
+);
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
 assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");

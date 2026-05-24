@@ -193,6 +193,22 @@ export function requiredCheckState(checks, requiredNames) {
   return { kind: "passed", reason: "required checks passed" };
 }
 
+function actionsRunIdFromUrl(url) {
+  const match = String(url || "").match(/\/actions\/runs\/(\d+)(?:\D|$)/);
+  return match ? match[1] : null;
+}
+
+export function pendingQueueRun(pr, statusContext) {
+  const status = (pr.statusCheckRollup || []).find((check) => (
+    check.__typename === "StatusContext"
+      && check.context === statusContext
+      && normalize(check.state) === "PENDING"
+  ));
+  if (!status?.targetUrl) return null;
+  const runId = actionsRunIdFromUrl(status.targetUrl);
+  return runId ? { runId, targetUrl: status.targetUrl } : null;
+}
+
 export function queueSkipReason(pr, requiredState, base) {
   if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
   if (pr.isDraft) return "draft PR";
@@ -254,6 +270,14 @@ function readPullRequest(repository, number) {
   ]);
 }
 
+function readWorkflowRun(repository, runId) {
+  return runGhJson([
+    "run", "view", runId,
+    "--repo", repository,
+    "--json", "status,conclusion,url",
+  ]);
+}
+
 function readBranchOid(repository, branch) {
   return runGhJson([
     "api",
@@ -307,13 +331,22 @@ function readQueueCandidates(repository, options) {
       const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base);
       if (skipReason) return { pr, skipReason };
       const detailed = readPullRequest(repository, pr.number);
+      const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
+      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
+      if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
+      const pendingRun = pendingQueueRun(detailed, options.statusContext);
+      if (pendingRun) {
+        const run = readWorkflowRun(repository, pendingRun.runId);
+        if (normalize(run.status) !== "COMPLETED") {
+          return {
+            pr: detailed,
+            skipReason: `queue test already running (${run.url || pendingRun.targetUrl})`,
+          };
+        }
+      }
       return {
         pr: detailed,
-        skipReason: queueSkipReason(
-          detailed,
-          requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks),
-          options.base,
-        ),
+        skipReason: null,
       };
     });
 }
