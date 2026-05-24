@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Generate crates/tsz-common/src/diagnostics/data.rs from TypeScript's diagnosticMessages.json
+// Generate crates/tsz-common/src/diagnostics/data.rs and its split data files
+// from TypeScript's diagnosticMessages.json.
 // Types and helper functions are hand-authored in diagnostics/mod.rs.
 // Usage: node scripts/gen_diagnostics.mjs
 
-import { readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 
@@ -76,7 +77,10 @@ for (const entry of entries) {
   codeEntries.push({
     ...entry,
     codeName: finalCodeName,
-   codeNameParser: entry.message === "Import statement expects a 'from' clause." ? "IMPORT_EXPECTS_FROM_CLAUSE" : undefined,
+    codeNameParser:
+      entry.message === "Import statement expects a 'from' clause."
+        ? "IMPORT_EXPECTS_FROM_CLAUSE"
+        : undefined,
   });
 }
 
@@ -101,53 +105,128 @@ function escapeRust(s) {
   return s.replace(/\\/g, "\\\\").replace(/"/g, '\\"').replace(/\n/g, "\\n");
 }
 
-// Generate the data file only (types live in mod.rs, which is hand-authored).
-// Output goes to diagnostics/data.rs.
-let output = `//! Auto-generated diagnostic message data.
+const generatedHeader = `//! Auto-generated diagnostic message data.
 //!
-//! DO NOT EDIT MANUALLY — run \`node scripts/gen_diagnostics.mjs\` to regenerate.
-use super::DiagnosticCategory;
-use super::DiagnosticMessage;
-
-/// All diagnostic messages from TypeScript's diagnosticMessages.json.
-pub static DIAGNOSTIC_MESSAGES: &[DiagnosticMessage] = &[
+//! DO NOT EDIT MANUALLY - run \`node scripts/gen_diagnostics.mjs\` to regenerate.
+`;
+const generatedIncludeHeader = `// Auto-generated diagnostic message data.
+//
+// DO NOT EDIT MANUALLY - run \`node scripts/gen_diagnostics.mjs\` to regenerate.
 `;
 
-for (const entry of codeEntries) {
-  output += `    DiagnosticMessage { code: ${entry.code}, category: ${categoryToRust(entry.category)}, message: "${escapeRust(entry.message)}" },\n`;
+function chunks(items, size) {
+  const out = [];
+  for (let index = 0; index < items.length; index += size) {
+    out.push(items.slice(index, index + size));
+  }
+  return out;
 }
 
-output += `];
-
-/// Diagnostic message templates matching TypeScript exactly.
-/// Use `format_message()` to fill in placeholders.
-pub mod diagnostic_messages {
-`;
-
-// Generate message constants
-for (const entry of codeEntries) {
-  output += `    pub const ${entry.codeName}: &str = "${escapeRust(entry.message)}";\n`;
+function partName(index) {
+  return `part_${String(index).padStart(3, "0")}`;
 }
 
-output += `}
+function cleanDir(dir) {
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(dir, { recursive: true });
+}
 
-/// TypeScript diagnostic error codes.
-/// Matches codes from TypeScript's diagnosticMessages.json
-pub mod diagnostic_codes {
-`;
+function messageEntry(entry) {
+  return [
+    "    DiagnosticMessage {",
+    `        code: ${entry.code},`,
+    `        category: ${categoryToRust(entry.category)},`,
+    `        message: "${escapeRust(entry.message)}",`,
+    "    },",
+  ].join("\n");
+}
 
-// Generate code constants
-for (const entry of codeEntries) {
+function messageConst(entry) {
+  return `    pub const ${entry.codeName}: &str = "${escapeRust(entry.message)}";`;
+}
+
+function codeConst(entry) {
   const constName = entry.codeNameParser || entry.codeName;
-  output += `    pub const ${constName}: u32 = ${entry.code};\n`;
+  return `    pub const ${constName}: u32 = ${entry.code};`;
 }
 
+const dataRoot = join(root, "crates/tsz-common/src/diagnostics/data");
+const messagesDir = join(dataRoot, "messages");
+const diagnosticMessagesDir = join(dataRoot, "diagnostic_messages");
+const diagnosticCodesDir = join(dataRoot, "diagnostic_codes");
 
-output += `}
-`;
+cleanDir(dataRoot);
+mkdirSync(messagesDir, { recursive: true });
+mkdirSync(diagnosticMessagesDir, { recursive: true });
+mkdirSync(diagnosticCodesDir, { recursive: true });
+
+const messageChunks = chunks(codeEntries.map(messageEntry), 275);
+const diagnosticMessageChunks = chunks(codeEntries.map(messageConst), 650);
+const diagnosticCodeChunks = chunks(codeEntries.map(codeConst), 850);
+
+for (const [index, chunk] of messageChunks.entries()) {
+  writeFileSync(
+    join(messagesDir, `${partName(index)}.rs`),
+    `${generatedHeader}use crate::diagnostics::{DiagnosticCategory, DiagnosticMessage};
+
+pub static MESSAGES: &[DiagnosticMessage] = &[
+${chunk.join("\n")}
+];
+`,
+  );
+}
+
+for (const [index, chunk] of diagnosticMessageChunks.entries()) {
+  writeFileSync(
+    join(diagnosticMessagesDir, `${partName(index)}.rs`),
+    `${generatedIncludeHeader}${chunk.join("\n")}\n`,
+  );
+}
+
+for (const [index, chunk] of diagnosticCodeChunks.entries()) {
+  writeFileSync(
+    join(diagnosticCodesDir, `${partName(index)}.rs`),
+    `${generatedIncludeHeader}${chunk.join("\n")}\n`,
+  );
+}
+
+writeFileSync(
+  join(dataRoot, "message_tables.rs"),
+  `${generatedHeader}use crate::diagnostics::DiagnosticMessage;
+
+${messageChunks.map((_, index) => `#[path = "messages/${partName(index)}.rs"]\npub mod ${partName(index)};`).join("\n")}
+
+pub static DIAGNOSTIC_MESSAGE_SECTIONS: &[&[DiagnosticMessage]] = &[
+${messageChunks.map((_, index) => `    ${partName(index)}::MESSAGES,`).join("\n")}
+];
+`,
+);
 
 const outPath = join(root, "crates/tsz-common/src/diagnostics/data.rs");
-writeFileSync(outPath, output);
+writeFileSync(
+  outPath,
+  `${generatedHeader}
+mod message_tables;
+
+pub use message_tables::DIAGNOSTIC_MESSAGE_SECTIONS;
+
+pub fn iter_diagnostic_messages() -> impl Iterator<Item = crate::diagnostics::DiagnosticMessage> {
+    DIAGNOSTIC_MESSAGE_SECTIONS.iter().flat_map(|section| section.iter().copied())
+}
+
+/// Diagnostic message templates matching TypeScript exactly.
+/// Use \`format_message()\` to fill in placeholders.
+pub mod diagnostic_messages {
+${diagnosticMessageChunks.map((_, index) => `    include!("data/diagnostic_messages/${partName(index)}.rs");`).join("\n")}
+}
+
+/// TypeScript diagnostic error codes.
+/// Matches codes from TypeScript's \`diagnosticMessages.json\`.
+pub mod diagnostic_codes {
+${diagnosticCodeChunks.map((_, index) => `    include!("data/diagnostic_codes/${partName(index)}.rs");`).join("\n")}
+}
+`,
+);
 
 console.log(`Generated ${codeEntries.length} diagnostic entries`);
-console.log(`Output: crates/tsz-common/src/diagnostics/data.rs`);
+console.log(`Output: crates/tsz-common/src/diagnostics/data.rs + split data parts`);

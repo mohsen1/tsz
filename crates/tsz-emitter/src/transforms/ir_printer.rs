@@ -40,12 +40,13 @@ use tsz_parser::syntax_kind_ext;
 struct NamespaceIifeContext<'a> {
     is_exported: bool,
     attach_to_exports: bool,
-    commonjs_export_name: Option<&'a str>,
+    commonjs_export_names: &'a [Cow<'static, str>],
     system_export_names: &'a [Cow<'static, str>],
     should_declare_var: bool,
     default_export_merge: bool,
     parent_name: Option<&'a str>,
     param_name: Option<&'a str>,
+    invalid_static_declaration: bool,
 }
 
 /// IR Printer - converts IR nodes to JavaScript strings
@@ -209,6 +210,25 @@ impl<'a> IRPrinter<'a> {
             self.emit_node(base);
         }
         self.write("))");
+    }
+
+    fn emit_static_block_iife_expression(&mut self, statements: &[IRNode]) {
+        self.write("(function () {");
+        if statements.is_empty() {
+            self.write(" })()");
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+        for stmt in statements {
+            self.write_indent();
+            self.emit_node(stmt);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("})()");
     }
 
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
@@ -842,6 +862,24 @@ impl<'a> IRPrinter<'a> {
                 self.indent_level -= 1;
                 self.write(")");
             }
+            IRNode::CommaExprMultilineFlat(exprs) => {
+                self.write("(");
+                for (i, expr) in exprs.iter().enumerate() {
+                    if i > 0 {
+                        if self.last_emit_ended_with_line_comment {
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
+                        self.write(",");
+                        self.write_line();
+                        self.write_indent();
+                    }
+                    self.last_emit_ended_with_line_comment = false;
+                    self.emit_node(expr);
+                }
+                self.write(")");
+            }
             IRNode::ArrayLiteral(elements) => {
                 self.write("[");
                 self.emit_comma_separated(elements);
@@ -854,6 +892,7 @@ impl<'a> IRPrinter<'a> {
             IRNode::ObjectLiteral {
                 properties,
                 source_range,
+                extra_indent,
             } => {
                 if properties.is_empty() {
                     self.write("{}");
@@ -871,7 +910,8 @@ impl<'a> IRPrinter<'a> {
                     // Multiline format
                     self.write("{");
                     self.write_line();
-                    self.indent_level += 1;
+                    let extra_indent = u32::from(*extra_indent);
+                    self.indent_level += 1 + extra_indent;
                     for (i, prop) in properties.iter().enumerate() {
                         self.write_indent();
                         self.emit_property(prop);
@@ -883,6 +923,7 @@ impl<'a> IRPrinter<'a> {
                     self.indent_level -= 1;
                     self.write_indent();
                     self.write("}");
+                    self.indent_level -= extra_indent;
                 } else {
                     // Single-line format
                     self.write("{ ");
@@ -1044,6 +1085,27 @@ impl<'a> IRPrinter<'a> {
                 self.write(";");
             }
             IRNode::ExpressionStatement(expr) => {
+                if let IRNode::CommaExprMultiline(exprs) = expr.as_ref() {
+                    self.indent_level += 1;
+                    for (i, expr) in exprs.iter().enumerate() {
+                        if i > 0 {
+                            if self.last_emit_ended_with_line_comment {
+                                self.write_line();
+                                self.write_indent_level(self.indent_level.saturating_sub(1));
+                            }
+                            self.last_emit_ended_with_line_comment = false;
+                            self.write(",");
+                            self.write_line();
+                            self.write_indent();
+                        }
+                        self.last_emit_ended_with_line_comment = false;
+                        self.emit_node(expr);
+                    }
+                    self.indent_level -= 1;
+                    self.write(";");
+                    return;
+                }
+
                 // Wrap function/object expressions in parens when in statement
                 // position to prevent declaration/block ambiguity.
                 let needs_paren = matches!(
@@ -1070,6 +1132,7 @@ impl<'a> IRPrinter<'a> {
                     if let IRNode::ObjectLiteral {
                         properties,
                         source_range: None,
+                        extra_indent: 0,
                     } = &**e
                         && Self::is_done_value_object_literal(properties)
                     {
@@ -1211,7 +1274,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("try ");
                 self.emit_node(try_block);
                 if let Some(catch) = catch_clause {
-                    self.write(" catch");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("catch");
                     if let Some(param) = &catch.param {
                         self.write(" (");
                         self.write(param);
@@ -1221,7 +1286,9 @@ impl<'a> IRPrinter<'a> {
                     self.emit_block(&catch.body);
                 }
                 if let Some(finally) = finally_block {
-                    self.write(" finally ");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("finally ");
                     self.emit_node(finally);
                 }
             }
@@ -1393,6 +1460,7 @@ impl<'a> IRPrinter<'a> {
                 weakmap_inits,
                 leading_comment,
                 deferred_static_blocks,
+                deferred_static_result_temp,
                 deferred_block_class_alias,
             } => {
                 if !self.remove_comments
@@ -1401,6 +1469,42 @@ impl<'a> IRPrinter<'a> {
                     self.write(comment);
                     self.write_line();
                     self.write_indent();
+                }
+
+                if let Some(result_temp) = deferred_static_result_temp
+                    && !deferred_static_blocks.is_empty()
+                    && computed_prop_temp_inits.is_empty()
+                    && weakmap_inits.is_empty()
+                    && deferred_block_class_alias.is_none()
+                {
+                    self.write(name);
+                    self.write(" = (");
+                    self.write(result_temp);
+                    self.write(" = ");
+                    self.increase_indent();
+                    self.emit_es5_class_expression(
+                        name,
+                        base_class.as_deref(),
+                        super_param.as_deref(),
+                        body,
+                    );
+                    for deferred in deferred_static_blocks {
+                        self.write(",");
+                        self.write_line();
+                        self.write_indent();
+                        if let IRNode::StaticBlockIIFE { statements } = deferred {
+                            self.emit_static_block_iife_expression(statements);
+                        } else {
+                            self.emit_node(deferred);
+                        }
+                    }
+                    self.write(",");
+                    self.write_line();
+                    self.write_indent();
+                    self.write(result_temp);
+                    self.write(");");
+                    self.decrease_indent();
+                    return;
                 }
 
                 self.write(name);
@@ -1442,21 +1546,8 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::StaticBlockIIFE { statements } => {
                 // (function () { ...statements... })();
-                self.write("(function () {");
-                if statements.is_empty() {
-                    self.write(" })();");
-                } else {
-                    self.write_line();
-                    self.increase_indent();
-                    for stmt in statements {
-                        self.write_indent();
-                        self.emit_node(stmt);
-                        self.write_line();
-                    }
-                    self.decrease_indent();
-                    self.write_indent();
-                    self.write("})();");
-                }
+                self.emit_static_block_iife_expression(statements);
+                self.write(";");
             }
             IRNode::ExtendsHelper {
                 class_name,
@@ -2486,6 +2577,7 @@ impl<'a> IRPrinter<'a> {
                 name,
                 members,
                 namespace_export,
+                invalid_namespace_static,
             } => {
                 if let Some(ns) = namespace_export {
                     self.emit_namespace_bound_enum_iife(name, members, ns);
@@ -2496,6 +2588,10 @@ impl<'a> IRPrinter<'a> {
                     } else {
                         "var"
                     };
+                    if *invalid_namespace_static && self.in_namespace_iife_body && !self.target_es5
+                    {
+                        self.write("static ");
+                    }
                     self.write(keyword);
                     self.write(" ");
                     self.write(name);
@@ -2532,7 +2628,7 @@ impl<'a> IRPrinter<'a> {
                 body,
                 is_exported,
                 attach_to_exports,
-                commonjs_export_name,
+                commonjs_export_names,
                 system_export_names,
                 should_declare_var,
                 parent_name,
@@ -2540,6 +2636,7 @@ impl<'a> IRPrinter<'a> {
                 default_export_merge,
                 skip_sequence_indent: _,
                 trailing_comment,
+                invalid_namespace_static,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -2548,12 +2645,13 @@ impl<'a> IRPrinter<'a> {
                     NamespaceIifeContext {
                         is_exported: *is_exported,
                         attach_to_exports: *attach_to_exports,
-                        commonjs_export_name: commonjs_export_name.as_deref(),
+                        commonjs_export_names,
                         system_export_names,
                         should_declare_var: *should_declare_var,
                         default_export_merge: *default_export_merge,
                         parent_name: parent_name.as_deref(),
                         param_name: param_name.as_deref(),
+                        invalid_static_declaration: *invalid_namespace_static,
                     },
                 );
                 if !self.remove_comments
@@ -2635,6 +2733,23 @@ impl<'a> IRPrinter<'a> {
         self.write(")");
     }
 
+    fn emit_commonjs_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[Cow<'static, str>],
+        current_name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(current_name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports.");
+        self.write(export_name);
+        self.write(" = ");
+        self.emit_commonjs_export_folded_namespace_assignment(inner_names, current_name);
+    }
+
     fn emit_namespace_iife(
         &mut self,
         name_parts: &[Cow<'static, str>],
@@ -2661,6 +2776,10 @@ impl<'a> IRPrinter<'a> {
             } else {
                 "var"
             };
+            if context.invalid_static_declaration && self.in_namespace_iife_body && !self.target_es5
+            {
+                self.write("static ");
+            }
             self.write(decl_keyword);
             self.write(" ");
             self.write(current_name);
@@ -2753,12 +2872,13 @@ impl<'a> IRPrinter<'a> {
                 NamespaceIifeContext {
                     is_exported: context.is_exported,
                     attach_to_exports: context.attach_to_exports,
-                    commonjs_export_name: context.commonjs_export_name,
+                    commonjs_export_names: context.commonjs_export_names,
                     system_export_names: &[],
                     should_declare_var: true,
                     default_export_merge: false,
                     parent_name: None,
                     param_name: context.param_name,
+                    invalid_static_declaration: false,
                 },
             );
             self.write_line();
@@ -2783,13 +2903,13 @@ impl<'a> IRPrinter<'a> {
                 self.write(current_name);
                 self.write(" = {})");
             } else if context.is_exported && context.attach_to_exports {
-                let export_name = context.commonjs_export_name.unwrap_or(current_name);
                 self.write(current_name);
-                self.write(" || (exports.");
-                self.write(export_name);
-                self.write(" = ");
-                self.write(current_name);
-                self.write(" = {})");
+                self.write(" || (");
+                self.emit_commonjs_export_folded_namespace_assignment(
+                    context.commonjs_export_names,
+                    current_name,
+                );
+                self.write(")");
             } else if !context.system_export_names.is_empty() {
                 self.write(current_name);
                 self.write(" || (");

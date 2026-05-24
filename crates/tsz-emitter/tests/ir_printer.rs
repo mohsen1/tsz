@@ -263,7 +263,7 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
             body: vec![],
             is_exported: false,
             attach_to_exports: false,
-            commonjs_export_name: None,
+            commonjs_export_names: Vec::new(),
             system_export_names: Vec::new(),
             should_declare_var: false,
             default_export_merge: false,
@@ -271,6 +271,7 @@ fn test_nested_sequence_respects_namespace_skip_indent() {
             param_name: None,
             skip_sequence_indent: true,
             trailing_comment: None,
+            invalid_namespace_static: false,
         },
     ]);
     let mut printer = IRPrinter::new();
@@ -306,7 +307,7 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
         ))],
         is_exported: false,
         attach_to_exports: false,
-        commonjs_export_name: None,
+        commonjs_export_names: Vec::new(),
         system_export_names: Vec::new(),
         should_declare_var: false,
         default_export_merge: false,
@@ -314,6 +315,7 @@ fn test_namespace_iife_generated_object_literal_is_multiline() {
         param_name: None,
         skip_sequence_indent: false,
         trailing_comment: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&ns);

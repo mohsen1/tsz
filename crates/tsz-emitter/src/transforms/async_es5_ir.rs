@@ -63,10 +63,18 @@ use tsz_parser::parser::syntax_kind_ext;
 
 #[path = "async_es5_ir_bindings.rs"]
 mod bindings;
+#[path = "async_es5_ir_calls.rs"]
+mod calls;
 #[path = "async_es5_ir_condition_await.rs"]
 mod condition_await;
 #[path = "async_es5_ir_discovery.rs"]
 mod discovery;
+#[path = "async_es5_ir_element_access.rs"]
+mod element_access;
+#[path = "async_es5_ir_for_await.rs"]
+mod for_await;
+#[path = "async_es5_ir_for_of.rs"]
+mod for_of;
 #[path = "async_es5_ir_loop_control.rs"]
 mod loop_control;
 #[path = "async_es5_ir_state.rs"]
@@ -114,6 +122,8 @@ pub struct AsyncES5Transformer<'a> {
     /// When true, generator-mode yields feed `__await(...)` values to
     /// `__asyncGenerator`.
     pub(crate) async_generator_mode: bool,
+    /// Whether ES5 `for..of` lowering must use iterator protocol helpers.
+    pub(crate) downlevel_iteration: bool,
     temp_var_counter: Cell<u32>,
     blocked_temp_names: RefCell<FxHashSet<String>>,
     disposable_env_counter: Cell<u32>,
@@ -137,6 +147,9 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) module_kind: ModuleKind,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
     pub(super) dynamic_import_promise_counter: Cell<u32>,
+    /// Active async-lowered loop labels and the generator label that implements
+    /// `continue <label>` for that loop.
+    pub(super) labeled_continue_targets: Vec<(String, u32)>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -149,6 +162,7 @@ impl<'a> AsyncES5Transformer<'a> {
             helpers_needed: HelpersNeeded::default(),
             generator_mode: false,
             async_generator_mode: false,
+            downlevel_iteration: false,
             temp_var_counter: Cell::new(0),
             blocked_temp_names: RefCell::new(FxHashSet::default()),
             disposable_env_counter: Cell::new(1),
@@ -163,6 +177,7 @@ impl<'a> AsyncES5Transformer<'a> {
             class_super_is_static: false,
             module_kind: ModuleKind::None,
             dynamic_import_promise_counter: Cell::new(1),
+            labeled_continue_targets: Vec::new(),
         }
     }
 
@@ -193,6 +208,10 @@ impl<'a> AsyncES5Transformer<'a> {
     /// body are lowered to the appropriate module-system form.
     pub const fn set_module_kind(&mut self, kind: ModuleKind) {
         self.module_kind = kind;
+    }
+
+    pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
+        self.downlevel_iteration = enabled;
     }
 
     pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
@@ -915,6 +934,20 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             ) {
                 lowered_call
+            } else if let Some(lowered_array) = self.lower_array_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_array
+            } else if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_access
             } else {
                 self.emit_nested_suspension(idx, cases, current_statements, current_label);
                 self.expression_to_ir(idx)
@@ -2375,6 +2408,45 @@ impl<'a> AsyncES5Transformer<'a> {
         (!name.is_empty()).then_some(name)
     }
 
+    fn block_to_ir_in_async(&self, block_idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(block_idx) else {
+            return IRNode::Block(Vec::new());
+        };
+        let Some(block) = self.arena.get_block(node) else {
+            return IRNode::Block(Vec::new());
+        };
+        IRNode::Block(
+            block
+                .statements
+                .nodes
+                .iter()
+                .map(|&stmt| self.statement_to_ir_in_async_block(stmt))
+                .collect(),
+        )
+    }
+
+    fn statement_to_ir_in_async_block(&self, stmt_idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(stmt_idx) else {
+            return IRNode::EmptyStatement;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT => {
+                let value = self.arena.get_return_statement(node).and_then(|ret| {
+                    ret.expression
+                        .into_option()
+                        .map(|expr| Box::new(self.expression_to_ir(expr)))
+                });
+                IRNode::ReturnStatement(Some(Box::new(IRNode::GeneratorOp {
+                    opcode: opcodes::RETURN,
+                    value,
+                    comment: Some("return".to_string().into()),
+                })))
+            }
+            k if k == syntax_kind_ext::BLOCK => self.block_to_ir_in_async(stmt_idx),
+            _ => self.statement_to_ir(stmt_idx),
+        }
+    }
+
     fn loop_body_to_ir(&self, statement: NodeIndex) -> IRNode {
         let Some(node) = self.arena.get(statement) else {
             return IRNode::EmptyStatement;
@@ -2532,6 +2604,22 @@ impl<'a> AsyncES5Transformer<'a> {
                 }
             }
 
+            k if k == syntax_kind_ext::BLOCK => {
+                if self.contains_await_recursive(idx) {
+                    if let Some(block) = self.arena.get_block(node) {
+                        self.process_async_statement_list(
+                            &block.statements.nodes,
+                            cases,
+                            current_statements,
+                            current_label,
+                            &[],
+                        );
+                    }
+                } else {
+                    current_statements.push(self.block_to_ir_in_async(idx));
+                }
+            }
+
             k if k == syntax_kind_ext::RETURN_STATEMENT => {
                 if let Some(ret) = self.arena.get_return_statement(node) {
                     if ret.expression.is_none() {
@@ -2575,6 +2663,24 @@ impl<'a> AsyncES5Transformer<'a> {
                             current_label,
                         ) {
                             lowered_call
+                        } else if let Some(lowered_array) = self
+                            .lower_array_literal_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_array
+                        } else if let Some(lowered_access) = self
+                            .lower_element_access_object_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_access
                         } else {
                             self.emit_nested_suspension(
                                 ret.expression,
@@ -2707,7 +2813,18 @@ impl<'a> AsyncES5Transformer<'a> {
             }
 
             k if k == syntax_kind_ext::FOR_OF_STATEMENT => {
-                if !self.process_for_await_using_statement_in_async(
+                if !self.process_for_await_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                    None,
+                ) && !self.process_for_await_using_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) && !self.process_for_of_statement_in_async(
                     idx,
                     cases,
                     current_statements,
@@ -2914,6 +3031,52 @@ impl<'a> AsyncES5Transformer<'a> {
                 return;
             }
 
+            if let Some(lowered_array) = self.lower_array_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_array)));
+                return;
+            }
+            if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_access)));
+                return;
+            }
+            if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_call)));
+                return;
+            }
+            if let Some(lowered_call) = self.lower_element_call_index_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_call)));
+                return;
+            }
+            if let Some(lowered_new) = self.lower_new_expression_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_new)));
+                return;
+            }
+
             if self.async_generator_mode
                 && (node.kind == syntax_kind_ext::YIELD_EXPRESSION
                     || self.node_text_contains_yield(idx))
@@ -2932,7 +3095,9 @@ impl<'a> AsyncES5Transformer<'a> {
                 return;
             }
             self.emit_nested_suspension(idx, cases, current_statements, current_label);
-            let ir = self.expression_to_ir(idx);
+            let ir = self
+                .lower_es5_call_spread(idx)
+                .unwrap_or_else(|| self.expression_to_ir(idx));
             current_statements.push(IRNode::ExpressionStatement(Box::new(ir)));
             return;
         }
@@ -3050,7 +3215,7 @@ impl<'a> AsyncES5Transformer<'a> {
         None
     }
 
-    fn emit_nested_suspension(
+    pub(super) fn emit_nested_suspension(
         &mut self,
         idx: NodeIndex,
         cases: &mut Vec<IRGeneratorCase>,
@@ -3085,20 +3250,30 @@ impl<'a> AsyncES5Transformer<'a> {
                 return;
             }
 
-            // Get the awaited expression
-            let operand = if await_expr.expression.is_none() {
-                IRNode::Raw("".to_string().into())
+            // Get the awaited expression. A bare generator `yield;` lowers to
+            // `[4 /*yield*/]`, while `await;` keeps the historical empty
+            // operand shape for invalid/recovered async input.
+            let operand = if await_expr.expression.is_none()
+                && self.generator_mode
+                && node.kind == syntax_kind_ext::YIELD_EXPRESSION
+            {
+                None
+            } else if await_expr.expression.is_none() {
+                Some(IRNode::Raw("".to_string().into()))
             } else if self.generator_mode && node.kind == syntax_kind_ext::YIELD_EXPRESSION {
-                self.generator_yield_operand_to_ir(await_expr.expression)
+                Some(self.generator_yield_operand_to_ir(await_expr.expression))
             } else {
-                let operand = self.expression_to_ir(await_expr.expression);
+                let operand = self
+                    .lower_es5_call_spread(await_expr.expression)
+                    .or_else(|| self.lower_es5_new_spread(await_expr.expression))
+                    .unwrap_or_else(|| self.expression_to_ir(await_expr.expression));
                 if self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
-                    IRNode::CallExpr {
+                    Some(IRNode::CallExpr {
                         callee: Box::new(IRNode::RuntimeHelper("__await".into())),
                         arguments: vec![operand],
-                    }
+                    })
                 } else {
-                    operand
+                    Some(operand)
                 }
             };
 
@@ -3106,7 +3281,7 @@ impl<'a> AsyncES5Transformer<'a> {
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::YIELD,
-                    value: Some(Box::new(operand)),
+                    value: operand.map(Box::new),
                     comment: Some("yield".to_string().into()),
                 },
             ))));
@@ -3291,24 +3466,12 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
-                if let Some((temp, initial_obj, lowered_init)) =
-                    self.lower_object_literal_es5_after_computed_suspension(decl.initializer)
-                {
-                    current_statements.push(IRNode::HoistedVarGroupBreak);
-                    current_statements.push(IRNode::VarDecl {
-                        name: temp.clone().into(),
-                        initializer: None,
-                    });
-                    current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-                        IRNode::id(temp),
-                        initial_obj,
-                    ))));
-                    self.emit_nested_suspension(
-                        decl.initializer,
-                        cases,
-                        current_statements,
-                        current_label,
-                    );
+                if let Some(lowered_init) = self.lower_object_literal_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
                     current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
                         IRNode::Identifier(name.into()),
                         lowered_init,
@@ -3318,6 +3481,38 @@ impl<'a> AsyncES5Transformer<'a> {
 
                 // Emit the yield for the nested await
                 if let Some(lowered_init) = self.lower_call_callee_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(
+                        IRNode::BinaryExpr {
+                            left: Box::new(IRNode::Identifier(name.into())),
+                            operator: "=".to_string().into(),
+                            right: Box::new(lowered_init),
+                        },
+                    )));
+                    return;
+                }
+
+                if let Some(lowered_init) = self.lower_array_literal_before_suspension(
+                    decl.initializer,
+                    cases,
+                    current_statements,
+                    current_label,
+                ) {
+                    current_statements.push(IRNode::ExpressionStatement(Box::new(
+                        IRNode::BinaryExpr {
+                            left: Box::new(IRNode::Identifier(name.into())),
+                            operator: "=".to_string().into(),
+                            right: Box::new(lowered_init),
+                        },
+                    )));
+                    return;
+                }
+
+                if let Some(lowered_init) = self.lower_element_access_object_before_suspension(
                     decl.initializer,
                     cases,
                     current_statements,
@@ -3433,6 +3628,7 @@ impl<'a> AsyncES5Transformer<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_static_result_temp: None,
             deferred_block_class_alias,
         });
 
@@ -4367,7 +4563,8 @@ impl<'a> AsyncES5Transformer<'a> {
             | IRNode::LogicalAnd { .. }
             | IRNode::ConditionalExpr { .. }
             | IRNode::CommaExpr(_)
-            | IRNode::CommaExprMultiline(_) => IRNode::Parenthesized(Box::new(condition)),
+            | IRNode::CommaExprMultiline(_)
+            | IRNode::CommaExprMultilineFlat(_) => IRNode::Parenthesized(Box::new(condition)),
             _ => condition,
         };
         IRNode::PrefixUnaryExpr {
@@ -4740,6 +4937,27 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(statement_node) = self.arena.get(labeled.statement) else {
             return;
         };
+        if statement_node.kind == syntax_kind_ext::WHILE_STATEMENT {
+            self.process_while_statement_in_async_with_label(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+                Some(&label),
+            );
+            return;
+        }
+        if statement_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && self.process_for_await_statement_in_async(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+                Some(&label),
+            )
+        {
+            return;
+        }
         if statement_node.kind == syntax_kind_ext::BLOCK
             && let Some(block) = self.arena.get_block(statement_node)
         {

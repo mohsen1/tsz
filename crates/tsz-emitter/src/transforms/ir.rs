@@ -132,6 +132,11 @@ pub enum IRNode {
     /// ```
     CommaExprMultiline(Vec<Self>),
 
+    /// Multiline comma expression whose continuation lines reuse the current
+    /// indentation level. Used when a comma expression is nested inside another
+    /// multiline comma expression.
+    CommaExprMultilineFlat(Vec<Self>),
+
     /// Array literal: `[a, b, c]`
     ArrayLiteral(Vec<Self>),
 
@@ -143,6 +148,9 @@ pub enum IRNode {
         properties: Vec<IRProperty>,
         /// Source range (pos, end) for single-line vs multiline detection
         source_range: Option<(u32, u32)>,
+        /// Extra continuation indentation for object literals that TypeScript
+        /// emits as part of downlevel computed-property temporaries.
+        extra_indent: u8,
     },
 
     /// Function expression: `function name(params) { body }`
@@ -329,6 +337,10 @@ pub enum IRNode {
         leading_comment: Option<String>,
         /// Static block IIFEs deferred to after the class assignment.
         deferred_static_blocks: Vec<Self>,
+        /// When set, deferred static blocks are folded into the assignment as
+        /// `C = (_t = classExpr, staticBlock(), _t)` so the assignment remains
+        /// one expression with the class value as its result.
+        deferred_static_result_temp: Option<Cow<'static, str>>,
         /// Class alias name assigned after the class value exists and before
         /// deferred static blocks that reference the alias.
         deferred_block_class_alias: Option<String>,
@@ -589,6 +601,7 @@ pub enum IRNode {
         name: Cow<'static, str>,
         members: Vec<EnumMember>,
         namespace_export: Option<Cow<'static, str>>,
+        invalid_namespace_static: bool,
     },
 
     /// Namespace IIFE: `(function (NS) { ... })(NS || (NS = {}))`
@@ -598,9 +611,10 @@ pub enum IRNode {
         body: Vec<Self>,
         is_exported: bool,
         attach_to_exports: bool,
-        /// CommonJS export property for an exported namespace IIFE. Usually the
-        /// local namespace name, but `export { N as Alias }` folds `Alias`.
-        commonjs_export_name: Option<Cow<'static, str>>,
+        /// CommonJS export properties folded into an exported namespace IIFE.
+        /// Names are in source order, so the last name becomes the outermost
+        /// assignment: `[N, Alias]` emits `exports.Alias = exports.N = N = {}`.
+        commonjs_export_names: Vec<Cow<'static, str>>,
         /// `SystemJS` export names folded into the namespace IIFE tail:
         /// `N || (exports_1("alias", exports_1("name", N = {})))`.
         system_export_names: Vec<Cow<'static, str>>,
@@ -623,6 +637,9 @@ pub enum IRNode {
         skip_sequence_indent: bool,
         /// Same-line comment after the namespace declaration closing brace.
         trailing_comment: Option<Cow<'static, str>>,
+        /// Preserve an invalid `static` modifier before the generated namespace
+        /// binding declaration when recovering namespace-body emit.
+        invalid_namespace_static: bool,
     },
 
     /// Namespace export: `NS.foo = ...;`
@@ -916,6 +933,7 @@ impl IRNode {
             }
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
+            | Self::CommaExprMultilineFlat(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)
@@ -1122,6 +1140,7 @@ impl IRNode {
                 name: enum_name,
                 members,
                 namespace_export,
+                ..
             } => {
                 enum_name.as_ref() == name
                     || namespace_export
@@ -1233,6 +1252,7 @@ impl IRNode {
             }
             Self::CommaExpr(nodes)
             | Self::CommaExprMultiline(nodes)
+            | Self::CommaExprMultilineFlat(nodes)
             | Self::ArrayLiteral(nodes)
             | Self::VarDeclList(nodes)
             | Self::Block(nodes)
@@ -1480,6 +1500,7 @@ impl IRNode {
         Self::ObjectLiteral {
             properties: props,
             source_range: None,
+            extra_indent: 0,
         }
     }
 
@@ -1488,6 +1509,7 @@ impl IRNode {
         Self::ObjectLiteral {
             properties: Vec::new(),
             source_range: None,
+            extra_indent: 0,
         }
     }
 
