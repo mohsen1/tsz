@@ -39,6 +39,122 @@ pub fn contains_identifier_occurrence(haystack: &str, ident: &str) -> bool {
     false
 }
 
+/// Check if `haystack` contains `ident` as a value reference before a local
+/// binding shadows it. A duplicate `import <ident> = ...` declaration does not
+/// count as shadowing because `TypeScript` still treats later value references
+/// as references to the same import-alias symbol after reporting the duplicate.
+pub fn contains_identifier_occurrence_before_shadow(haystack: &str, ident: &str) -> bool {
+    if ident.is_empty() {
+        return false;
+    }
+
+    let mut search_from = 0usize;
+    while let Some(rel) = haystack[search_from..].find(ident) {
+        let pos = search_from + rel;
+        if is_standalone_identifier_at(haystack, ident, pos) {
+            if identifier_occurrence_is_binding(haystack, pos) {
+                if binding_is_import_redeclaration(haystack, pos) {
+                    search_from = pos + ident.len();
+                    continue;
+                }
+                return false;
+            }
+            return true;
+        }
+        search_from = pos + ident.len();
+    }
+    false
+}
+
+fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
+    let before_ok = if pos == 0 {
+        true
+    } else {
+        haystack[..pos]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_ident_or_member_access_char(ch))
+    };
+    let after_idx = pos + ident.len();
+    let after_ok = if after_idx >= haystack.len() {
+        true
+    } else {
+        haystack[after_idx..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    };
+    before_ok && after_ok
+}
+
+fn identifier_occurrence_is_binding(haystack: &str, pos: usize) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut p = pos;
+    while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+
+    let preceding = &haystack[..p];
+    for keyword in [
+        "var",
+        "let",
+        "const",
+        "function",
+        "class",
+        "enum",
+        "namespace",
+        "module",
+        "import",
+    ] {
+        if !preceding.ends_with(keyword) {
+            continue;
+        }
+        let start = p - keyword.len();
+        let before_keyword_ok = start == 0
+            || haystack[..start]
+                .chars()
+                .next_back()
+                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+        if before_keyword_ok {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn binding_is_import_redeclaration(haystack: &str, pos: usize) -> bool {
+    let bytes = haystack.as_bytes();
+    let mut p = pos;
+    while p > 0 && bytes[p - 1].is_ascii_whitespace() {
+        p -= 1;
+    }
+    let preceding = &haystack[..p];
+    if !preceding.ends_with("import") {
+        return false;
+    }
+    let start = p - "import".len();
+    let before_keyword_ok = start == 0
+        || haystack[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
+    if !before_keyword_ok {
+        return false;
+    }
+
+    let mut after = pos;
+    while after < bytes.len()
+        && (bytes[after] == b'_' || bytes[after] == b'$' || bytes[after].is_ascii_alphanumeric())
+    {
+        after += 1;
+    }
+    while after < bytes.len() && bytes[after].is_ascii_whitespace() {
+        after += 1;
+    }
+    bytes.get(after) == Some(&b'=')
+}
+
 /// Returns true if `ch` preceding an identifier means it is NOT a standalone
 /// variable reference. Includes identifier chars and `.` (property access).
 const fn is_ident_or_member_access_char(ch: char) -> bool {

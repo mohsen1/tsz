@@ -623,6 +623,19 @@ impl<'a> CheckerState<'a> {
                     break;
                 }
 
+                // Bracket-default form `[T=default]`: skip the leading bracket
+                // so the identifier scan sees the name, mirroring
+                // `jsdoc_template_type_params`. Without this, a combined
+                // `@template {C} [T=default]` drops the constraint because no
+                // name is produced for the brace clause to bind to.
+                let in_bracket = bytes[cursor] as char == '[';
+                if in_bracket {
+                    cursor += 1;
+                    while cursor < bytes.len() && (bytes[cursor] as char).is_ascii_whitespace() {
+                        cursor += 1;
+                    }
+                }
+
                 let start = cursor;
                 while cursor < bytes.len() {
                     let ch = bytes[cursor] as char;
@@ -637,6 +650,17 @@ impl<'a> CheckerState<'a> {
                 }
 
                 let name = &names_str[start..cursor];
+
+                // Consume the remainder of a bracket-default form (`=default]`)
+                // so the next iteration resumes at the following name.
+                if in_bracket {
+                    while cursor < bytes.len() && bytes[cursor] as char != ']' {
+                        cursor += 1;
+                    }
+                    if cursor < bytes.len() {
+                        cursor += 1;
+                    }
+                }
 
                 // Skip `const` modifier keyword (e.g., `@template const T`).
                 if name == "const" {
