@@ -263,50 +263,6 @@ pub(crate) fn is_boxed_function_def(db: &dyn TypeDatabase, type_id: TypeId) -> b
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tsz_solver::PropertyInfo;
-    use tsz_solver::construction::TypeInterner;
-
-    fn object_with_property(db: &TypeInterner, name: &str) -> TypeId {
-        db.object(vec![PropertyInfo::new(
-            db.intern_string(name),
-            TypeId::STRING,
-        )])
-    }
-
-    #[test]
-    fn constraint_keyof_surface_detects_direct_keyof() {
-        let db = TypeInterner::new();
-        let object = object_with_property(&db, "alpha");
-        let keyof = db.keyof(object);
-
-        assert!(constraint_has_keyof_surface(&db, keyof));
-    }
-
-    #[test]
-    fn constraint_keyof_surface_ignores_non_keyof_alias() {
-        let db = TypeInterner::new();
-        let object = object_with_property(&db, "gamma");
-        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
-        db.store_display_alias(evaluated, object);
-
-        assert!(!constraint_has_keyof_surface(&db, evaluated));
-    }
-
-    #[test]
-    fn constraint_keyof_surface_ignores_keyof_display_alias() {
-        let db = TypeInterner::new();
-        let object = object_with_property(&db, "delta");
-        let keyof = db.keyof(object);
-        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
-        db.store_display_alias(evaluated, keyof);
-
-        assert!(!constraint_has_keyof_surface(&db, evaluated));
-    }
-}
-
 /// Get the base `DefId` from an `Application` type's base type.
 ///
 /// For `Application { base: Lazy(DefId), args: ... }`, returns the base DefId.
@@ -458,4 +414,48 @@ pub(crate) fn application_base_and_args(
 /// instantiation expression (`typeof fn<X>`).
 pub(crate) fn is_named_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_type_reference(db, type_id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::PropertyInfo;
+    use tsz_solver::construction::TypeInterner;
+
+    fn object_with_property(db: &TypeInterner, name: &str) -> TypeId {
+        db.object(vec![PropertyInfo::new(
+            db.intern_string(name),
+            TypeId::STRING,
+        )])
+    }
+
+    #[test]
+    fn constraint_keyof_surface_detects_direct_keyof() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "alpha");
+        let keyof = db.keyof(object);
+
+        assert!(constraint_has_keyof_surface(&db, keyof));
+    }
+
+    #[test]
+    fn constraint_keyof_surface_ignores_non_keyof_alias() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "gamma");
+        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        db.store_display_alias(evaluated, object);
+
+        assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
+
+    #[test]
+    fn constraint_keyof_surface_ignores_keyof_display_alias() {
+        let db = TypeInterner::new();
+        let object = object_with_property(&db, "delta");
+        let keyof = db.keyof(object);
+        let evaluated = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+        db.store_display_alias(evaluated, keyof);
+
+        assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
 }
