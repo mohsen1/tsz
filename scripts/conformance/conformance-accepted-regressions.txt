@@ -2,8 +2,8 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
-TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/contextualTypeFunctionObjectPropertyIntersection.ts
+TypeScript/tests/cases/compiler/contextuallyTypedJsxAttribute2.tsx
 TypeScript/tests/cases/compiler/declarationEmitMappedPrivateTypeTypeParameter.ts
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
 TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
@@ -25,8 +25,8 @@ TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts
-TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/importEquals2.ts
+TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
 TypeScript/tests/cases/conformance/jsdoc/declarations/jsDeclarationsTypedefAndLatebound.ts
 TypeScript/tests/cases/conformance/node/esmModuleExports2.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
