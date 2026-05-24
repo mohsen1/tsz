@@ -176,6 +176,28 @@ let Anon = class <out T> {
 }
 
 #[test]
+fn class_expression_constructor_type_prefers_ast_for_variance_type_params() {
+    let output = emit_dts(
+        r#"type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+let Renamed = class <out Item> {
+    foo(): InstanceType<(typeof Renamed<Item>)> {
+        return this;
+    }
+};"#,
+    );
+    assert!(
+        output.contains("new <out Item>()"),
+        "class-expression constructor type parameters should preserve variance modifiers: {output}"
+    );
+    assert!(
+        output.contains("foo(): InstanceType<(typeof Renamed<Item>)>;"),
+        "class-expression member return annotations should preserve value-space type queries: {output}"
+    );
+}
+
+#[test]
 fn probe_abstract_construct_signature_in_interface() {
     // Abstract construct signature in type
     let output = emit_dts("export type AbstractCtor = abstract new <T>() => T;");

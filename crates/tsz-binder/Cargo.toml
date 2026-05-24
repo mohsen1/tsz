@@ -37,6 +37,10 @@ path = "tests/scopes_tests.rs"
 name = "lib_merge_external_module_tests"
 path = "tests/lib_merge_external_module_tests.rs"
 
+[[test]]
+name = "ambient_module_export_context_tests"
+path = "tests/ambient_module_export_context_tests.rs"
+
 [lints]
 workspace = true
 

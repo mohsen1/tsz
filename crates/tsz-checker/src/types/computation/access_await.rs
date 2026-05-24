@@ -222,6 +222,19 @@ impl<'a> CheckerState<'a> {
             return self.ctx.types.factory().union(unwrapped);
         }
 
+        // Distribute over top-level intersections: tsc reduces `Awaited<A & B>`
+        // to `Awaited<A> & Awaited<B>`, so awaiting an intersection of promises
+        // (e.g. the `Promise<number> & Promise<string>` recovery type of a
+        // no-overload-match call) yields `number & string` (= `never`) rather
+        // than the un-awaited intersection. Mirrors the union distribution above.
+        if let Some(members) = query::intersection_members(self.ctx.types, type_id) {
+            let unwrapped: Vec<TypeId> = members
+                .into_iter()
+                .map(|m| self.compute_awaited_type(m, depth + 1))
+                .collect();
+            return self.ctx.types.factory().intersection(unwrapped);
+        }
+
         // Non-union: recursively unwrap nested Promise<...> applications.
         let mut current_type = type_id;
         let mut local_depth: u32 = 0;
