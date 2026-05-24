@@ -231,7 +231,10 @@ impl<'a> DeclarationEmitter<'a> {
         self.arena.get_function(func_node)
     }
 
-    fn js_top_level_variable_initializer(&self, name: &str) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn js_top_level_variable_initializer(
+        &self,
+        name: &str,
+    ) -> Option<NodeIndex> {
         self.js_top_level_variable_initializer_info(name)
             .map(|(initializer, _)| initializer)
     }
@@ -802,6 +805,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(type_text) = self.js_synthetic_export_value_type_text(initializer) else {
             return;
         };
+        self.record_js_require_property_import_alias_for_new_expression(initializer);
         let require_alias_import = self
             .js_require_alias_property_access_parts(initializer)
             .map(|(local_name, _, module_name)| (local_name, module_name));
@@ -1409,6 +1413,9 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(type_text) = type_text else {
             return;
         };
+        if is_exported {
+            self.record_js_require_property_import_alias_for_new_expression(initializer);
+        }
 
         self.write_indent();
         let reserved_export_alias = if is_exported {
@@ -3486,6 +3493,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(type_text) = self.js_require_alias_property_access_typeof_text(initializer) {
             return Some(type_text);
+        }
+
+        if let Some((local_name, _, _)) =
+            self.js_require_property_import_alias_for_value_expression(initializer)
+        {
+            return Some(local_name);
         }
 
         if let Some(type_id) = self.get_node_type_or_names(&[initializer])

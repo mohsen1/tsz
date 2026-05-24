@@ -3484,6 +3484,45 @@ module.exports = {
 }
 
 #[test]
+fn test_js_module_exports_object_prefers_require_property_alias_over_inferred_type() {
+    let source = r#"
+const Something = require("fs").Something;
+const thing = new Something();
+module.exports = {
+    thing
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    for (index, node) in parser.arena.nodes.iter().enumerate() {
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && parser
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "thing")
+        {
+            type_cache.node_types.insert(index as u32, TypeId::STRING);
+        }
+    }
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.js".to_string());
+    let output = emitter.emit(root);
+
+    assert_eq!(
+        output.trim(),
+        "export const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+    );
+}
+
+#[test]
 fn test_js_nested_module_exports_object_emits_namespace_with_import_alias() {
     let source = r#"
 const Something = require("fs").Something;
