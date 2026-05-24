@@ -2457,6 +2457,29 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
+#[test]
+fn test_callable_missing_property_suppression_uses_signature_queries() {
+    let src = fs::read_to_string("src/error_reporter/assignability_callable_suppression.rs")
+        .expect("failed to read assignability callable suppression source");
+
+    for forbidden in [
+        "format_type",
+        "format_type_diagnostic",
+        "is_function_type_display",
+    ] {
+        assert!(
+            !src.contains(forbidden),
+            "callable missing-property suppression must use TypeId signature queries, \
+             not rendered type text: found {forbidden}"
+        );
+    }
+
+    assert!(
+        src.contains("get_call_signatures") && src.contains("get_construct_signatures"),
+        "callable missing-property suppression should query call and construct signatures"
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]
