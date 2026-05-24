@@ -1339,4 +1339,47 @@ type Probe = Gen2<ABC.A>;
             checker.format_type(probe_type),
         );
     }
+
+    /// Rule: when `T extends U ? A : B` is deferred (contains type parameters),
+    /// property access uses `A | B` as the apparent type. Properties not on all
+    /// branches must produce TS2339; properties on all branches must be accepted.
+    #[test]
+    fn deferred_conditional_branch_only_property_emits_ts2339() {
+        let diags = check_source_diagnostics(
+            "type Cond<T> = T extends string ? { a: 1 } : { b: 2 };
+function f<T>(c: Cond<T>) {
+  c.a;
+  c.zzz;
+}",
+        );
+        let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
+        assert_eq!(
+            codes.iter().filter(|&&c| c == 2339).count(),
+            2,
+            "expected 2 TS2339 errors (c.a and c.zzz), got: {:?}",
+            diags
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn deferred_conditional_common_property_no_ts2339() {
+        let diags = check_source_diagnostics(
+            "type Cond<T> = T extends string ? { common: number } : { common: string };
+function f<T>(c: Cond<T>) {
+  c.common;
+}",
+        );
+        let ts2339: Vec<_> = diags.iter().filter(|d| d.code == 2339).collect();
+        assert!(
+            ts2339.is_empty(),
+            "expected no TS2339 for common property, got: {:?}",
+            ts2339
+                .iter()
+                .map(|d| (d.code, &d.message_text))
+                .collect::<Vec<_>>()
+        );
+    }
 }

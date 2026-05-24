@@ -34,6 +34,7 @@ pub use parse_health::ParseHealth;
 mod import_extension_flags;
 mod lib_queries;
 mod module_entity;
+mod package_resolution;
 mod request_cache;
 mod resolver;
 mod source_file_symbol_type_cache_scope;
@@ -492,6 +493,15 @@ pub struct CheckerContext<'a> {
     /// Prevents infinite recursion when a JSDoc `@typedef` references itself
     /// (e.g., `@typedef {... | Json[]} Json`).
     pub jsdoc_typedef_resolving: RefCell<rustc_hash::FxHashSet<String>>,
+
+    /// Recursion guard for *generic* JSDoc `@typedef` resolution, mapping the
+    /// typedef name currently being expanded to the `DefId` of its lazy alias.
+    /// A self-recursive generic application such as `@typedef {{ next: Box<T> |
+    /// null }} Box` must resolve the inner `Box<T>` to a deferred
+    /// `Application(Lazy(DefId), args)` instead of eagerly re-expanding the body,
+    /// which would otherwise recurse until the stack overflows. The solver then
+    /// resolves the alias coinductively, keyed by `(DefId, type args)`.
+    pub jsdoc_generic_typedef_resolving: RefCell<rustc_hash::FxHashMap<String, DefId>>,
 
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
