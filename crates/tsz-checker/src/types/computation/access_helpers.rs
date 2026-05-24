@@ -1008,4 +1008,43 @@ impl<'a> CheckerState<'a> {
         }
         Some(self.ctx.types.unique_symbol(SymbolRef(current.0)))
     }
+
+    /// Decide whether a wide-`symbol` element access made through a
+    /// `symbol`-typed identifier lacks a matching member on `object_type`, i.e.
+    /// whether tsc would report an implicit-any element access (TS7053/TS7015).
+    ///
+    /// `index_type_for_access` is the binding-identity `UniqueSymbol(ref)` the
+    /// binder produced for the identifier. The key is satisfied when the type
+    /// provides a `symbol` index signature (`{ [k: symbol]: V }`) or declares a
+    /// member under that exact binding; otherwise it is missing.
+    ///
+    /// Array/tuple/string-like receivers can never declare a member keyed by such
+    /// a binding — their element resolver leniently returns the element type for
+    /// any symbol key — so they are always missing unless an explicit `symbol`
+    /// index signature is present.
+    pub(crate) fn symbol_keyed_access_is_missing(
+        &self,
+        object_type: TypeId,
+        index_type_for_access: TypeId,
+    ) -> bool {
+        // A `symbol` index signature accepts any symbol key. Probe it with the wide
+        // `symbol` type, which only resolves through such a signature.
+        let via_symbol_index =
+            self.ctx
+                .types
+                .resolve_element_access_type(object_type, TypeId::SYMBOL, None);
+        if via_symbol_index != TypeId::UNDEFINED && via_symbol_index != TypeId::ERROR {
+            return false;
+        }
+
+        if self.is_array_like_type(object_type) {
+            return true;
+        }
+
+        let member =
+            self.ctx
+                .types
+                .resolve_element_access_type(object_type, index_type_for_access, None);
+        member == TypeId::UNDEFINED || member == TypeId::ERROR
+    }
 }

@@ -35,7 +35,7 @@ impl<'a> Printer<'a> {
         &mut self,
         pattern_idx: NodeIndex,
         source_expr: NodeIndex,
-        _first: &mut bool,
+        first: &mut bool,
     ) {
         #[cfg(not(target_arch = "wasm32"))]
         if std::env::var_os("TSZ_DEBUG_EMIT").is_some() {
@@ -62,6 +62,10 @@ impl<'a> Printer<'a> {
         let read_limit = self.binding_pattern_read_limit(pattern_node);
 
         let read_temp = self.get_temp_var_name();
+        if !*first {
+            self.write(", ");
+        }
+        *first = false;
         self.write(&read_temp);
         self.write(" = ");
         self.write_helper("__read");
@@ -69,9 +73,7 @@ impl<'a> Printer<'a> {
         self.destructuring_read_depth += 1;
         self.emit(source_expr);
         self.destructuring_read_depth -= 1;
-        if let Some(element_count) = read_limit
-            && element_count > 0
-        {
+        if let Some(element_count) = read_limit {
             self.write(", ");
             self.write(&element_count.to_string());
         }
