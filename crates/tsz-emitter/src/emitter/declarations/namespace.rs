@@ -197,10 +197,7 @@ impl<'a> Printer<'a> {
         mut module_idx: NodeIndex,
         fallback_name_idx: NodeIndex,
     ) -> String {
-        loop {
-            let Some(node) = self.arena.get(module_idx) else {
-                break;
-            };
+        while let Some(node) = self.arena.get(module_idx) {
             if node.kind != syntax_kind_ext::MODULE_DECLARATION {
                 break;
             }
