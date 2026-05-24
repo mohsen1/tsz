@@ -71,6 +71,30 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+fn starts_with_keyword_token(text: &str, keyword: &str) -> bool {
+    text.strip_prefix(keyword).is_some_and(|tail| {
+        tail.chars()
+            .next()
+            .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
+    })
+}
+
+const fn is_identifier_continue(byte: u8) -> bool {
+    byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
+}
+
+fn previous_identifier_token(text: &str, mut end: usize) -> Option<(&str, usize)> {
+    let bytes = text.as_bytes();
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        end -= 1;
+    }
+    let token_end = end;
+    while end > 0 && is_identifier_continue(bytes[end - 1]) {
+        end -= 1;
+    }
+    (end < token_end).then(|| (&text[end..token_end], end))
+}
+
 // =============================================================================
 // NamespaceES5Transformer - Main transformer struct
 // =============================================================================
@@ -655,6 +679,7 @@ impl<'a> NamespaceES5Transformer<'a> {
             trailing_comment: self
                 .extract_namespace_trailing_comment(innermost_body)
                 .map(Into::into),
+            invalid_namespace_static: self.has_invalid_namespace_static_modifier(ns_idx),
         })
     }
 
@@ -800,6 +825,72 @@ impl<'a> NamespaceES5Transformer<'a> {
         });
         let _ = result_name;
         prefix
+    }
+
+    fn has_invalid_namespace_static_modifier(&self, node_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(node_idx) else {
+            return false;
+        };
+        let (modifiers, probe_pos) = match node.kind {
+            k if k == syntax_kind_ext::MODULE_DECLARATION => {
+                let Some(module) = self.arena.get_module(node) else {
+                    return false;
+                };
+                let probe_pos = self
+                    .arena
+                    .get(module.name)
+                    .map_or(node.pos, |name| name.pos);
+                (module.modifiers.as_ref(), probe_pos)
+            }
+            k if k == syntax_kind_ext::ENUM_DECLARATION => {
+                let Some(enum_data) = self.arena.get_enum(node) else {
+                    return false;
+                };
+                let probe_pos = self
+                    .arena
+                    .get(enum_data.name)
+                    .map_or(node.pos, |name| name.pos);
+                (enum_data.modifiers.as_ref(), probe_pos)
+            }
+            _ => (None, node.pos),
+        };
+        if modifiers.is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|mod_node| mod_node.kind == SyntaxKind::StaticKeyword as u16)
+            })
+        }) {
+            return true;
+        }
+
+        let Some(source_text) = self.source_text else {
+            return false;
+        };
+        let token_start = self.skip_trivia_forward(probe_pos, node.end) as usize;
+        let Some(remaining) =
+            source_text.get(token_start..(node.end as usize).min(source_text.len()))
+        else {
+            return false;
+        };
+        if starts_with_keyword_token(remaining, "static") {
+            return true;
+        }
+
+        let Some((previous, previous_start)) = previous_identifier_token(source_text, token_start)
+        else {
+            return false;
+        };
+        if previous == "static" {
+            return true;
+        }
+        if matches!(previous, "namespace" | "module" | "enum")
+            && let Some((before_keyword, _)) =
+                previous_identifier_token(source_text, previous_start)
+        {
+            return before_keyword == "static";
+        }
+        false
     }
 
     fn source_file_has_default_exported_function(&self, ns_idx: NodeIndex, name: &str) -> bool {
@@ -1137,12 +1228,19 @@ impl<'a> NamespaceES5Transformer<'a> {
             // Start after the opening brace of the module block.
             let mut prev_end = body_node.pos + 1; // skip past '{'
             let mut prev_stmt_pos = body_node.pos + 1;
+            let mut pending_static_modifier = false;
 
             for &stmt_idx in &stmts.nodes {
                 let stmt_node = match self.arena.get(stmt_idx) {
                     Some(n) => n,
                     None => continue,
                 };
+                if stmt_node.kind == SyntaxKind::StaticKeyword as u16 {
+                    pending_static_modifier = true;
+                    prev_end = stmt_node.end;
+                    prev_stmt_pos = stmt_node.pos;
+                    continue;
+                }
 
                 // Some statements have trailing trivia that includes standalone comments
                 // before the next declaration. Capture those comments here so they can
@@ -1186,11 +1284,17 @@ impl<'a> NamespaceES5Transformer<'a> {
                     Vec::new()
                 };
 
-                let ir = self.transform_namespace_member_with_declared(
+                let mut ir = self.transform_namespace_member_with_declared(
                     ns_name,
                     stmt_idx,
                     &declared_names,
                 );
+                if pending_static_modifier {
+                    if let Some(ir_node) = ir.as_mut() {
+                        mark_invalid_namespace_static(ir_node);
+                    }
+                    pending_static_modifier = false;
+                }
                 if ir.is_some() {
                     for c in leading_comments {
                         result.push(c);
@@ -2353,6 +2457,7 @@ impl<'a> NamespaceES5Transformer<'a> {
         };
 
         let mut enum_ir = transform_enum_to_ir(self.arena, enum_idx)?;
+        let invalid_namespace_static = self.has_invalid_namespace_static_modifier(enum_idx);
 
         // For exported enums, fold the namespace export into the IIFE closing:
         // `(Color = A.Color || (A.Color = {}))` instead of separate `A.Color = Color;`
@@ -2362,6 +2467,14 @@ impl<'a> NamespaceES5Transformer<'a> {
             } = &mut enum_ir
         {
             *namespace_export = Some(ns_name.to_string().into());
+        }
+        if invalid_namespace_static
+            && let IRNode::EnumIIFE {
+                invalid_namespace_static,
+                ..
+            } = &mut enum_ir
+        {
+            *invalid_namespace_static = true;
         }
 
         Some(enum_ir)
@@ -2428,7 +2541,27 @@ impl<'a> NamespaceES5Transformer<'a> {
             trailing_comment: self
                 .extract_namespace_trailing_comment(ns_data.body)
                 .map(Into::into),
+            invalid_namespace_static: self.has_invalid_namespace_static_modifier(ns_idx),
         })
+    }
+}
+
+fn mark_invalid_namespace_static(node: &mut IRNode) {
+    match node {
+        IRNode::EnumIIFE {
+            invalid_namespace_static,
+            ..
+        }
+        | IRNode::NamespaceIIFE {
+            invalid_namespace_static,
+            ..
+        } => *invalid_namespace_static = true,
+        IRNode::Sequence(items) => {
+            if let Some(first) = items.first_mut() {
+                mark_invalid_namespace_static(first);
+            }
+        }
+        _ => {}
     }
 }
 

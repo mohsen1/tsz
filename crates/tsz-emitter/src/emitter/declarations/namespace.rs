@@ -449,6 +449,12 @@ impl<'a> Printer<'a> {
             } else {
                 "var"
             };
+            if self.should_emit_invalid_namespace_static_modifier_before_name(
+                module.name,
+                &module.modifiers,
+            ) {
+                self.write("static ");
+            }
             self.write(keyword);
             self.write(" ");
             self.write(&name);

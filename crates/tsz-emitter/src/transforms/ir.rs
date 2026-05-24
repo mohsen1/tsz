@@ -589,6 +589,7 @@ pub enum IRNode {
         name: Cow<'static, str>,
         members: Vec<EnumMember>,
         namespace_export: Option<Cow<'static, str>>,
+        invalid_namespace_static: bool,
     },
 
     /// Namespace IIFE: `(function (NS) { ... })(NS || (NS = {}))`
@@ -623,6 +624,9 @@ pub enum IRNode {
         skip_sequence_indent: bool,
         /// Same-line comment after the namespace declaration closing brace.
         trailing_comment: Option<Cow<'static, str>>,
+        /// Preserve an invalid `static` modifier before the generated namespace
+        /// binding declaration when recovering namespace-body emit.
+        invalid_namespace_static: bool,
     },
 
     /// Namespace export: `NS.foo = ...;`
@@ -1122,6 +1126,7 @@ impl IRNode {
                 name: enum_name,
                 members,
                 namespace_export,
+                ..
             } => {
                 enum_name.as_ref() == name
                     || namespace_export
