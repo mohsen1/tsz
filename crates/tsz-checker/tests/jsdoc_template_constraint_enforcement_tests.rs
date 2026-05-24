@@ -123,6 +123,26 @@ id(123);
 }
 
 #[test]
+fn bracket_default_form_preserves_constraint() {
+    // The combined brace-constraint + bracket-default spelling
+    // `@template {C} [T=D]` must still attach the constraint `C`.
+    let source = r#"
+/**
+ * @template {string} [T=string]
+ * @param {T} x
+ * @returns {T}
+ */
+function id(x) { return x; }
+id(123);
+"#;
+    let diags = check_js(source);
+    assert!(
+        codes(&diags).contains(&2345),
+        "expected TS2345 for {{string}} constraint in bracket-default form, got: {diags:?}"
+    );
+}
+
+#[test]
 fn class_template_constraint_enforced_on_constructor_argument() {
     let source = r#"
 /**

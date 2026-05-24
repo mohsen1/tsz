@@ -2722,8 +2722,10 @@ impl<'a> CheckerState<'a> {
     /// (`@template {C} A, B`) constrains only the first listed name.
     ///
     /// Callers resolve each string to a `TypeId` via `resolve_jsdoc_reference`
-    /// at the point where the type parameter is lowered, so that a constraint
-    /// referencing an earlier `@template` parameter sees it in scope.
+    /// at the point where the type parameter is lowered. As with `@template`
+    /// defaults, a constraint that references a sibling `@template` parameter
+    /// resolves only at sites that register each parameter in scope before
+    /// resolving the next.
     pub(crate) fn jsdoc_template_constraint_strings(
         jsdoc: &str,
     ) -> std::collections::HashMap<String, String> {
