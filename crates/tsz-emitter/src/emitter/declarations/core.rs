@@ -69,6 +69,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.ctx.target_es5 && func.asterisk_token {
+            self.emit_generator_function_es5(_idx);
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }

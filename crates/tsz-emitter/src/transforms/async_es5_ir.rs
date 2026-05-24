@@ -2962,20 +2962,27 @@ impl<'a> AsyncES5Transformer<'a> {
                 return;
             }
 
-            // Get the awaited expression
-            let operand = if await_expr.expression.is_none() {
-                IRNode::Raw("".to_string().into())
+            // Get the awaited expression. A bare generator `yield;` lowers to
+            // `[4 /*yield*/]`, while `await;` keeps the historical empty
+            // operand shape for invalid/recovered async input.
+            let operand = if await_expr.expression.is_none()
+                && self.generator_mode
+                && node.kind == syntax_kind_ext::YIELD_EXPRESSION
+            {
+                None
+            } else if await_expr.expression.is_none() {
+                Some(IRNode::Raw("".to_string().into()))
             } else if self.generator_mode && node.kind == syntax_kind_ext::YIELD_EXPRESSION {
-                self.generator_yield_operand_to_ir(await_expr.expression)
+                Some(self.generator_yield_operand_to_ir(await_expr.expression))
             } else {
                 let operand = self.expression_to_ir(await_expr.expression);
                 if self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION {
-                    IRNode::CallExpr {
+                    Some(IRNode::CallExpr {
                         callee: Box::new(IRNode::RuntimeHelper("__await".into())),
                         arguments: vec![operand],
-                    }
+                    })
                 } else {
-                    operand
+                    Some(operand)
                 }
             };
 
@@ -2983,7 +2990,7 @@ impl<'a> AsyncES5Transformer<'a> {
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::YIELD,
-                    value: Some(Box::new(operand)),
+                    value: operand.map(Box::new),
                     comment: Some("yield".to_string().into()),
                 },
             ))));
@@ -3577,6 +3584,7 @@ impl<'a> AsyncES5Transformer<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_static_result_temp: None,
             deferred_block_class_alias,
         });
 
