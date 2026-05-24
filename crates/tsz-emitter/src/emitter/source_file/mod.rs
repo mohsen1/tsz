@@ -466,6 +466,87 @@ mod tests {
     }
 
     #[test]
+    fn base_constructor_computed_object_temps_stay_in_constructor_scope() {
+        let source = "class C { constructor() { this.value = { [this.key]: 1 }; } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("function C() {\n        var _a;\n        this.value ="),
+            "Object-literal temps from a base constructor body should be local to that constructor.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(function () {\n    var _a;\n    function C()"),
+            "Base constructor body temps must not be hoisted to the class IIFE.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn base_constructor_field_initializer_object_temps_stay_in_constructor_scope() {
+        let source = "class C { field = { [this.key]: 1 }; constructor() {} }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("function C() {\n        var _a;\n        this.field ="),
+            "Object-literal temps from moved field initializers should be local to the constructor.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(function () {\n    var _a;\n    function C()"),
+            "Moved field initializer temps must not be hoisted to the class IIFE.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn synthesized_base_constructor_field_initializer_object_temps_stay_in_constructor_scope() {
+        let source = "class C { field = { [this.key]: 1 }; }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("function C() {\n        var _a;\n        this.field ="),
+            "Object-literal temps from synthesized constructor initializers should be local to the constructor.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("(function () {\n    var _a;\n    function C()"),
+            "Synthesized constructor initializer temps must not be hoisted to the class IIFE.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn derived_constructor_with_explicit_branch_returns_omits_tail_this_return() {
         let source = "declare const flag: boolean;\nclass A {}\nclass B extends A {\n    prop = () => this;\n    constructor() {\n        super();\n        if (flag) {\n            return {\n                prop: () => this,\n                value: 1\n            };\n        }\n        else\n            return null;\n    }\n}\n";
 
