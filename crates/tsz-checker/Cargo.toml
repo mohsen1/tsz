@@ -950,6 +950,10 @@ name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
 [[test]]
+name = "cross_module_unimported_name_resolution_tests"
+path = "tests/cross_module_unimported_name_resolution_tests.rs"
+
+[[test]]
 name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 
