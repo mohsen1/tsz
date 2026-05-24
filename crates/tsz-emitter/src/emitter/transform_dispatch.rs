@@ -368,7 +368,8 @@ impl<'a> Printer<'a> {
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
-                ns_emitter.set_should_declare_var(should_declare_var);
+                ns_emitter
+                    .set_should_declare_var(should_declare_var && !self.in_top_level_using_scope);
                 if !self.ctx.module_state.default_exported_func_names.is_empty() {
                     ns_emitter.set_default_exported_func_names(
                         self.ctx
@@ -883,6 +884,7 @@ impl<'a> Printer<'a> {
             .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         ns_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+        ns_emitter.set_disposable_env_context(self.next_disposable_env_id);
     }
 
     pub(in crate::emitter) fn sync_es5_namespace_emitter_block_scope(
@@ -892,6 +894,10 @@ impl<'a> Printer<'a> {
         self.ctx
             .block_scope_state
             .reserve_names(ns_emitter.block_scope_reserved_names());
+        self.next_disposable_env_id = ns_emitter.disposable_env_counter();
+        for generated_name in ns_emitter.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
     }
 
     pub(in crate::emitter) fn sync_es5_class_emitter_state(
@@ -1365,6 +1371,15 @@ impl<'a> Printer<'a> {
                         ns_name_for_exports = ns_name.clone();
                         self.declared_namespace_names.insert(ns_name);
                     }
+                    if self.in_top_level_using_scope && self.ctx.target_es5 {
+                        self.emit_namespace_iife(ns_data, None, None);
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= node.end
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                        return;
+                    }
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
@@ -1393,7 +1408,8 @@ impl<'a> Printer<'a> {
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
-                ns_emitter.set_should_declare_var(*should_declare_var);
+                ns_emitter
+                    .set_should_declare_var(*should_declare_var && !self.in_top_level_using_scope);
                 let output = ns_emitter.emit_exported_namespace(*namespace_node);
                 self.sync_es5_namespace_emitter_block_scope(&ns_emitter);
                 self.write(output.trim_end_matches('\n'));
@@ -1586,6 +1602,15 @@ impl<'a> Printer<'a> {
                         ns_name_for_exports = ns_name.clone();
                         self.declared_namespace_names.insert(ns_name);
                     }
+                    if self.in_top_level_using_scope && self.ctx.target_es5 {
+                        self.emit_namespace_iife(ns_data, None, None);
+                        while self.comment_emit_idx < self.all_comments.len()
+                            && self.all_comments[self.comment_emit_idx].end <= node.end
+                        {
+                            self.comment_emit_idx += 1;
+                        }
+                        return;
+                    }
                 }
                 let mut ns_emitter =
                     NamespaceES5Emitter::with_commonjs(self.arena, self.ctx.is_commonjs());
@@ -1613,7 +1638,8 @@ impl<'a> Printer<'a> {
                 if let Some(text) = self.source_text_for_map() {
                     ns_emitter.set_source_text(text);
                 }
-                ns_emitter.set_should_declare_var(*should_declare_var);
+                ns_emitter
+                    .set_should_declare_var(*should_declare_var && !self.in_top_level_using_scope);
                 let output = ns_emitter.emit_namespace(*namespace_node);
                 self.write(output.trim_end_matches('\n'));
                 // Advance comment cursor past comments inside the namespace body,
