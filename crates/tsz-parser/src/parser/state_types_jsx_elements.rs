@@ -1,0 +1,1653 @@
+use super::state::*;
+use crate::parser::node::*;
+use crate::parser::{NodeIndex, NodeList, node, syntax_kind_ext};
+use tsz_common::Atom;
+use tsz_scanner::SyntaxKind;
+
+impl ParserState {
+    // =========================================================================
+    // JSX Parsing
+    // =========================================================================
+
+    /// Determine if we should parse a type assertion or JSX element.
+    /// Type assertions use <Type>expr syntax, JSX uses <Element>.
+    pub(crate) fn parse_jsx_element_or_type_assertion(&mut self) -> NodeIndex {
+        // In .tsx/.jsx files, all <...> syntax is JSX (use "as Type" for type assertions)
+        // In .ts files, we need to distinguish type assertions from JSX
+        if self.is_jsx_file() || (self.is_js_file() && self.look_ahead_is_jsx_fragment_start()) {
+            return self.parse_jsx_element_or_self_closing_or_fragment(true);
+        }
+
+        // In .ts files (non-JSX), always try to parse as type assertion first.
+        // This will produce appropriate errors (e.g., TS1005 " '>' expected") for invalid JSX-like syntax.
+        if self.is_ambiguous_generic_type_assertion() {
+            self.error_expression_expected();
+        }
+        self.parse_type_assertion()
+    }
+
+    pub(crate) fn look_ahead_is_jsx_fragment_start(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let is_fragment =
+            !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::GreaterThanToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_fragment
+    }
+
+    pub(crate) fn is_ambiguous_generic_type_assertion(&mut self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let first_end = self.token_end();
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+
+        // `<<T>(x) => T` is ambiguous in parser grammar.
+        // Treat this as the shift-like form when there is no whitespace between `<<`.
+        self.next_token();
+        let is_ambiguous = self.is_token(SyntaxKind::LessThanToken)
+            && self.token_pos() == first_end
+            && self.look_ahead_is_generic_arrow_function();
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        is_ambiguous
+    }
+
+    /// Parse a type assertion: <Type>expression
+    pub(crate) fn parse_type_assertion(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::LessThanToken);
+        let type_node = self.parse_non_predicate_type();
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        // Save full-start position (including leading trivia) of the token
+        // after `>`. When trivia like conflict markers separates `>` from the
+        // next real token, we report "Expression expected" at the trivia start
+        // (right after `>`), matching tsc behavior.
+        let after_gt_full_start = self.token_full_start();
+
+        // `<number> yield 0` inside a generator: tsc's parseSimpleUnaryExpression
+        // does not handle YieldKeyword, so it leaves the assertion expression
+        // missing and re-parses `yield 0` as a separate yield statement. Mirror
+        // that — report TS1109 and use NodeIndex::NONE for the inner expression.
+        // (`<number> (yield 0)` is fine: parens make it a primary expression.)
+        let yield_after_gt = self.in_generator_context() && self.is_token(SyntaxKind::YieldKeyword);
+        if yield_after_gt {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at_current_token(
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+        }
+
+        // When a Git merge conflict marker terminated trivia scanning before
+        // the type-assertion's operand and the next token is EOF, anchor the
+        // missing-expression diagnostic at the position right after the `>`
+        // of the type assertion (matching tsc), not at the EOF position.
+        let has_conflict_marker_before_operand = self.is_token(SyntaxKind::EndOfFileToken)
+            && self.scanner.get_scanner_diagnostics().iter().any(|d| {
+                d.code == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+            });
+        let expression = if yield_after_gt {
+            NodeIndex::NONE
+        } else if has_conflict_marker_before_operand {
+            use tsz_common::diagnostics::diagnostic_codes;
+            self.parse_error_at(
+                after_gt_full_start,
+                0,
+                "Expression expected.",
+                diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            NodeIndex::NONE
+        } else {
+            self.parse_unary_expression()
+        };
+        if expression.is_none() {
+            use tsz_common::diagnostics::diagnostic_codes;
+            if self.should_report_error() {
+                self.parse_error_at(
+                    after_gt_full_start,
+                    0,
+                    "Expression expected.",
+                    diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
+        }
+        let end_pos = self.token_end();
+
+        self.arena.add_type_assertion(
+            syntax_kind_ext::TYPE_ASSERTION,
+            start_pos,
+            end_pos,
+            node::TypeAssertionData {
+                expression,
+                type_node,
+                keyword_pos: start_pos,
+            },
+        )
+    }
+
+    /// Parse a JSX element, self-closing element, or fragment.
+    /// Called when we see `<` in an expression context.
+    pub(crate) fn parse_jsx_element_or_self_closing_or_fragment(
+        &mut self,
+        in_expression_context: bool,
+    ) -> NodeIndex {
+        self.parse_jsx_element_or_self_closing_or_fragment_inner(in_expression_context, None)
+    }
+
+    /// Internal JSX parse with parent tag context for mismatch detection.
+    /// `currently_opened_tag` is the parent element's opening tag name (if any),
+    /// used to distinguish TS17008 (closer matches parent) from TS17002 (wrong closer).
+    pub(crate) fn parse_jsx_element_or_self_closing_or_fragment_inner(
+        &mut self,
+        in_expression_context: bool,
+        currently_opened_tag: Option<NodeIndex>,
+    ) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let opening = self.parse_jsx_opening_or_self_closing_or_fragment(in_expression_context);
+
+        // Check what type of opening element we got
+        let kind = self.arena.get(opening).map_or(0, |n| n.kind);
+
+        let jsx_node = if kind == syntax_kind_ext::JSX_OPENING_ELEMENT {
+            // Get the tag name from the opening element for error reporting
+            let opening_tag_name = self
+                .arena
+                .get(opening)
+                .and_then(|n| self.arena.get_jsx_opening(n))
+                .map(|data| data.tag_name);
+
+            // Parse children, passing our opening tag name for parent-match detection
+            let children = self.parse_jsx_children(opening_tag_name);
+
+            // Check if last child is a JsxElement whose closing tag "stole" our closer
+            let last_child_stole_closer =
+                self.check_last_child_stole_closer(&children, opening_tag_name);
+
+            let closing = if let Some((child_opening_tag, child_closing_idx)) =
+                last_child_stole_closer
+            {
+                // TS17008: The child element was never properly closed
+                // (dedup at same position handles double emission from inner + outer)
+                self.emit_jsx_unclosed_tag_error(child_opening_tag);
+                // Reuse the child's closing element as our own
+                child_closing_idx
+            } else {
+                // When a Git merge conflict marker terminated JSX child
+                // scanning before any closing tag and we're at EOF, tsc
+                // anchors the missing `</` error at the end of the opening
+                // element rather than at the EOF position. Emit our own
+                // diagnostic at that anchor and synthesize an empty
+                // closing element so `parse_jsx_closing_element` doesn't
+                // re-emit at EOF.
+                let has_conflict_marker = self
+                        .scanner
+                        .get_scanner_diagnostics()
+                        .iter()
+                        .any(|d| {
+                            d.code
+                                == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+                        });
+                let closing = if has_conflict_marker
+                    && self.is_token(SyntaxKind::EndOfFileToken)
+                    && let Some(opening_node) = self.arena.get(opening)
+                {
+                    let anchor = opening_node.end;
+                    self.parse_error_at(
+                        anchor,
+                        0,
+                        "'</' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                    // Synthesize an empty closing element. TSC emits `<div></>`
+                    // for this conflict-marker recovery, and we already emitted
+                    // the TS1005 above so the tag-mismatch check should stay quiet.
+                    self.arena.add_jsx_closing(
+                        syntax_kind_ext::JSX_CLOSING_ELEMENT,
+                        anchor,
+                        anchor,
+                        crate::parser::node::JsxClosingData {
+                            tag_name: NodeIndex::NONE,
+                        },
+                    )
+                } else {
+                    self.parse_jsx_closing_element()
+                };
+                // Check for tag name mismatch
+                if let Some(open_tag) = opening_tag_name
+                    && let Some(close_node) = self.arena.get(closing)
+                    && let Some(close_data) = self.arena.get_jsx_closing(close_node)
+                {
+                    let close_tag = close_data.tag_name;
+                    if close_tag.is_some() && !self.jsx_tag_names_match(open_tag, close_tag) {
+                        // Check if closing matches parent's tag (tsc pattern)
+                        let matches_parent = currently_opened_tag
+                            .is_some_and(|pt| self.jsx_tag_names_match(pt, close_tag));
+                        if matches_parent {
+                            // TS17008: Our tag is unclosed (closer belongs to parent)
+                            self.emit_jsx_unclosed_tag_error(open_tag);
+                        } else {
+                            // TS17002: Wrong closing tag
+                            self.emit_jsx_mismatched_closing_tag_error(open_tag, close_tag);
+                        }
+                    }
+                }
+                closing
+            };
+
+            let end_pos = self.token_end();
+
+            self.arena.add_jsx_element(
+                syntax_kind_ext::JSX_ELEMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxElementData {
+                    opening_element: opening,
+                    children,
+                    closing_element: closing,
+                },
+            )
+        } else if kind == syntax_kind_ext::JSX_OPENING_FRAGMENT {
+            // Parse children and closing fragment
+            let children = self.parse_jsx_children(None);
+            let malformed_named_closing_fragment =
+                if !self.is_js_file() && self.is_token(SyntaxKind::LessThanSlashToken) {
+                    let snapshot = self.scanner.save_state();
+                    let current = self.current_token;
+
+                    self.next_token();
+                    let malformed = !self.is_token(SyntaxKind::GreaterThanToken);
+                    let diagnostic_anchor = if malformed {
+                        let expected_start = self.token_pos();
+                        let expected_length = self.token_end().saturating_sub(expected_start);
+
+                        if self.is_identifier_or_keyword() {
+                            self.next_token();
+                        }
+                        let fragment_unclosed_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
+                            let end = self.token_end();
+                            self.next_token();
+                            end
+                        } else {
+                            self.token_end()
+                        };
+
+                        Some((expected_start, expected_length, fragment_unclosed_pos))
+                    } else {
+                        None
+                    };
+
+                    self.scanner.restore_state(snapshot);
+                    self.current_token = current;
+                    diagnostic_anchor
+                } else {
+                    None
+                };
+
+            if let Some((expected_start, expected_length, fragment_unclosed_pos)) =
+                malformed_named_closing_fragment
+            {
+                use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+                self.parse_error_at(
+                    expected_start,
+                    expected_length,
+                    diagnostic_messages::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                    diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT,
+                );
+                self.parse_error_at(
+                    fragment_unclosed_pos,
+                    0,
+                    diagnostic_messages::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                    diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                );
+            }
+
+            let has_prior_fragment_mismatch = self.parse_diagnostics.iter().any(|diag| {
+                diag.code
+                    == tsz_common::diagnostics::diagnostic_codes::EXPECTED_CORRESPONDING_CLOSING_TAG_FOR_JSX_FRAGMENT
+            });
+
+            if self.is_token(SyntaxKind::EndOfFileToken) && !has_prior_fragment_mismatch {
+                self.emit_jsx_unclosed_fragment_error(opening);
+            }
+            let closing = self.parse_jsx_closing_fragment();
+            let end_pos = self.token_end();
+
+            self.arena.add_jsx_fragment(
+                syntax_kind_ext::JSX_FRAGMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxFragmentData {
+                    opening_fragment: opening,
+                    children,
+                    closing_fragment: closing,
+                },
+            )
+        } else {
+            // Self-closing element, already complete
+            opening
+        };
+
+        if !self.is_js_file()
+            && kind == syntax_kind_ext::JSX_OPENING_FRAGMENT
+            && self.is_token(SyntaxKind::LessThanToken)
+            && self
+                .get_source_text()
+                .get(self.token_pos() as usize..)
+                .is_some_and(|rest| rest.starts_with("<>"))
+            && !self.is_jsx_adjacent_sibling_candidate()
+        {
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+        }
+
+        if in_expression_context && !self.suppress_next_jsx_head_missing_semicolon {
+            self.recover_adjacent_jsx_siblings(jsx_node);
+        }
+
+        jsx_node
+    }
+
+    /// Returns true if the current token is `<` and is immediately followed by `/`,
+    /// meaning this is the start of a closing JSX tag (`</`), not a type argument list.
+    /// Used to prevent consuming the `<` of a closing tag as a type argument opener.
+    pub(crate) fn is_less_than_slash_token(&self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+        let pos = self.token_pos() as usize;
+        // Check the character immediately after `<`
+        self.get_source_text()
+            .get(pos + 1..)
+            .and_then(|s| s.bytes().next())
+            == Some(b'/')
+    }
+
+    pub(crate) fn is_jsx_adjacent_sibling_candidate(&self) -> bool {
+        if !self.is_token(SyntaxKind::LessThanToken) {
+            return false;
+        }
+
+        let Some(rest) = self.get_source_text().get(self.token_pos() as usize..) else {
+            return false;
+        };
+        let line_end = rest.find(['\n', '\r', ';']).unwrap_or(rest.len());
+        let line = &rest[..line_end];
+        line.contains("</") || line.contains("/>")
+    }
+
+    pub(crate) fn recover_adjacent_jsx_siblings(&mut self, first_expr: NodeIndex) -> bool {
+        let Some(first_node) = self.arena.get(first_expr) else {
+            return false;
+        };
+
+        if !matches!(
+            first_node.kind,
+            syntax_kind_ext::JSX_ELEMENT
+                | syntax_kind_ext::JSX_FRAGMENT
+                | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+        ) {
+            return false;
+        }
+
+        if !self.is_jsx_file() || !self.is_jsx_adjacent_sibling_candidate() {
+            return false;
+        }
+
+        let start_pos = first_node.pos;
+        let mut end_pos = first_node.end;
+
+        while self.is_jsx_adjacent_sibling_candidate() {
+            let sibling = self.parse_jsx_element_or_self_closing_or_fragment(false);
+            end_pos = self
+                .arena
+                .get(sibling)
+                .map_or(self.token_end(), |node| node.end);
+        }
+
+        // tsc's parser always emits TS2657 when adjacent JSX siblings
+        // are found in expression context, regardless of file extension
+        // (.tsx, .jsx, or .js with JSX enabled).
+        self.parse_error_at(
+            start_pos,
+            end_pos.saturating_sub(start_pos),
+            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+        );
+        true
+    }
+
+    /// Parse JSX opening element, self-closing element, or opening fragment.
+    pub(crate) fn parse_jsx_opening_or_self_closing_or_fragment(
+        &mut self,
+        _in_expression_context: bool,
+    ) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::LessThanToken);
+        let initial_tag_head_token = self.token();
+
+        // Check for fragment: <>
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            let end_pos = self.token_end();
+            self.next_token(); // consume >
+            return self
+                .arena
+                .add_token(syntax_kind_ext::JSX_OPENING_FRAGMENT, start_pos, end_pos);
+        }
+
+        // Parse tag name
+        let tag_name = self.parse_jsx_element_name();
+        // tsc-parity recovery requires distinguishing parser-synthesized
+        // placeholder identifiers (from `create_missing_expression`) from
+        // genuine empty identifiers. Use the canonical helper rather than
+        // re-deriving the `escaped_text.is_empty()` heuristic inline.
+        let tag_name_is_missing = self.arena.is_missing_recovery_identifier(tag_name);
+
+        // In JS/JSX recovery, `~< <` should produce TS1003 on the malformed tag
+        // name and then a trailing TS1109 after we consume the dangling `<`.
+        if tag_name_is_missing && self.is_js_file() && self.is_token(SyntaxKind::LessThanToken) {
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.parse_error_at_current_token(
+                    "Expression expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+                );
+            }
+        }
+
+        // Parse optional type arguments (not in JS files, matching tsc's
+        // `(contextFlags & NodeFlags.JavaScriptFile) === 0 ? tryParseTypeArguments() : undefined`)
+        //
+        // Guard: if the `<` is immediately followed by `/`, this is a closing tag (`</`),
+        // not a type argument. Consuming it as a type argument would strip the `<` from the
+        // closing tag and leave the scanner mid-tag, causing false TS1382 diagnostics when
+        // `re_scan_jsx_token` rescans from that position in JSX mode. This mirrors tsc's
+        // `abortParsingListOrMoveToNextToken` behavior: when the token belongs to an outer
+        // parsing context (JsxChildren), the inner list aborts without consuming it.
+        let type_arguments = if !self.is_js_file()
+            && self.is_less_than_or_compound()
+            && !self.is_less_than_slash_token()
+        {
+            Some(self.parse_type_arguments())
+        } else {
+            None
+        };
+
+        // Parse attributes
+        let (attributes, aborted_for_outer_recovery) = self.parse_jsx_attributes();
+
+        // In JavaScript JSX files, `<Comp<T> ... />` is not legal type-argument syntax.
+        // When the remainder still looks like JSX (`</...>` or `/>` on the same line),
+        // recover as adjacent JSX roots instead of falling into the self-closing `/>`
+        // parser path that would emit the wrong `'/` expected diagnostic.
+        if self.is_js_file() && self.is_jsx_adjacent_sibling_candidate() {
+            self.parse_error_at_current_token(
+                "Identifier expected.",
+                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
+            let mismatched_closing_tag = self
+                .get_source_text()
+                .get(self.token_pos() as usize..)
+                .and_then(|rest| {
+                    let line_end = rest.find(['\n', '\r', ';']).unwrap_or(rest.len());
+                    let line = &rest[..line_end];
+                    let close_idx = line.find("></")?;
+                    let open_name = line
+                        .strip_prefix('<')?
+                        .split(['>', '/', ' ', '\t'])
+                        .next()
+                        .filter(|name| !name.is_empty())?;
+                    let close_name_start_rel = close_idx + 3;
+                    let close_tail = line.get(close_name_start_rel..)?;
+                    let close_name_len = close_tail
+                        .chars()
+                        .take_while(|ch| {
+                            ch.is_ascii_alphanumeric() || matches!(ch, '_' | '$' | '.' | '-')
+                        })
+                        .map(char::len_utf8)
+                        .sum::<usize>();
+                    (close_name_len > 0).then_some((
+                        open_name.to_string(),
+                        self.token_pos() + close_name_start_rel as u32,
+                        close_name_len as u32,
+                    ))
+                });
+            if let Some(rest) = self.get_source_text().get(start_pos as usize..) {
+                let line_len = rest.find(['\n', '\r']).unwrap_or(rest.len()) as u32;
+                self.parse_error_at(
+                    start_pos,
+                    line_len,
+                    tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                    tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MUST_HAVE_ONE_PARENT_ELEMENT,
+                );
+            }
+            if let Some((open_name, close_start, close_length)) = mismatched_closing_tag {
+                self.parse_error_at(
+                    close_start,
+                    close_length,
+                    &format!("Expected corresponding JSX closing tag for '{open_name}'."),
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
+                );
+            }
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                self.token_pos(),
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
+        if aborted_for_outer_recovery
+            && !self.is_token(SyntaxKind::GreaterThanToken)
+            && !self.is_token(SyntaxKind::SlashToken)
+        {
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                self.token_pos(),
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
+        if self.recover_jsx_missing_attr_initializer_head {
+            let end_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
+                let end = self.token_end();
+                self.next_token();
+                end
+            } else {
+                self.token_pos()
+            };
+            return self.arena.add_jsx_opening(
+                syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
+        // Check for opening element: >
+        // Must check > first (matching tsc order) so that error tokens
+        // (like stray `<`) fall through to the self-closing path, which
+        // avoids attempting to parse children/closing for malformed JSX.
+        if self.is_token(SyntaxKind::GreaterThanToken) {
+            if !self.is_js_file()
+                && tag_name_is_missing
+                && initial_tag_head_token == SyntaxKind::NumericLiteral
+            {
+                self.parse_error_at(
+                    self.token_pos(),
+                    1,
+                    tsz_common::diagnostics::diagnostic_messages::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                    tsz_common::diagnostics::diagnostic_codes::UNEXPECTED_TOKEN_DID_YOU_MEAN_OR_GT,
+                );
+            }
+            let end_pos = self.token_end();
+            self.next_token(); // consume >
+            let kind =
+                if tag_name_is_missing && initial_tag_head_token == SyntaxKind::NumericLiteral {
+                    // `<1234>` in JS/JSX recovery should not force an unclosed-tag
+                    // trailing diagnostic; treat this malformed head as self-closing.
+                    syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                } else {
+                    syntax_kind_ext::JSX_OPENING_ELEMENT
+                };
+            return self.arena.add_jsx_opening(
+                kind,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxOpeningData {
+                    tag_name,
+                    type_arguments,
+                    attributes,
+                },
+            );
+        }
+
+        // Self-closing element: /> or error recovery
+        self.parse_expected(SyntaxKind::SlashToken);
+        let end_pos = self.token_end();
+        if self.parse_expected(SyntaxKind::GreaterThanToken) {
+            // Consumed >; no further action needed
+        }
+        self.arena.add_jsx_opening(
+            syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxOpeningData {
+                tag_name,
+                type_arguments,
+                attributes,
+            },
+        )
+    }
+
+    /// Emit TS17021 if the current token (a JSX identifier) was scanned via
+    /// a Unicode escape sequence.  tsc forbids `\uXXXX` / `\u{XXXXX}` in JSX
+    /// tag names and attribute names; the scanner sets `TokenFlags::UnicodeEscape`
+    /// whenever it consumed an escape while building the identifier, so we can
+    /// surface the diagnostic at the token's start position.
+    pub(crate) fn check_no_unicode_escape_in_jsx_identifier(&mut self) {
+        let flags = self.scanner.get_token_flags();
+        if (flags & tsz_scanner::scanner_impl::TokenFlags::UnicodeEscape as u32) == 0 {
+            return;
+        }
+        let pos = self.token_pos();
+        let end = self.token_end();
+        self.parse_error_at(
+            pos,
+            end - pos,
+            "Unicode escape sequence cannot appear here.",
+            tsz_common::diagnostics::diagnostic_codes::UNICODE_ESCAPE_SEQUENCE_CANNOT_APPEAR_HERE,
+        );
+    }
+
+    /// Parse JSX element name (identifier, this, namespaced, or property access).
+    pub(crate) fn parse_jsx_element_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Error recovery: if the current token can't start a JSX element name,
+        // return a missing identifier to avoid crashes.
+        if !self.is_token(SyntaxKind::Identifier)
+            && !self.is_token(SyntaxKind::ThisKeyword)
+            && !self.is_identifier_or_keyword()
+        {
+            // When the current token is '}' in JSX context, emit TS1005 "'}' expected."
+            // instead of TS1003 "Identifier expected." to match tsc behavior.
+            // Note: In JSX mode, '}' is scanned as JsxText with TS1381, not CloseBraceToken.
+            // The JsxText may contain just '}' or '}' followed by other characters.
+            let token_value = self.scanner.get_token_value_ref();
+            let is_close_brace = self.is_token(SyntaxKind::CloseBraceToken)
+                || (self.is_token(SyntaxKind::JsxText) && token_value.starts_with("}"));
+            if is_close_brace && !self.in_jsx_attribute_initializer_element {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(
+                    self.token_pos(),
+                    1,
+                    "'}' expected.",
+                    diagnostic_codes::EXPECTED,
+                );
+            } else {
+                self.error_identifier_expected();
+            }
+            // Create a missing identifier node
+            // Match tsc's missing-node span behavior: anchor to token full-start
+            // so downstream JSX unclosed-tag diagnostics point at `<` + trivia.
+            let missing_pos = self.token_full_start();
+            return self.arena.add_identifier(
+                SyntaxKind::Identifier as u16,
+                missing_pos,
+                missing_pos,
+                node::IdentifierData {
+                    atom: Atom::NONE,
+                    escaped_text: String::new(),
+                    original_text: None,
+                    type_arguments: None,
+                },
+            );
+        }
+
+        // Parse the initial name (identifier or this)
+        let mut expr = if self.is_token(SyntaxKind::ThisKeyword) {
+            let pos = self.token_pos();
+            self.next_token();
+            let end_pos = self.token_end();
+            let this_node = self
+                .arena
+                .add_token(SyntaxKind::ThisKeyword as u16, pos, end_pos);
+
+            // Check for namespaced name (this:b) — same as identifier path
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token(); // consume :
+                self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
+                let local_name = self.parse_identifier_name();
+                // The namespaced-name node ends at the local name, not at the
+                // next token. Using `token_end()` here would extend the span
+                // over the following `>` (or other trailing token), which then
+                // surfaces as e.g. `'a:b>'` in TS17002 messages.
+                let ns_end = self
+                    .arena
+                    .get(local_name)
+                    .map_or(self.token_end(), |node| node.end);
+                return self.arena.add_jsx_namespaced_name(
+                    syntax_kind_ext::JSX_NAMESPACED_NAME,
+                    start_pos,
+                    ns_end,
+                    crate::parser::node::JsxNamespacedNameData {
+                        namespace: this_node,
+                        name: local_name,
+                    },
+                );
+            }
+
+            this_node
+        } else {
+            // scan_jsx_identifier handles both identifiers and keywords,
+            // extending the token to include hyphens (e.g., public-foo)
+            self.scanner.scan_jsx_identifier();
+            self.check_no_unicode_escape_in_jsx_identifier();
+            let name = self.parse_identifier_name();
+
+            // Check for namespaced name (a:b)
+            if self.is_token(SyntaxKind::ColonToken) {
+                self.next_token(); // consume :
+                self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
+                let local_name = self.parse_identifier_name();
+                // The namespaced-name node ends at the local name, not at the
+                // next token. Using `token_end()` here would extend the span
+                // over the following `>` (or other trailing token), which then
+                // surfaces as e.g. `'a:b>'` in TS17002 messages.
+                let end_pos = self
+                    .arena
+                    .get(local_name)
+                    .map_or(self.token_end(), |node| node.end);
+                return self.arena.add_jsx_namespaced_name(
+                    syntax_kind_ext::JSX_NAMESPACED_NAME,
+                    start_pos,
+                    end_pos,
+                    crate::parser::node::JsxNamespacedNameData {
+                        namespace: name,
+                        name: local_name,
+                    },
+                );
+            }
+
+            name
+        };
+
+        // Parse property access chain (Foo.Bar.Baz)
+        // Private identifiers (e.g. #prop) are not allowed in JSX element names;
+        // tsc uses allowPrivateIdentifiers=false for the right-hand side of the
+        // dot here, so we emit TS1003 "Identifier expected" and create a missing
+        // identifier node instead of accepting the private name.
+        while self.is_token(SyntaxKind::DotToken) {
+            self.next_token(); // consume .
+            let name = if self.is_token(SyntaxKind::PrivateIdentifier) {
+                // Private identifiers are not valid in JSX element names.
+                // tsc's parseRightSideOfDot consumes the PrivateIdentifier
+                // via parsePrivateIdentifier(), then calls createMissingNode
+                // with reportAtCurrentPosition:true which uses
+                // scanner.getTokenStart() — the start of the NEXT token's
+                // trivia (which equals the end of the PrivateIdentifier
+                // token).  We replicate that by recording the end position
+                // of the PrivateIdentifier and emitting the error there.
+                let pos = self.token_pos();
+                let end = self.token_end();
+                let err_pos = end;
+                self.next_token(); // consume the private identifier
+                self.parse_error_at(
+                    err_pos,
+                    0,
+                    "Identifier expected.",
+                    tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+                self.arena.add_identifier(
+                    SyntaxKind::Identifier as u16,
+                    pos,
+                    end,
+                    crate::parser::node::IdentifierData {
+                        atom: Atom::NONE,
+                        escaped_text: String::new(),
+                        original_text: None,
+                        type_arguments: None,
+                    },
+                )
+            } else {
+                self.scanner.scan_jsx_identifier();
+                self.check_no_unicode_escape_in_jsx_identifier();
+                self.parse_identifier()
+            };
+            let end_pos = self.token_end();
+            expr = self.arena.add_access_expr(
+                syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+                start_pos,
+                end_pos,
+                crate::parser::node::AccessExprData {
+                    expression: expr,
+                    name_or_argument: name,
+                    question_dot_token: false,
+                },
+            );
+        }
+
+        expr
+    }
+
+    /// Parse JSX attributes list.
+    pub(crate) fn parse_jsx_attributes(&mut self) -> (NodeIndex, bool) {
+        let start_pos = self.token_pos();
+        let mut properties = Vec::new();
+        let mut aborted_for_outer_recovery = false;
+
+        while !self.is_token(SyntaxKind::GreaterThanToken)
+            && !self.is_token(SyntaxKind::SlashToken)
+            && !self.is_token(SyntaxKind::EndOfFileToken)
+        {
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                // Spread attribute: {...props}
+                properties.push(self.parse_jsx_spread_attribute());
+            } else if self.is_identifier_or_keyword() {
+                // Regular attribute: name="value" or name={expr} or just name
+                properties.push(self.parse_jsx_attribute());
+            } else if self.is_token(SyntaxKind::SemicolonToken) {
+                // The JSX head recovery reached a statement terminator that belongs
+                // to the outer expression statement. tsc reports this as a missing
+                // `}` in malformed JSX-attribute expression recovery.
+                self.parse_error_at(
+                    self.token_pos(),
+                    0,
+                    "'}' expected.",
+                    tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                );
+                aborted_for_outer_recovery = true;
+                break;
+            } else if self.is_token(SyntaxKind::LessThanToken) {
+                // A `<` in the attribute list means we've hit a JSX child or closing
+                // tag. This token belongs to an outer parsing context (JsxChildren),
+                // so abort without consuming it — mirroring tsc's
+                // `abortParsingListOrMoveToNextToken` which returns `true` (abort)
+                // when `isInSomeParsingContext()` detects the token is valid in an
+                // enclosing context. Consuming `<` here causes the scanner to be
+                // left mid-way through the closing tag text when `re_scan_jsx_token`
+                // is later called, which triggers a false TS1382.
+                self.error_identifier_expected();
+                break;
+            } else {
+                // Match tsc's JSX-attribute list recovery: report an identifier
+                // at the unexpected token, consume one token, and keep parsing the
+                // tag until we reach `>` or `/>`.
+                // When the current token is '}' in JSX context, emit TS1005.
+                if self.is_token(SyntaxKind::CloseBraceToken) {
+                    use tsz_common::diagnostics::diagnostic_codes;
+                    self.parse_error_at(
+                        self.token_pos(),
+                        1,
+                        "'}' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                } else {
+                    self.error_identifier_expected();
+                }
+                let unexpected = self.token();
+                let should_abort = Self::is_jsx_attribute_list_abort_token(unexpected);
+                self.next_token();
+                if unexpected == SyntaxKind::StringLiteral {
+                    self.recover_jsx_missing_attr_initializer_head = true;
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
+                if unexpected == SyntaxKind::OpenBracketToken {
+                    while !self.is_token(SyntaxKind::EndOfFileToken)
+                        && !self.is_token(SyntaxKind::GreaterThanToken)
+                        && !self.is_token(SyntaxKind::SlashToken)
+                    {
+                        self.next_token();
+                    }
+                    if self.is_token(SyntaxKind::GreaterThanToken) {
+                        self.next_token();
+                    }
+                    self.suppress_next_jsx_head_missing_semicolon = true;
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
+                // Certain malformed attribute starters (`<X 32foo=...>`,
+                // `<X -foo=...>`) are recovered by tsc as the end of the JSX
+                // head after consuming the bad token. Keep the following
+                // identifier for outer expression recovery instead of treating
+                // it as another JSX attribute.
+                if should_abort {
+                    if Self::jsx_attribute_abort_consumes_following_identifier(unexpected)
+                        && self.is_identifier_or_keyword()
+                    {
+                        self.next_token();
+                    }
+                    aborted_for_outer_recovery = true;
+                    break;
+                }
+            }
+        }
+
+        let end_pos = self.token_end();
+        (
+            self.arena.add_jsx_attributes(
+                syntax_kind_ext::JSX_ATTRIBUTES,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxAttributesData {
+                    properties: self.make_node_list(properties),
+                },
+            ),
+            aborted_for_outer_recovery,
+        )
+    }
+
+    /// Parse a single JSX attribute.
+    pub(crate) fn parse_jsx_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+
+        // Error recovery: if the current token can't start an attribute name,
+        // report error and skip to next attribute or end of attributes
+        if !self.is_token(SyntaxKind::Identifier) && !self.is_identifier_or_keyword() {
+            // When the current token is '}' in JSX context, emit TS1005.
+            if self.is_token(SyntaxKind::CloseBraceToken) {
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at(start_pos, 1, "'}' expected.", diagnostic_codes::EXPECTED);
+            } else {
+                self.error_identifier_expected();
+            }
+            // Skip the invalid token to prevent infinite loops
+            self.next_token();
+            // Return a dummy attribute with missing name
+            let end_pos = self.token_end();
+            return self.arena.add_jsx_attribute(
+                syntax_kind_ext::JSX_ATTRIBUTE,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxAttributeData {
+                    name: NodeIndex::NONE,
+                    initializer: NodeIndex::NONE,
+                },
+            );
+        }
+
+        let name = self.parse_jsx_attribute_name();
+
+        // Check for value: = followed by string, expression, or nested JSX
+        let initializer = if self.parse_optional(SyntaxKind::EqualsToken) {
+            // Rescan the next token using the JSX attribute value scanner.
+            // JSX attribute strings allow literal newlines (unlike regular JS strings),
+            // so we must rescan in JSX mode to handle multiline attribute values.
+            self.current_token = self.scanner.re_scan_jsx_attribute_value();
+            if self.is_token(SyntaxKind::StringLiteral) {
+                self.parse_string_literal()
+            } else if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_jsx_expression_for_attribute()
+            } else if self.is_token(SyntaxKind::LessThanToken) {
+                let was_in_initializer = self.in_jsx_attribute_initializer_element;
+                self.in_jsx_attribute_initializer_element = true;
+                let element = self.parse_jsx_element_or_self_closing_or_fragment(true);
+                self.in_jsx_attribute_initializer_element = was_in_initializer;
+                element
+            } else {
+                // TS1145: '{' or JSX element expected.
+                use tsz_common::diagnostics::diagnostic_codes;
+                self.parse_error_at_current_token(
+                    "'{' or JSX element expected.",
+                    diagnostic_codes::OR_JSX_ELEMENT_EXPECTED,
+                );
+                NodeIndex::NONE
+            }
+        } else {
+            NodeIndex::NONE
+        };
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_attribute(
+            syntax_kind_ext::JSX_ATTRIBUTE,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxAttributeData { name, initializer },
+        )
+    }
+
+    /// Parse JSX attribute name (possibly namespaced).
+    /// JSX attribute names can be keywords like "extends", "class", etc.
+    pub(crate) fn parse_jsx_attribute_name(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        // scan_jsx_identifier handles both identifiers and keywords,
+        // extending the token to include hyphens (e.g., class-id, data-testid)
+        self.scanner.scan_jsx_identifier();
+        self.check_no_unicode_escape_in_jsx_identifier();
+        // Use parse_identifier_name to allow keywords as attribute names
+        let name = self.parse_identifier_name();
+
+        // Check for namespaced name (a:b)
+        if self.is_token(SyntaxKind::ColonToken) {
+            self.next_token(); // consume :
+            self.scanner.scan_jsx_identifier();
+            self.check_no_unicode_escape_in_jsx_identifier();
+            // Also allow keywords for the local part of namespaced names
+            let local_name = self.parse_identifier_name();
+            // End at the local name, not the next token.
+            let end_pos = self
+                .arena
+                .get(local_name)
+                .map_or(self.token_end(), |node| node.end);
+            return self.arena.add_jsx_namespaced_name(
+                syntax_kind_ext::JSX_NAMESPACED_NAME,
+                start_pos,
+                end_pos,
+                crate::parser::node::JsxNamespacedNameData {
+                    namespace: name,
+                    name: local_name,
+                },
+            );
+        }
+
+        name
+    }
+
+    /// Parse a JSX spread attribute: {...props}
+    pub(crate) fn parse_jsx_spread_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+        if self.is_token(SyntaxKind::DotDotDotToken) {
+            self.next_token();
+        } else {
+            self.parse_error_at_current_token(
+                "'...' expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+            );
+        }
+        let expression = self.parse_expression();
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_spread_attribute(
+            syntax_kind_ext::JSX_SPREAD_ATTRIBUTE,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxSpreadAttributeData { expression },
+        )
+    }
+
+    /// Parse a JSX expression: {expr} or {...expr}
+    /// Parse a JSX expression used as an attribute initializer (`attr={expr}`).
+    ///
+    /// Emits TS17000 when the expression is empty (`attr={}`).
+    pub(crate) fn parse_jsx_expression_for_attribute(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Check for spread: {...}
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+
+        // Check for empty expression: {}
+        // Note: TS17000 for empty expressions is reported in the checker (checkGrammarJsxElement),
+        // not in the parser, matching tsc behavior (one error per JSX element).
+        let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.suppress_next_jsx_missing_brace_at_semicolon = true;
+            NodeIndex::NONE
+        } else if dot_dot_dot_token {
+            // `{...expr}` is not valid as a JSX attribute initializer in JS/TS.
+            // tsc reports this as TS1109 at `{` and TS1003 at `expr`.
+            let spread_start = self.token_pos().saturating_sub(3);
+            self.parse_error_at(
+                spread_start,
+                1,
+                "Expression expected.",
+                tsz_common::diagnostics::diagnostic_codes::EXPRESSION_EXPECTED,
+            );
+            // Keep the spread payload token for JSX attribute-list recovery. In
+            // `<X a={...a} />`, tsc emits the malformed `a:` initializer and
+            // then recovers the payload `a` as the following shorthand prop.
+            self.parse_error_at(
+                self.token_end(),
+                0,
+                "Identifier expected.",
+                tsz_common::diagnostics::diagnostic_codes::IDENTIFIER_EXPECTED,
+            );
+            NodeIndex::NONE
+        } else {
+            self.parse_jsx_embedded_expression()
+        };
+
+        self.parse_expected(SyntaxKind::CloseBraceToken);
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_expression(
+            syntax_kind_ext::JSX_EXPRESSION,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxExpressionData {
+                dot_dot_dot_token,
+                expression,
+            },
+        )
+    }
+
+    pub(crate) fn parse_jsx_expression(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        self.parse_expected(SyntaxKind::OpenBraceToken);
+
+        // Check for spread: {...}
+        let dot_dot_dot_token = self.parse_optional(SyntaxKind::DotDotDotToken);
+        let mut suppress_missing_close_brace_error = false;
+
+        // Check for empty expression: {}
+        let expression = if self.is_token(SyntaxKind::CloseBraceToken) {
+            NodeIndex::NONE
+        } else if self.is_token(SyntaxKind::LessThanSlashToken)
+            || (self.is_token(SyntaxKind::LessThanToken) && {
+                let snapshot = self.scanner.save_state();
+                let current = self.current_token;
+                self.next_token();
+                let is_closing_tag_start = self.is_token(SyntaxKind::SlashToken);
+                self.scanner.restore_state(snapshot);
+                self.current_token = current;
+                is_closing_tag_start
+            })
+        {
+            // Recovery for `{ </tag>` inside JSX children:
+            // tsc reports TS1109 and lets the outer JSX parser consume `</tag>`
+            // as a normal closing element, without a cascading "'}' expected.".
+            self.error_expression_expected();
+            suppress_missing_close_brace_error = true;
+            NodeIndex::NONE
+        } else {
+            self.parse_jsx_embedded_expression()
+        };
+
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.next_token();
+        } else if !suppress_missing_close_brace_error {
+            let parsed_close_brace = self.parse_expected(SyntaxKind::CloseBraceToken);
+            if !parsed_close_brace
+                && (self.is_token(SyntaxKind::LessThanSlashToken)
+                    || self.is_token(SyntaxKind::LessThanToken))
+            {
+                self.pending_jsx_missing_close_brace_in_expression_statement = self
+                    .pending_jsx_missing_close_brace_in_expression_statement
+                    .saturating_add(1);
+            }
+        } else {
+            self.pending_jsx_missing_close_brace_in_expression_statement = self
+                .pending_jsx_missing_close_brace_in_expression_statement
+                .saturating_add(1);
+        }
+
+        let end_pos = self.token_end();
+        self.arena.add_jsx_expression(
+            syntax_kind_ext::JSX_EXPRESSION,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxExpressionData {
+                dot_dot_dot_token,
+                expression,
+            },
+        )
+    }
+
+    pub(crate) fn parse_jsx_embedded_expression(&mut self) -> NodeIndex {
+        let expression = self.parse_expression();
+        self.report_jsx_comma_expression(expression);
+        expression
+    }
+
+    pub(crate) fn report_jsx_comma_expression(&mut self, expression: NodeIndex) {
+        let expression = self.arena.skip_parenthesized_and_assertions(expression);
+        let Some(node) = self.arena.get(expression) else {
+            return;
+        };
+        let Some(binary) = self.arena.get_binary_expr(node) else {
+            return;
+        };
+        if binary.operator_token != SyntaxKind::CommaToken as u16 {
+            return;
+        }
+
+        self.parse_error_at(
+            node.pos,
+            node.end.saturating_sub(node.pos),
+            tsz_common::diagnostics::diagnostic_messages::JSX_EXPRESSIONS_MAY_NOT_USE_THE_COMMA_OPERATOR_DID_YOU_MEAN_TO_WRITE_AN_ARRAY,
+            tsz_common::diagnostics::diagnostic_codes::JSX_EXPRESSIONS_MAY_NOT_USE_THE_COMMA_OPERATOR_DID_YOU_MEAN_TO_WRITE_AN_ARRAY,
+        );
+    }
+
+    /// Parse JSX children (elements, text, expressions).
+    /// `opening_tag_name` is the `NodeIndex` of the opening element's tag name,
+    /// used to emit TS17008 if we hit EOF without a corresponding closing tag.
+    pub(crate) fn parse_jsx_children(&mut self, opening_tag_name: Option<NodeIndex>) -> NodeList {
+        let mut children = Vec::new();
+
+        loop {
+            // Rescan in JSX context to get proper JsxText tokens and LessThanSlashToken
+            // This is necessary because after parsing expressions or nested elements,
+            // the scanner may not be in JSX mode.
+            self.current_token = self.scanner.re_scan_jsx_token(true);
+
+            match self.current_token {
+                SyntaxKind::LessThanSlashToken => {
+                    // Closing tag/fragment - stop parsing children
+                    break;
+                }
+                SyntaxKind::LessThanToken => {
+                    // Nested JSX element — pass our opening tag as parent context
+                    let child = self.parse_jsx_element_or_self_closing_or_fragment_inner(
+                        false,
+                        opening_tag_name,
+                    );
+                    children.push(child);
+                    // Check if this child stole our closing tag (tsc pattern):
+                    // If the child is a JsxElement with mismatched tags and its
+                    // closing tag matches our opening tag, break early.
+                    if let Some(parent_tag) = opening_tag_name
+                        && self.jsx_child_stole_closer(child, parent_tag)
+                    {
+                        break;
+                    }
+                }
+                SyntaxKind::OpenBraceToken => {
+                    // JSX expression: {expr}
+                    children.push(self.parse_jsx_expression());
+                }
+                SyntaxKind::JsxText => {
+                    // Text node
+                    children.push(self.parse_jsx_text());
+                }
+                SyntaxKind::EndOfFileToken => {
+                    // TS17008: JSX element has no corresponding closing tag.
+                    // Suppress when the scanner already reported a Git merge
+                    // conflict marker — tsc treats the marker as terminating
+                    // recovery and does not also emit the unclosed-tag error.
+                    let has_conflict_marker = self
+                        .scanner
+                        .get_scanner_diagnostics()
+                        .iter()
+                        .any(|d| {
+                            d.code
+                                == tsz_common::diagnostics::diagnostic_codes::MERGE_CONFLICT_MARKER_ENCOUNTERED
+                        });
+                    if !has_conflict_marker && let Some(tag_name_idx) = opening_tag_name {
+                        self.emit_jsx_unclosed_tag_error(tag_name_idx);
+                    }
+                    break;
+                }
+                _ => {
+                    // Unknown token in JSX children - stop
+                    break;
+                }
+            }
+        }
+
+        self.make_node_list(children)
+    }
+
+    /// Parse JSX text content.
+    pub(crate) fn parse_jsx_text(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        let text = self.scanner.get_token_value_ref().to_string();
+        if let Some(mut window_start) = self.jsx_missing_brace_semicolon_window_start {
+            for (offset, byte) in text.as_bytes().iter().enumerate() {
+                if *byte != b';' {
+                    continue;
+                }
+                let semicolon_pos = start_pos.saturating_add(offset as u32);
+                let has_missing_close_brace = self.parse_diagnostics.iter().any(|diag| {
+                    diag.start >= window_start
+                        && diag.start <= semicolon_pos
+                        && diag.code == tsz_common::diagnostics::diagnostic_codes::EXPECTED
+                        && diag.message == "'}' expected."
+                });
+                let segment_has_open_brace = self
+                    .get_source_text()
+                    .get(window_start as usize..semicolon_pos as usize)
+                    .is_some_and(|segment| segment.contains('{'));
+
+                if segment_has_open_brace
+                    && !has_missing_close_brace
+                    && !self.suppress_next_jsx_missing_brace_at_semicolon
+                {
+                    self.parse_error_at(
+                        semicolon_pos,
+                        0,
+                        "'}' expected.",
+                        tsz_common::diagnostics::diagnostic_codes::EXPECTED,
+                    );
+                }
+                window_start = semicolon_pos.saturating_add(1);
+            }
+            self.jsx_missing_brace_semicolon_window_start = Some(window_start);
+        }
+        let end_pos = self.token_end();
+        self.next_token();
+
+        self.arena.add_jsx_text(
+            SyntaxKind::JsxText as u16,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxTextData {
+                text,
+                contains_only_trivia_white_spaces: false,
+            },
+        )
+    }
+
+    /// Get the text of a JSX tag name node from source text.
+    /// Works for identifiers, property access (Foo.Bar), and namespaced names (a:b).
+    /// For property access nodes, finds the tight end by using the last name child.
+    /// Compare two JSX tag names by structure, ignoring whitespace/formatting
+    pub(crate) fn jsx_tag_names_match(&self, a: NodeIndex, b: NodeIndex) -> bool {
+        if a == b {
+            return true;
+        }
+        let node_a = match self.arena.get(a) {
+            Some(n) => n,
+            None => return false,
+        };
+        let node_b = match self.arena.get(b) {
+            Some(n) => n,
+            None => return false,
+        };
+
+        if node_a.kind != node_b.kind {
+            return false;
+        }
+
+        if node_a.is_identifier() {
+            if let (Some(id_a), Some(id_b)) = (
+                self.arena.get_identifier(node_a),
+                self.arena.get_identifier(node_b),
+            ) {
+                if id_a.atom != Atom::NONE && id_b.atom != Atom::NONE {
+                    return id_a.atom == id_b.atom;
+                }
+                return id_a.escaped_text == id_b.escaped_text;
+            }
+        } else if node_a.kind == SyntaxKind::ThisKeyword as u16 {
+            return true;
+        } else if node_a.kind == syntax_kind_ext::JSX_NAMESPACED_NAME {
+            if let (Some(ns_a), Some(ns_b)) = (
+                self.arena.get_jsx_namespaced_name(node_a),
+                self.arena.get_jsx_namespaced_name(node_b),
+            ) {
+                return self.jsx_tag_names_match(ns_a.namespace, ns_b.namespace)
+                    && self.jsx_tag_names_match(ns_a.name, ns_b.name);
+            }
+        } else if node_a.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && let (Some(acc_a), Some(acc_b)) = (
+                self.arena.get_access_expr(node_a),
+                self.arena.get_access_expr(node_b),
+            )
+        {
+            return self.jsx_tag_names_match(acc_a.expression, acc_b.expression)
+                && self.jsx_tag_names_match(acc_a.name_or_argument, acc_b.name_or_argument);
+        }
+        false
+    }
+
+    pub(crate) fn get_jsx_tag_name_text(&self, tag_name: NodeIndex) -> String {
+        if let Some(node) = self.arena.get(tag_name) {
+            let source = self.scanner.source_text();
+            let start = node.pos as usize;
+            // For property access expressions, the node.end may be too broad
+            // (includes trailing token position). Find the tight end by looking
+            // at the name child of the property access chain.
+            let end = self.get_jsx_tag_name_end(tag_name) as usize;
+            if start < end && end <= source.len() {
+                return source[start..end].to_string();
+            }
+            // Fallback to node boundaries
+            let end = node.end as usize;
+            if start < end && end <= source.len() {
+                return source[start..end].to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// Get the tight end position of a JSX tag name, following property access chains.
+    pub(crate) fn get_jsx_tag_name_end(&self, tag_name: NodeIndex) -> u32 {
+        if let Some(node) = self.arena.get(tag_name) {
+            // For property access expressions (Foo.Bar), use the name child's end
+            if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                && let Some(access) = self.arena.get_access_expr(node)
+            {
+                return self.get_jsx_tag_name_end(access.name_or_argument);
+            }
+            node.end
+        } else {
+            0
+        }
+    }
+
+    /// Emit TS17008: JSX element '{0}' has no corresponding closing tag.
+    /// Points at the opening tag name span (tight end for property access chains).
+    pub(crate) fn emit_jsx_unclosed_tag_error(&mut self, tag_name: NodeIndex) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let tag_text = self.get_jsx_tag_name_text(tag_name);
+        if let Some(node) = self.arena.get(tag_name) {
+            let start = node.pos;
+            let end = self.get_jsx_tag_name_end(tag_name);
+            self.parse_error_at(
+                start,
+                end - start,
+                &format!("JSX element '{tag_text}' has no corresponding closing tag."),
+                diagnostic_codes::JSX_ELEMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            );
+        }
+    }
+
+    pub(crate) fn emit_jsx_unclosed_fragment_error(&mut self, opening_fragment: NodeIndex) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+        if let Some(node) = self.arena.get(opening_fragment) {
+            let start = if self.is_js_file() {
+                node.pos.saturating_sub(1)
+            } else {
+                node.pos
+            };
+            self.parse_error_at(
+                start,
+                node.end - start,
+                diagnostic_messages::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+                diagnostic_codes::JSX_FRAGMENT_HAS_NO_CORRESPONDING_CLOSING_TAG,
+            );
+        }
+    }
+
+    /// Emit TS17002: Expected corresponding JSX closing tag for '{0}'.
+    /// Points at the closing tag name span (where the mismatch is).
+    pub(crate) fn emit_jsx_mismatched_closing_tag_error(
+        &mut self,
+        open_tag_name: NodeIndex,
+        close_tag_name: NodeIndex,
+    ) {
+        use tsz_common::diagnostics::diagnostic_codes;
+        let open_text = self.get_jsx_tag_name_text(open_tag_name);
+        if let Some(close_node) = self.arena.get(close_tag_name) {
+            let start = close_node.pos;
+            let length = close_node.end - close_node.pos;
+            self.parse_error_at(
+                start,
+                length,
+                &format!("Expected corresponding JSX closing tag for '{open_text}'."),
+                diagnostic_codes::EXPECTED_CORRESPONDING_JSX_CLOSING_TAG_FOR,
+            );
+        }
+    }
+
+    /// Check if a child `JsxElement` has mismatched tags where its closing tag
+    /// matches the given parent opening tag name. This implements the tsc pattern
+    /// where a child element "steals" the parent's closing tag.
+    pub(crate) fn jsx_child_stole_closer(
+        &self,
+        child: NodeIndex,
+        parent_tag_name: NodeIndex,
+    ) -> bool {
+        let child_node = match self.arena.get(child) {
+            Some(n) if n.kind == syntax_kind_ext::JSX_ELEMENT => n,
+            _ => return false,
+        };
+        let elem_data = match self.arena.get_jsx_element(child_node) {
+            Some(d) => d.clone(),
+            None => return false,
+        };
+        // Get the child's opening and closing tag names
+        let child_open_tag = self
+            .arena
+            .get(elem_data.opening_element)
+            .and_then(|n| self.arena.get_jsx_opening(n))
+            .map(|d| d.tag_name);
+        let child_close_tag = self
+            .arena
+            .get(elem_data.closing_element)
+            .and_then(|n| self.arena.get_jsx_closing(n))
+            .map(|d| d.tag_name);
+        match (child_open_tag, child_close_tag) {
+            (Some(open), Some(close)) => {
+                // Child has mismatched tags AND its closing matches our opening
+                !self.jsx_tag_names_match(open, close)
+                    && self.jsx_tag_names_match(close, parent_tag_name)
+            }
+            _ => false,
+        }
+    }
+
+    /// Check if the last child in a `NodeList` stole the parent's closing tag.
+    /// Returns (`child_opening_tag_name`, `child_closing_element`) if so.
+    pub(crate) fn check_last_child_stole_closer(
+        &self,
+        children: &NodeList,
+        parent_tag_name: Option<NodeIndex>,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let parent_tag = parent_tag_name?;
+        let last_child = *children.nodes.last()?;
+        let child_node = self.arena.get(last_child)?;
+        if child_node.kind != syntax_kind_ext::JSX_ELEMENT {
+            return None;
+        }
+        let elem_data = self.arena.get_jsx_element(child_node)?.clone();
+        let child_open_tag = self
+            .arena
+            .get(elem_data.opening_element)
+            .and_then(|n| self.arena.get_jsx_opening(n))
+            .map(|d| d.tag_name)?;
+        let child_close_tag = self
+            .arena
+            .get(elem_data.closing_element)
+            .and_then(|n| self.arena.get_jsx_closing(n))
+            .map(|d| d.tag_name)?;
+        if !self.jsx_tag_names_match(child_open_tag, child_close_tag)
+            && self.jsx_tag_names_match(child_close_tag, parent_tag)
+        {
+            Some((child_open_tag, elem_data.closing_element))
+        } else {
+            None
+        }
+    }
+
+    /// Parse a JSX closing element: </Foo>
+    pub(crate) fn parse_jsx_closing_element(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        // In JSX mode, </ is scanned as a single LessThanSlashToken
+        self.parse_expected(SyntaxKind::LessThanSlashToken);
+        let tag_name = self.parse_jsx_element_name();
+        let tag_name_end = self
+            .arena
+            .get(tag_name)
+            .map_or(self.token_pos(), |node| node.end);
+        let end_pos = if self.is_token(SyntaxKind::GreaterThanToken) {
+            self.token_end()
+        } else {
+            tag_name_end
+        };
+        if self.is_token(SyntaxKind::OpenBraceToken) {
+            self.recover_jsx_closing_tag_trailing_tail = true;
+        }
+        if !self.parse_expected(SyntaxKind::GreaterThanToken) {
+            if self.is_token(SyntaxKind::ColonToken) {
+                // Match tsc's malformed namespaced-closing-tag recovery: the
+                // closing name stops after the first namespace pair (`</a:b`).
+                // A later separator belongs to the outer malformed syntax, where
+                // declaration/expression recovery can preserve the tail.
+                self.recover_jsx_closing_tag_extra_namespace_tail = true;
+            } else if self.is_token(SyntaxKind::DotToken) {
+                // For a malformed namespaced close like `</b:c.x>`, tsc drops
+                // the stray `.` and lets `x >` recover as a following expression.
+                self.next_token();
+            }
+        }
+        self.arena.add_jsx_closing(
+            syntax_kind_ext::JSX_CLOSING_ELEMENT,
+            start_pos,
+            end_pos,
+            crate::parser::node::JsxClosingData { tag_name },
+        )
+    }
+
+    /// Parse a JSX closing fragment: </>
+    pub(crate) fn parse_jsx_closing_fragment(&mut self) -> NodeIndex {
+        let start_pos = self.token_pos();
+        if !self.is_js_file() && !self.is_token(SyntaxKind::LessThanSlashToken) {
+            // For non-JS JSX files, EOF still reports the missing `</` token.
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                self.parse_expected(SyntaxKind::LessThanSlashToken);
+                return self.arena.add_token(
+                    syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                    start_pos,
+                    self.token_pos(),
+                );
+            }
+            while !self.is_token(SyntaxKind::EndOfFileToken)
+                && !self.scanner.has_preceding_line_break()
+                && !self.is_token(SyntaxKind::SemicolonToken)
+            {
+                self.next_token();
+            }
+            return self.arena.add_token(
+                syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                start_pos,
+                self.token_pos(),
+            );
+        }
+        // In JSX mode, </ is scanned as a single LessThanSlashToken
+        self.parse_expected(SyntaxKind::LessThanSlashToken);
+        if !self.is_js_file() && !self.is_token(SyntaxKind::GreaterThanToken) {
+            if self.is_token(SyntaxKind::Identifier) {
+                self.next_token();
+            }
+            if self.is_token(SyntaxKind::GreaterThanToken) {
+                self.next_token();
+            }
+            return self.arena.add_token(
+                syntax_kind_ext::JSX_CLOSING_FRAGMENT,
+                start_pos,
+                self.token_pos(),
+            );
+        }
+        let end_pos = self.token_end();
+        self.parse_expected(SyntaxKind::GreaterThanToken);
+        self.arena
+            .add_token(syntax_kind_ext::JSX_CLOSING_FRAGMENT, start_pos, end_pos)
+    }
+
+    /// Consume the parser and return its parts.
+    /// This is useful for taking ownership of the arena after parsing.
+    #[must_use]
+    pub fn into_parts(mut self) -> (NodeArena, Vec<ParseDiagnostic>) {
+        // Transfer the interner from the scanner to the arena so atoms can be resolved
+        self.arena.set_interner(self.scanner.take_interner());
+        (self.arena, self.parse_diagnostics)
+    }
+}

@@ -31,17 +31,26 @@ pub mod spelling;
 pub mod state;
 mod state_declarations;
 mod state_declarations_exports;
+mod state_diagnostics;
+mod state_exports_recovery;
 mod state_expressions;
+mod state_expressions_arrow;
 mod state_expressions_literals;
 mod state_expressions_literals_regex;
+mod state_expressions_tail;
 mod state_import_attributes;
+mod state_recovery_helpers;
 mod state_statements;
 mod state_statements_class;
 mod state_statements_class_members;
+mod state_statements_keywords;
 mod state_statements_recovery;
+mod state_switch_recovery;
 mod state_type_parameters;
 mod state_types;
 mod state_types_jsx;
+mod state_types_jsx_elements;
+mod state_variable_declarations;
 
 #[cfg(test)]
 #[path = "../../tests/test_fixture.rs"]
