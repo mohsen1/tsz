@@ -593,6 +593,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 type_text =
                     self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+                type_text = self.imported_call_public_type_text(initializer, &type_text);
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)

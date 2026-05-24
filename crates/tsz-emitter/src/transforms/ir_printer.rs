@@ -211,6 +211,25 @@ impl<'a> IRPrinter<'a> {
         self.write("))");
     }
 
+    fn emit_static_block_iife_expression(&mut self, statements: &[IRNode]) {
+        self.write("(function () {");
+        if statements.is_empty() {
+            self.write(" })()");
+            return;
+        }
+
+        self.write_line();
+        self.increase_indent();
+        for stmt in statements {
+            self.write_indent();
+            self.emit_node(stmt);
+            self.write_line();
+        }
+        self.decrease_indent();
+        self.write_indent();
+        self.write("})()");
+    }
+
     fn extract_trailing_comment_from_function(&self, function: &IRNode) -> Option<String> {
         let source_text = self.source_text?;
         let (body_start, body_end) = match function {
@@ -1205,7 +1224,9 @@ impl<'a> IRPrinter<'a> {
                 self.write("try ");
                 self.emit_node(try_block);
                 if let Some(catch) = catch_clause {
-                    self.write(" catch");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("catch");
                     if let Some(param) = &catch.param {
                         self.write(" (");
                         self.write(param);
@@ -1215,7 +1236,9 @@ impl<'a> IRPrinter<'a> {
                     self.emit_block(&catch.body);
                 }
                 if let Some(finally) = finally_block {
-                    self.write(" finally ");
+                    self.write_line();
+                    self.write_indent();
+                    self.write("finally ");
                     self.emit_node(finally);
                 }
             }
@@ -1387,6 +1410,7 @@ impl<'a> IRPrinter<'a> {
                 weakmap_inits,
                 leading_comment,
                 deferred_static_blocks,
+                deferred_static_result_temp,
                 deferred_block_class_alias,
             } => {
                 if !self.remove_comments
@@ -1395,6 +1419,42 @@ impl<'a> IRPrinter<'a> {
                     self.write(comment);
                     self.write_line();
                     self.write_indent();
+                }
+
+                if let Some(result_temp) = deferred_static_result_temp
+                    && !deferred_static_blocks.is_empty()
+                    && computed_prop_temp_inits.is_empty()
+                    && weakmap_inits.is_empty()
+                    && deferred_block_class_alias.is_none()
+                {
+                    self.write(name);
+                    self.write(" = (");
+                    self.write(result_temp);
+                    self.write(" = ");
+                    self.increase_indent();
+                    self.emit_es5_class_expression(
+                        name,
+                        base_class.as_deref(),
+                        super_param.as_deref(),
+                        body,
+                    );
+                    for deferred in deferred_static_blocks {
+                        self.write(",");
+                        self.write_line();
+                        self.write_indent();
+                        if let IRNode::StaticBlockIIFE { statements } = deferred {
+                            self.emit_static_block_iife_expression(statements);
+                        } else {
+                            self.emit_node(deferred);
+                        }
+                    }
+                    self.write(",");
+                    self.write_line();
+                    self.write_indent();
+                    self.write(result_temp);
+                    self.write(");");
+                    self.decrease_indent();
+                    return;
                 }
 
                 self.write(name);
@@ -1436,21 +1496,8 @@ impl<'a> IRPrinter<'a> {
             }
             IRNode::StaticBlockIIFE { statements } => {
                 // (function () { ...statements... })();
-                self.write("(function () {");
-                if statements.is_empty() {
-                    self.write(" })();");
-                } else {
-                    self.write_line();
-                    self.increase_indent();
-                    for stmt in statements {
-                        self.write_indent();
-                        self.emit_node(stmt);
-                        self.write_line();
-                    }
-                    self.decrease_indent();
-                    self.write_indent();
-                    self.write("})();");
-                }
+                self.emit_static_block_iife_expression(statements);
+                self.write(";");
             }
             IRNode::ExtendsHelper {
                 class_name,

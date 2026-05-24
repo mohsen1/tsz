@@ -329,6 +329,10 @@ pub enum IRNode {
         leading_comment: Option<String>,
         /// Static block IIFEs deferred to after the class assignment.
         deferred_static_blocks: Vec<Self>,
+        /// When set, deferred static blocks are folded into the assignment as
+        /// `C = (_t = classExpr, staticBlock(), _t)` so the assignment remains
+        /// one expression with the class value as its result.
+        deferred_static_result_temp: Option<Cow<'static, str>>,
         /// Class alias name assigned after the class value exists and before
         /// deferred static blocks that reference the alias.
         deferred_block_class_alias: Option<String>,
