@@ -13,7 +13,14 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<tsz_solver::TypeId> {
         let heritage = heritage?;
         let (type_idx, expr_idx) = self.non_nameable_extends_heritage_type(heritage)?;
-        self.get_node_type_or_names(&[expr_idx, type_idx])
+        if self.js_extends_entity_reference_has_any_annotation(expr_idx) {
+            return Some(tsz_solver::TypeId::ANY);
+        }
+        let inferred = self.get_node_type_or_names(&[expr_idx, type_idx]);
+        if inferred.is_none() && self.js_entity_extends_needs_synthetic_alias(type_idx) {
+            return Some(tsz_solver::TypeId::ANY);
+        }
+        inferred
     }
 
     pub(crate) fn retain_synthetic_class_extends_alias_dependencies_in_statements(
@@ -483,7 +490,7 @@ impl<'a> DeclarationEmitter<'a> {
         let Some(source_text) = self.source_file_text.as_deref().map(str::to_string) else {
             return;
         };
-        let export_types = statements
+        let mut export_types = statements
             .nodes
             .iter()
             .filter_map(|&stmt_idx| self.arena.get(stmt_idx))
@@ -510,10 +517,14 @@ impl<'a> DeclarationEmitter<'a> {
                 candidates
             })
             .collect::<Vec<_>>();
+        export_types.extend(self.exported_function_return_type_dependencies(statements));
 
         for type_text in export_types {
             let import = self
-                .public_named_import_dependency_for_type_text(statements, &type_text)
+                .current_source_named_import_dependency_for_type_text(statements, &type_text)
+                .or_else(|| {
+                    self.public_named_import_dependency_for_type_text(statements, &type_text)
+                })
                 .or_else(|| {
                     Self::rewrite_leading_import_type_with_public_named_import(
                         &source_text,
@@ -532,6 +543,144 @@ impl<'a> DeclarationEmitter<'a> {
                 self.import_string_aliases.insert((module, imported), alias);
             }
         }
+    }
+
+    fn exported_function_return_type_dependencies(&self, statements: &NodeList) -> Vec<String> {
+        let mut dependencies = Vec::new();
+        for &stmt_idx in &statements.nodes {
+            let Some((func_idx, func)) = self.exported_function_dependency_target(stmt_idx) else {
+                continue;
+            };
+            let (preferred_return, direct_function_return) =
+                self.function_body_return_hint(func, func.body);
+            if direct_function_return && let Some(type_text) = preferred_return.as_ref() {
+                let (type_text, _) =
+                    self.function_return_type_text_for_declaration_scope(func, type_text);
+                dependencies.push(type_text);
+            }
+
+            let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) else {
+                continue;
+            };
+            let func_type_id = cache
+                .node_types
+                .get(&func_idx.0)
+                .copied()
+                .or_else(|| self.get_type_via_symbol_for_func(func_idx, func.name));
+            let Some(func_type_id) = func_type_id else {
+                continue;
+            };
+            let Some(return_type_id) =
+                tsz_solver::type_queries::get_return_type(*interner, func_type_id)
+            else {
+                continue;
+            };
+            dependencies.push(self.inferred_function_return_type_text(func, return_type_id));
+        }
+        dependencies
+    }
+
+    fn exported_function_dependency_target(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(NodeIndex, &tsz_parser::parser::node::FunctionData)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION {
+            if !self.statement_has_effective_export(stmt_idx) {
+                return None;
+            }
+            return self
+                .arena
+                .get_function(stmt_node)
+                .map(|func| (stmt_idx, func));
+        }
+
+        if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+            let export = self.arena.get_export_decl(stmt_node)?;
+            let clause_node = self.arena.get(export.export_clause)?;
+            if clause_node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return None;
+            }
+            return self
+                .arena
+                .get_function(clause_node)
+                .map(|func| (export.export_clause, func));
+        }
+
+        None
+    }
+
+    fn current_source_named_import_dependency_for_type_text(
+        &self,
+        statements: &NodeList,
+        type_text: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        let (start, module_specifier, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let tail = tail.strip_prefix('.')?;
+        let type_name = Self::leading_import_type_member_name(tail)?;
+        self.named_import_dependency_for_module_member(statements, &module_specifier, type_name)
+    }
+
+    fn named_import_dependency_for_module_member(
+        &self,
+        statements: &NodeList,
+        module_specifier: &str,
+        type_name: &str,
+    ) -> Option<(String, String, Option<String>)> {
+        for &stmt_idx in &statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module_specifier {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                for &spec_idx in &bindings.elements.nodes {
+                    let Some(spec_node) = self.arena.get(spec_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(spec_node) else {
+                        continue;
+                    };
+                    let imported_idx = if specifier.property_name.is_some() {
+                        specifier.property_name
+                    } else {
+                        specifier.name
+                    };
+                    let Some(imported_name) = self.get_identifier_text(imported_idx) else {
+                        continue;
+                    };
+                    if imported_name != type_name {
+                        continue;
+                    }
+                    let local_name = self.get_identifier_text(specifier.name);
+                    let alias = local_name.filter(|local| local != &imported_name);
+                    return Some((module_lit.text.clone(), imported_name, alias));
+                }
+            }
+        }
+
+        None
     }
 
     fn public_named_import_dependency_for_type_text(

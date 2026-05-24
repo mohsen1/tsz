@@ -69,6 +69,11 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.ctx.target_es5 && func.asterisk_token {
+            self.emit_generator_function_es5(_idx);
+            return;
+        }
+
         if func.is_async {
             self.write("async ");
         }
@@ -643,6 +648,20 @@ impl<'a> Printer<'a> {
                     let let_prefix = format!("let {enum_name};");
                     if output.starts_with(&var_prefix) {
                         output = format!("{let_prefix}{}", &output[var_prefix.len()..]);
+                    }
+                }
+                if !enum_name.is_empty()
+                    && self.should_emit_invalid_namespace_static_modifier_before_name(
+                        enum_decl.name,
+                        &enum_decl.modifiers,
+                    )
+                {
+                    let let_prefix = format!("let {enum_name};");
+                    let var_prefix = format!("var {enum_name};");
+                    if output.starts_with(&let_prefix) {
+                        output = format!("static {let_prefix}{}", &output[let_prefix.len()..]);
+                    } else if output.starts_with(&var_prefix) {
+                        output = format!("static {var_prefix}{}", &output[var_prefix.len()..]);
                     }
                 }
                 self.write(&output);

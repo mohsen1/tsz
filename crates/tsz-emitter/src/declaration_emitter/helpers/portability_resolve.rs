@@ -1008,6 +1008,100 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|(rewritten, _, _, _)| rewritten)
     }
 
+    pub(in crate::declaration_emitter) fn rewrite_current_source_named_import_type_text(
+        &self,
+        type_text: &str,
+    ) -> Option<String> {
+        let (start, module_specifier, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let tail = tail.strip_prefix('.')?;
+        let imported_name = Self::leading_import_type_member_name(tail)?;
+        let local_name =
+            self.current_source_named_import_local_name(&module_specifier, imported_name)?;
+        Self::rewrite_leading_import_type_member(type_text, imported_name, &local_name)
+    }
+
+    fn rewrite_leading_import_type_member(
+        type_text: &str,
+        imported_name: &str,
+        local_name: &str,
+    ) -> Option<String> {
+        let (start, _, tail) = Self::next_import_type_text(type_text)?;
+        if start != 0 {
+            return None;
+        }
+        let tail = tail.strip_prefix('.')?;
+        let import_type_end = type_text.len() - (tail.len() + 1);
+        let member_start = import_type_end + 1;
+        let member_end = member_start + imported_name.len();
+        let mut rewritten = String::with_capacity(type_text.len());
+        rewritten.push_str(&type_text[..start]);
+        rewritten.push_str(local_name);
+        rewritten.push_str(&type_text[member_end..]);
+        Some(rewritten)
+    }
+
+    fn current_source_named_import_local_name(
+        &self,
+        module_specifier: &str,
+        imported_name: &str,
+    ) -> Option<String> {
+        let source_file = self
+            .current_source_file_idx
+            .and_then(|source_file_idx| self.arena.get(source_file_idx))
+            .and_then(|node| self.arena.get_source_file(node))
+            .or_else(|| self.arena_source_file(self.arena))?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            let Some(import) = self.arena.get_import_decl(stmt_node) else {
+                continue;
+            };
+            let Some(module_node) = self.arena.get(import.module_specifier) else {
+                continue;
+            };
+            let Some(module_lit) = self.arena.get_literal(module_node) else {
+                continue;
+            };
+            if module_lit.text != module_specifier {
+                continue;
+            }
+            let Some(clause_node) = self.arena.get(import.import_clause) else {
+                continue;
+            };
+            let Some(clause) = self.arena.get_import_clause(clause_node) else {
+                continue;
+            };
+            if let Some(bindings_node) = self.arena.get(clause.named_bindings)
+                && let Some(bindings) = self.arena.get_named_imports(bindings_node)
+            {
+                for &element_idx in &bindings.elements.nodes {
+                    let Some(element_node) = self.arena.get(element_idx) else {
+                        continue;
+                    };
+                    let Some(specifier) = self.arena.get_specifier(element_node) else {
+                        continue;
+                    };
+                    let imported_idx = if specifier.property_name.is_some() {
+                        specifier.property_name
+                    } else {
+                        specifier.name
+                    };
+                    if self.get_identifier_text(imported_idx).as_deref() != Some(imported_name) {
+                        continue;
+                    }
+                    return self.get_identifier_text(specifier.name);
+                }
+            }
+        }
+
+        None
+    }
+
     pub(in crate::declaration_emitter) fn rewrite_current_source_public_import_type_text_with_import(
         &self,
         type_text: &str,

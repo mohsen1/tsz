@@ -9,10 +9,7 @@ use std::sync::Arc;
 
 use crate::control_flow::FlowGraph;
 use crate::diagnostics::{Diagnostic, diagnostic_codes};
-use crate::module_resolution::{
-    build_file_name_index, module_specifier_candidates, probe_file_name_index,
-    resolve_specifier_via_file_index,
-};
+use crate::module_resolution::build_file_name_index;
 use tsz_binder::symbols::StableLocation;
 use tsz_binder::{BinderState, SymbolId};
 use tsz_parser::parser::NodeIndex;
@@ -1169,68 +1166,6 @@ impl<'a> CheckerContext<'a> {
             .find_map(|(&type_alias_id, &alias_id)| {
                 (alias_id == alias_sym_id).then_some(type_alias_id)
             })
-    }
-
-    /// Resolve an import specifier to its target file index.
-    /// Uses the `resolved_module_paths` map populated by the driver.
-    /// Returns None if the import cannot be resolved (e.g., external module).
-    pub fn resolve_import_target(&self, specifier: &str) -> Option<usize> {
-        self.resolve_import_target_from_file(self.current_file_idx, specifier)
-    }
-
-    /// Resolve an import specifier from a specific file to its target file index.
-    /// Like `resolve_import_target` but for any source file, not just the current one.
-    ///
-    /// Stage 1: `global_file_name_index` (always populated by `set_all_arenas`).
-    /// Stage 2: `resolved_module_paths` (driver FS map, fallback for path-mapped imports).
-    pub fn resolve_import_target_from_file(
-        &self,
-        source_file_idx: usize,
-        specifier: &str,
-    ) -> Option<usize> {
-        if let Some(idx) = self.global_file_name_index.as_ref() {
-            // Absolute paths (both POSIX `/` and Windows `\`): empty src_dir
-            // causes resolve_specifier_via_file_index to use the specifier verbatim.
-            if specifier.starts_with('/') || specifier.starts_with('\\') {
-                if let Some(result) = resolve_specifier_via_file_index("", specifier, idx) {
-                    return Some(result);
-                }
-            } else if let Some(source_file_name) = self
-                .all_arenas
-                .as_ref()
-                .and_then(|a| a.get(source_file_idx))
-                .and_then(|a| a.source_files.first())
-                .map(|sf| sf.file_name.as_str())
-            {
-                if let Some(result) =
-                    resolve_specifier_via_file_index(source_file_name, specifier, idx)
-                {
-                    return Some(result);
-                }
-                // Bare names (single-segment like `types` or multi-segment like
-                // `packages/foo/src/bar`) that resolve_specifier_via_file_index
-                // rejects as potential package subpaths are probed directly
-                // against the index. External npm packages won't be in the index;
-                // project-relative bare paths will match by file name or stem.
-                if !specifier.starts_with("./")
-                    && !specifier.starts_with("../")
-                    && !specifier.starts_with('/')
-                    && let Some(result) = probe_file_name_index(specifier, idx)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        if let Some(paths) = self.resolved_module_paths.as_ref() {
-            for candidate in module_specifier_candidates(specifier) {
-                if let Some(target_idx) = paths.get(&(source_file_idx, candidate)) {
-                    return Some(*target_idx);
-                }
-            }
-        }
-
-        None
     }
 
     /// Resolve a member exported by the target module of an ALIAS symbol.

@@ -35,6 +35,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn function_body_single_spread_object_literal_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let object_expr_idx = self.direct_returned_object_literal(body_idx)?;
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        self.single_spread_object_literal_type_text(object)
+    }
+
     pub(in crate::declaration_emitter) fn should_prefer_source_return_type_text(
         &self,
         source_type_text: &str,
@@ -71,6 +81,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if self
             .source_return_type_preserves_named_application(source_type_text, inferred_return_type)
+        {
+            return true;
+        }
+        if self.source_return_type_preserves_mapped_alias_application(source_type_text)
+            && self.print_type_id(inferred_return_type) != source_type_text
         {
             return true;
         }
@@ -118,6 +133,18 @@ impl<'a> DeclarationEmitter<'a> {
         };
         self.inferred_return_application_base_name(inferred_return_type)
             .is_some_and(|base_name| source_name == base_name)
+    }
+
+    fn source_return_type_preserves_mapped_alias_application(
+        &self,
+        source_type_text: &str,
+    ) -> bool {
+        let Some((alias_name, _)) = Self::single_type_reference_application(source_type_text)
+        else {
+            return false;
+        };
+        self.source_type_alias_type_text(self.arena, alias_name)
+            .is_some_and(|alias_text| Self::type_text_contains_mapped_type_literal(&alias_text))
     }
 
     fn inferred_return_application_base_name(
@@ -222,7 +249,10 @@ impl<'a> DeclarationEmitter<'a> {
         let text = self.restore_mapped_return_type_param_constraints(func, &text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
-        self.expand_mapped_alias_index_conditional_text(self.arena, &text)
+        let text = self
+            .expand_mapped_alias_index_conditional_text(self.arena, &text)
+            .unwrap_or(text);
+        self.rewrite_current_source_named_import_type_text(&text)
             .unwrap_or(text)
     }
 
@@ -900,7 +930,10 @@ impl<'a> DeclarationEmitter<'a> {
         rewritten
     }
 
-    fn direct_returned_object_literal(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn direct_returned_object_literal(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let body_node = self.arena.get(body_idx)?;
         let block = self.arena.get_block(body_node)?;
         let mut returned_object = None;
@@ -1029,6 +1062,15 @@ impl<'a> DeclarationEmitter<'a> {
                     // return is equivalent to `return undefined` with
                     // widening to `void`. Matches declFileTypeAnnotationBuiltInType.
                     "void".to_string()
+                } else if self
+                    .arena
+                    .get(ret.expression)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::NEW_EXPRESSION)
+                    && let Some(text) = self
+                        .preferred_expression_type_text(ret.expression)
+                        .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
                 } else if let Some(text) = self
                     .widened_inferred_expression_type_text(ret.expression)
                     .filter(|text| !text.is_empty() && text != "any")
