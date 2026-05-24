@@ -371,48 +371,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Check if an AST node is a nullish coalescing expression (`??`) or a
-    /// literal value (string, number, boolean, bigint, template), unwrapping
-    /// parentheses. TSC only emits TS2869 for these syntactic forms; general
-    /// non-nullable expressions (identifiers, property access, `&&` chains)
-    /// do not trigger TS2869 even when their type is never nullish.
-    fn is_nullish_coalescing_or_literal(
-        arena: &tsz_parser::parser::NodeArena,
-        node_idx: NodeIndex,
-    ) -> bool {
-        use tsz_scanner::SyntaxKind;
-
-        let Some(node) = arena.get(node_idx) else {
-            return false;
-        };
-
-        // Unwrap parentheses: (expr) -> expr
-        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-            if let Some(paren) = arena.get_parenthesized(node) {
-                return Self::is_nullish_coalescing_or_literal(arena, paren.expression);
-            }
-            return false;
-        }
-
-        // Binary expression: check if it's a `??`
-        if node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-            if let Some(binary) = arena.get_binary_expr(node) {
-                return binary.operator_token == SyntaxKind::QuestionQuestionToken as u16;
-            }
-            return false;
-        }
-
-        // Literal values: string, number, bigint, template, true, false
-        let kind = node.kind;
-        kind == SyntaxKind::StringLiteral as u16
-            || kind == SyntaxKind::NumericLiteral as u16
-            || kind == SyntaxKind::BigIntLiteral as u16
-            || kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
-            || kind == SyntaxKind::TrueKeyword as u16
-            || kind == SyntaxKind::FalseKeyword as u16
-            || kind == syntax_kind_ext::TEMPLATE_EXPRESSION
-    }
-
     /// Check if a type "may represent a primitive value" for TS2638.
     ///
     /// In tsc, this fires for "instantiable" types (type parameters, conditional types)
@@ -993,7 +951,6 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         use crate::query_boundaries::type_computation::core::BinaryOpResult;
         use tsz_scanner::SyntaxKind;
-        let factory = self.ctx.types.factory();
 
         // Hot path: pure `+` chains with stable primitive operands are common in
         // generated benchmark fixtures. We still check every operand node (so
@@ -1494,30 +1451,19 @@ impl<'a> CheckerState<'a> {
                 let (non_nullish, cause) = self.split_nullish_type(evaluated_left);
                 let left_is_top_type =
                     evaluated_left == TypeId::UNKNOWN || evaluated_left == TypeId::ANY;
-                let left_is_nullish_chain_or_literal =
-                    Self::is_nullish_coalescing_or_literal(self.ctx.arena, left_idx);
-                // Syntactic always-nullish detection: the left operand's
-                // runtime value is the literal `null` / `undefined` seen
-                // through any combination of parentheses, type assertions
-                // (`as T`, `<T>`, `satisfies T`), or non-null assertions
-                // (`!`). Assertions change the static type but cannot change
-                // the runtime always-nullish fact, so tsc emits TS2871 in
-                // these cases regardless of whether the asserted type still
-                // contains a non-nullish slice or has been widened to `any`
-                // / narrowed to `never`. The skip is a no-op for the bare
-                // `null` / `undefined` operand cases, so this single check
-                // also subsumes the historical bare-literal predicate.
-                let unwrapped_left_idx = self.ctx.arena.skip_parenthesized_and_assertions(left_idx);
-                let left_is_always_nullish_literal_through_assertions =
-                    self.is_literal_null_or_undefined_node(unwrapped_left_idx);
+                let diagnostics = self.nullish_coalescing_left_diagnostics(
+                    left_idx,
+                    non_nullish,
+                    cause,
+                    left_is_top_type,
+                );
 
-                if cause.is_none() && !left_is_top_type && left_is_nullish_chain_or_literal {
+                if let Some(diag_idx) = diagnostics.never_nullish_diag {
                     use crate::diagnostics::diagnostic_codes;
                     // TS2869: the left operand is never nullish, so the right
                     // operand of `??` is unreachable. tsc anchors the error
                     // at the left operand, skipping parentheses to the inner
                     // expression (e.g., `(expr) ?? ""` → anchored at `expr`).
-                    let diag_idx = self.ctx.arena.skip_parenthesized(left_idx);
                     self.error_at_node(
                         diag_idx,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
@@ -1527,33 +1473,8 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                if left_is_always_nullish_literal_through_assertions
-                    || (non_nullish.is_none()
-                        && cause.is_some()
-                        && !left_is_top_type
-                        && left_is_nullish_chain_or_literal)
-                {
-                    // TS2871: the left operand of `??` is always nullish, so
-                    // the operator is redundant — its result is always the
-                    // right operand at runtime. Two paths feed this branch:
-                    //
-                    //   (1) The evaluated type contains only nullish
-                    //       constituents and the syntactic form is a `??`
-                    //       chain or a bare null/undefined literal.
-                    //   (2) The runtime value is syntactically a `null` /
-                    //       `undefined` literal seen through any combination
-                    //       of parens, `as T` / `<T>` / `satisfies T`, and
-                    //       `!` (so the static type may have been widened
-                    //       away from nullish).
-                    //
-                    // Anchor at the underlying literal (path 2) when present,
-                    // otherwise at the parens-skipped left operand (path 1).
+                if let Some(diag_idx) = diagnostics.always_nullish_diag {
                     use crate::diagnostics::diagnostic_codes;
-                    let diag_idx = if left_is_always_nullish_literal_through_assertions {
-                        unwrapped_left_idx
-                    } else {
-                        self.ctx.arena.skip_parenthesized(left_idx)
-                    };
                     self.error_at_node(
                         diag_idx,
                         "This expression is always nullish.",
@@ -1566,31 +1487,8 @@ impl<'a> CheckerState<'a> {
                     // via subtype reduction of `string | "x"`).
                 }
 
-                // tsc uses UnionReduction.Subtype for `??` result types,
-                // which removes structural subtypes (e.g., `never[]` from
-                // `number[] | never[]` → `number[]`). This matters when the
-                // RHS is an empty array literal `[]` (always `never[]` in
-                // strict mode).
-                let result = match non_nullish {
-                    None => right_type,
-                    Some(non_nullish) => {
-                        // Apply tsc's NonNullable<D> approximation: when D
-                        // is an unconstrained type parameter,
-                        // `(D | undefined) ?? X` yields `(D & {}) | X` rather
-                        // than `D | X`. This matches what the solver does
-                        // for `??` in `BinaryOpEvaluator`.
-                        let non_nullish =
-                            evaluator.apply_non_nullable_approximation(evaluated_left, non_nullish);
-                        if non_nullish == right_type || self.is_subtype_of(right_type, non_nullish)
-                        {
-                            non_nullish
-                        } else if self.is_subtype_of(non_nullish, right_type) {
-                            right_type
-                        } else {
-                            factory.union2(non_nullish, right_type)
-                        }
-                    }
-                };
+                let result =
+                    self.nullish_coalescing_result_type(evaluated_left, non_nullish, right_type);
                 type_stack.push(result);
                 continue;
             }

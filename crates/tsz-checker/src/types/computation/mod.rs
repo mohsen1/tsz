@@ -16,6 +16,7 @@
 //! - `expression_guards` — expression-shape helpers for diagnostics/contextual typing
 //! - `identifier` — identifier reference resolution
 //! - `identifier_flow` — flow-based helpers for identifier type computation (evolving arrays, implicit any)
+//! - `nullish_coalescing` — `??` diagnostic/result orchestration helpers
 //! - `object_literal` — object literal type construction
 //! - `object_literal_context` — contextual property type resolution helpers for object literals
 //! - `tagged_template` — tagged template expression type resolution
@@ -50,6 +51,7 @@ pub mod helpers;
 pub(crate) mod identifier;
 pub(crate) mod identifier_flow;
 pub(crate) mod large_tuple;
+mod nullish_coalescing;
 pub(crate) mod object_literal;
 pub(crate) mod object_literal_circularity;
 pub(crate) mod object_literal_context;
