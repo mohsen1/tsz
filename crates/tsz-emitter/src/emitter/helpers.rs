@@ -17,6 +17,18 @@ const fn is_identifier_continue(byte: u8) -> bool {
     byte == b'_' || byte == b'$' || byte.is_ascii_alphanumeric()
 }
 
+fn previous_identifier_token(text: &str, mut end: usize) -> Option<(&str, usize)> {
+    let bytes = text.as_bytes();
+    while end > 0 && matches!(bytes[end - 1], b' ' | b'\t' | b'\r' | b'\n') {
+        end -= 1;
+    }
+    let token_end = end;
+    while end > 0 && is_identifier_continue(bytes[end - 1]) {
+        end -= 1;
+    }
+    (end < token_end).then(|| (&text[end..token_end], end))
+}
+
 impl<'a> Printer<'a> {
     pub(super) const fn take_pending_source_pos(&mut self) -> Option<SourcePosition> {
         self.pending_source_pos.take()
@@ -242,9 +254,19 @@ impl<'a> Printer<'a> {
         if starts_with_keyword_token(remaining, "static") {
             let after_static = &remaining["static".len()..];
             let after_static = after_static.trim_start_matches([' ', '\t']);
-            return ["var", "let", "const", "function", "async"]
-                .iter()
-                .any(|keyword| starts_with_keyword_token(after_static, keyword));
+            return [
+                "var",
+                "let",
+                "const",
+                "function",
+                "async",
+                "class",
+                "namespace",
+                "module",
+                "enum",
+            ]
+            .iter()
+            .any(|keyword| starts_with_keyword_token(after_static, keyword));
         }
 
         let mut static_end = token_start;
@@ -275,9 +297,52 @@ impl<'a> Printer<'a> {
         let Some(leading_token) = text.get(token_start..(node.end as usize).min(text.len())) else {
             return false;
         };
-        ["var", "let", "const", "function", "async"]
-            .iter()
-            .any(|keyword| starts_with_keyword_token(leading_token, keyword))
+        [
+            "var",
+            "let",
+            "const",
+            "function",
+            "async",
+            "class",
+            "namespace",
+            "module",
+            "enum",
+        ]
+        .iter()
+        .any(|keyword| starts_with_keyword_token(leading_token, keyword))
+    }
+
+    pub(in crate::emitter) fn should_emit_invalid_namespace_static_modifier_before_name(
+        &self,
+        name_idx: NodeIndex,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        if !self.in_namespace_iife || self.ctx.target_es5 {
+            return false;
+        }
+        if self
+            .arena
+            .has_modifier(modifiers, SyntaxKind::StaticKeyword)
+        {
+            return true;
+        }
+
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        let token_start = self.skip_trivia_forward(name_node.pos, name_node.end) as usize;
+        let Some((previous, previous_start)) = previous_identifier_token(text, token_start) else {
+            return false;
+        };
+        if previous == "static" {
+            return true;
+        }
+        matches!(previous, "class" | "namespace" | "module" | "enum")
+            && previous_identifier_token(text, previous_start)
+                .is_some_and(|(before_keyword, _)| before_keyword == "static")
     }
 
     /// Emit an expression, unwrapping `ExpressionWithTypeArguments` without parens.

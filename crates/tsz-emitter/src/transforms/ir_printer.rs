@@ -46,6 +46,7 @@ struct NamespaceIifeContext<'a> {
     default_export_merge: bool,
     parent_name: Option<&'a str>,
     param_name: Option<&'a str>,
+    invalid_static_declaration: bool,
 }
 
 /// IR Printer - converts IR nodes to JavaScript strings
@@ -2517,6 +2518,7 @@ impl<'a> IRPrinter<'a> {
                 name,
                 members,
                 namespace_export,
+                invalid_namespace_static,
             } => {
                 if let Some(ns) = namespace_export {
                     self.emit_namespace_bound_enum_iife(name, members, ns);
@@ -2527,6 +2529,10 @@ impl<'a> IRPrinter<'a> {
                     } else {
                         "var"
                     };
+                    if *invalid_namespace_static && self.in_namespace_iife_body && !self.target_es5
+                    {
+                        self.write("static ");
+                    }
                     self.write(keyword);
                     self.write(" ");
                     self.write(name);
@@ -2571,6 +2577,7 @@ impl<'a> IRPrinter<'a> {
                 default_export_merge,
                 skip_sequence_indent: _,
                 trailing_comment,
+                invalid_namespace_static,
             } => {
                 self.emit_namespace_iife(
                     name_parts,
@@ -2585,6 +2592,7 @@ impl<'a> IRPrinter<'a> {
                         default_export_merge: *default_export_merge,
                         parent_name: parent_name.as_deref(),
                         param_name: param_name.as_deref(),
+                        invalid_static_declaration: *invalid_namespace_static,
                     },
                 );
                 if !self.remove_comments
@@ -2692,6 +2700,10 @@ impl<'a> IRPrinter<'a> {
             } else {
                 "var"
             };
+            if context.invalid_static_declaration && self.in_namespace_iife_body && !self.target_es5
+            {
+                self.write("static ");
+            }
             self.write(decl_keyword);
             self.write(" ");
             self.write(current_name);
@@ -2790,6 +2802,7 @@ impl<'a> IRPrinter<'a> {
                     default_export_merge: false,
                     parent_name: None,
                     param_name: context.param_name,
+                    invalid_static_declaration: false,
                 },
             );
             self.write_line();

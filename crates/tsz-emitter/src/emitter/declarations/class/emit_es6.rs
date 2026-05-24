@@ -252,10 +252,21 @@ impl<'a> Printer<'a> {
             }
         }
 
+        let emit_invalid_namespace_static =
+            self.should_emit_invalid_namespace_static_modifier(node, &class.modifiers);
+        if emit_invalid_namespace_static {
+            self.write("static ");
+        }
+
         // Emit modifiers (including decorators) - skip TS-only modifiers for JS output
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if emit_invalid_namespace_static
+                        && mod_node.kind == SyntaxKind::StaticKeyword as u16
+                    {
+                        continue;
+                    }
                     // Skip export/default modifiers in CommonJS mode or namespace IIFE
                     if (self.ctx.is_commonjs() || self.in_namespace_iife)
                         && (mod_node.kind == SyntaxKind::ExportKeyword as u16

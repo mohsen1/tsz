@@ -22,6 +22,7 @@ fn test_ir_enum_numeric() {
             },
         ],
         namespace_export: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
@@ -50,6 +51,7 @@ fn test_ir_enum_string() {
             },
         ],
         namespace_export: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&enum_ir);
@@ -83,6 +85,7 @@ fn test_ir_namespace_iife() {
         param_name: None,
         skip_sequence_indent: false,
         trailing_comment: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);
@@ -108,6 +111,7 @@ fn test_ir_namespace_qualified() {
         param_name: None,
         skip_sequence_indent: false,
         trailing_comment: None,
+        invalid_namespace_static: false,
     };
 
     let output = IRPrinter::emit_to_string(&namespace_ir);
