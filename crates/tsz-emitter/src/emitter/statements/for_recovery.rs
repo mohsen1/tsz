@@ -47,10 +47,10 @@ impl<'a> Printer<'a> {
         if loop_stmt.initializer.is_some()
             || loop_stmt.condition.is_some()
             || loop_stmt.incrementor.is_some()
-            || !self
+            || self
                 .arena
                 .get(loop_stmt.statement)
-                .is_some_and(|stmt| stmt.kind == syntax_kind_ext::EMPTY_STATEMENT)
+                .is_none_or(|stmt| stmt.kind != syntax_kind_ext::EMPTY_STATEMENT)
         {
             return None;
         }
