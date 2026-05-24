@@ -714,6 +714,10 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_super(self.has_extends)
             .with_super_name(self.super_name.clone())
             .with_temp_var_counter(self.temp_var_counter.get())
+            .with_disposable_env_context(
+                self.disposable_env_counter.get(),
+                self.blocked_disposable_env_names.borrow().iter().cloned(),
+            )
             .with_module_kind(self.module_kind);
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);
@@ -759,6 +763,17 @@ impl<'a> ES5ClassTransformer<'a> {
     /// Collect hoisted temps from a converter and update our temp counter
     fn collect_from_converter(&self, converter: &AstToIr<'a>) {
         self.temp_var_counter.set(converter.temp_var_counter());
+        self.disposable_env_counter
+            .set(converter.disposable_env_counter());
+        let generated = converter.take_generated_disposable_env_names();
+        if !generated.is_empty() {
+            let mut blocked = self.blocked_disposable_env_names.borrow_mut();
+            let mut all_generated = self.generated_disposable_env_names.borrow_mut();
+            for name in generated {
+                blocked.insert(name.clone());
+                all_generated.push(name);
+            }
+        }
         self.extra_hoisted_temps
             .borrow_mut()
             .extend(converter.take_hoisted_temps());
@@ -865,29 +880,28 @@ impl<'a> ES5ClassTransformer<'a> {
         result
     }
 
-    /// Convert an AST statement to IR in static context (super uses `_super.X` not `_super.prototype.X`)
-    fn convert_statement_static(&self, idx: NodeIndex) -> IRNode {
-        let converter = self
-            .make_converter()
-            .with_static(true)
-            .with_await_as_yield(true);
-        let result = converter.convert_statement(idx);
-        self.collect_from_converter(&converter);
-        result
-    }
-
-    /// Convert an AST statement to IR in static context with class alias for `this` substitution
-    fn convert_statement_static_with_class_alias(
+    fn convert_expression_with_context(
         &self,
         idx: NodeIndex,
-        class_alias: &str,
+        is_static: bool,
+        class_alias: Option<&str>,
+        lexical_this_capture_alias: Option<&str>,
     ) -> IRNode {
-        let converter = self
-            .make_converter()
-            .with_static(true)
-            .with_await_as_yield(true)
-            .with_class_alias(Some(class_alias.to_string()));
-        let result = converter.convert_statement(idx);
+        let mut converter = self.make_converter();
+        if is_static {
+            converter = converter.with_static(true);
+        }
+        if let Some(alias) = class_alias {
+            converter = converter.with_class_alias(Some(alias.to_string()));
+        }
+        if let Some(alias) = lexical_this_capture_alias {
+            converter = converter.with_lexical_this_capture_alias(Some(alias.to_string()));
+        }
+        if let Some(alias) = self.class_self_reference_alias.as_ref() {
+            converter =
+                converter.with_identifier_substitution(self.class_name.clone(), alias.clone());
+        }
+        let result = converter.convert_expression(idx);
         self.collect_from_converter(&converter);
         result
     }
@@ -1940,22 +1954,32 @@ impl<'a> ES5ClassTransformer<'a> {
         {
             let trailing_comment_limit =
                 self.body_closing_brace_pos(block_idx).map(|pos| pos as u32);
-            let mut converted = Vec::new();
-            for &stmt_idx in &block.statements.nodes {
-                if let Some(stmt_node) = self.arena.get(stmt_idx)
-                    && let Some(comment) = self.extract_leading_comment(stmt_node)
-                {
-                    converted.push(IRNode::Raw(comment.into()));
-                }
-                converted.push(self.convert_statement_with_context(
-                    stmt_idx,
+            if self.block_has_using_declarations(&block.statements) {
+                self.convert_block_body_using_region(
+                    block,
                     is_static,
                     class_alias.as_deref(),
                     lexical_this_capture_alias.as_deref(),
                     trailing_comment_limit,
-                ));
+                )
+            } else {
+                let mut converted = Vec::new();
+                for &stmt_idx in &block.statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt_idx)
+                        && let Some(comment) = self.extract_leading_comment(stmt_node)
+                    {
+                        converted.push(IRNode::Raw(comment.into()));
+                    }
+                    converted.push(self.convert_statement_with_context(
+                        stmt_idx,
+                        is_static,
+                        class_alias.as_deref(),
+                        lexical_this_capture_alias.as_deref(),
+                        trailing_comment_limit,
+                    ));
+                }
+                converted
             }
-            converted
         } else {
             vec![]
         };
@@ -1992,6 +2016,52 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         stmts
+    }
+
+    fn convert_block_body_using_region(
+        &self,
+        block: &tsz_parser::parser::node::BlockData,
+        is_static: bool,
+        class_alias: Option<&str>,
+        lexical_this_capture_alias: Option<&str>,
+        trailing_comment_limit: Option<u32>,
+    ) -> Vec<IRNode> {
+        let (env_name, error_name) = self.next_constructor_disposable_env_names();
+        let mut try_body = Vec::new();
+
+        for &stmt_idx in &block.statements.nodes {
+            if let Some(stmt_node) = self.arena.get(stmt_idx)
+                && let Some(comment) = self.extract_leading_comment(stmt_node)
+            {
+                try_body.push(IRNode::Raw(comment.into()));
+            }
+
+            if let Some(ir) = self.convert_using_variable_statement_for_env_with_context(
+                stmt_idx,
+                &env_name,
+                is_static,
+                class_alias,
+                lexical_this_capture_alias,
+            ) {
+                try_body.push(ir);
+            } else {
+                try_body.push(self.convert_statement_with_context(
+                    stmt_idx,
+                    is_static,
+                    class_alias,
+                    lexical_this_capture_alias,
+                    trailing_comment_limit,
+                ));
+            }
+        }
+
+        vec![
+            IRNode::var_decl(
+                env_name.clone(),
+                Some(Self::disposable_env_initializer_ir()),
+            ),
+            Self::using_try_statement_ir(env_name, error_name, try_body),
+        ]
     }
 
     fn this_capture_alias_for_body(
@@ -2824,6 +2894,8 @@ impl<'a> ES5ClassTransformer<'a> {
         // Snapshot hoisted temps before processing constructor body so we can
         // separate temps generated inside the constructor from class-level temps.
         let temps_before = self.extra_hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
 
         // Emit statements before super() unchanged
         let mut prev_stmt_end = body_node.pos;
@@ -2885,6 +2957,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Hoist temps generated during constructor body to the top of the
         // constructor function, not the class IIFE.
         self.insert_constructor_hoisted_temps(body, temps_before);
+        self.temp_var_counter.set(saved_temp_counter);
 
         let remaining_can_complete_normally = if super_stmt_idx.is_some() {
             self.statements_can_complete_normally(
@@ -2911,6 +2984,8 @@ impl<'a> ES5ClassTransformer<'a> {
         instance_props: &[NodeIndex],
     ) {
         let temps_before = self.extra_hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
         let (env_name, error_name) = self.next_constructor_disposable_env_names();
 
         body.push(IRNode::var_decl("_this", Some(IRNode::this())));
@@ -3001,6 +3076,7 @@ impl<'a> ES5ClassTransformer<'a> {
         });
 
         self.insert_constructor_hoisted_temps(body, temps_before);
+        self.temp_var_counter.set(saved_temp_counter);
 
         let remaining_can_complete_normally = if super_stmt_idx.is_some() {
             self.statements_can_complete_normally(
@@ -3073,6 +3149,59 @@ impl<'a> ES5ClassTransformer<'a> {
             1 => declarations.into_iter().next(),
             _ => Some(IRNode::VarDeclList(declarations)),
         }
+    }
+
+    fn convert_using_variable_statement_for_env_with_context(
+        &self,
+        stmt_idx: NodeIndex,
+        env_name: &str,
+        is_static: bool,
+        class_alias: Option<&str>,
+        lexical_this_capture_alias: Option<&str>,
+    ) -> Option<IRNode> {
+        let (decl_list, flags) = self.using_declaration_list_for_statement(stmt_idx)?;
+        let using_async = node_flags::is_await_using(flags);
+        let mut declarations = Vec::new();
+
+        for &decl_idx in &decl_list.declarations.nodes {
+            let decl_node = self.arena.get(decl_idx)?;
+            let decl = self.arena.get_variable_declaration(decl_node)?;
+            let name = get_identifier_text(self.arena, decl.name)?;
+            let value = if decl.initializer.is_none() {
+                IRNode::Undefined
+            } else {
+                self.convert_expression_with_context(
+                    decl.initializer,
+                    is_static,
+                    class_alias,
+                    lexical_this_capture_alias,
+                )
+            };
+            declarations.push(IRNode::var_decl(
+                name,
+                Some(IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+                    arguments: vec![
+                        IRNode::id(env_name.to_string()),
+                        value,
+                        IRNode::BooleanLiteral(using_async),
+                    ],
+                }),
+            ));
+        }
+
+        match declarations.len() {
+            0 => None,
+            1 => declarations.into_iter().next(),
+            _ => Some(IRNode::VarDeclList(declarations)),
+        }
+    }
+
+    fn block_has_using_declarations(&self, statements: &NodeList) -> bool {
+        statements.nodes.iter().any(|&stmt_idx| {
+            self.using_declaration_list_for_statement(stmt_idx)
+                .is_some()
+        })
     }
 
     fn using_declaration_list_for_statement(
@@ -3154,6 +3283,35 @@ impl<'a> ES5ClassTransformer<'a> {
         ])
     }
 
+    fn using_try_statement_ir(
+        env_name: String,
+        error_name: String,
+        try_body: Vec<IRNode>,
+    ) -> IRNode {
+        IRNode::TryStatement {
+            try_block: Box::new(IRNode::Block(try_body)),
+            catch_clause: Some(IRCatchClause {
+                param: Some(error_name.clone().into()),
+                body: vec![
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "error"),
+                        IRNode::id(error_name),
+                    )),
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+                        IRNode::BooleanLiteral(true),
+                    )),
+                ],
+            }),
+            finally_block: Some(Box::new(IRNode::Block(vec![IRNode::expr_stmt(
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                    arguments: vec![IRNode::id(env_name)],
+                },
+            )]))),
+        }
+    }
+
     fn statements_can_complete_normally(&self, statements: &[NodeIndex]) -> bool {
         for &stmt_idx in statements {
             if !self.statement_can_complete_normally(stmt_idx) {
@@ -3201,6 +3359,14 @@ impl<'a> ES5ClassTransformer<'a> {
         instance_props: &[NodeIndex],
     ) {
         let temps_before = self.extra_hoisted_temps.borrow().len();
+        let saved_temp_counter = self.temp_var_counter.get();
+        self.temp_var_counter.set(0);
+        let using_region_names = self
+            .arena
+            .get(body_idx)
+            .and_then(|block_node| self.arena.get_block(block_node))
+            .filter(|block| self.block_has_using_declarations(&block.statements))
+            .map(|_| self.next_constructor_disposable_env_names());
 
         // Check if constructor body or instance property initializers contain
         // arrow functions that capture `this`.
@@ -3242,6 +3408,28 @@ impl<'a> ES5ClassTransformer<'a> {
             let mut prev_stmt_end = block_node.pos;
             if block.statements.nodes.is_empty() {
                 self.emit_empty_block_comments(body, block_node);
+            } else if let Some((env_name, error_name)) = using_region_names.clone() {
+                body.push(IRNode::var_decl(
+                    env_name.clone(),
+                    Some(Self::disposable_env_initializer_ir()),
+                ));
+                let mut try_body = Vec::new();
+                for &stmt_idx in &block.statements.nodes {
+                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                        self.emit_leading_statement_comments(
+                            &mut try_body,
+                            prev_stmt_end,
+                            stmt_node.pos,
+                        );
+                        prev_stmt_end = stmt_node.end;
+                    }
+                    try_body.push(
+                        self.convert_constructor_statement_with_using_env(
+                            stmt_idx, &env_name, false,
+                        ),
+                    );
+                }
+                body.push(Self::using_try_statement_ir(env_name, error_name, try_body));
             } else {
                 for &stmt_idx in &block.statements.nodes {
                     if let Some(stmt_node) = self.arena.get(stmt_idx) {
@@ -3254,6 +3442,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.insert_constructor_hoisted_temps(body, temps_before);
+        self.temp_var_counter.set(saved_temp_counter);
     }
 
     fn insert_constructor_hoisted_temps(&self, body: &mut Vec<IRNode>, temps_before: usize) {

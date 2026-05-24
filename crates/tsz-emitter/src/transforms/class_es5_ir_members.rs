@@ -135,6 +135,41 @@ impl<'a> ES5ClassTransformer<'a> {
         })))]
     }
 
+    fn generator_method_body(&self, body: NodeIndex, is_static: bool) -> Vec<IRNode> {
+        let mut transformer = AsyncES5Transformer::new(self.arena).with_class_super_context(
+            self.has_extends,
+            self.super_name.clone(),
+            is_static,
+        );
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        transformer.set_module_kind(self.module_kind);
+        self.configure_async_disposable_context(&mut transformer);
+        transformer.generator_mode = true;
+        let has_yield = transformer.body_contains_await(body);
+        let mut generator_body = transformer.transform_generator_body(body, has_yield);
+        transformer.generator_mode = false;
+        self.sync_async_disposable_context(&mut transformer);
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+
+        let mut body = Vec::new();
+        for group in hoisted_var_groups {
+            body.push(IRNode::VarDeclList(
+                group
+                    .into_iter()
+                    .map(|name| IRNode::VarDecl {
+                        name: name.into(),
+                        initializer: None,
+                    })
+                    .collect(),
+            ));
+        }
+        body.push(generator_body);
+        body
+    }
+
     /// Build a getter function IR from an accessor node
     fn build_getter_function_ir(&self, accessor_idx: NodeIndex) -> Option<IRNode> {
         self.build_getter_function_ir_impl(accessor_idx, false)
@@ -401,7 +436,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let class_alias = self.current_static_class_alias.clone();
 
-        let mut deferred_static_blocks = Vec::new();
+        let mut deferred_static_block_indices = Vec::new();
 
         // Collect accessor pairs for both instance and static
         let instance_accessor_map = collect_accessor_pairs(self.arena, &class_data.members, false);
@@ -450,6 +485,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     );
                     let is_async = has_async_modifier && !has_generator_asterisk;
                     let is_async_generator = has_async_modifier && has_generator_asterisk;
+                    let is_generator = !has_async_modifier && has_generator_asterisk;
 
                     let static_destructuring =
                         self.generate_destructuring_prologue(&method_data.parameters, &params);
@@ -490,6 +526,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             &method_data.parameters.nodes,
                             method_data.body,
                         )
+                    } else if is_generator {
+                        self.generator_method_body(method_data.body, true)
                     } else {
                         let this_capture_alias = self.this_capture_alias_for_body(
                             method_data.body,
@@ -517,6 +555,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
                     let body_source_range = if is_async
                         || is_async_generator
+                        || is_generator
                         || self.has_destructured_parameters(&method_data.parameters)
                     {
                         None
@@ -586,8 +625,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     );
                     let is_async = has_async_modifier && !has_generator_asterisk;
                     let is_async_generator = has_async_modifier && has_generator_asterisk;
+                    let is_generator = !has_async_modifier && has_generator_asterisk;
 
-                    let body_source_range = if is_async || is_async_generator {
+                    let body_source_range = if is_async || is_async_generator || is_generator {
                         None
                     } else if destructuring_prologue.is_empty() {
                         self.arena
@@ -633,6 +673,8 @@ impl<'a> ES5ClassTransformer<'a> {
                             &method_data.parameters.nodes,
                             method_data.body,
                         )
+                    } else if is_generator {
+                        self.generator_method_body(method_data.body, false)
                     } else {
                         let this_capture_alias = self.this_capture_alias_for_body(
                             method_data.body,
@@ -1092,27 +1134,19 @@ impl<'a> ES5ClassTransformer<'a> {
                 if self.skip_static_field_initializers {
                     continue;
                 }
-                if let Some(block_data) = self.arena.get_block(member_node) {
-                    let statements: Vec<IRNode> = block_data
-                        .statements
-                        .nodes
-                        .iter()
-                        .map(|&stmt_idx| {
-                            if let Some(ref alias) = class_alias {
-                                self.convert_statement_static_with_class_alias(stmt_idx, alias)
-                            } else {
-                                self.convert_statement_static(stmt_idx)
-                            }
-                        })
-                        .collect();
-
-                    let iife = IRNode::StaticBlockIIFE { statements };
+                if self.arena.get_block(member_node).is_some() {
                     if has_static_props {
+                        let statements = self.convert_block_body_with_alias_impl(
+                            member_idx,
+                            class_alias.clone(),
+                            true,
+                        );
+                        let iife = IRNode::StaticBlockIIFE { statements };
                         // Defer static blocks to after methods/accessors,
                         // interleaved with static property inits in source order
                         deferred_static_prop_inits.push(iife);
                     } else {
-                        deferred_static_blocks.push(iife);
+                        deferred_static_block_indices.push(member_idx);
                     }
                 }
             } else if member_node.kind == syntax_kind_ext::SEMICOLON_CLASS_ELEMENT {
@@ -1145,6 +1179,15 @@ impl<'a> ES5ClassTransformer<'a> {
             }
             body.append(&mut deferred_static_prop_inits);
         }
+
+        let deferred_static_blocks = deferred_static_block_indices
+            .into_iter()
+            .map(|member_idx| {
+                let statements =
+                    self.convert_block_body_with_alias_impl(member_idx, class_alias.clone(), true);
+                IRNode::StaticBlockIIFE { statements }
+            })
+            .collect();
 
         deferred_static_blocks
     }

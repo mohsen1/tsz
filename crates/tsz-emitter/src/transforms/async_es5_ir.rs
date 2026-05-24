@@ -3584,6 +3584,7 @@ impl<'a> AsyncES5Transformer<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_static_result_temp: None,
             deferred_block_class_alias,
         });
 

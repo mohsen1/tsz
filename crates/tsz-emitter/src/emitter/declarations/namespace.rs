@@ -16,6 +16,19 @@ pub(in crate::emitter) use namespace_helpers::rewrite_enum_iife_for_namespace_ex
 use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 
 impl<'a> Printer<'a> {
+    fn namespace_body_has_using_declarations(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+        block
+            .statements
+            .as_ref()
+            .is_some_and(|statements| self.block_has_using_declarations(statements))
+    }
+
     pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
@@ -45,6 +58,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Top-level using scopes already own disposable environment numbering.
+        // Emit namespaces that contain `using` through the statement printer path
+        // so the namespace-local resource region shares that numbering.
+        if self.ctx.target_es5 && self.in_top_level_using_scope {
+            self.emit_namespace_iife(module, None, None);
+            return;
+        }
+
         // ES5 target: Transform namespace to IIFE pattern
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
@@ -68,6 +89,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_block_scope_reserved_names(
                 self.ctx.block_scope_state.visible_reserved_names(),
             );
+            es5_emitter.set_disposable_env_context(self.next_disposable_env_id);
             es5_emitter.set_const_enum_facts(
                 self.const_enum_values.clone(),
                 self.const_enum_import_aliases.clone(),
@@ -89,7 +111,8 @@ impl<'a> Printer<'a> {
             if !ns_name.is_empty() {
                 // When the namespace name was already declared (e.g., by a
                 // function or class), suppress the `var` declaration.
-                if self.declared_namespace_names.contains(&ns_name) {
+                if self.declared_namespace_names.contains(&ns_name) || self.in_top_level_using_scope
+                {
                     es5_emitter.set_should_declare_var(false);
                 }
                 // Cross-block export sharing for ES5 path
@@ -116,6 +139,10 @@ impl<'a> Printer<'a> {
             } else {
                 es5_emitter.emit_namespace(idx)
             };
+            self.next_disposable_env_id = es5_emitter.disposable_env_counter();
+            for generated_name in es5_emitter.take_generated_disposable_env_names() {
+                self.generated_temp_names.insert(generated_name);
+            }
             // Do NOT propagate namespace-internal block-scope reserved names back
             // to the outer scope state. The namespace IIFE creates an independent
             // function scope in ES5, so suffix renames inside it (e.g. `y_2` from
@@ -359,7 +386,7 @@ impl<'a> Printer<'a> {
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
     /// `parent_name` is set when this is a nested namespace (e.g., Bar inside Foo).
-    fn emit_namespace_iife(
+    pub(in crate::emitter) fn emit_namespace_iife(
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
         parent_name: Option<&str>,
@@ -412,7 +439,8 @@ impl<'a> Printer<'a> {
         // Determine if we should emit a variable declaration for this namespace.
         // Skip if name already declared by class/function/enum (both at top level and
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
-        let should_declare = !self.declared_namespace_names.contains(&name);
+        let should_declare = !self.declared_namespace_names.contains(&name)
+            && !(self.in_top_level_using_scope && parent_name.is_none());
         if should_declare {
             let keyword = if (self.in_namespace_iife || self.function_scope_depth > 0)
                 && !self.ctx.target_es5
@@ -1878,36 +1906,40 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            let namespace_using_region = if !self.ctx.options.target.supports_es2025()
-                && self.block_has_using_declarations(stmts)
-            {
-                let using_async = self.block_has_await_using(stmts);
-                let (env_name, error_name, result_name) =
-                    self.disposable_env_names_for_node(module.body);
-                let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
-                let prev_block_using_env = self
-                    .block_using_env
-                    .replace((env_name.clone(), using_async));
+            let has_using_declarations = self.block_has_using_declarations(stmts)
+                || self
+                    .reserved_disposable_env_names
+                    .contains_key(&module.body)
+                || self.namespace_body_has_using_declarations(module.body);
+            let namespace_using_region =
+                if !self.ctx.options.target.supports_es2025() && has_using_declarations {
+                    let using_async = self.block_has_await_using(stmts);
+                    let (env_name, error_name, result_name) =
+                        self.disposable_env_names_for_node(module.body);
+                    let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+                    let prev_block_using_env = self
+                        .block_using_env
+                        .replace((env_name.clone(), using_async));
 
-                self.write(env_decl_keyword);
-                self.write(" ");
-                self.write(&env_name);
-                self.write(" = { stack: [], error: void 0, hasError: false };");
-                self.write_line();
-                self.write("try {");
-                self.write_line();
-                self.increase_indent();
+                    self.write(env_decl_keyword);
+                    self.write(" ");
+                    self.write(&env_name);
+                    self.write(" = { stack: [], error: void 0, hasError: false };");
+                    self.write_line();
+                    self.write("try {");
+                    self.write_line();
+                    self.increase_indent();
 
-                Some((
-                    env_name,
-                    error_name,
-                    result_name,
-                    using_async,
-                    prev_block_using_env,
-                ))
-            } else {
-                None
-            };
+                    Some((
+                        env_name,
+                        error_name,
+                        result_name,
+                        using_async,
+                        prev_block_using_env,
+                    ))
+                } else {
+                    None
+                };
 
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
