@@ -94,6 +94,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::{Cell, RefCell};
 use tsz_common::common::ModuleKind;
 use tsz_parser::parser::node::{Node, NodeAccess, NodeArena};
+use tsz_parser::parser::node_flags;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::{
@@ -2767,6 +2768,23 @@ impl<'a> ES5ClassTransformer<'a> {
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
+        let has_top_level_using = block.statements.nodes.iter().any(|&stmt_idx| {
+            self.using_declaration_list_for_statement(stmt_idx)
+                .is_some()
+        });
+
+        if has_top_level_using {
+            self.emit_derived_constructor_body_with_using_ir(
+                body,
+                body_node,
+                block,
+                super_stmt_idx,
+                super_stmt_position,
+                params,
+                instance_props,
+            );
+            return;
+        }
 
         let can_use_tail_super_return = super_stmt_idx.is_some()
             && stmts_after_super == 0
@@ -2880,6 +2898,260 @@ impl<'a> ES5ClassTransformer<'a> {
         if super_stmt_idx.is_some() && remaining_can_complete_normally {
             body.push(IRNode::ret(Some(IRNode::id("_this"))));
         }
+    }
+
+    fn emit_derived_constructor_body_with_using_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        body_node: &Node,
+        block: &tsz_parser::parser::node::BlockData,
+        super_stmt_idx: Option<NodeIndex>,
+        super_stmt_position: usize,
+        params: &NodeList,
+        instance_props: &[NodeIndex],
+    ) {
+        let temps_before = self.extra_hoisted_temps.borrow().len();
+        let (env_name, error_name) = self.next_constructor_disposable_env_names();
+
+        body.push(IRNode::var_decl("_this", Some(IRNode::this())));
+        body.push(IRNode::var_decl(
+            env_name.clone(),
+            Some(Self::disposable_env_initializer_ir()),
+        ));
+
+        let mut try_body = Vec::new();
+        let mut prev_stmt_end = body_node.pos;
+        for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+            if i >= super_stmt_position && super_stmt_idx.is_some() {
+                break;
+            }
+            if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                self.emit_leading_statement_comments(&mut try_body, prev_stmt_end, stmt_node.pos);
+                prev_stmt_end = stmt_node.end;
+            }
+            try_body.push(
+                self.convert_constructor_statement_with_using_env(stmt_idx, &env_name, false),
+            );
+        }
+
+        if let Some(super_idx) = super_stmt_idx {
+            try_body.push(IRNode::expr_stmt(
+                self.emit_super_call_assignment_ir(super_idx),
+            ));
+        }
+
+        {
+            let ir_params = self.extract_parameters(params);
+            let prologue = self.generate_destructuring_prologue(params, &ir_params);
+            try_body.extend(prologue);
+        }
+
+        self.emit_parameter_properties_ir(&mut try_body, params, true);
+        self.emit_private_field_initializations_ir(&mut try_body, true);
+        self.emit_private_accessor_initializations_ir(&mut try_body, true);
+        self.emit_auto_accessor_initializations_ir(&mut try_body, true);
+
+        for &prop_idx in instance_props {
+            self.emit_property_leading_comment(&mut try_body, prop_idx);
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+                try_body.push(ir);
+            }
+        }
+
+        if super_stmt_idx.is_some() {
+            for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
+                if i <= super_stmt_position {
+                    continue;
+                }
+                if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                    self.emit_leading_statement_comments(
+                        &mut try_body,
+                        prev_stmt_end,
+                        stmt_node.pos,
+                    );
+                    prev_stmt_end = stmt_node.end;
+                }
+                try_body.push(
+                    self.convert_constructor_statement_with_using_env(stmt_idx, &env_name, true),
+                );
+            }
+        }
+
+        body.push(IRNode::TryStatement {
+            try_block: Box::new(IRNode::Block(try_body)),
+            catch_clause: Some(IRCatchClause {
+                param: Some(error_name.clone().into()),
+                body: vec![
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "error"),
+                        IRNode::id(error_name),
+                    )),
+                    IRNode::expr_stmt(IRNode::assign(
+                        IRNode::prop(IRNode::id(env_name.clone()), "hasError"),
+                        IRNode::BooleanLiteral(true),
+                    )),
+                ],
+            }),
+            finally_block: Some(Box::new(IRNode::Block(vec![IRNode::expr_stmt(
+                IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__disposeResources".into())),
+                    arguments: vec![IRNode::id(env_name)],
+                },
+            )]))),
+        });
+
+        self.insert_constructor_hoisted_temps(body, temps_before);
+
+        let remaining_can_complete_normally = if super_stmt_idx.is_some() {
+            self.statements_can_complete_normally(
+                &block.statements.nodes[(super_stmt_position + 1)..],
+            )
+        } else {
+            true
+        };
+
+        if super_stmt_idx.is_some() && remaining_can_complete_normally {
+            body.push(IRNode::ret(Some(IRNode::id("_this"))));
+        }
+    }
+
+    fn convert_constructor_statement_with_using_env(
+        &self,
+        stmt_idx: NodeIndex,
+        env_name: &str,
+        capture_this: bool,
+    ) -> IRNode {
+        if let Some(ir) =
+            self.convert_using_variable_statement_for_env(stmt_idx, env_name, capture_this)
+        {
+            return ir;
+        }
+
+        if capture_this {
+            self.convert_statement_this_captured(stmt_idx)
+        } else {
+            self.convert_statement(stmt_idx)
+        }
+    }
+
+    fn convert_using_variable_statement_for_env(
+        &self,
+        stmt_idx: NodeIndex,
+        env_name: &str,
+        capture_this: bool,
+    ) -> Option<IRNode> {
+        let (decl_list, flags) = self.using_declaration_list_for_statement(stmt_idx)?;
+        let using_async = node_flags::is_await_using(flags);
+        let mut declarations = Vec::new();
+
+        for &decl_idx in &decl_list.declarations.nodes {
+            let decl_node = self.arena.get(decl_idx)?;
+            let decl = self.arena.get_variable_declaration(decl_node)?;
+            let name = get_identifier_text(self.arena, decl.name)?;
+            let value = if decl.initializer.is_none() {
+                IRNode::Undefined
+            } else if capture_this {
+                self.convert_expression_this_captured(decl.initializer)
+            } else {
+                self.convert_expression(decl.initializer)
+            };
+            declarations.push(IRNode::var_decl(
+                name,
+                Some(IRNode::CallExpr {
+                    callee: Box::new(IRNode::RuntimeHelper("__addDisposableResource".into())),
+                    arguments: vec![
+                        IRNode::id(env_name.to_string()),
+                        value,
+                        IRNode::BooleanLiteral(using_async),
+                    ],
+                }),
+            ));
+        }
+
+        match declarations.len() {
+            0 => None,
+            1 => declarations.into_iter().next(),
+            _ => Some(IRNode::VarDeclList(declarations)),
+        }
+    }
+
+    fn using_declaration_list_for_statement(
+        &self,
+        stmt_idx: NodeIndex,
+    ) -> Option<(&tsz_parser::parser::node::VariableData, u32)> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return None;
+        }
+
+        let var_stmt = self.arena.get_variable(stmt_node)?;
+        for &decl_list_idx in &var_stmt.declarations.nodes {
+            let decl_list_node = self.arena.get(decl_list_idx)?;
+            if decl_list_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                let flags = decl_list_node.flags as u32;
+                if (flags & node_flags::USING) != 0 {
+                    return self
+                        .arena
+                        .get_variable(decl_list_node)
+                        .map(|decl_list| (decl_list, flags));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn next_constructor_disposable_env_names(&self) -> (String, String) {
+        loop {
+            let id = self.disposable_env_counter.get();
+            self.disposable_env_counter.set(id + 1);
+            let env_name = format!("env_{id}");
+            let error_name = format!("e_{id}");
+            if self.is_blocked_disposable_name(&env_name)
+                || self.is_blocked_disposable_name(&error_name)
+            {
+                continue;
+            }
+            self.blocked_disposable_env_names
+                .borrow_mut()
+                .insert(env_name.clone());
+            self.blocked_disposable_env_names
+                .borrow_mut()
+                .insert(error_name.clone());
+            self.generated_disposable_env_names
+                .borrow_mut()
+                .extend([env_name.clone(), error_name.clone()]);
+            return (env_name, error_name);
+        }
+    }
+
+    fn is_blocked_disposable_name(&self, name: &str) -> bool {
+        self.blocked_disposable_env_names.borrow().contains(name)
+            || self
+                .arena
+                .identifiers
+                .iter()
+                .any(|identifier| identifier.escaped_text == name)
+    }
+
+    fn disposable_env_initializer_ir() -> IRNode {
+        IRNode::object(vec![
+            IRProperty {
+                key: IRPropertyKey::Identifier("stack".into()),
+                value: IRNode::ArrayLiteral(Vec::new()),
+                kind: IRPropertyKind::Init,
+            },
+            IRProperty {
+                key: IRPropertyKey::Identifier("error".into()),
+                value: IRNode::Undefined,
+                kind: IRPropertyKind::Init,
+            },
+            IRProperty {
+                key: IRPropertyKey::Identifier("hasError".into()),
+                value: IRNode::BooleanLiteral(false),
+                kind: IRPropertyKind::Init,
+            },
+        ])
     }
 
     fn statements_can_complete_normally(&self, statements: &[NodeIndex]) -> bool {
@@ -3038,6 +3310,20 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Emit super(args) as var _this = _super.call(this, args) || this;
     fn emit_super_call_ir(&self, stmt_idx: NodeIndex) -> IRNode {
+        IRNode::var_decl(
+            "_this",
+            Some(self.emit_super_call_assignment_value_ir(stmt_idx)),
+        )
+    }
+
+    fn emit_super_call_assignment_ir(&self, stmt_idx: NodeIndex) -> IRNode {
+        IRNode::assign(
+            IRNode::id("_this"),
+            self.emit_super_call_assignment_value_ir(stmt_idx),
+        )
+    }
+
+    fn emit_super_call_assignment_value_ir(&self, stmt_idx: NodeIndex) -> IRNode {
         let mut args = vec![IRNode::this()];
 
         if let Some(stmt_node) = self.arena.get(stmt_idx)
@@ -3051,16 +3337,12 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        // var _this = _super.call(this, args...) || this;
-        IRNode::var_decl(
-            "_this",
-            Some(IRNode::logical_or(
-                IRNode::call(
-                    IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
-                    args,
-                ),
-                IRNode::this(),
-            )),
+        IRNode::logical_or(
+            IRNode::call(
+                IRNode::prop(IRNode::id(self.super_name.clone()), "call"),
+                args,
+            ),
+            IRNode::this(),
         )
     }
 
