@@ -378,6 +378,21 @@ impl<'a> CheckerState<'a> {
                 // Evaluate with TS2589 detection flag
                 let depth_exceeded = (has_stable_recursive_ref || has_recursive_wrapper_arg)
                     && self.evaluate_type_for_ts2589_check(body_type, def_id);
+                // A bare-`infer` self-recursive alias is unconditionally infinite.
+                // tsc collapses it to the error type so use sites do not cascade
+                // into spurious TS2322. Flag the def as depth-poisoned: the
+                // evaluator then resolves every `Alias<...>` application to the
+                // error type (assignable both ways). Scoped to this shape so the
+                // direct-recursion path, which anchors TS2589 at the use site,
+                // keeps its current behavior. Clearing the evaluation caches drops
+                // any unexpanded application that was cached before the flag.
+                if depth_exceeded
+                    && self
+                        .conditional_body_has_bare_infer_recursive_ref(alias.type_node, alias_sid)
+                {
+                    self.ctx.definition_store.mark_depth_poisoned(def_id);
+                    self.ctx.clear_type_evaluation_caches_for_def(def_id);
+                }
                 if depth_exceeded || has_unresolved_computed_recursive_ref {
                     use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                     // tsc anchors TS2589 at `currentNode` (the inner self-reference
@@ -761,6 +776,46 @@ impl<'a> CheckerState<'a> {
             .into_iter()
             .any(|child_idx| {
                 self.conditional_body_has_definite_recursive_alias_ref(child_idx, alias_sid)
+            })
+    }
+
+    /// True when the alias body contains a conditional whose `extends` clause is
+    /// a bare `infer X` and whose true branch re-applies the alias to itself
+    /// (e.g. `type A<T> = T extends infer X ? A<X & B> : never`).
+    ///
+    /// A bare `infer X` always matches, so the true branch is taken
+    /// unconditionally; if that branch re-applies the alias the instantiation is
+    /// infinite. tsc reports TS2589 and collapses the alias to the error type.
+    /// We use this to scope the error-type collapse to exactly this shape, so the
+    /// existing direct-recursion path (which anchors TS2589 at the use site) is
+    /// unaffected.
+    fn conditional_body_has_bare_infer_recursive_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::CONDITIONAL_TYPE
+            && let Some(cond) = self.ctx.arena.get_conditional_type(node)
+            && self
+                .ctx
+                .arena
+                .kind_at(cond.extends_type)
+                .is_some_and(|kind| kind == syntax_kind_ext::INFER_TYPE)
+            && self.conditional_body_has_definite_recursive_alias_ref(cond.true_type, alias_sid)
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.conditional_body_has_bare_infer_recursive_ref(child_idx, alias_sid)
             })
     }
 

@@ -559,26 +559,8 @@ impl<'a> Printer<'a> {
         // ANY parameter has a default initializer or destructuring pattern.
         // The outer function forwards `arguments` to __awaiter. This ensures
         // parameter evaluation happens inside the generator context.
-        let any_param_needs_forwarding = use_native_generators
-            && params.iter().copied().any(|p| {
-                let Some(node) = self.arena.get(p) else {
-                    return false;
-                };
-                let Some(param) = self.arena.get_parameter(node) else {
-                    return false;
-                };
-                // Default initializer
-                if param.initializer.is_some() {
-                    return true;
-                }
-                // Destructuring pattern (name is not a simple identifier)
-                if let Some(name_node) = self.arena.get(param.name)
-                    && name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16
-                {
-                    return true;
-                }
-                false
-            });
+        let any_param_needs_forwarding =
+            use_native_generators && self.async_params_need_generator_forwarding(params);
         let move_params_to_generator =
             use_native_generators && (params_have_top_level_await || any_param_needs_forwarding);
         let es5_await_param_recovery = !use_native_generators
@@ -679,6 +661,7 @@ impl<'a> Printer<'a> {
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
             async_emitter.set_module_kind(self.ctx.outer_module_kind());
+            async_emitter.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1099,7 +1082,15 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        transformer.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
+        let blocked_disposable_names = self.blocked_disposable_names_for_transform();
+        transformer
+            .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
         let ir = transformer.transform_generator_function(function_node);
+        self.next_disposable_env_id = transformer.disposable_env_counter();
+        for generated_name in transformer.take_generated_disposable_env_names() {
+            self.generated_temp_names.insert(generated_name);
+        }
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_transforms(self.transforms.clone());
         if let Some(text) = self.source_text {
@@ -1562,6 +1553,14 @@ impl<'a> Printer<'a> {
                         Es5StaticClassExpressionElement::Field(_) => None,
                     }));
             }
+            return;
+        }
+        if !use_static_comma
+            && !defer_static_block_only_tail
+            && let Some(class_iife_expr) =
+                Self::es5_class_iife_expression_from_var(&es5_output, &class_name)
+        {
+            self.write_multiline_fragment_preserving_indent(&class_iife_expr);
             return;
         }
 
