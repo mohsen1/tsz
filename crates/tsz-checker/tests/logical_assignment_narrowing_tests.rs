@@ -242,3 +242,35 @@ type T = Expect<Equal<typeof c, number | undefined>>;
         "Expected typeof c == number | undefined with no assignment, got codes: {codes:?}"
     );
 }
+
+/// `typeof x` after a logical assignment whose RHS is an *identifier/const*
+/// (not a literal) must still reflect the whole-expression result, not the
+/// bare RHS type. The `&&=` case is the discriminating one: `b &&= yb` with
+/// `b: number | null` and `yb: 5` is `number | null` per tsc, whereas a
+/// bare-RHS shortcut would wrongly yield `5`. Guards against the
+/// ordering-sensitive cached-RHS shortcut flagged in PR #9912 review.
+#[test]
+fn test_typeof_after_logical_assignment_identifier_rhs_uses_whole_expression() {
+    let codes = check_typeof_equal(
+        r#"
+declare let a: number | undefined;
+declare const ya: number;
+a ??= ya;
+type TA = Expect<Equal<typeof a, number>>;
+
+declare let b: number | null;
+declare const yb: 5;
+b &&= yb;
+type TB = Expect<Equal<typeof b, number | null>>;
+
+declare let c: string | undefined;
+declare const yc: string;
+c ||= yc;
+type TC = Expect<Equal<typeof c, string>>;
+"#,
+    );
+    assert!(
+        !codes.contains(&2344),
+        "Expected whole-expression narrowing (not bare RHS) for identifier-RHS logical assignments, got codes: {codes:?}"
+    );
+}

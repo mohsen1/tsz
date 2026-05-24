@@ -322,24 +322,22 @@ impl<'a> FlowAnalyzer<'a> {
                         //   x ??= y  -> NonNullable<x> | typeof y
                         //   x ||= y  -> Truthy<x> | typeof y
                         //   x &&= y  -> Falsy<x> | typeof y
+                        // Prefer the cached whole-expression type when the assignment
+                        // statement has already been checked.
                         if let Some(node_types) = self.node_types
                             && let Some(&expr_type) = node_types.get(&assignment_node.0)
                         {
                             return Some(expr_type);
                         }
-                        if let Some(node_types) = self.node_types
-                            && let Some(&rhs_type) = node_types.get(&bin.right.0)
-                        {
-                            return Some(rhs_type);
-                        }
-                        // The assignment expression has not been typed yet — this
-                        // happens when a `typeof x` type query is resolved before the
-                        // statement that performs `x ??= y` is checked. Recompute the
-                        // whole-expression result (`x ?? y` / `x || y` / `x && y`)
-                        // structurally from the operand types using the same binary
-                        // evaluator the value-position path caches, so the type-query
-                        // flow type agrees with value-position narrowing for all three
-                        // logical-assignment operators.
+                        // Otherwise recompute the whole-expression result
+                        // (`x ?? y` / `x || y` / `x && y`) structurally from the operand
+                        // types using the same binary evaluator the value-position path
+                        // caches. This happens when a `typeof x` type query is resolved
+                        // before the statement that performs `x ??= y` is checked. Do NOT
+                        // fall back to the cached RHS type alone: for these operators the
+                        // LHS does not simply become `typeof y` (the short-circuit branch
+                        // contributes the narrowed original `x`), so a bare-RHS result
+                        // would diverge from the value-position flow type.
                         return self.logical_compound_assignment_fallback_type(
                             bin.left,
                             bin.right,
