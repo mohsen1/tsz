@@ -954,6 +954,83 @@ class RegularClass {\n    accessor shouldError: string;\n}\n";
     }
 
     #[test]
+    fn es2015_private_field_destructuring_assignment_uses_setter_target() {
+        let source = "class C {\n    #value: string;\n    m(arg: { key: string }) {\n        ({ key: this.#value } = arg);\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var __classPrivateFieldSet ="),
+            "Private-field destructuring writes should schedule the SET helper.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("m(arg) {\n        var _a;"),
+            "The private receiver temp should be hoisted in the method body.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("(_a = this, { key: ({ set value(_b) { __classPrivateFieldSet(_a, _C_value, _b, \"f\"); } }).value } = arg);"),
+            "Native destructuring should use a setter proxy target for private-field writes.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("{ key: __classPrivateFieldGet(this, _C_value, \"f\") } = arg"),
+            "The private field target must not be emitted as a private-field read.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn es2015_constructor_private_destructuring_keeps_prologue_order() {
+        let source = "class C {\n    #secret: string;\n    constructor(arg: { key: string }, public exposed: number) {\n        \"prologue\";\n        ({ key: this.#secret } = arg);\n    }\n}\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        let directive_pos = output
+            .find("\"prologue\";")
+            .expect("constructor directive should be emitted");
+        let temp_pos = output
+            .find("var _a;")
+            .expect("private receiver temp should be hoisted after the directive");
+        let param_pos = output
+            .find("this.exposed = exposed;")
+            .expect("parameter property assignment should be emitted");
+        let private_init_pos = output
+            .find("_C_secret.set(this, void 0);")
+            .expect("private field initialization should be emitted");
+        let destructure_pos = output
+            .find("(_a = this, { key: ({ set value(_b) { __classPrivateFieldSet(_a, _C_secret, _b, \"f\"); } }).value } = arg);")
+            .expect("private-field destructuring setter target should be emitted");
+
+        assert!(
+            directive_pos < temp_pos
+                && temp_pos < param_pos
+                && param_pos < private_init_pos
+                && private_init_pos < destructure_pos,
+            "Constructor directives, temps, parameter properties, private initializers, and body statements should stay in tsc order.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn esnext_legacy_class_fields_hoist_auto_accessors_in_source_order() {
         let source = "// order comment\n\
 class C {\n\

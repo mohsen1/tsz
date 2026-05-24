@@ -661,6 +661,7 @@ impl<'a> Printer<'a> {
             let mut async_emitter = crate::transforms::async_es5::AsyncES5Emitter::new(self.arena);
             async_emitter.set_system_import_meta(self.in_system_execute_body);
             async_emitter.set_module_kind(self.ctx.outer_module_kind());
+            async_emitter.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
             // The generator body is nested inside `function () { ... }` in the __awaiter
             // callback, so render it at one extra indent level (matching tsc multi-line format).
             async_emitter.set_indent_level(self.writer.indent_level() + 1);
@@ -1081,6 +1082,7 @@ impl<'a> Printer<'a> {
             transformer.set_source_text(text);
         }
         transformer.set_module_kind(self.ctx.outer_module_kind());
+        transformer.set_downlevel_iteration(self.ctx.options.downlevel_iteration);
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         transformer
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);

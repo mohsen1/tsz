@@ -1294,7 +1294,7 @@ impl<'a> Printer<'a> {
             }
 
             // If no super() call exists, emit prologue before first body statement
-            if !prologue_emitted && super_call_idx.is_none() && stmt_i == 0 {
+            if !prologue_emitted && super_call_idx.is_none() && stmt_i == directive_prologue_count {
                 self.emit_constructor_prologue(param_props, field_inits, auto_accessor_inits);
                 prologue_emitted = true;
             }
@@ -1359,19 +1359,6 @@ impl<'a> Printer<'a> {
             self.write(".add(this);");
             self.write_line();
         }
-        // Emit private field WeakMap.set inits
-        let private_inits = self.pending_private_field_constructor_inits.clone();
-        for (weakmap_name, has_initializer, initializer) in &private_inits {
-            self.write(weakmap_name);
-            self.write(".set(this, ");
-            if *has_initializer {
-                self.emit_expression(*initializer);
-            } else {
-                self.write("void 0");
-            }
-            self.write(");");
-            self.write_line();
-        }
         // When useDefineForClassFields is true and fields are being lowered to
         // the constructor (target < ES2022), parameter properties should use
         // Object.defineProperty to match tsc's emit semantics.
@@ -1403,6 +1390,20 @@ impl<'a> Printer<'a> {
                 self.write(name);
                 self.write(";");
             }
+            self.write_line();
+        }
+        // Emit private field WeakMap.set inits after parameter properties. They
+        // are instance field initializers for ordering purposes.
+        let private_inits = self.pending_private_field_constructor_inits.clone();
+        for (weakmap_name, has_initializer, initializer) in &private_inits {
+            self.write(weakmap_name);
+            self.write(".set(this, ");
+            if *has_initializer {
+                self.emit_expression(*initializer);
+            } else {
+                self.write("void 0");
+            }
+            self.write(");");
             self.write_line();
         }
         for (name, init_idx, init_end, leading_comments, trailing_comments) in field_inits {

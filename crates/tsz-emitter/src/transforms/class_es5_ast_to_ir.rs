@@ -2049,7 +2049,7 @@ impl<'a> AstToIr<'a> {
         // Final reference to temp
         comma_parts.push(IRNode::id(temp));
 
-        IRNode::CommaExpr(comma_parts)
+        IRNode::CommaExprMultiline(comma_parts)
     }
 
     /// Lower a single object property to an ES5 assignment or Object.defineProperty call
