@@ -693,11 +693,22 @@ impl<'a> Printer<'a> {
         let should_emit_single_line = source_single_line && !has_multiline_object_member;
         if should_emit_single_line {
             self.write("{ ");
-            for (i, &prop) in emitted_properties.iter().enumerate() {
+            let mut i = 0;
+            while i < emitted_properties.len() {
                 if i > 0 {
                     self.write(", ");
                 }
+                let prop = emitted_properties[i];
                 self.emit_object_property(prop);
+                if i + 1 < emitted_properties.len()
+                    && let Some(tail) = self
+                        .object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
+                {
+                    self.write(", ");
+                    self.write(&tail);
+                    i += 1;
+                }
+                i += 1;
             }
             if has_trailing_comma {
                 self.write(",");
@@ -720,8 +731,11 @@ impl<'a> Printer<'a> {
                     .map(|off| (start + off + 1) as u32)
                     .unwrap_or(node.pos + 1)
             });
-            for (i, &prop) in emitted_properties.iter().enumerate() {
+            let mut i = 0;
+            while i < emitted_properties.len() {
+                let prop = emitted_properties[i];
                 let Some(prop_node) = self.arena.get(prop) else {
+                    i += 1;
                     continue;
                 };
                 // Skip error-recovery shorthand placeholders synthesized when the parser
@@ -734,6 +748,7 @@ impl<'a> Printer<'a> {
                     && name_node.kind == tsz_scanner::SyntaxKind::Identifier as u16
                     && name_node.pos == name_node.end
                 {
+                    i += 1;
                     continue;
                 }
                 // Emit leading comments before the first property (e.g. /** own x*/)
@@ -751,13 +766,31 @@ impl<'a> Printer<'a> {
                 }
                 self.emit_object_property(prop);
 
-                let is_last = i == emitted_properties.len() - 1;
+                let recovery_tail = if i + 1 < emitted_properties.len() {
+                    self.object_literal_shorthand_continuation_tail(prop, emitted_properties[i + 1])
+                } else {
+                    None
+                };
+                let unit_end_index = if let Some(tail) = recovery_tail {
+                    self.write(", ");
+                    self.write(&tail);
+                    i + 1
+                } else {
+                    i
+                };
+                let unit_end_prop = emitted_properties[unit_end_index];
+                let Some(unit_end_node) = self.arena.get(unit_end_prop) else {
+                    i = unit_end_index + 1;
+                    continue;
+                };
+                let is_last = unit_end_index == emitted_properties.len() - 1;
 
                 // Use token_end (before trivia) for comment scanning.
                 // The parser's node.end extends past trailing trivia (comments,
                 // whitespace) into the next token's position, so using node.end
                 // directly would miss trailing same-line comments.
-                let token_end = self.find_token_end_before_trivia(prop_node.pos, prop_node.end);
+                let token_end =
+                    self.find_token_end_before_trivia(unit_end_node.pos, unit_end_node.end);
 
                 // For the last property, has_trailing_comma_in_source may miss
                 // commas followed by inline comments (e.g., `x: 1, // comment`)
@@ -766,7 +799,7 @@ impl<'a> Printer<'a> {
                 // right after a comma (it treats commas as non-trivia tokens).
                 let next_pos = if !is_last {
                     emitted_properties
-                        .get(i + 1)
+                        .get(unit_end_index + 1)
                         .and_then(|&next_prop| self.arena.get(next_prop))
                         .map_or(prop_node.end, |n| n.pos)
                 } else {
@@ -789,7 +822,7 @@ impl<'a> Printer<'a> {
 
                 // Check if next property is on the same line in source
                 if !is_last {
-                    let next_prop = emitted_properties[i + 1];
+                    let next_prop = emitted_properties[unit_end_index + 1];
                     // Check if there's a trailing comment on the same line after the comma
                     // If so, add a space between the comma and the comment
                     let has_same_line_comment = self.source_text.is_some_and(|text| {
@@ -809,7 +842,7 @@ impl<'a> Printer<'a> {
                             false
                         }
                     });
-                    let same_line = self.are_on_same_line_in_source(prop, next_prop);
+                    let same_line = self.are_on_same_line_in_source(unit_end_prop, next_prop);
                     if has_same_line_comment {
                         // Same-line trailing comment after comma: space before comment
                         self.write(" ");
@@ -841,9 +874,121 @@ impl<'a> Printer<'a> {
                         self.write_line();
                     }
                 }
+                i = unit_end_index + 1;
             }
             self.decrease_indent();
             self.write("}");
+        }
+    }
+
+    fn object_literal_shorthand_continuation_tail(
+        &self,
+        prop: NodeIndex,
+        next_prop: NodeIndex,
+    ) -> Option<String> {
+        let source = self.source_text?;
+        let prop_node = self.arena.get(prop)?;
+        if prop_node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+            return None;
+        }
+        let shorthand = self.arena.get_shorthand_property(prop_node)?;
+        if shorthand.equals_token || shorthand.object_assignment_initializer != NodeIndex::NONE {
+            return None;
+        }
+        let name_node = self.arena.get(shorthand.name)?;
+        if name_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let ident = self.arena.get_identifier(name_node)?;
+
+        let bytes = source.as_bytes();
+        let next_node = self.arena.get(next_prop)?;
+        let search_start = std::cmp::min(prop_node.pos as usize, source.len());
+        let search_end = std::cmp::min(next_node.end as usize, source.len());
+        if search_start >= search_end {
+            return None;
+        }
+        let search = crate::safe_slice::slice(source, search_start, search_end).ok()?;
+        let dot_pos = search.find('.');
+        let bracket_pos = search.find('[');
+        let tail_rel = match (dot_pos, bracket_pos) {
+            (Some(dot), Some(bracket)) => std::cmp::min(dot, bracket),
+            (Some(dot), None) => dot,
+            (None, Some(bracket)) => bracket,
+            (None, None) => return None,
+        };
+        let before_tail = &search[..tail_rel];
+        if before_tail.contains('\n') || before_tail.trim() != ident.escaped_text {
+            return None;
+        }
+        let cursor = search_start + tail_rel;
+
+        match bytes.get(cursor).copied()? {
+            b'.' => {
+                let next_shorthand = self.arena.get_shorthand_property(next_node)?;
+                if next_node.kind != syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    || next_shorthand.equals_token
+                    || next_shorthand.object_assignment_initializer != NodeIndex::NONE
+                {
+                    return None;
+                }
+                let next_name = self.arena.get(next_shorthand.name)?;
+                if next_name.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+                    return None;
+                }
+                let next_ident = self.arena.get_identifier(next_name)?;
+                let after_dot = cursor + 1;
+                let dot_tail = crate::safe_slice::slice(source, after_dot, search_end).ok()?;
+                let next_rel = dot_tail.find(&next_ident.escaped_text)?;
+                if dot_tail[..next_rel].contains('\n') {
+                    return None;
+                }
+                let tail_end = after_dot + next_rel + next_ident.escaped_text.len();
+                if source[cursor..tail_end].contains('\n') {
+                    return None;
+                }
+                let tail = crate::safe_slice::slice(source, cursor, tail_end).ok()?;
+                Some(format!(": {tail}"))
+            }
+            b'[' => {
+                let computed_name_idx = if next_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT {
+                    let assignment = self.arena.get_property_assignment(next_node)?;
+                    if assignment.initializer != assignment.name {
+                        return None;
+                    }
+                    assignment.name
+                } else if next_node.kind == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT {
+                    let next_shorthand = self.arena.get_shorthand_property(next_node)?;
+                    if next_shorthand.equals_token
+                        || next_shorthand.object_assignment_initializer != NodeIndex::NONE
+                    {
+                        return None;
+                    }
+                    next_shorthand.name
+                } else {
+                    return None;
+                };
+                let computed_name = self.arena.get(computed_name_idx)?;
+                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    return None;
+                }
+                let mut tail_end = std::cmp::min(computed_name.end as usize, source.len());
+                while tail_end > cursor && matches!(bytes[tail_end - 1], b' ' | b'\t') {
+                    tail_end -= 1;
+                }
+                if tail_end > cursor && bytes[tail_end - 1] == b',' {
+                    tail_end -= 1;
+                }
+                while tail_end > cursor && matches!(bytes[tail_end - 1], b' ' | b'\t') {
+                    tail_end -= 1;
+                }
+                if source[cursor..tail_end].contains('\n') {
+                    return None;
+                }
+                let tail = crate::safe_slice::slice(source, cursor, tail_end).ok()?;
+                Some(format!("{tail}: "))
+            }
+            _ => None,
         }
     }
 
@@ -1547,6 +1692,60 @@ mod tests {
         assert!(
             output.contains("1, /* trailing */"),
             "Block comment should stay on same line after comma.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_literal_recovery_keeps_property_access_tail_with_shorthand() {
+        let source = "var h = {\n    alpha.beta,\n    renamed.gamma,\n};\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("alpha, : .beta,"),
+            "Recovered property-access member should stay attached to its shorthand base.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("renamed, : .gamma,"),
+            "Recovery should not depend on a specific identifier spelling.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn object_literal_recovery_keeps_element_access_tail_with_shorthand() {
+        let source = "var h = {\n    alpha[\"beta\"],\n    renamed[1],\n};\n";
+
+        let (parser, root) = parse_test_source(source);
+
+        let mut printer = Printer::with_options(
+            &parser.arena,
+            PrinterOptions {
+                target: ScriptTarget::ES2015,
+                ..Default::default()
+            },
+        );
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("alpha, [\"beta\"]: ,"),
+            "Recovered element-access member should stay attached to its shorthand base.\nOutput:\n{output}"
+        );
+        assert!(
+            output.contains("renamed, [1]: ,"),
+            "Recovery should also handle numeric computed names without name-specific logic.\nOutput:\n{output}"
         );
     }
 
