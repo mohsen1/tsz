@@ -4,6 +4,7 @@ import {
   formatResult,
   pendingQueueRun,
   parseArgs,
+  queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
 } from "./poor-mans-merge-queue.mjs";
@@ -80,6 +81,9 @@ assert.equal(
   }), "Queue Tested"),
   null,
 );
+assert.equal(queueRunIsActive({ status: "queued" }), true);
+assert.equal(queueRunIsActive({ status: "in_progress" }), true);
+assert.equal(queueRunIsActive({ status: "completed", conclusion: "cancelled" }), false);
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
 assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");
@@ -96,6 +100,14 @@ assert.match(
     skips: [],
   }, parseArgs(["--repository", "owner/repo", "--dry-run"])),
   /Would synthetic-test and merge #42/,
+);
+
+assert.match(
+  formatResult({
+    invalidated: 12,
+    skippedActiveRuns: 2,
+  }, parseArgs(["--repository", "owner/repo", "--invalidate-open"])),
+  /Preserved 2 active queue run status/,
 );
 
 assert.match(

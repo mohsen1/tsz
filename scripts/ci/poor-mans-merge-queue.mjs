@@ -209,6 +209,21 @@ export function pendingQueueRun(pr, statusContext) {
   return runId ? { runId, targetUrl: status.targetUrl } : null;
 }
 
+export function queueRunIsActive(run) {
+  return normalize(run?.status) !== "COMPLETED";
+}
+
+function activePendingQueueRun(repository, pr, statusContext) {
+  const pendingRun = pendingQueueRun(pr, statusContext);
+  if (!pendingRun) return null;
+  const run = readWorkflowRun(repository, pendingRun.runId);
+  if (!queueRunIsActive(run)) return null;
+  return {
+    ...pendingRun,
+    url: run.url || pendingRun.targetUrl,
+  };
+}
+
 export function queueSkipReason(pr, requiredState, base) {
   if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
   if (pr.isDraft) return "draft PR";
@@ -308,7 +323,10 @@ function postComment(repository, number, body) {
 }
 
 function invalidatePullRequest(repository, pr, options) {
-  if (options.dryRun) return;
+  if (options.dryRun) return { invalidated: false, skipped: false };
+  const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
+  const activeRun = activePendingQueueRun(repository, detailed, options.statusContext);
+  if (activeRun) return { invalidated: false, skipped: true, activeRun };
   postStatus(
     repository,
     pr.headRefOid,
@@ -316,12 +334,19 @@ function invalidatePullRequest(repository, pr, options) {
     options.statusContext,
     `Waiting for ${options.base} synthetic merge test`,
   );
+  return { invalidated: true, skipped: false };
 }
 
 function invalidateOpen(repository, options) {
   const prs = readPullRequests(repository, options.base, options.maxPrs);
-  for (const pr of prs) invalidatePullRequest(repository, pr, options);
-  return { invalidated: prs.length };
+  let invalidated = 0;
+  let skippedActiveRuns = 0;
+  for (const pr of prs) {
+    const result = invalidatePullRequest(repository, pr, options);
+    if (result?.invalidated) invalidated += 1;
+    if (result?.skipped) skippedActiveRuns += 1;
+  }
+  return { invalidated, skippedActiveRuns };
 }
 
 function readQueueCandidates(repository, options) {
@@ -334,15 +359,12 @@ function readQueueCandidates(repository, options) {
       const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
       const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
       if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
-      const pendingRun = pendingQueueRun(detailed, options.statusContext);
-      if (pendingRun) {
-        const run = readWorkflowRun(repository, pendingRun.runId);
-        if (normalize(run.status) !== "COMPLETED") {
-          return {
-            pr: detailed,
-            skipReason: `queue test already running (${run.url || pendingRun.targetUrl})`,
-          };
-        }
+      const activeRun = activePendingQueueRun(repository, detailed, options.statusContext);
+      if (activeRun) {
+        return {
+          pr: detailed,
+          skipReason: `queue test already running (${activeRun.url})`,
+        };
       }
       return {
         pr: detailed,
@@ -498,6 +520,9 @@ export function formatResult(result, options) {
   ];
   if (result.invalidated !== undefined) {
     lines.push(`Invalidated ${result.invalidated} open PR head(s).`);
+    if (result.skippedActiveRuns) {
+      lines.push(`Preserved ${result.skippedActiveRuns} active queue run status(es).`);
+    }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
   } else if (result.dryRun) {
@@ -526,8 +551,11 @@ function main() {
   let result;
   if (options.invalidatePr !== null) {
     const pr = readPullRequest(options.repository, options.invalidatePr);
-    invalidatePullRequest(options.repository, pr, options);
-    result = { invalidated: 1 };
+    const invalidation = invalidatePullRequest(options.repository, pr, options);
+    result = {
+      invalidated: invalidation?.invalidated ? 1 : 0,
+      skippedActiveRuns: invalidation?.skipped ? 1 : 0,
+    };
   } else if (options.invalidateOpen) {
     result = invalidateOpen(options.repository, options);
   } else {
