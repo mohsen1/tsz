@@ -251,6 +251,152 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         })
     }
 
+    /// Reduce an instantiated parameter type before the final argument check.
+    ///
+    /// Once generic inference has fixed a function's type parameters, a
+    /// conditional / `Exclude` parameter that referenced those parameters
+    /// becomes concrete and must be evaluated so it reduces to its real form
+    /// (for example `'a' extends 'a' ? never : 'a'` reduces to `never`). Without
+    /// this step the un-reduced conditional is treated as assignable from any
+    /// argument, so a forbidden argument is silently accepted (missing TS2345).
+    /// This mirrors tsc's instantiate-then-check: the parameter type is
+    /// instantiated with the inferred type arguments and evaluated before the
+    /// argument-assignability test.
+    ///
+    /// Higher-order callback parameters that still carry the function's tracked
+    /// type parameters are left untouched so callback-inference placeholders
+    /// survive. Genuinely deferred conditionals (still containing free type
+    /// parameters from an outer scope) are also left alone — `evaluate_type`
+    /// keeps those deferred.
+    pub(super) fn finalize_instantiated_param_type(
+        &mut self,
+        param_type: TypeId,
+        infer_subst: &TypeSubstitution,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+    ) -> TypeId {
+        if self
+            .function_like_type_param_appears_in_parameter_position(param_type, tracked_type_params)
+        {
+            return param_type;
+        }
+        let normalized = if infer_subst.is_empty() {
+            param_type
+        } else {
+            self.normalize_inferred_placeholder_type(param_type, infer_subst)
+        };
+        // A conditional / `Exclude` (alias application of a conditional) parameter
+        // type whose free type parameters are all fixed is fully concrete and must
+        // be reduced (e.g. to `never`) before the argument check, so a forbidden
+        // argument reaches a `never` parameter and is rejected (TS2345). Use the
+        // checker's evaluator so that `extends` operands and alias applications
+        // referencing named types (`keyof R`, `Exclude<K, 'a'>`, interface refs)
+        // resolve through the type environment — the interner alone cannot resolve
+        // `Lazy(DefId)` references. Restricting this to the conditional family
+        // keeps every other parameter shape on its prior reduction path.
+        if self.type_reduces_via_conditional(normalized)
+            && !crate::visitor::contains_free_type_parameters(
+                self.interner.as_type_database(),
+                normalized,
+            )
+        {
+            return self.checker.evaluate_type(normalized);
+        }
+        // Pre-existing behavior: top-level applications (e.g. `Promise<T>`) are
+        // reduced through the interner once a substitution has been applied.
+        if !infer_subst.is_empty()
+            && matches!(
+                self.interner.lookup(normalized),
+                Some(TypeData::Application(_))
+            )
+        {
+            return self.interner.evaluate_type(normalized);
+        }
+        normalized
+    }
+
+    /// Whether a fresh literal inferred for `tp_name` should be preserved (not
+    /// widened to its primitive) so a conditional / `Exclude` parameter
+    /// referencing it can reduce to `never` (issue #9652).
+    ///
+    /// This is a deliberately narrow stopgap, not the full tsc `widenLiteralTypes`
+    /// / `inference.topLevel` model. tsc's `topLevel` is a *runtime* property of
+    /// where each inference candidate came from (cleared by callback-return,
+    /// array-element, intersection-member, … contributions), which a static
+    /// signature inspection cannot reproduce faithfully. To avoid changing
+    /// inference for unrelated shapes — and regressing conformance — preservation
+    /// is restricted to the case the bug needs: the type parameter is at the top
+    /// level of the return type and flows into a conditional / `Exclude`
+    /// parameter that can reduce to `never`. Every other shape keeps its prior
+    /// (widening) behavior. Generalizing to tsc's full model is a follow-up.
+    pub(super) fn type_param_preserves_inferred_literal(
+        &mut self,
+        func: &FunctionShape,
+        tp_name: tsz_common::Atom,
+    ) -> bool {
+        if !self.type_param_at_top_level_through_aliases(func.return_type, tp_name) {
+            return false;
+        }
+        let param_types: Vec<TypeId> = func.params.iter().map(|p| p.type_id).collect();
+        param_types.iter().any(|&param_type| {
+            crate::visitor::contains_type_parameter_named(
+                self.interner.as_type_database(),
+                param_type,
+                tp_name,
+            ) && self.type_reduces_via_conditional(param_type)
+        })
+    }
+
+    /// Whether `ty` is — or, for a top-level alias application such as
+    /// `Exclude<K, 'a'>`, expands to — a type that contains a conditional. These
+    /// are the parameter shapes that can reduce to `never` once their type
+    /// arguments are fixed.
+    fn type_reduces_via_conditional(&mut self, ty: TypeId) -> bool {
+        if self.type_contains_conditional(ty) {
+            return true;
+        }
+        if matches!(self.interner.lookup(ty), Some(TypeData::Application(_)))
+            && let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            return self.type_contains_conditional(expanded);
+        }
+        false
+    }
+
+    /// Like `is_type_parameter_at_top_level`, but expands a top-level alias
+    /// application (e.g. `Exclude<K, 'a'>` -> `K extends 'a' ? never : K`) so the
+    /// type parameter's top-level position inside the alias body is visible.
+    fn type_param_at_top_level_through_aliases(
+        &mut self,
+        ty: TypeId,
+        tp_name: tsz_common::Atom,
+    ) -> bool {
+        if crate::visitor::is_type_parameter_at_top_level(
+            self.interner.as_type_database(),
+            ty,
+            tp_name,
+        ) {
+            return true;
+        }
+        if matches!(self.interner.lookup(ty), Some(TypeData::Application(_)))
+            && let Some(expanded) = self.checker.expand_type_alias_application(ty)
+            && expanded != ty
+        {
+            return crate::visitor::is_type_parameter_at_top_level(
+                self.interner.as_type_database(),
+                expanded,
+                tp_name,
+            );
+        }
+        false
+    }
+
+    fn type_contains_conditional(&self, ty: TypeId) -> bool {
+        crate::visitor::collect_all_types(self.interner.as_type_database(), ty)
+            .into_iter()
+            .any(|t| matches!(self.interner.lookup(t), Some(TypeData::Conditional(_))))
+    }
+
     /// Collapse transient inference placeholders (like `__infer_src_*`) to stable types.
     ///
     /// The generic call pipeline uses temporary type parameter placeholders for

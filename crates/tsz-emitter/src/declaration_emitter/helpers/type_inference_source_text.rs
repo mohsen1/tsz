@@ -234,22 +234,8 @@ impl<'a> DeclarationEmitter<'a> {
         expr_idx: NodeIndex,
     ) -> Option<String> {
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
-        if self.is_module_exports_reference(expr_idx) {
-            let source_file_idx = self.current_source_file_idx?;
-            let source_file_node = self.arena.get(source_file_idx)?;
-            let source_file = self.arena.get_source_file(source_file_node)?;
-            if source_file
-                .statements
-                .nodes
-                .iter()
-                .copied()
-                .any(|stmt_idx| {
-                    self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
-                        .is_some()
-                })
-            {
-                return Some(r#"import(".")"#.to_string());
-            }
+        if self.expression_is_anonymous_module_exports_class_reference(expr_idx) {
+            return Some(r#"import(".")"#.to_string());
         }
         let expr_node = self.arena.get(expr_idx)?;
 
@@ -266,6 +252,36 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => None,
         }
+    }
+
+    pub(in crate::declaration_emitter) fn expression_is_anonymous_module_exports_class_reference(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        if !self.is_module_exports_reference(expr_idx) {
+            return false;
+        }
+        let Some(source_file_idx) = self.current_source_file_idx else {
+            return false;
+        };
+        let Some(source_file_node) = self.arena.get(source_file_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.arena.get_source_file(source_file_node) else {
+            return false;
+        };
+        source_file
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .any(|stmt_idx| {
+                self.js_anonymous_export_equals_class_expression_initializer(stmt_idx)
+                    .is_some()
+            })
     }
 
     fn current_namespace_relative_type_reference_text(&self, reference_text: &str) -> String {

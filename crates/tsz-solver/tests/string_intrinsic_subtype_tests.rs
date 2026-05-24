@@ -626,3 +626,107 @@ fn template_literal_collapses_single_pattern_type_span() {
         Some(TypeData::Intrinsic(IntrinsicKind::Number))
     ));
 }
+
+// =============================================================================
+// String mapping over an `any` argument (#9668).
+//
+// `Uppercase<any>` is a *deferred* string-mapping type in tsc, not `any`. The
+// case constraint stays active: only a literal that is already at the mapping's
+// fixed point is a member. Collapsing to `any` (the previous behaviour) silenced
+// the constraint and accepted every string — a soundness false negative.
+//
+// These cover all four intrinsics with at least two literal shapes each, so the
+// rule is exercised structurally rather than for one spelling.
+// =============================================================================
+
+// (The non-collapse property — `Uppercase<any>` evaluates to a StringIntrinsic,
+// not `any` — is asserted in evaluate_tests::test_string_intrinsic_over_any_stays_deferred.)
+
+#[test]
+fn string_intrinsic_over_any_is_subtype_of_string() {
+    let interner = TypeInterner::new();
+
+    for kind in [
+        StringIntrinsicKind::Uppercase,
+        StringIntrinsicKind::Lowercase,
+        StringIntrinsicKind::Capitalize,
+        StringIntrinsicKind::Uncapitalize,
+    ] {
+        let mapping_any = interner.string_intrinsic(kind, TypeId::ANY);
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            checker.is_subtype_of(mapping_any, TypeId::STRING),
+            "{kind:?}<any> should be assignable to string"
+        );
+    }
+}
+
+#[test]
+fn string_intrinsic_over_any_accepts_fixed_point_literals_only() {
+    // For each mapping `M`, a literal `s` is a member of `M<any>` iff `M(s) == s`
+    // (the literal is already at the mapping's fixed point). The two literal lists
+    // per row vary case and shape so the rule is exercised structurally.
+    let cases: &[(StringIntrinsicKind, &[&str], &[&str])] = &[
+        (
+            StringIntrinsicKind::Uppercase,
+            &["X", "FOO", "A1B2"],
+            &["x", "Foo", "bar"],
+        ),
+        (
+            StringIntrinsicKind::Lowercase,
+            &["x", "foo", "a1b2"],
+            &["X", "Foo", "BAR"],
+        ),
+        (
+            StringIntrinsicKind::Capitalize,
+            &["X", "Xy", "Foo"],
+            &["x", "xy", "foo"],
+        ),
+        (
+            StringIntrinsicKind::Uncapitalize,
+            &["x", "xy", "fOO"],
+            &["X", "Xy", "FOO"],
+        ),
+    ];
+
+    let interner = TypeInterner::new();
+    for &(kind, accepted, rejected) in cases {
+        let mapping_any = interner.string_intrinsic(kind, TypeId::ANY);
+        let mut checker = SubtypeChecker::new(&interner);
+        for lit in accepted {
+            let s = interner.literal_string(lit);
+            assert!(
+                checker.is_subtype_of(s, mapping_any),
+                "\"{lit}\" should be assignable to {kind:?}<any>"
+            );
+        }
+        for lit in rejected {
+            let s = interner.literal_string(lit);
+            assert!(
+                !checker.is_subtype_of(s, mapping_any),
+                "\"{lit}\" should NOT be assignable to {kind:?}<any>"
+            );
+        }
+    }
+}
+
+#[test]
+fn string_primitive_is_not_member_of_string_intrinsic_over_any() {
+    let interner = TypeInterner::new();
+
+    // `string` can contain non-conforming characters, so it is not a member of
+    // `Uppercase<any>` / `Capitalize<any>` (parity with `Uppercase<string>`).
+    for kind in [
+        StringIntrinsicKind::Uppercase,
+        StringIntrinsicKind::Lowercase,
+        StringIntrinsicKind::Capitalize,
+        StringIntrinsicKind::Uncapitalize,
+    ] {
+        let mapping_any = interner.string_intrinsic(kind, TypeId::ANY);
+        let mut checker = SubtypeChecker::new(&interner);
+        assert!(
+            !checker.is_subtype_of(TypeId::STRING, mapping_any),
+            "string should NOT be assignable to {kind:?}<any>"
+        );
+    }
+}

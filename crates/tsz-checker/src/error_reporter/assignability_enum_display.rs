@@ -16,11 +16,16 @@ impl<'a> CheckerState<'a> {
             .iter()
             .filter_map(|&member| self.enum_member_symbol_for_type(member))
             .collect();
+        // Collapse a union of same-enum members to the bare enum name only
+        // when the union covers EVERY member of the enum. tsc renders a
+        // proper subset (e.g. `E.A | E.B` of a three-member enum) member by
+        // member, falling through to the per-member rendering loop below.
         if enum_member_symbols.len() == members.len()
             && let Some((_, enum_sym)) = enum_member_symbols.first().copied()
             && enum_member_symbols
                 .iter()
                 .all(|(_, candidate)| *candidate == enum_sym)
+            && self.union_contains_all_enum_members(&members, enum_sym)
         {
             let widened = self.widen_enum_member_type(members[0]);
             return self

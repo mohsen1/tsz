@@ -21,6 +21,73 @@ use super::super::complex::is_contextually_sensitive;
 use super::post_generic::PostGenericCallDiagnostics;
 
 impl<'a> CheckerState<'a> {
+    /// Merge the return-context inference contributed by one call argument into
+    /// the in-progress Round 2 substitution. Type parameters that Round 1 left
+    /// uninformative (any/unknown/error/still-generic, or a freshly widened
+    /// supertype) are filled in; concrete inferences are preserved. A literal
+    /// contribution to a non-`const` type parameter is widened, matching tsc's
+    /// literal widening during inference. `null`/`undefined` contributions from
+    /// a context-sensitive (callback) argument are ignored.
+    fn merge_arg_return_context_into_round2(
+        &mut self,
+        shape: &common::FunctionShape,
+        shape_param_type: TypeId,
+        arg_type: TypeId,
+        tracked_type_params: &FxHashSet<tsz_common::Atom>,
+        arg_is_sensitive: bool,
+        round2_substitution: &mut crate::query_boundaries::common::TypeSubstitution,
+    ) {
+        let mut arg_substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut visited = FxHashSet::default();
+        self.collect_return_context_substitution(
+            shape_param_type,
+            arg_type,
+            tracked_type_params,
+            &mut arg_substitution,
+            &mut visited,
+        );
+        for (&name, &raw_ty) in arg_substitution.map().iter() {
+            let ty = if shape
+                .type_params
+                .iter()
+                .find(|tp| tp.name == name)
+                .is_some_and(|tp| !tp.is_const)
+            {
+                if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, raw_ty)
+                    .is_some()
+                {
+                    raw_ty
+                } else {
+                    self.widen_literal_type(raw_ty)
+                }
+            } else {
+                raw_ty
+            };
+            if ty == TypeId::UNKNOWN
+                || ty == TypeId::ERROR
+                || (arg_is_sensitive && (ty == TypeId::NULL || ty == TypeId::UNDEFINED))
+                || self.target_contains_blocking_return_context_type_params(ty, tracked_type_params)
+            {
+                continue;
+            }
+            let should_update = match round2_substitution.get(name) {
+                None => true,
+                Some(existing) if existing == ty => false,
+                Some(existing) => {
+                    existing == TypeId::UNKNOWN
+                        || existing == TypeId::ERROR
+                        || self.inference_type_is_anyish(existing)
+                        || common::contains_infer_types(self.ctx.types, existing)
+                        || common::contains_type_parameters(self.ctx.types, existing)
+                        || assign_query::is_fresh_subtype_of(self.ctx.types, ty, existing)
+                }
+            };
+            if should_update {
+                round2_substitution.insert(name, ty);
+            }
+        }
+    }
+
     pub(crate) fn get_type_of_call_expression_inner(
         &mut self,
         idx: NodeIndex,
@@ -1443,6 +1510,40 @@ impl<'a> CheckerState<'a> {
                         let mut progressive_arg_types = round1_arg_types;
                         let mut round2_arg_types = Vec::with_capacity(arg_count);
 
+                        // Pre-seed the Round 2 contextual substitution from every
+                        // non-context-sensitive argument before contextually typing any
+                        // sensitive callback. The typing loop below otherwise accumulates
+                        // substitutions left-to-right, so a context-sensitive callback
+                        // positioned before the argument that pins a type parameter it
+                        // depends on would be typed with a stale substitution (the parameter
+                        // still uninferred). tsc fixes type parameters from all
+                        // non-context-sensitive arguments before contextually typing any
+                        // context-sensitive argument, making the callback's contextual type
+                        // order-independent.
+                        for (i, &arg_type) in progressive_arg_types.iter().enumerate() {
+                            if sensitive_args.get(i).copied().unwrap_or(false)
+                                || arg_type == TypeId::UNKNOWN
+                                || arg_type == TypeId::ERROR
+                            {
+                                continue;
+                            }
+                            if let Some(shape_param_type) =
+                                shape.params.get(i).map(|p| p.type_id).or_else(|| {
+                                    let last = shape.params.last()?;
+                                    last.rest.then_some(last.type_id)
+                                })
+                            {
+                                self.merge_arg_return_context_into_round2(
+                                    &shape,
+                                    shape_param_type,
+                                    arg_type,
+                                    &tracked_type_params,
+                                    false,
+                                    &mut round2_substitution,
+                                );
+                            }
+                        }
+
                         for (i, &arg_idx) in args.iter().enumerate() {
                             if sensitive_args.get(i).copied().unwrap_or(false)
                                 && let Some(first_branch_idx) =
@@ -1637,74 +1738,14 @@ impl<'a> CheckerState<'a> {
                                     last.rest.then_some(last.type_id)
                                 })
                             {
-                                let mut arg_substitution =
-                                    crate::query_boundaries::common::TypeSubstitution::new();
-                                let mut visited = FxHashSet::default();
-                                self.collect_return_context_substitution(
+                                self.merge_arg_return_context_into_round2(
+                                    &shape,
                                     shape_param_type,
                                     arg_type_for_refinement,
                                     &tracked_type_params,
-                                    &mut arg_substitution,
-                                    &mut visited,
+                                    sensitive_args.get(i).copied().unwrap_or(false),
+                                    &mut round2_substitution,
                                 );
-                                for (&name, &raw_ty) in arg_substitution.map().iter() {
-                                    let ty = if shape
-                                        .type_params
-                                        .iter()
-                                        .find(|tp| tp.name == name)
-                                        .is_some_and(|tp| !tp.is_const)
-                                    {
-                                        if crate::query_boundaries::common::object_shape_for_type(
-                                            self.ctx.types,
-                                            raw_ty,
-                                        )
-                                        .is_some()
-                                        {
-                                            raw_ty
-                                        } else {
-                                            self.widen_literal_type(raw_ty)
-                                        }
-                                    } else {
-                                        raw_ty
-                                    };
-                                    if ty == TypeId::UNKNOWN
-                                        || ty == TypeId::ERROR
-                                        || (sensitive_args.get(i).copied().unwrap_or(false)
-                                            && (ty == TypeId::NULL || ty == TypeId::UNDEFINED))
-                                        || self.target_contains_blocking_return_context_type_params(
-                                            ty,
-                                            &tracked_type_params,
-                                        )
-                                    {
-                                        continue;
-                                    }
-
-                                    let should_update = match round2_substitution.get(name) {
-                                        None => true,
-                                        Some(existing) if existing == ty => false,
-                                        Some(existing) => {
-                                            existing == TypeId::UNKNOWN
-                                                || existing == TypeId::ERROR
-                                                || self.inference_type_is_anyish(existing)
-                                                || common::contains_infer_types(
-                                                    self.ctx.types,
-                                                    existing,
-                                                )
-                                                || common::contains_type_parameters(
-                                                    self.ctx.types,
-                                                    existing,
-                                                )
-                                                || assign_query::is_fresh_subtype_of(
-                                                    self.ctx.types,
-                                                    ty,
-                                                    existing,
-                                                )
-                                        }
-                                    };
-                                    if should_update {
-                                        round2_substitution.insert(name, ty);
-                                    }
-                                }
                             }
 
                             let expected_still_unresolved = expected_type.is_some_and(|expected| {
@@ -2536,6 +2577,13 @@ impl<'a> CheckerState<'a> {
                         .get(i)
                         .copied()
                         .flatten()
+                        // A `never` contextual type is uninformative: it only
+                        // arises when the instantiated parameter reduced to `never`
+                        // (a forbidden argument). Using it to re-type the argument
+                        // would spuriously widen a literal (`'a'` -> `string`) and
+                        // mask the TS2345 the first resolve already found. Fall back
+                        // to the base contextual type instead.
+                        .filter(|&t| t != TypeId::NEVER)
                         .or_else(|| base_contextual_param_types.get(i).copied().flatten())
                 },
                 check_excess_properties,
