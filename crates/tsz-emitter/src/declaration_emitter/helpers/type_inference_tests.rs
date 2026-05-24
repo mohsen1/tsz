@@ -301,8 +301,8 @@ fn object_union_arms_without_methods_are_expanded() {
 
 #[test]
 fn object_union_three_property_only_arms_cross_normalize() {
-    // Mirrors jsDeclarationsJson: three property-only arms with differing
-    // keys each gain `?: undefined` for every sibling key they omit.
+    // Three property-only arms with differing keys each gain `?: undefined`
+    // for every sibling key they omit (the widened source-array union shape).
     let mut types = vec![
         "{\n    x: number;\n}".to_string(),
         "{\n    x: number;\n    y: number;\n}".to_string(),
