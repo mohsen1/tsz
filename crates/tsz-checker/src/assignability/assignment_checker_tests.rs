@@ -808,6 +808,122 @@ let foo: Record<E, any> = {};
 }
 
 #[test]
+fn mapped_string_enum_alias_single_missing_uses_member_display() {
+    // `{ [K in E]: V }` aliased as a named type, single missing member.
+    let diagnostics = diagnostics_for(
+        r#"
+enum E { A = "a", B = "b" }
+type M = { [K in E]: number };
+const bad: M = { a: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text.contains("Property '[E.B]' is missing"),
+        "single missing key from a string-enum mapped type renders as `[E.B]`, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_numeric_enum_single_missing_uses_member_display() {
+    // Numeric enum keys are erased to `"0"`/`"1"`; the display must still
+    // recover the member reference rather than the numeric literal.
+    let diagnostics = diagnostics_for(
+        r#"
+enum E { A, B }
+type M = { [K in E]: number };
+const bad: M = { 0: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text.contains("Property '[E.B]' is missing"),
+        "numeric-enum mapped key renders as `[E.B]`, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Property '1' is missing"),
+        "must not render the erased numeric key, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_enum_key_member_display_is_not_name_specific() {
+    // Renaming the enum/members must not change the rule — proves the fix is
+    // structural, not keyed on the spelling `E`/`B`.
+    let diagnostics = diagnostics_for(
+        r#"
+enum Color { Red = "red", Green = "green" }
+type Palette = { [K in Color]: number };
+const bad: Palette = { red: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text
+            .contains("Property '[Color.Green]' is missing"),
+        "renamed enum still renders the member reference, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_string_union_key_single_missing_stays_bare() {
+    // Negative control: a plain string-literal-union mapped type has no enum
+    // origin, so tsc (and tsz) render the bare key `'b'`, not `[E.B]`.
+    let diagnostics = diagnostics_for(
+        r#"
+type M = { [K in "a" | "b"]: number };
+const bad: M = { a: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2741)
+        .expect("expected TS2741");
+    assert!(
+        diag.message_text.contains("Property 'b' is missing"),
+        "string-union mapped key has no enum origin and stays bare, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains('['),
+        "string-union key must not be bracketed, got: {diag:?}"
+    );
+}
+
+#[test]
+fn mapped_enum_keys_multiple_missing_use_bare_member_names() {
+    // tsc brackets the key only for the single-property TS2741 message; the
+    // multi-property TS2739 list uses bare member names (`b, c`).
+    let diagnostics = diagnostics_for(
+        r#"
+enum E { A = "a", B = "b", C = "c" }
+type M = { [K in E]: number };
+const bad: M = { a: 1 };
+"#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2739)
+        .expect("expected TS2739 for multiple missing keys");
+    assert!(
+        diag.message_text.contains("from type 'M': b, c"),
+        "multi-property list uses bare member names, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains('['),
+        "multi-property list must not bracket enum members, got: {diag:?}"
+    );
+}
+
+#[test]
 fn mapped_type_assertion_source_preserves_alias_display() {
     let source = r#"
 type HomomorphicMappedType<T> = { [P in keyof T]: T[P] extends string ? boolean : null };
