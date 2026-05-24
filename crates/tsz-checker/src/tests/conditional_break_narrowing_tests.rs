@@ -40,6 +40,30 @@ function f(x: string | number) {
 }
 
 #[test]
+fn conditionless_for_conditional_break_preserves_break_site_narrowing() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+function f(x: string | number) {
+    for (;;) {
+        if (typeof x === "string") {
+            break;
+        }
+        return;
+    }
+    const t: string = x;
+}
+"#,
+    );
+
+    assert_eq!(
+        diagnostics.len(),
+        0,
+        "expected conditional break narrowing to make `x` string after the conditionless for loop, got {:?}",
+        diagnostic_summaries(&diagnostics)
+    );
+}
+
+#[test]
 fn while_true_conditional_break_survives_body_assignment() {
     let diagnostics = check_source_diagnostics(
         r#"
@@ -105,6 +129,28 @@ function f(x: string | number) {
         ts2322.len(),
         1,
         "expected unconditional break to keep the original union, got {:?}",
+        diagnostic_summaries(&diagnostics)
+    );
+}
+
+#[test]
+fn conditionless_for_unconditional_break_does_not_invent_narrowing() {
+    let diagnostics = check_source_diagnostics(
+        r#"
+function f(x: string | number) {
+    for (;;) {
+        break;
+    }
+    const t: string = x;
+}
+"#,
+    );
+
+    let ts2322 = diagnostics_with_code(&diagnostics, 2322);
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "expected unconditional conditionless for break to keep the original union, got {:?}",
         diagnostic_summaries(&diagnostics)
     );
 }

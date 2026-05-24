@@ -177,8 +177,6 @@ impl BinderState {
             }
             self.bind_expression(arena, loop_data.incrementor);
             self.add_antecedent(loop_label, self.current_flow);
-            self.add_antecedent(post_loop, loop_label);
-            self.add_antecedent(post_loop, self.current_flow);
         } else {
             self.bind_expression(arena, loop_data.condition);
             let pre_condition_flow = self.current_flow;
