@@ -510,9 +510,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Current post-merge count for the logical literal-preservation PR.
-        # Keep this ratchet exact when the broad boundary debt shrinks.
-        3378,
+        # Bumped by 2 for the deferred-conditional diagnostic-display fix
+        # (`is_conditional_type` guards in the assignment-target display path,
+        # matching the existing direct-call pattern in type_display.rs).
+        3377,
     ),
 ]
 
