@@ -140,6 +140,9 @@ pub struct AsyncES5Transformer<'a> {
     pub(super) module_kind: ModuleKind,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
     pub(super) dynamic_import_promise_counter: Cell<u32>,
+    /// Active async-lowered loop labels and the generator label that implements
+    /// `continue <label>` for that loop.
+    pub(super) labeled_continue_targets: Vec<(String, u32)>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -166,6 +169,7 @@ impl<'a> AsyncES5Transformer<'a> {
             class_super_is_static: false,
             module_kind: ModuleKind::None,
             dynamic_import_promise_counter: Cell::new(1),
+            labeled_continue_targets: Vec::new(),
         }
     }
 
@@ -4755,6 +4759,16 @@ impl<'a> AsyncES5Transformer<'a> {
         let Some(statement_node) = self.arena.get(labeled.statement) else {
             return;
         };
+        if statement_node.kind == syntax_kind_ext::WHILE_STATEMENT {
+            self.process_while_statement_in_async_with_label(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+                Some(&label),
+            );
+            return;
+        }
         if statement_node.kind == syntax_kind_ext::BLOCK
             && let Some(block) = self.arena.get_block(statement_node)
         {
