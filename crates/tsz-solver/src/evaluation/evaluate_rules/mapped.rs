@@ -2041,6 +2041,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Instantiate a mapped type's template with the iteration variable bound
+    /// to the tuple position `index`, then evaluate it. For a homomorphic
+    /// mapping this makes `X[I]` resolve to that position's element type.
+    fn map_template_at_index(&mut self, mapped: &MappedType, index: usize) -> TypeId {
+        let index_type = self.interner().literal_number(index as f64);
+        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
+        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
+    }
+
     /// Evaluate a homomorphic mapped type over a Tuple type.
     ///
     /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
@@ -2055,34 +2064,43 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         let tuple_elements = self.interner().tuple_list(tuple_id);
         let mut mapped_elements = Vec::new();
+        let mut seen_rest = false;
 
         for (i, elem) in tuple_elements.iter().enumerate() {
-            // CRITICAL: Handle rest elements specially
-            // For rest elements (...T[]), we cannot use index substitution.
-            // We must map the array type itself.
             if elem.rest {
-                // Rest elements like ...number[] need to be mapped as arrays
-                // Check if the rest type is an Array
+                let is_first_rest = !seen_rest;
+                seen_rest = true;
                 let rest_type = elem.type_id;
                 let mapped_rest_type = match self.interner().lookup(rest_type) {
+                    Some(TypeData::Array(_)) if is_first_rest => {
+                        // `...E[]` as the first rest: every position before it is
+                        // fixed, so `X[i]` (this position's index) unambiguously
+                        // resolves to the rest element's own type. Binding `I` to
+                        // `X[number]` instead — as `evaluate_mapped_array` does —
+                        // would wrongly yield the union of every tuple element
+                        // (e.g. `Identity<[string, ...number[]]>` rest member
+                        // `string | number` rather than `number`). Re-wrap as an
+                        // array so the slot stays a rest element.
+                        //
+                        // A later rest cannot use this: `tuple_index_literal`
+                        // short-circuits on the first rest it meets, so positions
+                        // after an earlier rest/variadic spread are unreliable.
+                        let mapped_element = self.map_template_at_index(mapped, i);
+                        self.interner().array(mapped_element)
+                    }
                     Some(TypeData::Array(inner_elem)) => {
-                        // Map the inner array element
-                        // Reuse the array mapping logic
                         self.evaluate_mapped_array(mapped, inner_elem)
                     }
                     Some(TypeData::Tuple(inner_tuple_id)) => {
-                        // Nested tuple in rest - recurse
+                        // Nested tuple spread (`...[A, B]`) - recurse.
                         self.evaluate_mapped_tuple(mapped, inner_tuple_id)
                     }
                     _ => {
-                        // Fallback: try index substitution (may not work correctly)
-                        let index_type = self.interner().literal_number(i as f64);
-                        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-                        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
+                        // Generic/opaque rest (e.g. `...U`): index substitution.
+                        self.map_template_at_index(mapped, i)
                     }
                 };
 
-                // Handle optional modifier for rest elements
                 let final_rest_type =
                     if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
                         self.interner().union2(mapped_rest_type, TypeId::UNDEFINED)
@@ -2099,15 +2117,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 continue;
             }
 
-            // Non-rest elements: use index substitution
-            // Create a literal number type for this tuple position
-            let index_type = self.interner().literal_number(i as f64);
-
-            let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-
-            // Substitute into the template to get the mapped element type
-            let mapped_type =
-                self.evaluate(instantiate_type(self.interner(), mapped.template, &subst));
+            // Non-rest elements: bind the iteration variable to this position's
+            // index so the template's `X[I]` resolves to this element's type.
+            let mapped_type = self.map_template_at_index(mapped, i);
 
             // Per-element readonly is not representable on a `TupleElement`; the
             // mapped type's readonly modifier is applied at the tuple level by
