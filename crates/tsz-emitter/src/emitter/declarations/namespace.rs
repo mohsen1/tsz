@@ -111,7 +111,7 @@ impl<'a> Printer<'a> {
                         .collect(),
                 );
             }
-            let ns_name = self.namespace_declaration_root_name(idx, module.name);
+            let ns_name = self.get_module_root_name(module.name).unwrap_or_default();
             if !ns_name.is_empty() {
                 // When the namespace name was already declared (e.g., by a
                 // function or class), suppress the `var` declaration.
@@ -190,38 +190,6 @@ impl<'a> Printer<'a> {
             parent_name.as_deref(),
             parent_source_path.as_deref(),
         );
-    }
-
-    fn namespace_declaration_root_name(
-        &self,
-        mut module_idx: NodeIndex,
-        fallback_name_idx: NodeIndex,
-    ) -> String {
-        while let Some(node) = self.arena.get(module_idx) {
-            if node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                break;
-            }
-            let Some(module) = self.arena.get_module(node) else {
-                break;
-            };
-            let name = self.qualified_name_to_string(module.name);
-            if let Some(root) = name.split('.').find(|part| !part.is_empty()) {
-                return root.to_string();
-            }
-            let Some(body_node) = self.arena.get(module.body) else {
-                break;
-            };
-            if body_node.kind != syntax_kind_ext::MODULE_DECLARATION {
-                break;
-            }
-            module_idx = module.body;
-        }
-
-        self.qualified_name_to_string(fallback_name_idx)
-            .split('.')
-            .find(|part| !part.is_empty())
-            .unwrap_or_default()
-            .to_string()
     }
 
     pub(in crate::emitter) fn emit_recovered_template_module_declaration(
