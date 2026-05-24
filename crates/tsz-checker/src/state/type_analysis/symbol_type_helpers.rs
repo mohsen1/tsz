@@ -143,7 +143,7 @@ impl<'a> CheckerState<'a> {
     /// But NOT safe type-argument references like `T extends Array<T>` or
     /// `S extends Foo<S>`, which are valid in TypeScript.
     pub(crate) fn is_same_type_parameter(
-        &self,
+        &mut self,
         constraint_type: TypeId,
         param_type_id: TypeId,
         param_name: &str,
@@ -224,11 +224,20 @@ impl<'a> CheckerState<'a> {
                     });
             return key_without_keyof;
         }
-        direct_resolution_path_constraint
+        if direct_resolution_path_constraint
             && self.constraint_references_type_param_identity_in_resolution_path(
                 constraint_type,
                 param_type_id,
             )
+        {
+            return true;
+        }
+
+        // A transparent type-alias application expands to its body before the base
+        // constraint resolves, which can reveal a self-reference the checks above
+        // (treating the application as opaque) miss, e.g. `type Self<T extends Self<T>> = T`.
+        let param_atom = self.ctx.types.intern_string(param_name);
+        self.constraint_alias_application_is_circular(constraint_type, param_atom)
     }
 
     pub(crate) fn type_parameter_identity_matches(
