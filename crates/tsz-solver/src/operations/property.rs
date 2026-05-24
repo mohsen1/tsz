@@ -363,7 +363,59 @@ impl<'a> PropertyAccessEvaluator<'a> {
         obj_type: TypeId,
         prop_name: &str,
     ) -> PropertyAccessResult {
-        self.resolve_property_access_inner(obj_type, prop_name, None)
+        let result = self.resolve_property_access_inner(obj_type, prop_name, None);
+
+        // For deferred conditionals: when the inner resolver returned ANY (the deferred
+        // fallback), check the apparent type — union of branches — to detect genuine
+        // property-not-found cases. This is only done at the top-level entry point so
+        // that the `is_deferred_any_fallback_member` mechanism in union/intersection
+        // handlers (which call resolve_property_access_inner directly) is unaffected.
+        if let PropertyAccessResult::Success {
+            type_id,
+            from_index_signature: false,
+            ..
+        } = result
+            && type_id == TypeId::ANY
+            && let Some(TypeData::Conditional(cond_id)) = self.interner().lookup(obj_type)
+        {
+            let evaluated = self
+                .db
+                .evaluate_type_with_options(obj_type, self.no_unchecked_indexed_access);
+            if evaluated == obj_type {
+                let cond = self.interner().get_conditional(cond_id);
+                // Skip the strict check if either branch is a raw type parameter.
+                // When a branch is a type param (e.g., `T extends string ? T : string`),
+                // the raw param is unconstrained in the union check but tsc knows it
+                // is constrained by the conditional's check type in the true branch.
+                // Applying the union check would produce false TS2339 for properties
+                // that exist on the constraint (e.g., `.length` on T that extends string).
+                let is_type_param = |t: TypeId| {
+                    matches!(
+                        self.interner().lookup(t),
+                        Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
+                    )
+                };
+                if is_type_param(cond.true_type) || is_type_param(cond.false_type) {
+                    return result;
+                }
+                // Truly deferred with concrete branches: use the apparent type (union
+                // of branches) to check whether the property genuinely exists.
+                // union2 normalises any|T→any and never|T→T.
+                let apparent = self.interner().union2(cond.true_type, cond.false_type);
+                match self.resolve_property_access_inner(apparent, prop_name, None) {
+                    PropertyAccessResult::PropertyNotFound { .. } => {
+                        let prop_atom = self.interner().intern_string(prop_name);
+                        return PropertyAccessResult::PropertyNotFound {
+                            type_id: obj_type,
+                            property_name: prop_atom,
+                        };
+                    }
+                    branch_result => return branch_result,
+                }
+            }
+        }
+
+        result
     }
 
     fn enter_property_access_guard(&self, obj_type: TypeId) -> Option<PropertyAccessGuard<'_>> {
@@ -921,6 +973,8 @@ impl<'a> PropertyAccessEvaluator<'a> {
                         result
                     } else {
                         // Conditional type is deferred - return ANY to avoid false TS2339
+                        // in union/intersection member contexts. The top-level entry point
+                        // (resolve_property_access) will re-check via union(branches).
                         PropertyAccessResult::simple(TypeId::ANY)
                     }
                 }

@@ -656,6 +656,8 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+        let prev_in_system_top_level_using_prelude = self.in_system_top_level_using_prelude;
+        self.in_system_top_level_using_prelude = true;
         for &stmt_idx in &source.statements.nodes[..start_idx] {
             if hoisted_func_stmts.contains(&stmt_idx) {
                 continue;
@@ -719,6 +721,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+        self.in_system_top_level_using_prelude = prev_in_system_top_level_using_prelude;
 
         if self.ctx.options.target.supports_es2025() {
             let prev_deferred_local_export_bindings = self

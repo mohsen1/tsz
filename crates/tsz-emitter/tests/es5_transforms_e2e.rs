@@ -2204,3 +2204,65 @@ fn nested_empty_binding_patterns_evaluate_intermediate_properties() {
         "Nested empty binding should access both intermediate properties.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn class_property_initializer_uses_outer_renamed_let() {
+    // When a `let` in the outer block scope is renamed during ES5 lowering
+    // (because it shadows an outer `let`), a class property initializer that
+    // references that variable must use the renamed form.
+    let output = emit_es5(
+        "let x = 1;\n\
+         {\n\
+             let x = 2;\n\
+             class C {\n\
+                 p = x;\n\
+             }\n\
+         }\n",
+    );
+    assert!(
+        output.contains("this.p = x_1"),
+        "Class property initializer must reference the renamed let (x_1), not the original (x).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.p = x;"),
+        "Class property initializer must not reference the pre-rename name (x).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_property_initializer_uses_outer_renamed_let_different_names() {
+    // Same structural rule as above but with different variable names to
+    // prove the fix is not keyed on the spelling `x`.
+    let output = emit_es5(
+        "let value = 1;\n\
+         {\n\
+             let value = 2;\n\
+             class Widget {\n\
+                 field = value;\n\
+             }\n\
+         }\n",
+    );
+    assert!(
+        output.contains("this.field = value_1"),
+        "Class property initializer must reference the renamed let (value_1).\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("this.field = value;"),
+        "Class property initializer must not reference the pre-rename name (value).\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn class_property_initializer_no_rename_when_no_shadow() {
+    // When no shadowing occurs, the variable name must pass through unchanged.
+    let output = emit_es5(
+        "let count = 42;\n\
+         class Counter {\n\
+             n = count;\n\
+         }\n",
+    );
+    assert!(
+        output.contains("this.n = count"),
+        "Unshadowed let reference must remain unchanged.\nOutput:\n{output}"
+    );
+}

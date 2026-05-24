@@ -231,3 +231,26 @@ fn class_decl_at_loop_capture_function_level_keeps_local_name() {
     assert_eq!(state.get_emitted_name("row"), Some("row".to_string()));
     state.exit_scope();
 }
+
+#[test]
+fn function_level_shadowed_names_stay_local_nested_blocks_rename() {
+    let mut state = BlockScopeState::new();
+
+    state.enter_function_scope();
+    state.register_function_scope_shadowed_name("value");
+
+    assert_eq!(
+        state.register_variable("value"),
+        "value",
+        "Direct function-body block-scoped declarations lower to local var bindings"
+    );
+
+    state.enter_scope();
+    assert_eq!(
+        state.register_variable("value"),
+        "value_1",
+        "Nested block-scoped declarations must rename so the hoisted var does not capture later references"
+    );
+    state.exit_scope();
+    state.exit_scope();
+}

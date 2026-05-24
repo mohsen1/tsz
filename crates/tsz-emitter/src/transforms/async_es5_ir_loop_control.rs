@@ -56,6 +56,13 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements
                     .push(Self::generator_break_statement(loop_control.continue_label));
             }
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
+                if let Some(target) = self.labeled_continue_target(idx) {
+                    current_statements.push(Self::generator_break_statement(target));
+                } else {
+                    self.process_async_statement(idx, cases, current_statements, current_label);
+                }
+            }
             k if k == syntax_kind_ext::BLOCK => {
                 if let Some(block) = self.arena.get_block(node) {
                     for &stmt in &block.statements.nodes {
@@ -79,7 +86,11 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
             k if self.statement_starts_inner_loop_or_function(k) => {
-                self.process_async_statement(idx, cases, current_statements, current_label);
+                if let Some(rewritten) = self.statement_to_ir_with_labeled_continue(idx) {
+                    current_statements.push(rewritten);
+                } else {
+                    self.process_async_statement(idx, cases, current_statements, current_label);
+                }
             }
             _ => {
                 self.process_async_statement(idx, cases, current_statements, current_label);
@@ -258,6 +269,101 @@ impl<'a> AsyncES5Transformer<'a> {
             .get(idx)
             .and_then(|node| self.arena.get_jump_data(node))
             .is_some_and(|jump| jump.label.is_none())
+    }
+
+    fn labeled_continue_target(&self, idx: NodeIndex) -> Option<u32> {
+        let jump = self
+            .arena
+            .get(idx)
+            .and_then(|node| self.arena.get_jump_data(node))?;
+        let label = jump.label.into_option()?;
+        let label = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, label);
+        self.labeled_continue_targets
+            .iter()
+            .rev()
+            .find_map(|(candidate, target)| (candidate == &label).then_some(*target))
+    }
+
+    fn statement_to_ir_with_labeled_continue(&self, idx: NodeIndex) -> Option<IRNode> {
+        let node = self.arena.get(idx)?;
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+        {
+            return None;
+        }
+
+        match node.kind {
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => self
+                .labeled_continue_target(idx)
+                .map(Self::generator_break_statement),
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                let block = self.arena.get_block(node)?;
+                let mut changed = false;
+                let statements = block
+                    .statements
+                    .nodes
+                    .iter()
+                    .map(|&stmt| {
+                        if let Some(rewritten) = self.statement_to_ir_with_labeled_continue(stmt) {
+                            changed = true;
+                            rewritten
+                        } else {
+                            self.statement_to_ir(stmt)
+                        }
+                    })
+                    .collect();
+                changed.then_some(IRNode::Block(statements))
+            }
+            k if k == syntax_kind_ext::WHILE_STATEMENT => {
+                let loop_data = self.arena.get_loop(node)?;
+                let body = self.statement_to_ir_with_labeled_continue(loop_data.statement)?;
+                Some(IRNode::WhileStatement {
+                    condition: Box::new(self.expression_to_ir(loop_data.condition)),
+                    body: Box::new(body),
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                let if_stmt = self.arena.get_if_statement(node)?;
+                let then_branch =
+                    self.statement_to_ir_with_labeled_continue(if_stmt.then_statement);
+                let else_statement = if_stmt.else_statement.into_option();
+                let else_branch = else_statement
+                    .and_then(|stmt| self.statement_to_ir_with_labeled_continue(stmt));
+                if then_branch.is_none() && else_branch.is_none() {
+                    return None;
+                }
+                Some(IRNode::IfStatement {
+                    condition: Box::new(self.expression_to_ir(if_stmt.expression)),
+                    then_branch: Box::new(
+                        then_branch.unwrap_or_else(|| self.statement_to_ir(if_stmt.then_statement)),
+                    ),
+                    else_branch: else_statement.map(|stmt| {
+                        Box::new(else_branch.unwrap_or_else(|| self.statement_to_ir(stmt)))
+                    }),
+                })
+            }
+            k if k == syntax_kind_ext::LABELED_STATEMENT => {
+                let labeled = self.arena.get_labeled_statement(node)?;
+                let label = crate::transforms::emit_utils::identifier_text_or_empty(
+                    self.arena,
+                    labeled.label,
+                );
+                if self
+                    .labeled_continue_targets
+                    .iter()
+                    .any(|(candidate, _)| candidate == &label)
+                {
+                    return None;
+                }
+                let statement = self.statement_to_ir_with_labeled_continue(labeled.statement)?;
+                Some(IRNode::LabeledStatement {
+                    label: label.into(),
+                    statement: Box::new(statement),
+                })
+            }
+            _ => None,
+        }
     }
 
     const fn statement_starts_inner_loop_or_function(&self, kind: u16) -> bool {
