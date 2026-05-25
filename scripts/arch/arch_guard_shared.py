@@ -518,7 +518,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down by 1 during the #9281 current-main refresh after
         # the split guard tests caught slack in the live count.
-        3357,
+        #
+        # Ratcheted down by 1 after the interface heritage `this`-type helper
+        # moved to `query_boundaries::type_predicates`.
+        3356,
     ),
 ]
 
