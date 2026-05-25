@@ -1298,7 +1298,6 @@ impl<'a> CheckerState<'a> {
                 .types
                 .get_display_properties(evaluated_source)
                 .is_some();
-
         if let Some(display) = self.typeof_result_source_display(evaluated_source, target) {
             return display.to_string();
         }
@@ -1308,7 +1307,6 @@ impl<'a> CheckerState<'a> {
         {
             return source_display;
         }
-
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
             || ([source, evaluated_source].into_iter().any(|candidate| {
