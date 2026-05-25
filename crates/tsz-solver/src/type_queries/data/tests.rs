@@ -1,6 +1,8 @@
 use super::*;
 use crate::construction::TypeInterner;
-use crate::types::{CallSignature, CallableShape, ParamInfo, PropertyInfo, TypeId, TypeParamInfo};
+use crate::types::{
+    CallSignature, CallableShape, MappedType, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
+};
 
 fn make_callable_with_construct_sig(
     interner: &TypeInterner,
@@ -889,6 +891,43 @@ fn contains_application_union_without_app() {
     let interner = TypeInterner::new();
     let union = interner.union2(TypeId::STRING, TypeId::NUMBER);
     assert!(!contains_application_in_structure(&interner, union));
+}
+
+#[test]
+fn contains_application_in_structure_ignores_index_access_operands() {
+    let interner = TypeInterner::new();
+    let base = interner.lazy(crate::def::DefId(1));
+    let app = interner.application(base, vec![TypeId::STRING]);
+    let indexed = interner.index_access(app, TypeId::STRING);
+    assert!(!contains_application_in_structure(&interner, indexed));
+    assert!(contains_application_in_constraint_resolution_path(
+        &interner, indexed
+    ));
+}
+
+#[test]
+fn contains_application_in_structure_ignores_mapped_constraints() {
+    let interner = TypeInterner::new();
+    let name = interner.intern_string("K");
+    let base = interner.lazy(crate::def::DefId(1));
+    let app = interner.application(base, vec![TypeId::STRING]);
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name,
+            constraint: Some(app),
+            default: None,
+            is_const: false,
+        },
+        constraint: app,
+        name_type: None,
+        template: TypeId::NUMBER,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    assert!(!contains_application_in_structure(&interner, mapped));
+    assert!(contains_application_in_constraint_resolution_path(
+        &interner, mapped
+    ));
 }
 
 // =========================================================================

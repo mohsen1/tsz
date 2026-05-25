@@ -119,9 +119,16 @@ impl<'a> CheckerState<'a> {
         // Every non-application constraint is already covered by the direct /
         // resolution-path identity checks, so only pay for the extra evaluation
         // when there is an application that expansion could reshape.
-        if !crate::query_boundaries::common::contains_application_in_structure(
+        if !crate::query_boundaries::common::contains_application_in_constraint_resolution_path(
             self.ctx.types,
             constraint_type,
+        ) {
+            return false;
+        }
+        if !crate::query_boundaries::common::contains_type_parameter_named(
+            self.ctx.types,
+            constraint_type,
+            param_name,
         ) {
             return false;
         }
