@@ -449,6 +449,7 @@ function invalidatePullRequest(repository, pr, options) {
     "pending",
     options.statusContext,
     `Waiting for ${options.base} synthetic merge test`,
+    pr.url || "",
   );
   return { invalidated: true, skipped: false };
 }

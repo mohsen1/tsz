@@ -305,3 +305,4 @@ mod probes_tsc_comparison;
 mod simple_declarations;
 mod type_formatting;
 mod type_info;
+mod type_info_constructor_objects;
