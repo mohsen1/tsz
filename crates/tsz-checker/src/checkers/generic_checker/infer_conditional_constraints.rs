@@ -63,8 +63,8 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.is_assignable_to(restricted_evaluated, inst_constraint)
-            || self.is_assignable_to(restricted, inst_constraint)
+        self.diagnostic_relation_boolean_guard(restricted_evaluated, inst_constraint)
+            || self.diagnostic_relation_boolean_guard(restricted, inst_constraint)
     }
 
     fn infer_result_satisfies_via_mapped_key_subset(
@@ -140,8 +140,8 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.is_assignable_to(restricted_evaluated, inst_constraint)
-            || self.is_assignable_to(restricted, inst_constraint)
+        self.diagnostic_relation_boolean_guard(restricted_evaluated, inst_constraint)
+            || self.diagnostic_relation_boolean_guard(restricted, inst_constraint)
     }
 
     /// Some aliases compute a constrained result through a conditional `infer`
@@ -187,8 +187,8 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.is_assignable_to(restricted_evaluated, inst_constraint)
-            || self.is_assignable_to(restricted, inst_constraint)
+        self.diagnostic_relation_boolean_guard(restricted_evaluated, inst_constraint)
+            || self.diagnostic_relation_boolean_guard(restricted, inst_constraint)
     }
 
     pub(super) fn type_arg_satisfies_via_hidden_infer_constraints(
@@ -231,7 +231,7 @@ impl<'a> CheckerState<'a> {
             &substitution,
         );
         let restricted = self.resolve_lazy_type(restricted);
-        self.is_assignable_to(restricted, inst_constraint)
+        self.diagnostic_relation_boolean_guard(restricted, inst_constraint)
             || self.base_union_members_satisfy_constraint(restricted, inst_constraint)
     }
 
@@ -261,7 +261,7 @@ impl<'a> CheckerState<'a> {
         };
 
         candidates.into_iter().any(|candidate| {
-            self.is_assignable_to_no_weak_checks(candidate, inst_constraint)
+            self.diagnostic_relation_boolean_guard_no_weak_checks(candidate, inst_constraint)
                 || self.base_union_members_satisfy_constraint(candidate, inst_constraint)
                 || self.conditional_array_element_infer_satisfies_constraint(
                     candidate,
@@ -425,7 +425,7 @@ impl<'a> CheckerState<'a> {
             .filter_map(|candidate| self.array_like_element_type(candidate))
             .collect::<Vec<_>>();
         elements.into_iter().any(|element| {
-            self.is_assignable_to_no_weak_checks(element, inst_constraint)
+            self.diagnostic_relation_boolean_guard_no_weak_checks(element, inst_constraint)
                 || self.base_union_members_satisfy_constraint(element, inst_constraint)
         })
     }

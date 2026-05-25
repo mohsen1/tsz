@@ -606,6 +606,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "checkers"
             / "generic_checker"
+            / "infer_conditional_constraints.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
             / "conditional_constraint_helpers.rs",
             ROOT
             / "crates"
