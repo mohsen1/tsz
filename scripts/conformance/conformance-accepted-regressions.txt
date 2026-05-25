@@ -12,13 +12,12 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/noExcessiveStackDepthError.ts
+TypeScript/tests/cases/compiler/quickinfoTypeAtReturnPositionsInaccurate.ts
 TypeScript/tests/cases/compiler/reactHOCSpreadprops.tsx
 TypeScript/tests/cases/compiler/relationComplexityError.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/reverseMappedTypeIntersectionConstraint.ts
-TypeScript/tests/cases/compiler/spyComparisonChecking.ts
 TypeScript/tests/cases/compiler/temporal.ts
-TypeScript/tests/cases/compiler/thislessFunctionsNotContextSensitive3.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
 TypeScript/tests/cases/conformance/controlFlow/controlFlowGenericTypes.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
