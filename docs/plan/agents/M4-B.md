@@ -27,8 +27,11 @@ scripts/agents/list-owned-work.sh M4-B
   - `#10078` ready/off-auto; this lane-doc PR is docs-only. Direct squash
     merge is blocked by the protected-branch policy; queue runs invalidate
     `Queue Tested` after each synchronize and report no queue-ready auto-merge
-    PR because auto-merge remains off by lane rule. Do not churn this PR just
-    to update its own head SHA.
+    PR because auto-merge remains off by lane rule. Synthetic queue run
+    `26375361829` for branch `automation/merge-queue/pr-10078` completed with
+    `conformance-aggregate` incomplete coverage (`12810 < 12820`, tolerance 5);
+    M4-B left a signed handoff comment with that evidence. Do not churn this PR
+    just to update its own head SHA.
   - `#10058` ready/off-auto on rebased head
     `171fc3620611a4ba128b1d156f1ee8d739372bf1`; exact-head ready-review CI is
     green, but required `Queue Tested` remains pending.
@@ -66,8 +69,9 @@ scripts/agents/list-owned-work.sh M4-B
   ready-review CI like the rest of the open ready PR set.
 - `#9230`, `#9807`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
   landed only after exact-head required checks are complete and green. For
-  `#10078`, required `Queue Tested` is still pending because auto-merge is not
-  armed; do not arm it under the lane rules while a required status is pending.
+  `#10078`, the latest inspected synthetic queue run failed in
+  `conformance-aggregate` with incomplete coverage, and auto-merge remains off;
+  do not arm it under the lane rules while queue state is not clean.
   `#10058`, `#9945`, and `#9230` have green exact-head ready-review CI but are
   still blocked by required `Queue Tested`.
 - M1-B depends on this lane for checker relation gateway cleanup.
