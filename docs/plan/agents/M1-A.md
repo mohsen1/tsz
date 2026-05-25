@@ -24,15 +24,18 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 15:55 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10157` merged.
+- 2026-05-25 18:55 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#9465` merged.
+  - `#9465` landed on 2026-05-25 as
+    `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
+    excess-property check (#8725)`. Its synthetic queue branch
+    `automation/merge-queue/pr-9465` was deleted after merge.
   - `#9559` is merged; the former M1-A JSX branch is no longer an active
     landing target.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
-    longer matches current `main`; the latest apply run deleted the merged
-    `#10157` queue branch `automation/merge-queue/pr-10157` and the superseded
-    open-PR branch `automation/merge-queue/pr-9281-49bd3b2`.
+    longer matches current `main`; the latest dry run reports zero stale queue
+    branches and preserves no active queue runs.
   - `#9230` merged on 2026-05-25 and is no longer an active queue unblocker.
   - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
     `#9804`, `#9799`) is fully merged.
@@ -45,11 +48,13 @@ node scripts/ci/pr-ownership-report.mjs
   - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
     Its stale synthetic branch was cleaned after merge.
   - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
-    `mergeable=MERGEABLE`: `#9281`, `#9632`, `#9634`, `#9807`, `#9811`,
-    `#9912`, `#10078`, `#10081`, `#10084`, and `#10126`.
-  - `#9281` has an active synthetic queue run on
-    `automation/merge-queue/pr-9281-cb0458-49bd3b2`; do not take it over unless
-    the owner asks or it becomes stale and needs a signed handoff.
+    `mergeable=MERGEABLE` include `#9632`, `#9912`, `#10078`, `#10081`,
+    `#10084`, `#10085`, `#10087`, `#10126`, and `#10147`. These currently
+    belong to other lanes; do not take them over unless the owner asks or a
+    stale branch needs a signed handoff.
+  - Queue branch cleanup currently skips open PR branches
+    `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10085`, `pr-10147`,
+    `pr-9632`, `pr-9848`, and `pr-9912`.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
