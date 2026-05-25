@@ -27,7 +27,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
-use super::DtsCacheResolver;
+use super::{DtsCacheResolver, DtsStructuralResolver};
 
 pub(crate) struct ResolvedDeclarationTypeText {
     pub(crate) type_id: tsz_solver::types::TypeId,
@@ -833,6 +833,25 @@ impl<'a> DeclarationEmitter<'a> {
         self.print_type_id_with_policy(type_id, |_, _, _| false)
     }
 
+    pub(in crate::declaration_emitter) fn evaluate_type_id_structurally_for_declaration_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        let evaluated = if let Some(cache) = &self.type_cache {
+            let resolver = DtsStructuralResolver { cache };
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
+            evaluator.set_max_mapped_keys(1_024);
+            evaluator.evaluate(type_id)
+        } else {
+            let mut evaluator = tsz_solver::computation::TypeEvaluator::new(interner);
+            evaluator.set_max_mapped_keys(1_024);
+            evaluator.evaluate(type_id)
+        };
+        Some(evaluated)
+    }
+
     pub(in crate::declaration_emitter) fn qualify_current_namespace_self_type_text(
         &self,
         type_text: &str,
@@ -1038,14 +1057,15 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::single_type_argument_text(type_text, end, type_arg_end)
                 {
                     out.push_str(type_arg);
-                    out.push_str(" | /*elided*/ any");
+                    out.push_str(" | ");
+                    out.push_str(crate::ELIDED_ANY);
                 } else {
-                    out.push_str("/*elided*/ any");
+                    out.push_str(crate::ELIDED_ANY);
                 }
                 i = type_arg_end;
                 continue;
             }
-            out.push_str("/*elided*/ any");
+            out.push_str(crate::ELIDED_ANY);
         }
         out
     }

@@ -2,6 +2,14 @@
 
 use tsz_solver::TypeId;
 
+pub(super) fn is_function_like_for_literal_member_widening(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::function_shape_for_type(db, type_id).is_some()
+        || crate::query_boundaries::common::callable_shape_for_type(db, type_id).is_some()
+}
+
 /// Returns true if the formatted type name matches a built-in wrapper type
 /// (Boolean, Number, String, Object). These types inherit properties from Object
 /// and missing-property diagnostics should be suppressed in favor of TS2322.
@@ -77,14 +85,6 @@ pub(crate) fn is_reserved_type_name(name: &str) -> bool {
             | "null"
             | "object"
     )
-}
-
-/// Returns true if the display string looks like a function/callable type.
-/// Used as a fallback when TypeId-level detection fails due to TypeQuery/Lazy wrapping.
-/// Function types display as `(params) => ReturnType`.
-pub(super) fn is_function_type_display(name: &str) -> bool {
-    // A function type display always starts with `(` and contains `) => `.
-    name.starts_with('(') && name.contains(") => ")
 }
 
 /// Returns true if the property name is a standard Object.prototype method.
