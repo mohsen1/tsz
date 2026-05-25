@@ -8,7 +8,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::{FunctionShape, TypeId, TypeParamInfo};
+use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
 
 /// Context for TS2366/TS2355/TS7030 function return completeness checks.
 pub(crate) struct FunctionReturnCheckCtx {
@@ -32,6 +32,30 @@ pub(crate) struct FunctionReturnCheckCtx {
     pub(crate) name_node: Option<NodeIndex>,
     /// The overall expression/declaration index used for diagnostics.
     pub(crate) idx: NodeIndex,
+}
+
+pub(crate) struct FunctionFinalReturnTypeCtx {
+    pub(crate) has_type_annotation: bool,
+    pub(crate) function_is_async: bool,
+    pub(crate) function_is_generator: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) final_generator_yield_type: Option<TypeId>,
+    pub(crate) early_gen_return_type: Option<TypeId>,
+    pub(crate) early_gen_next_type: Option<TypeId>,
+}
+
+pub(crate) struct GeneratorBodyReturnCheckCtx<'b> {
+    pub(crate) is_generator: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) type_annotation: NodeIndex,
+    pub(crate) idx: NodeIndex,
+    pub(crate) function_is_async: bool,
+    pub(crate) early_yield_type: Option<TypeId>,
+    pub(crate) name_node: Option<NodeIndex>,
+    pub(crate) name_for_error: Option<&'b str>,
 }
 
 impl<'a> CheckerState<'a> {
@@ -163,6 +187,185 @@ impl<'a> CheckerState<'a> {
         }
 
         (None, None, None, false)
+    }
+
+    pub(crate) fn check_generator_body_return(
+        &mut self,
+        ctx: GeneratorBodyReturnCheckCtx<'_>,
+    ) -> Option<TypeId> {
+        if !ctx.is_generator {
+            return None;
+        }
+
+        if ctx.has_type_annotation {
+            let declared_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+            let yield_t = self.ctx.current_yield_type();
+            let error_node = if ctx.type_annotation != NodeIndex::NONE {
+                ctx.type_annotation
+            } else {
+                ctx.idx
+            };
+            self.check_generator_return_type_assignability(
+                ctx.function_is_async,
+                yield_t,
+                declared_type,
+                error_node,
+            );
+            return None;
+        }
+
+        let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
+        let inferred_yield = if yield_types.is_empty() {
+            TypeId::NEVER
+        } else {
+            self.ctx.types.factory().union(yield_types)
+        };
+        let widened = if ctx.early_yield_type.is_some() {
+            inferred_yield
+        } else {
+            self.widen_literal_type(inferred_yield)
+        };
+        let final_yield = if !self.ctx.strict_null_checks()
+            && crate::query_boundaries::common::is_only_null_or_undefined(self.ctx.types, widened)
+        {
+            TypeId::ANY
+        } else {
+            widened
+        };
+
+        if final_yield == TypeId::ANY
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+            && !self.ctx.generator_had_ts7057
+            && ctx.early_yield_type.is_none()
+        {
+            use crate::diagnostics::diagnostic_codes;
+            if let Some(name) = ctx.name_for_error {
+                self.error_at_node_msg(
+                    ctx.name_node.unwrap_or(ctx.idx),
+                    diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
+                    &[name, "any"],
+                );
+            } else {
+                self.error_at_node_msg(
+                    ctx.idx,
+                    diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
+                    &["any"],
+                );
+            }
+        }
+
+        Some(final_yield)
+    }
+
+    pub(crate) fn append_js_arguments_rest_param(
+        &mut self,
+        body: NodeIndex,
+        params: &mut Vec<ParamInfo>,
+    ) {
+        // In JS files, functions that reference `arguments` accept any number
+        // of extra arguments. Pre-walk the body as a fallback for call sites
+        // that compute function types before body checking updates the flag.
+        let uses_arguments =
+            self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
+        if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
+            params.push(ParamInfo {
+                name: None,
+                type_id: self.ctx.types.factory().array(TypeId::ANY),
+                optional: true,
+                rest: true,
+            });
+        }
+    }
+
+    pub(crate) fn final_function_return_type(&mut self, ctx: FunctionFinalReturnTypeCtx) -> TypeId {
+        let mut final_return_type = if !ctx.has_type_annotation && ctx.function_is_generator {
+            self.unannotated_generator_return_type(&ctx)
+        } else {
+            ctx.annotated_return_type.unwrap_or(ctx.return_type)
+        };
+
+        if !ctx.has_type_annotation && ctx.function_is_async && !ctx.function_is_generator {
+            final_return_type = self.wrap_unannotated_async_return_type(final_return_type);
+        }
+
+        final_return_type
+    }
+
+    fn unannotated_generator_return_type(&mut self, ctx: &FunctionFinalReturnTypeCtx) -> TypeId {
+        let gen_name = if ctx.function_is_async {
+            "AsyncGenerator"
+        } else {
+            "Generator"
+        };
+        let _resolved = self.resolve_lib_type_by_name(gen_name);
+        let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.types.factory().lazy(def_id)
+        });
+        let Some(base) = lazy_base else {
+            return TypeId::ANY;
+        };
+
+        let yield_t = ctx.final_generator_yield_type.unwrap_or(TypeId::ANY);
+        let body_return_t = self.unannotated_generator_body_return_type(ctx);
+        let return_t = body_return_t
+            .or(ctx.early_gen_return_type)
+            .unwrap_or(TypeId::VOID);
+        let next_t = ctx.early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
+
+        self.ctx
+            .types
+            .factory()
+            .application(base, vec![yield_t, return_t, next_t])
+    }
+
+    fn unannotated_generator_body_return_type(
+        &mut self,
+        ctx: &FunctionFinalReturnTypeCtx,
+    ) -> Option<TypeId> {
+        let return_type = ctx.return_type;
+        if return_type == TypeId::UNKNOWN
+            || return_type == TypeId::VOID
+            || return_type == TypeId::UNDEFINED
+            || (return_type == TypeId::ANY && ctx.early_gen_return_type.is_some())
+        {
+            return None;
+        }
+
+        let contextual_pins_return = ctx
+            .early_gen_return_type
+            .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN);
+        let preserve = contextual_pins_return
+            || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, return_type);
+        let widened = if preserve {
+            return_type
+        } else {
+            self.widen_literal_type(return_type)
+        };
+        Some(widened)
+    }
+
+    fn wrap_unannotated_async_return_type(&mut self, mut return_type: TypeId) -> TypeId {
+        let had_promise_wrapper = if let Some(inner) = self.unwrap_promise_type(return_type) {
+            return_type = inner;
+            true
+        } else {
+            false
+        };
+        if !had_promise_wrapper
+            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, return_type)
+        {
+            return_type = self.widen_literal_type(return_type);
+        }
+        let promise_base = self
+            .ctx
+            .lib_promise_type_ref()
+            .unwrap_or(TypeId::PROMISE_BASE);
+        self.ctx
+            .types
+            .factory()
+            .application(promise_base, vec![return_type])
     }
 
     pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {

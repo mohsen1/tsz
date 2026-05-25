@@ -3,6 +3,7 @@ mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
 
+use super::function_type_helpers::{FunctionFinalReturnTypeCtx, GeneratorBodyReturnCheckCtx};
 use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
@@ -2324,83 +2325,19 @@ impl<'a> CheckerState<'a> {
                     snap.rollback(&mut self.ctx.diagnostic_state());
                 }
 
-                // For annotated generator expressions, check that Generator<TYield, any, any>
-                // is assignable to the declared return type.
-                if is_generator && has_type_annotation {
-                    let declared_type = annotated_return_type.unwrap_or(return_type);
-                    let yield_t = self.ctx.current_yield_type();
-                    let error_node = if type_annotation != NodeIndex::NONE {
-                        type_annotation
-                    } else {
-                        idx
-                    };
-                    self.check_generator_return_type_assignability(
+                final_generator_yield_type =
+                    self.check_generator_body_return(GeneratorBodyReturnCheckCtx {
+                        is_generator,
+                        has_type_annotation,
+                        annotated_return_type,
+                        return_type,
+                        type_annotation,
+                        idx,
                         function_is_async,
-                        yield_t,
-                        declared_type,
-                        error_node,
-                    );
-                }
-
-                // For unannotated generator expressions, determine the inferred yield type
-                // and emit TS7055/TS7025 if TYield is 'any'.
-                // TS7055 and TS7057 are independent — TS7055 fires at function name when
-                // TYield is implicit any, while TS7057 fires per-expression.
-                if is_generator && !has_type_annotation {
-                    let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-                    // Compute inferred yield type; skip widening when contextual
-                    // yield type preserved literals (`yield 0` stays `0` not `number`).
-                    let inferred_yield = if yield_types.is_empty() {
-                        TypeId::NEVER
-                    } else {
-                        self.ctx.types.factory().union(yield_types)
-                    };
-                    let widened = if early_yield_type.is_some() {
-                        inferred_yield
-                    } else {
-                        self.widen_literal_type(inferred_yield)
-                    };
-                    let final_yield = if !self.ctx.strict_null_checks()
-                        && crate::query_boundaries::common::is_only_null_or_undefined(
-                            self.ctx.types,
-                            widened,
-                        ) {
-                        TypeId::ANY
-                    } else {
-                        widened
-                    };
-                    final_generator_yield_type = Some(final_yield);
-                    // Suppress TS7055 when TS7057 was already emitted for a yield
-                    // in this generator. tsc emits one or the other, not both:
-                    // TS7057 covers the per-expression case; TS7055 is for the
-                    // function-level "yield type is implicitly any" case.
-                    if final_yield == TypeId::ANY
-                        && self.ctx.no_implicit_any()
-                        && !self.is_js_file()
-                        && !self.ctx.generator_had_ts7057
-                        // Suppress TS7055/TS7025 when the generator has a contextual
-                        // yield type — the yield type is implicitly provided by context,
-                        // not truly missing.
-                        && early_yield_type.is_none()
-                    {
-                        use crate::diagnostics::diagnostic_codes;
-                        if let Some(name) = &name_for_error {
-                            // TS7055: Named generator's yield type is implicitly 'any'
-                            self.error_at_node_msg(
-                                name_node.unwrap_or(idx),
-                                diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
-                                &[name, "any"],
-                            );
-                        } else {
-                            // TS7025: Unnamed generator expression
-                            self.error_at_node_msg(
-                                idx,
-                                diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
-                                &["any"],
-                            );
-                        }
-                    }
-                }
+                        early_yield_type,
+                        name_node,
+                        name_for_error: name_for_error.as_deref(),
+                    });
 
                 // Restore outer generator's yield collection state
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
@@ -2431,156 +2368,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.function_owned_this_stack.pop();
         }
 
-        // In JS files, functions that reference `arguments` in their body should accept
-        // any number of extra arguments (TSC adds an implicit rest parameter).
-        // Only add if the function doesn't already have a rest parameter.
-        // Some call sites compute function types before body checking has set
-        // `js_body_uses_arguments` (notably function expressions in variable initializers).
-        // Always pre-walk the body as a fallback so JS implicit rest parameter inference
-        // remains stable across declaration/expression contexts.
-        let uses_arguments =
-            self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
-        if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
-            params.push(ParamInfo {
-                name: None,
-                type_id: self.ctx.types.factory().array(TypeId::ANY),
-                optional: true,
-                rest: true,
-            });
-        }
+        self.append_js_arguments_rest_param(body, &mut params);
         // Restore the arguments tracking flag
         self.ctx.js_body_uses_arguments = saved_uses_arguments;
 
-        // Create function type using TypeInterner
-        // For annotated return types, use the original un-evaluated type so callers see
-        // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
-        // for await unwrapping and generic type parameter extraction.
-        // For inferred return types (no annotation), use the inferred type as-is.
-        let mut final_return_type = if !has_type_annotation && function_is_generator {
-            // Unannotated generators should remain permissive until full
-            // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
-            // However, we must return a Generator-like type to avoid suppressing TS2322
-            // when the generator is returned or yielded to a context expecting something else.
-            // Use void for TReturn: unannotated generators have no explicit return value,
-            // so TReturn is void (matching tsc). This ensures generator.return() is callable
-            // without arguments, since void-typed params are effectively optional.
-            let gen_name = if function_is_async {
-                "AsyncGenerator"
-            } else {
-                "Generator"
-            };
-            // Ensure the lib type is loaded/resolved (side effect: populates file_locals).
-            let _resolved = self.resolve_lib_type_by_name(gen_name);
-            // Use Lazy(DefId) as the Application base instead of the resolved TypeId.
-            // resolve_lib_type_by_name returns a fully expanded structural interface body,
-            // which loses the Generator identity during type relations. Lazy(DefId) preserves
-            // the symbolic reference so evaluate_application can properly instantiate it.
-            let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx.types.factory().lazy(def_id)
-            });
-            if let Some(base) = lazy_base {
-                // Use contextual generator type params when available, otherwise
-                // fall back to defaults (any/void/unknown).
-                // For TReturn, prefer the body-inferred return type (from return
-                // statements) over the contextual type, falling back to void when
-                // neither is available. This ensures generic type parameters like
-                // `Ret` in `<Ret>(f: () => Generator<never, Ret, never>)` get
-                // inferred from the generator body's return statements.
-                let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
-                // For TReturn: prefer the body-inferred return type when concrete (not
-                // UNKNOWN/VOID/UNDEFINED), falling back to the contextual TReturn, then VOID.
-                // Also exclude `any` when a contextual TReturn is available - the inferred
-                // `any` may be stale from an earlier type-checking pass where the variable
-                // `next = yield ...` was typed as `any` before contextual types were set.
-                let body_return_t = if return_type != TypeId::UNKNOWN
-                    && return_type != TypeId::VOID
-                    && return_type != TypeId::UNDEFINED
-                    && !(return_type == TypeId::ANY && early_gen_return_type.is_some())
-                {
-                    // Widen literal body-inferred returns: `return 1;` →
-                    // TReturn = number. Preserve unique symbols. Also
-                    // preserve when contextual TReturn is a real type — tsc
-                    // pins T from the call-site type-arg, widening defeats
-                    // the pin. `void` is treated as no-constraint (matches
-                    // tsc's widening behavior for `() => Generator<_, void, _>`).
-                    let contextual_pins_return = early_gen_return_type.is_some_and(|t| {
-                        t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN
-                    });
-                    let preserve = contextual_pins_return
-                        || crate::query_boundaries::common::is_unique_symbol_type(
-                            self.ctx.types,
-                            return_type,
-                        );
-                    let widened = if preserve {
-                        return_type
-                    } else {
-                        self.widen_literal_type(return_type)
-                    };
-                    Some(widened)
-                } else {
-                    None
-                };
-                let return_t = body_return_t
-                    .or(early_gen_return_type)
-                    .unwrap_or(TypeId::VOID);
-                let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
-                self.ctx
-                    .types
-                    .factory()
-                    .application(base, vec![yield_t, return_t, next_t])
-            } else {
-                TypeId::ANY
-            }
-        } else {
-            annotated_return_type.unwrap_or(return_type)
-        };
-        // Unannotated async functions infer Promise<T>, where T is inferred from
-        // return statements in the function body.
-        if !has_type_annotation && function_is_async && !function_is_generator {
-            // Async functions implicitly await their return values. If the body
-            // returns Promise<T> (e.g., `async () => fetch(url)`), the runtime
-            // awaits it to get T, then the async wrapper produces Promise<T> —
-            // NOT Promise<Promise<T>>. Unwrap any existing Promise layer first.
-            let had_promise_wrapper =
-                if let Some(inner) = self.unwrap_promise_type(final_return_type) {
-                    final_return_type = inner;
-                    true
-                } else {
-                    false
-                };
-            // Widen literal return types before re-wrapping in Promise, matching
-            // tsc's async return-type inference: `async () => 0` infers
-            // `() => Promise<number>`, not `() => Promise<0>`. Skip widening when
-            // the body already produced a `Promise<T>` — the inner T either came
-            // from contextual typing (which preserved literals intentionally) or
-            // from a Promise-returning expression whose type is already stable.
-            // Also preserve `unique symbol` types: tsc does not widen them to
-            // `symbol` in async return-type inference; widening breaks
-            // `uniqueSymbolsDeclarations.ts` (the solver's generic widen_type
-            // walks UniqueSymbol → SYMBOL, which is right for mutable-binding
-            // contexts but wrong here).
-            if !had_promise_wrapper
-                && !crate::query_boundaries::common::is_unique_symbol_type(
-                    self.ctx.types,
-                    final_return_type,
-                )
-            {
-                final_return_type = self.widen_literal_type(final_return_type);
-            }
-            // Resolve the real Promise type from lib files when available,
-            // so that the return type is structurally compatible with PromiseLike<T>.
-            // Fall back to synthetic PROMISE_BASE only without lib files.
-            let promise_base = self
-                .ctx
-                .lib_promise_type_ref()
-                .unwrap_or(TypeId::PROMISE_BASE);
-            final_return_type = self
-                .ctx
-                .types
-                .factory()
-                .application(promise_base, vec![final_return_type]);
-        }
+        let final_return_type = self.final_function_return_type(FunctionFinalReturnTypeCtx {
+            has_type_annotation,
+            function_is_async,
+            function_is_generator,
+            annotated_return_type,
+            return_type,
+            final_generator_yield_type,
+            early_gen_return_type,
+            early_gen_next_type,
+        });
 
         let shape = FunctionShape {
             type_params,
