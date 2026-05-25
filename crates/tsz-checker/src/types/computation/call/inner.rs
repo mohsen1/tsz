@@ -1905,8 +1905,7 @@ impl<'a> CheckerState<'a> {
                                 call_checker::get_contextual_signature(self.ctx.types, ctx)
                                     .is_some_and(|shape| !shape.type_params.is_empty());
                             (!common::contains_type_parameters(self.ctx.types, ctx)
-                                || contextual_generic_callable
-                                || common::contains_this_type(self.ctx.types, ctx))
+                                || contextual_generic_callable)
                                 && !common::contains_infer_types(self.ctx.types, ctx)
                                 && !common::contains_type_by_id(
                                     self.ctx.types,
@@ -2685,12 +2684,6 @@ impl<'a> CheckerState<'a> {
                 args.len(),
             )
         {
-            let shape = self.freshen_contextual_signature_shape_for_inference(
-                shape,
-                Some(ctx_type),
-                &arg_types,
-                &generic_inference_arg_types,
-            );
             let mut return_context_substitution =
                 self.compute_return_context_substitution_from_shape(&shape, Some(ctx_type));
             let return_param_names: FxHashSet<_> = self
@@ -2726,12 +2719,11 @@ impl<'a> CheckerState<'a> {
                     .iter()
                     .copied()
                     .any(|arg| self.is_callback_like_argument(arg));
-                let contextual_return_is_stable =
-                    (!common::contains_type_parameters(self.ctx.types, ctx_type)
-                        || common::contains_this_type(self.ctx.types, ctx_type))
+                let contextual_return_is_concrete =
+                    !common::contains_type_parameters(self.ctx.types, ctx_type)
                         && !common::contains_infer_types(self.ctx.types, ctx_type)
                         && !common::contains_type_by_id(self.ctx.types, ctx_type, TypeId::UNKNOWN);
-                if !has_callback_like_arg && contextual_return_is_stable {
+                if !has_callback_like_arg && contextual_return_is_concrete {
                     let instantiated_shape_return =
                         crate::query_boundaries::common::instantiate_type(
                             self.ctx.types,
@@ -3035,6 +3027,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
+
         let call_context = CallResultContext {
             callee_expr: call.expression,
             call_idx: idx,
