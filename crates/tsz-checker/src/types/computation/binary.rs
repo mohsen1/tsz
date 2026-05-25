@@ -3,34 +3,10 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::type_computation::core::{
-    WriteTargetLogicalOperator, WriteTargetLogicalResult,
-};
 use crate::state::CheckerState;
-use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-
-#[path = "binary_operator_diagnostics.rs"]
-mod binary_operator_diagnostics;
-#[path = "binary_support.rs"]
-mod binary_support;
-
-/// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
-/// This is a purely syntactic check -- it does NOT look at types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-enum SyntacticNullishness {
-    /// The expression is always nullish (e.g., `null`, `undefined`).
-    #[allow(dead_code)]
-    Always,
-    /// The expression may or may not be nullish (e.g., identifiers, calls, property accesses).
-    Sometimes,
-    /// The expression is never nullish (e.g., literals, arithmetic results, `??` results).
-    Never,
-}
 
 impl<'a> CheckerState<'a> {
     /// Get the type of a binary expression.
@@ -263,6 +239,7 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let right_type = self.get_type_of_node_with_request(right_idx, request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
@@ -330,6 +307,7 @@ impl<'a> CheckerState<'a> {
                         TypingRequest::NONE
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     let should_check_contextual_right =
                         outer_context.is_some() && right_accepts_context && {
@@ -596,15 +574,15 @@ impl<'a> CheckerState<'a> {
                     // which removes structural subtypes (e.g., never[] from
                     // number[] | never[] → number[]). This matters when the
                     // RHS is an empty array literal [] (always never[] in strict mode).
-                    //
                     // Exception: a fresh object literal on the right must NOT
                     // be reduced out even if it is structurally a subtype of the
                     // left's non-nullish part. tsc keeps the fresh literal in
                     // the result union so that subsequent excess-property
                     // checking (against the outer contextual target) can run
-                    // on the fresh member. Collapsing here erases the fresh
-                    // shape and silently accepts excess properties — see
-                    // mohsen1/tsz#9681.
+                    // on the fresh member. Empty object-literal fallbacks are
+                    // safe to reduce because they have no excess properties;
+                    // keeping `{}` as the whole result can make destructuring
+                    // lose the property-bearing left type.
                     let result = match non_nullish {
                         None => right_type,
                         Some(non_nullish) => {

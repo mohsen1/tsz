@@ -407,4 +407,3 @@ def scan_project_config_writers(
             hits.append(f"{bench_rel}:0 {row} does not use shared config writer {writer}")
 
     return hits
-

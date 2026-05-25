@@ -121,7 +121,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        237,
+        238,
     ),
 ]
 
@@ -289,16 +289,13 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Bumped by 2 for the deferred-conditional diagnostic-display fix
-        # (`is_conditional_type` guards in the assignment-target display path,
-        # matching the existing direct-call pattern in type_display.rs).
-        #
-        # Ratcheted down by 5 after literal alias / literal widening
-        # diagnostic display probes moved through query_boundaries::diagnostics.
-        #
-        # Bumped intentionally for #9681, then ratcheted to the live count after
-        # file-size splits moved the added sites into smaller shards.
-        3361,
+        # Bumped by 2 for the deferred-conditional diagnostic-display fix while
+        # the display context still delegates through the broad common barrel.
+        # Ratcheted down by 5 after literal alias / literal widening boundary
+        # cleanup moved the display predicate behind narrower helpers.
+        # Bumped intentionally for #9681, then ratcheted to the post-merge live
+        # count after file-size splits moved the added sites into smaller shards.
+        3371,
     ),
 ]
 

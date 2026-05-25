@@ -4,8 +4,6 @@ import re
 import argparse
 import importlib.util
 import json
-import shlex
-import subprocess
 import sys
 from collections import Counter
 from pathlib import Path
@@ -18,6 +16,60 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11.
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
+
+import arch_guard_projects as _arch_guard_projects
+from arch_guard_config import (
+    BRANCH_LOCAL_VISITED_CLONE_CHECKS,
+    CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS,
+    DEBUG_PRINT_MACRO_CHECKS,
+    DEBUG_PRINT_REPORT_PATH,
+    EXCLUDE_DIRS,
+    FILE_LINE_LIMIT_CHECKS,
+    INDEPENDENT_PIPELINE_CHECKS,
+    LINE_LIMIT_CHECKS,
+    LSP_FEATURE_METHOD_COUNT_CHECKS,
+    PROJECT_CONFIG_WRITER_CHECKS,
+    PROJECT_CONFIG_WRITERS,
+    PROJECT_DASHBOARD_ROW_CHECKS,
+    PROJECT_FIXTURE_SOURCE_CHECKS,
+    PROJECT_INCLUSION_POLICY_CHECKS,
+    QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS,
+    QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS,
+    REGEX_LINE_COUNT_CHECKS,
+    ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS,
+    ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS,
+    SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS,
+    SOLVER_IMPORT_COUNT_CHECKS,
+    SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST,
+    SPECULATION_GUARD_NAME_CHECKS,
+    STRUCT_FIELD_COUNT_CHECKS,
+    TRAIT_METHOD_COUNT_CHECKS,
+    VALID_CHECKER_CONTEXT_CAPABILITIES,
+    VALID_CHECKER_CONTEXT_LIFETIMES,
+    WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS,
+)
+from arch_guard_projects import (
+    scan_project_dashboard_rows,
+    scan_project_fixture_sources,
+    scan_project_inclusion_policy,
+)
+
+
+def scan_project_config_writers(
+    fixture_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    previous = _arch_guard_projects.PROJECT_CONFIG_WRITERS
+    _arch_guard_projects.PROJECT_CONFIG_WRITERS = PROJECT_CONFIG_WRITERS
+    try:
+        return _arch_guard_projects.scan_project_config_writers(
+            fixture_path,
+            compile_guard_path,
+            bench_path,
+        )
+    finally:
+        _arch_guard_projects.PROJECT_CONFIG_WRITERS = previous
 
 
 def _strip_toml_comment(line: str) -> str:
@@ -222,63 +274,6 @@ def _load_all_checks(
 
 CHECKS, MANIFEST_CHECKS = _load_all_checks()
 
-from arch_guard_config import (
-    LINE_LIMIT_CHECKS,
-    FILE_LINE_LIMIT_CHECKS,
-    STRUCT_FIELD_COUNT_CHECKS,
-    TRAIT_METHOD_COUNT_CHECKS,
-    VALID_CHECKER_CONTEXT_LIFETIMES,
-    VALID_CHECKER_CONTEXT_CAPABILITIES,
-    CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS,
-    INDEPENDENT_PIPELINE_CHECKS,
-    SOLVER_IMPORT_COUNT_CHECKS,
-    ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS,
-    ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS,
-    QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS,
-    QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS,
-    WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS,
-    SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS,
-    SPECULATION_GUARD_NAME_CHECKS,
-    DEBUG_PRINT_REPORT_PATH,
-    DEBUG_PRINT_MACRO_CHECKS,
-    REGEX_LINE_COUNT_CHECKS,
-    BRANCH_LOCAL_VISITED_CLONE_CHECKS,
-    LSP_FEATURE_METHOD_COUNT_CHECKS,
-    PROJECT_DASHBOARD_ROW_CHECKS,
-    PROJECT_FIXTURE_SOURCE_CHECKS,
-    PROJECT_INCLUSION_POLICY_CHECKS,
-    PROJECT_CONFIG_WRITER_CHECKS,
-    PROJECT_CONFIG_WRITERS,
-    GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
-    COMPILE_GUARD_ONLY_PROJECT_ROWS,
-    BENCHMARK_ONLY_PROJECT_ROWS,
-    EXCLUDE_DIRS,
-    SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST,
-)
-
-import arch_guard_projects as _arch_guard_projects
-from arch_guard_projects import (
-    scan_project_dashboard_rows,
-    scan_project_fixture_sources,
-    scan_project_inclusion_policy,
-)
-
-
-def scan_project_config_writers(
-    fixture_path: pathlib.Path,
-    compile_guard_path: pathlib.Path,
-    bench_path: pathlib.Path,
-) -> list[str]:
-    previous = _arch_guard_projects.PROJECT_CONFIG_WRITERS
-    _arch_guard_projects.PROJECT_CONFIG_WRITERS = PROJECT_CONFIG_WRITERS
-    try:
-        return _arch_guard_projects.scan_project_config_writers(
-            fixture_path,
-            compile_guard_path,
-            bench_path,
-        )
-    finally:
-        _arch_guard_projects.PROJECT_CONFIG_WRITERS = previous
 def iter_rs_files(base: pathlib.Path):
     for path in base.rglob("*.rs"):
         rel = path.relative_to(ROOT).as_posix()
