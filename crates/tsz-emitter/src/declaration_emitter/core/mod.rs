@@ -1,6 +1,7 @@
 // This module was split from a single core.rs file. Each submodule contains
 // methods on `DeclarationEmitter` grouped by concern.
 
+mod emit_class_properties;
 mod emit_declaration_class_helpers;
 mod emit_declarations;
 mod emit_members;
