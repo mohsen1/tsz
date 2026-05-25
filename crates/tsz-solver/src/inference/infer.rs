@@ -14,7 +14,7 @@ use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::visitor::{is_literal_type, is_union_of_fresh_literals};
+use crate::visitor::{is_literal_type, union_contains_literal_member};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -1243,7 +1243,7 @@ impl<'a> InferenceContext<'a> {
             is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
                 && (is_literal_type(self.interner, ty)
                     || (self.in_array_element_context
-                        && is_union_of_fresh_literals(self.interner, ty)))
+                        && union_contains_literal_member(self.interner, ty)))
                 && !self.source_is_type_annotation,
             from_object_property: context.from_object_property,
             from_index_signature: context.from_index_signature,

@@ -74,19 +74,21 @@ pub fn is_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(types.lookup(type_id), Some(TypeData::Literal(_)))
 }
 
-/// Check if a type is a union whose every member is a fresh literal.
+/// Check if a type is a union with at least one literal member (e.g. `number | "x"`).
 ///
-/// Returns `true` for `"a" | "b" | "c"`, `1 | 2 | 3`, `true | false`, etc.
-/// Returns `false` for scalar `Literal` types, primitives, and any union that
-/// contains at least one non-literal member.
-pub fn is_union_of_fresh_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+/// Gates widening of inference candidates from fresh array-literal elements. tsc's
+/// `getWidenedLiteralType` widens each fresh literal member of a union
+/// independently, so a non-literal member injected by a spread (the `number` in
+/// `[...numberArr, "x"]`) must not suppress widening of its literal siblings — an
+/// all-members check would wrongly preserve `"x"`.
+pub fn union_contains_literal_member(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     if type_id.is_intrinsic() {
         return false;
     }
     match types.lookup(type_id) {
         Some(TypeData::Union(list_id)) => {
             let members = types.type_list(list_id);
-            !members.is_empty() && members.iter().all(|&m| is_literal_type(types, m))
+            members.iter().any(|&m| is_literal_type(types, m))
         }
         _ => false,
     }

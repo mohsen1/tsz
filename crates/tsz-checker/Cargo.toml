@@ -86,6 +86,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "spread_array_literal_widening_inference_tests"
+path = "tests/spread_array_literal_widening_inference_tests.rs"
+
+[[test]]
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
