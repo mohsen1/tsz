@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_TYPE;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
@@ -198,10 +199,45 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
     ) -> bool {
         crate::query_boundaries::common::number_literal_value(self.ctx.types, index_type).is_some()
-            && self.node_text(object_type_node).is_some_and(|text| {
-                let text = text.trim();
-                text.starts_with("Parameters<") || text.starts_with("ConstructorParameters<")
-            })
+            && self.type_node_is_parameters_utility_reference(object_type_node)
+    }
+
+    fn type_node_is_parameters_utility_reference(&self, type_node: NodeIndex) -> bool {
+        let type_node = self.unwrap_parenthesized_type_node(type_node);
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name) = self
+            .ctx
+            .arena
+            .get_identifier_at(type_ref.type_name)
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        matches!(name, "Parameters" | "ConstructorParameters")
+    }
+
+    fn unwrap_parenthesized_type_node(&self, mut type_node: NodeIndex) -> NodeIndex {
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(type_node) else {
+                return type_node;
+            };
+            if node.kind != PARENTHESIZED_TYPE {
+                return type_node;
+            }
+            let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) else {
+                return type_node;
+            };
+            type_node = wrapped.type_node;
+        }
+        type_node
     }
 
     pub(super) fn index_constraint_keyof_matches_mapped_constraint(
