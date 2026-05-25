@@ -71,7 +71,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let derived_value = self.evaluate_type_with_env(derived_value);
         let base_value = self.evaluate_type_with_env(base_value);
-        if self.is_assignable_to(derived_value, base_value) {
+        if self.diagnostic_relation_boolean_guard(derived_value, base_value) {
             return true;
         }
 
@@ -95,7 +95,7 @@ impl<'a> CheckerState<'a> {
         derived_value: TypeId,
         base_value: TypeId,
     ) -> bool {
-        self.is_assignable_to(derived_value, base_value)
+        self.diagnostic_relation_boolean_guard(derived_value, base_value)
             || self.type_heritage_includes_base(derived_value, base_value)
     }
 
