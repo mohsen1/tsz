@@ -1252,10 +1252,9 @@ run_conformance_aggregate() {
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
   baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  # Planned shard totals are drift diagnostics; coverage completeness is measured
+  # against the checked-in runner snapshot domain.
   local coverage_baseline_total="$baseline_total"
-  if [[ "$total_expected_tests" -gt 0 ]]; then
-    coverage_baseline_total="$total_expected_tests"
-  fi
   local total_tolerance=5
   if [[ "$coverage_baseline_total" -gt 0 && "$total_tests" -lt $(( coverage_baseline_total - total_tolerance )) ]]; then
     echo "error: conformance coverage is incomplete: ${total_tests} < ${coverage_baseline_total} (tolerance ${total_tolerance})" >&2
