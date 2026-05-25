@@ -302,6 +302,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_union_callback_context_tests"
+path = "tests/jsx_union_callback_context_tests.rs"
+
+[[test]]
 name = "jsx_import_source_namespace_tests"
 path = "tests/jsx_import_source_namespace_tests.rs"
 
@@ -416,6 +420,10 @@ path = "tests/typeof_const_member_conditional_tests.rs"
 [[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
+
+[[test]]
+name = "typeof_chained_indexed_access_alias_tests"
+path = "tests/typeof_chained_indexed_access_alias_tests.rs"
 
 [[test]]
 name = "typeof_import_commonjs_object_literal_export_tests"
@@ -850,6 +858,10 @@ name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
 [[test]]
+name = "ts2344_keyof_constraint_display_tests"
+path = "tests/ts2344_keyof_constraint_display_tests.rs"
+
+[[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
 path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 
@@ -1158,6 +1170,10 @@ name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
 
 [[test]]
+name = "intersection_mapped_alias_indexed_access_tests"
+path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
+
+[[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
 path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 
@@ -1284,6 +1300,10 @@ path = "tests/template_literal_bigint_placeholder_tests.rs"
 [[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
+
+[[test]]
+name = "tagged_template_this_binding_tests"
+path = "tests/tagged_template_this_binding_tests.rs"
 
 [[test]]
 name = "template_literal_recursive_replace_tests"

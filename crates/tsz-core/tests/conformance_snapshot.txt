@@ -15,7 +15,6 @@ FAIL TypeScript/tests/cases/compiler/convertKeywordsYes.ts
 FAIL TypeScript/tests/cases/compiler/customAsyncIterator.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitExpressionInExtends6.ts
 FAIL TypeScript/tests/cases/compiler/declarationEmitObjectAssignedDefaultExport.ts
-FAIL TypeScript/tests/cases/compiler/declarationEmitPrivatePromiseLikeInterface.ts
 FAIL TypeScript/tests/cases/compiler/decoratorUsedBeforeDeclaration.ts
 FAIL TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
 FAIL TypeScript/tests/cases/compiler/destructuringTuple.ts
@@ -61,7 +60,6 @@ FAIL TypeScript/tests/cases/compiler/jsxChildrenIndividualErrorElaborations.tsx
 FAIL TypeScript/tests/cases/compiler/jsxComponentTypeErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxElementType.tsx
 FAIL TypeScript/tests/cases/compiler/jsxElementTypeLiteral.tsx
-FAIL TypeScript/tests/cases/compiler/jsxExcessPropsAndAssignability.tsx
 FAIL TypeScript/tests/cases/compiler/jsxIntrinsicElementsTypeArgumentErrors.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceElementChildrenAttributeIgnoredWhenReactJsx.tsx
 FAIL TypeScript/tests/cases/compiler/jsxNamespaceNoElementChildrenAttributeReactJsx.tsx
