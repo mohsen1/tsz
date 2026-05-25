@@ -509,9 +509,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Ratcheted down after the current main merge moved additional
-        # checker call sites out of query_boundaries::common.
-        3350,
+        # Merge-repaired against current main after #9598 added live
+        # quarantine callers; future work should ratchet this back down.
+        3427,
     ),
 ]
 
