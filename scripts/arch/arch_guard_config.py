@@ -565,6 +565,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "tsz-checker"
             / "src"
             / "types"
+            / "computation"
+            / "access_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
             / "type_checking"
             / "core_statement_checks.rs",
             ROOT
