@@ -1162,6 +1162,10 @@ name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
 
 [[test]]
+name = "intersection_mapped_alias_indexed_access_tests"
+path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
+
+[[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
 path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 
