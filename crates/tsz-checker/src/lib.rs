@@ -268,6 +268,9 @@ mod ts2320_tests;
 #[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
 mod ts2322_destructuring_obj_literal_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_indexed_access_type_param_tests.rs"]
+mod ts2322_indexed_access_type_param_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
@@ -400,6 +403,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/array_literal_spread_inference_widening_tests.rs"]
+mod array_literal_spread_inference_widening_tests;
+#[cfg(test)]
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
 #[cfg(test)]
@@ -471,6 +477,9 @@ mod direct_generic_return_tests;
 #[cfg(test)]
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
+#[cfg(test)]
+#[path = "tests/do_while_exit_narrowing_tests.rs"]
+mod do_while_exit_narrowing_tests;
 #[cfg(test)]
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;

@@ -498,6 +498,10 @@ name = "js_constructor_property_tests"
 path = "tests/js_constructor_property_tests.rs"
 
 [[test]]
+name = "js_constructor_property_more_tests"
+path = "tests/js_constructor_property_more_tests.rs"
+
+[[test]]
 name = "jsdoc_type_tag_tests"
 path = "tests/jsdoc_type_tag_tests.rs"
 
@@ -1234,6 +1238,10 @@ name = "indexed_access_callback_tests"
 path = "tests/indexed_access_callback_tests.rs"
 
 [[test]]
+name = "ts2322_indexed_access_type_param_tests"
+path = "tests/ts2322_indexed_access_type_param_tests.rs"
+
+[[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
 path = "tests/js_exports_surface_fallback_for_named_imports_tests.rs"
 
@@ -1600,6 +1608,10 @@ path = "tests/type_parameter_canonical_typeid_tests.rs"
 [[test]]
 name = "jsdoc_enum_member_assignability_tests"
 path = "tests/jsdoc_enum_member_assignability_tests.rs"
+
+[[test]]
+name = "structural_dispatch_void_tests"
+path = "tests/structural_dispatch_void_tests.rs"
 
 [lints]
 workspace = true

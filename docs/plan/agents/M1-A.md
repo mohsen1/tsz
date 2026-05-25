@@ -24,14 +24,27 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 15:10 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10154` merged.
+- 2026-05-25 19:53 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10160` merged.
+  - `#9465` landed on 2026-05-25 as
+    `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
+    excess-property check (#8725)`. Its synthetic queue branch
+    `automation/merge-queue/pr-9465` was deleted after merge.
   - `#9559` is merged; the former M1-A JSX branch is no longer an active
     landing target.
+  - `#10160` refreshed this lane state after `#9465` landed and merged on
+    2026-05-25 as `4b484e5fd6 docs(agents): refresh M1-A post-9465
+    state (#10160)`. Its stale synthetic queue branch was deleted after merge.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
-    longer matches current `main`; the latest apply run deleted the merged
-    `#10150` queue branch `automation/merge-queue/pr-10150-b8f0354`.
+    longer matches current `main`; the latest dry run reports zero stale queue
+    branches and preserves no active queue runs.
+  - `#9889` landed through the poor-man queue during M1-A queue drain. Its
+    stale synthetic queue branch was deleted after merge.
+  - `#9875` was selected by the queue but conflicted with current `main`.
+    M1-A disabled auto-merge and left a signed M4-C handoff comment; leave it
+    off auto-merge until the owner refreshes and re-verifies the branch.
+  - `#9230` merged on 2026-05-25 and is no longer an active queue unblocker.
   - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
     `#9804`, `#9799`) is fully merged.
   - The old WIP-title queue (`#9822`, `#9803`, `#9639`) is resolved by merge
@@ -42,12 +55,18 @@ node scripts/ci/pr-ownership-report.mjs
 - Current PR-garden surfaces to inspect before issue backlog:
   - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
     Its stale synthetic branch was cleaned after merge.
+  - No queue-ready auto-merge PR is currently selected by
+    `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
+    either drafts, not auto-merge armed, or already handed off.
   - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
-    `mergeable=MERGEABLE`: `#9230`, `#9281`, `#9634`, `#9807`, `#9811`,
-    `#9912`, `#10078`, `#10081`, and `#10126`.
-  - Ready main-based PRs with known conflict handoff needs include `#9632` and
-    `#10084`; M1-A posted a current conflict handoff on `#9632` on
-    2026-05-25.
+    `mergeable=MERGEABLE` include `#9632`, `#9912`, `#10078`, `#10081`,
+    `#10084`, `#10085`, `#10087`, `#10126`, and `#10147`. These currently
+    belong to other lanes; do not take them over unless the owner asks or a
+    stale branch needs a signed handoff.
+  - Queue branch cleanup currently skips open PR branches
+    `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10085`, `pr-10147`,
+    `pr-9632`, and `pr-9912`. The stale merged-PR queue branches for `#9848`,
+    `#9889`, and `#10160` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
