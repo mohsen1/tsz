@@ -516,9 +516,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down by 14 after branch refresh removed stale direct
         # common references.
         #
-        # Ratcheted down by 2 during the #9281 current-main refresh after
+        # Ratcheted down by 1 during the #9281 current-main refresh after
         # the split guard tests caught slack in the live count.
-        3356,
+        3357,
     ),
 ]
 
