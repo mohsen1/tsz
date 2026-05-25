@@ -5,13 +5,21 @@
 //! `is_key_in_mapped_constraint` had no arm for template-literal constraints
 //! and fell through to a conservative "reject" branch. The fix matches the
 //! source property name against the template literal pattern.
+//!
+//! Issue #8725 (`templateLiteralTypes6`): same rule entered through the
+//! `Record` alias when the key is a template-literal pattern; coverage at
+//! the bottom of this file pins the `Record<K, T>` -> `{ [P in K]: T }`
+//! lowering path.
 
+use std::sync::{Arc, OnceLock};
+use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
 
 fn diags(source: &str) -> Vec<(u32, String)> {
-    let libs = load_lib_files(&["es5.d.ts"]);
-    check_source_with_libs(source, "test.ts", CheckerOptions::default(), &libs)
+    static LIBS: OnceLock<Vec<Arc<LibFile>>> = OnceLock::new();
+    let libs = LIBS.get_or_init(|| load_lib_files(&["es5.d.ts"]));
+    check_source_with_libs(source, "test.ts", CheckerOptions::default(), libs)
         .iter()
         .filter(|d| d.code != 2318)
         .map(|d| (d.code, d.message_text.clone()))
@@ -92,5 +100,70 @@ const si: SuffixIndex = { "foo-end": "a", "bar-end": "b" };
     assert!(
         ts2353.is_empty(),
         "Expected no TS2353 for suffix template pattern, got: {ts2353:?}",
+    );
+}
+
+// Regression coverage for #8725: same rule as above, reached via the
+// `Record<K, T>` -> `{ [P in K]: T }` alias lowering.
+
+#[test]
+fn record_template_literal_pattern_accepts_matching_keys() {
+    let source = r#"
+const ok: Record<`evt_${string}`, number> = { evt_a: 1, evt_b: 2 };
+"#;
+    let ds = diags(source);
+    let ts2353: Vec<_> = ds.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Expected no TS2353 for keys matching Record<`evt_${{string}}`,_>, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn record_template_literal_pattern_rejects_non_matching_key() {
+    let source = r#"
+const bad: Record<`evt_${string}`, number> = { other: 1 };
+"#;
+    let ds = diags(source);
+    let ts2353: Vec<_> = ds.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 for non-matching Record key 'other', got: {ts2353:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'other'"),
+        "Expected TS2353 to mention 'other', got: {}",
+        ts2353[0].1,
+    );
+}
+
+#[test]
+fn record_template_literal_pattern_with_satisfies_operator() {
+    let source = r#"
+const ok = { prefix_foo: 1 } satisfies Record<`prefix_${string}`, number>;
+"#;
+    let ds = diags(source);
+    let ts2353: Vec<_> = ds.iter().filter(|d| d.0 == 2353).collect();
+    assert!(
+        ts2353.is_empty(),
+        "Expected no TS2353 for `satisfies Record<`prefix_${{string}}`,_>`, got: {ts2353:?}",
+    );
+}
+
+#[test]
+fn record_template_literal_pattern_renamed_alias() {
+    // Confirms the rule is structural, not bound to the `Record` name.
+    let source = r#"
+type Bucket<K extends keyof any, T> = { [P in K]: T };
+const ok: Bucket<`evt_${string}`, number> = { evt_a: 1, evt_b: 2 };
+const bad: Bucket<`evt_${string}`, number> = { other: 1 };
+"#;
+    let ds = diags(source);
+    let ts2353: Vec<_> = ds.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected exactly one TS2353 (for 'other') under renamed Record alias, got: {ts2353:?}",
     );
 }
