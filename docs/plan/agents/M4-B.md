@@ -47,7 +47,11 @@ scripts/agents/list-owned-work.sh M4-B
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
     `26373943878` attempt 2 completed successfully after the earlier
     `conformance-aggregate` incomplete-coverage failure was rerun. Exact-head
-    ready-review CI is green, but required `Queue Tested` remains pending.
+    ready-review CI is green, but synthetic queue run `26380248069` failed
+    `conformance-aggregate` with incomplete coverage (`12600 < 12619`,
+    tolerance 5). M4-B left a signed handoff comment with that evidence; keep
+    auto-merge off until the aggregate coverage mismatch is understood and a
+    fresh exact-head queue run is green.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
   merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
   reason.
@@ -69,11 +73,11 @@ scripts/agents/list-owned-work.sh M4-B
   ready-review CI like the rest of the open ready PR set.
 - `#9230`, `#9807`, `#9945`, `#10058`, and `#10078` are ready/off-auto and should be
   landed only after exact-head required checks are complete and green. For
-  `#10078`, the latest inspected synthetic queue run failed in
+  `#10078` and `#9230`, the latest inspected synthetic queue runs failed in
   `conformance-aggregate` with incomplete coverage, and auto-merge remains off;
-  do not arm it under the lane rules while queue state is not clean.
-  `#10058`, `#9945`, and `#9230` have green exact-head ready-review CI but are
-  still blocked by required `Queue Tested`.
+  do not arm either under the lane rules while queue state is not clean.
+  `#10058` and `#9945` have green exact-head ready-review CI but are still
+  blocked by required `Queue Tested`.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
   ownership unless explicitly handed off.
