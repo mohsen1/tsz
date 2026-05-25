@@ -747,8 +747,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 jsdoc_type,
                             );
                         if should_check {
-                            let fwd = self.checker.is_assignable_to(expr_type, jsdoc_type);
-                            let rev = self.checker.is_assignable_to(jsdoc_type, expr_type);
+                            let fwd = self
+                                .checker
+                                .is_assignable_for_type_assertion_overlap(expr_type, jsdoc_type);
+                            let rev = self
+                                .checker
+                                .is_assignable_for_type_assertion_overlap(jsdoc_type, expr_type);
                             if !fwd && !rev {
                                 // Check union member overlap (same as `as` expressions):
                                 // if expr is a union, check if any member overlaps with target.
@@ -757,8 +761,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     query::union_members(self.checker.ctx.types, expr_type)
                                 {
                                     for member in members {
-                                        if self.checker.is_assignable_to(member, jsdoc_type)
-                                            || self.checker.is_assignable_to(jsdoc_type, member)
+                                        if self.checker.is_assignable_for_type_assertion_overlap(
+                                            member, jsdoc_type,
+                                        ) || self
+                                            .checker
+                                            .is_assignable_for_type_assertion_overlap(
+                                                jsdoc_type, member,
+                                            )
                                         {
                                             have_overlap = true;
                                             break;
