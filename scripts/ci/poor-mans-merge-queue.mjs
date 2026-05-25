@@ -226,6 +226,12 @@ export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
 
+export function activeSyntheticQueueRun(runs, headSha) {
+  return (runs || []).find((run) => (
+    queueRunIsActive(run) && (!headSha || run.headSha === headSha)
+  )) || null;
+}
+
 function activePendingQueueRun(repository, pr, options) {
   const pendingRun = pendingQueueRun(pr, options.statusContext);
   if (pendingRun) {
@@ -320,7 +326,7 @@ function readBranchWorkflowRuns(repository, branch) {
     "--repo", repository,
     "--branch", branch,
     "--limit", "20",
-    "--json", "databaseId,status,conclusion,url",
+    "--json", "databaseId,status,conclusion,headSha,url",
   ]);
 }
 
@@ -451,15 +457,26 @@ function commitStatusRollup(repository, sha) {
   ];
 }
 
-function waitForSyntheticChecks(repository, mergeOid, options) {
+function waitForSyntheticChecks(repository, synthetic, options) {
   for (let attempt = 0; attempt < options.waitAttempts; attempt += 1) {
     const state = requiredCheckState(
-      commitStatusRollup(repository, mergeOid),
+      commitStatusRollup(repository, synthetic.mergeOid),
       options.mergeRequiredChecks,
     );
     if (state.kind === "passed") return state;
     if (state.kind === "failed") throw new Error(state.reason);
     if (attempt + 1 < options.waitAttempts) sleep(options.waitIntervalMs);
+  }
+  const activeRun = activeSyntheticQueueRun(
+    readBranchWorkflowRuns(repository, synthetic.branch),
+    synthetic.mergeOid,
+  );
+  if (activeRun) {
+    return {
+      kind: "pending",
+      reason: `timed out while synthetic run ${activeRun.databaseId || "(unknown)"} is still active`,
+      activeRun,
+    };
   }
   throw new Error(`timed out waiting for synthetic merge check(s): ${options.mergeRequiredChecks.join(", ")}`);
 }
@@ -491,7 +508,18 @@ function processOne(repository, options) {
     invalidatePullRequest(repository, pr, options);
     try {
       const synthetic = prepareSyntheticMerge(repository, pr, baseOid, options);
-      waitForSyntheticChecks(repository, synthetic.mergeOid, options);
+      const syntheticState = waitForSyntheticChecks(repository, synthetic, options);
+      if (syntheticState.activeRun) {
+        postStatus(
+          repository,
+          pr.headRefOid,
+          "pending",
+          options.statusContext,
+          `Waiting for synthetic run ${syntheticState.activeRun.databaseId || synthetic.mergeOid.slice(0, 12)}`,
+          syntheticState.activeRun.url || "",
+        );
+        return { selected: pr, pendingSynthetic: true, synthetic, activeRun: syntheticState.activeRun, skips };
+      }
       const refreshed = readPullRequest(repository, pr.number);
       const currentBase = readBranchOid(repository, options.base);
       if (currentBase !== baseOid) {
@@ -564,6 +592,10 @@ export function formatResult(result, options) {
     lines.push(`Retest needed for #${result.selected.number}: base moved from \`${result.oldBaseOid.slice(0, 12)}\` to \`${result.newBaseOid.slice(0, 12)}\`.`);
   } else if (result.headMoved) {
     lines.push(`Retest needed for #${result.selected.number}: PR head moved during queue test.`);
+  } else if (result.pendingSynthetic) {
+    const runId = result.activeRun?.databaseId || "(unknown)";
+    const runUrl = result.activeRun?.url ? ` (${result.activeRun.url})` : "";
+    lines.push(`Preserved #${result.selected.number}: synthetic run ${runId}${runUrl} is still active after the queue wait window.`);
   } else if (result.failed) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }

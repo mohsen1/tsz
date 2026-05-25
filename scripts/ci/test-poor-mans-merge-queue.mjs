@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   activeBranchQueueRun,
+  activeSyntheticQueueRun,
   formatResult,
   hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
@@ -124,6 +125,19 @@ assert.equal(
   ]),
   null,
 );
+assert.deepEqual(
+  activeSyntheticQueueRun([
+    { databaseId: 1, status: "queued", conclusion: "", headSha: "a".repeat(40), url: "https://github.example/runs/1" },
+    { databaseId: 2, status: "queued", conclusion: "", headSha: "b".repeat(40), url: "https://github.example/runs/2" },
+  ], "b".repeat(40)),
+  { databaseId: 2, status: "queued", conclusion: "", headSha: "b".repeat(40), url: "https://github.example/runs/2" },
+);
+assert.equal(
+  activeSyntheticQueueRun([
+    { databaseId: 1, status: "completed", conclusion: "success", headSha: "b".repeat(40), url: "https://github.example/runs/1" },
+  ], "b".repeat(40)),
+  null,
+);
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
 assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");
@@ -170,6 +184,17 @@ assert.match(
     skips: [],
   }, parseArgs(["--repository", "owner/repo"])),
   /Retest needed/,
+);
+
+assert.match(
+  formatResult({
+    selected: pr(),
+    pendingSynthetic: true,
+    synthetic: { mergeOid: "c".repeat(40) },
+    activeRun: { databaseId: 123, url: "https://github.example/runs/123" },
+    skips: [],
+  }, parseArgs(["--repository", "owner/repo"])),
+  /synthetic run 123.*still active/,
 );
 
 console.log("poor man's merge queue tests passed");
