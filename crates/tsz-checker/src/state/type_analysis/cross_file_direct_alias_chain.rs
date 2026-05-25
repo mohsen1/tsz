@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{BinderState, symbol_flags};
+use tsz_binder::{BinderState, SymbolId, symbol_flags};
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
@@ -71,7 +71,12 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(sym_id) =
+                    Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
+                else {
                     return false;
                 };
                 if seen.contains(&sym_id) {
@@ -243,6 +248,15 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                Self::source_file_mapped_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    type_param_names,
+                    seen,
+                )
+            }
             _ => false,
         }
     }
@@ -275,7 +289,12 @@ impl<'a> CheckerState<'a> {
                 else {
                     return false;
                 };
-                let Some(sym_id) = binder.file_locals.get(name) else {
+                let Some(raw_sym_id) = binder.file_locals.get(name) else {
+                    return false;
+                };
+                let Some(sym_id) =
+                    Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
+                else {
                     return false;
                 };
                 if seen.contains(&sym_id) {
@@ -320,11 +339,20 @@ impl<'a> CheckerState<'a> {
                         arena,
                         type_alias.type_node,
                         syntax_kind_ext::TYPE_QUERY,
-                    ) || !Self::source_file_type_node_is_generic_scope_independent(
-                        arena,
-                        type_alias.type_node,
-                        &target_param_names,
-                    ) {
+                    ) || !seen.push(sym_id)
+                    {
+                        return false;
+                    }
+                    let result =
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            arena,
+                            binder,
+                            type_alias.type_node,
+                            &target_param_names,
+                            seen,
+                        );
+                    seen.pop(sym_id);
+                    if !result {
                         return false;
                     }
                     return true;
@@ -390,7 +418,141 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
+            k if k == syntax_kind_ext::TYPE_OPERATOR => {
+                arena.get_type_operator(node).is_some_and(|operator| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        operator.type_node,
+                        seen,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
+                arena.get_indexed_access_type(node).is_some_and(|indexed| {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        indexed.object_type,
+                        seen,
+                    ) && Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena,
+                        binder,
+                        indexed.index_type,
+                        seen,
+                    )
+                })
+            }
+            k if k == syntax_kind_ext::MAPPED_TYPE => {
+                Self::source_file_mapped_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    &[],
+                    seen,
+                )
+            }
             _ => false,
         }
+    }
+
+    fn source_file_resolve_alias_symbol_for_lowering(
+        binder: &BinderState,
+        sym_id: SymbolId,
+    ) -> Option<SymbolId> {
+        let symbol = binder.get_symbol(sym_id)?;
+        if symbol.flags & symbol_flags::ALIAS == 0 {
+            return Some(sym_id);
+        }
+        let module_specifier = symbol.import_module.as_ref()?;
+        let import_name = symbol
+            .import_name
+            .as_deref()
+            .unwrap_or(symbol.escaped_name.as_str());
+        if import_name == "*" {
+            return None;
+        }
+        let (target_sym_id, _) =
+            binder.resolve_import_with_reexports_type_only(module_specifier, import_name)?;
+        (target_sym_id != sym_id).then_some(target_sym_id)
+    }
+
+    fn source_file_mapped_type_is_generic_local_alias_application_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        let Some(mapped) = arena.get_mapped_type(node) else {
+            return false;
+        };
+        if mapped
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(type_param_node) = arena.get(mapped.type_parameter) else {
+            return false;
+        };
+        let Some(type_param) = arena.get_type_parameter(type_param_node) else {
+            return false;
+        };
+        let Some(name_node) = arena.get(type_param.name) else {
+            return false;
+        };
+        let Some(name) = arena.get_identifier(name_node) else {
+            return false;
+        };
+
+        if !type_param.constraint.is_none()
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                type_param.constraint,
+                type_param_names,
+                seen,
+            )
+        {
+            return false;
+        }
+        if !type_param.default.is_none()
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                type_param.default,
+                type_param_names,
+                seen,
+            )
+        {
+            return false;
+        }
+
+        let mut mapped_param_names = type_param_names.to_vec();
+        if !mapped_param_names
+            .iter()
+            .any(|param| param == &name.escaped_text)
+        {
+            mapped_param_names.push(name.escaped_text.to_string());
+        }
+
+        (mapped.name_type.is_none()
+            || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                mapped.name_type,
+                &mapped_param_names,
+                seen,
+            ))
+            && (mapped.type_node.is_none()
+                || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    mapped.type_node,
+                    &mapped_param_names,
+                    seen,
+                ))
     }
 }

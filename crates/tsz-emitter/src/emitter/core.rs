@@ -458,6 +458,13 @@ pub struct Printer<'a> {
     /// function declarations are emitted.
     pub(crate) reserved_disposable_env_names: FxHashMap<NodeIndex, (String, String, String)>,
 
+    /// Result temps reserved for ES5 class assignments with deferred static
+    /// blocks inside top-level using scopes.
+    pub(crate) reserved_top_level_using_class_result_temps: FxHashMap<NodeIndex, String>,
+    /// Result temps that should be emitted as their own file-level hoist after
+    /// shared resource initializer temps.
+    pub(crate) hoisted_deferred_static_class_result_temps: Vec<String>,
+
     /// When set, a block-level using-lowering try/catch is active. `using` variable
     /// statements should emit `const x = __addDisposableResource(env, expr, async)`
     /// instead of their own try/catch wrapper. The tuple is (`env_name`, `is_async`).
@@ -466,6 +473,11 @@ pub struct Printer<'a> {
     /// True while emitting statements inside a wrapped top-level using region.
     /// This distinguishes post-`using` lowered statements from pre-`using` ones.
     pub(crate) in_top_level_using_scope: bool,
+
+    /// True while emitting System statements before the wrapped top-level using region.
+    /// Those statements share the wrapper's export scheduler but are outside the
+    /// disposable-resource try/catch.
+    pub(crate) in_system_top_level_using_prelude: bool,
 
     /// Type parameter names of the class currently being decorated (for metadata serialization).
     /// Set during `emit_legacy_member_decorator_calls` so `serialize_type_for_metadata` can
@@ -476,9 +488,9 @@ pub struct Printer<'a> {
     /// the closing: `(N || (exports.N = N = {}))` instead of `(N || (N = {}))`.
     pub(crate) pending_cjs_namespace_export_fold: bool,
 
-    /// Export property name to use with `pending_cjs_namespace_export_fold`.
-    /// This differs from the namespace's local name for `export { N as Alias }`.
-    pub(crate) pending_cjs_namespace_export_name: Option<String>,
+    /// Export property names to use with `pending_cjs_namespace_export_fold`.
+    /// These differ from the namespace's local name for `export { N as Alias }`.
+    pub(crate) pending_cjs_namespace_export_names: Vec<String>,
 
     /// `SystemJS` export names for the next namespace IIFE tail:
     /// `(N || (exports_1("alias", exports_1("name", N = {}))))`.
@@ -539,6 +551,10 @@ pub struct Printer<'a> {
     /// These local value bindings shadow parent namespace exports while
     /// qualifying identifiers inside namespace IIFEs.
     pub(crate) namespace_current_class_fn_enum_names: FxHashSet<String>,
+
+    /// Non-exported variable names declared in active namespace IIFEs.
+    /// These local value bindings shadow same-named namespace and module exports.
+    pub(crate) namespace_local_var_shadow_stack: Vec<FxHashSet<String>>,
 
     /// Names of variables exported from the current CJS module.
     /// Used to qualify identifier reads: `x` → `exports.x` in expression positions.
@@ -1147,12 +1163,15 @@ impl<'a> Printer<'a> {
             next_dynamic_import_promise_id: 1,
             async_generator_inner_name_counts: FxHashMap::default(),
             reserved_disposable_env_names: FxHashMap::default(),
+            reserved_top_level_using_class_result_temps: FxHashMap::default(),
+            hoisted_deferred_static_class_result_temps: Vec::new(),
             block_using_env: None,
             in_top_level_using_scope: false,
+            in_system_top_level_using_prelude: false,
             metadata_class_type_params: None,
             pending_block_comment_space: false,
             pending_cjs_namespace_export_fold: false,
-            pending_cjs_namespace_export_name: None,
+            pending_cjs_namespace_export_names: Vec::new(),
             pending_system_namespace_export_fold: None,
             suppress_default_export_merge_iife: false,
             pending_commonjs_class_export_name: None,
@@ -1165,6 +1184,7 @@ impl<'a> Printer<'a> {
             namespace_parent_exported_names: FxHashSet::default(),
             namespace_ancestor_export_qualifiers: FxHashMap::default(),
             namespace_current_class_fn_enum_names: FxHashSet::default(),
+            namespace_local_var_shadow_stack: Vec::new(),
             commonjs_exported_var_names: FxHashSet::default(),
             commonjs_exported_var_shadow_stack: Vec::new(),
             deferred_local_export_bindings: None,

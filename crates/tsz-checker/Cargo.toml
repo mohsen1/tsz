@@ -54,6 +54,10 @@ name = "ts2511_abstract_type_param_tests"
 path = "tests/ts2511_abstract_type_param_tests.rs"
 
 [[test]]
+name = "ts2513_abstract_super_access_tests"
+path = "tests/ts2513_abstract_super_access_tests.rs"
+
+[[test]]
 name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
@@ -294,6 +298,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_union_callback_context_tests"
+path = "tests/jsx_union_callback_context_tests.rs"
+
+[[test]]
 name = "jsx_import_source_namespace_tests"
 path = "tests/jsx_import_source_namespace_tests.rs"
 
@@ -316,6 +324,10 @@ path = "tests/destructuring_spread_rest_tuple_source_display_tests.rs"
 [[test]]
 name = "destructuring_default_flow_assignment_tests"
 path = "tests/destructuring_default_flow_assignment_tests.rs"
+
+[[test]]
+name = "merged_namespace_typeof_display_tests"
+path = "tests/merged_namespace_typeof_display_tests.rs"
 
 [[test]]
 name = "recursive_typeof_param_display_tests"
@@ -382,6 +394,10 @@ name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
 [[test]]
+name = "mapped_readonly_tuple_tests"
+path = "tests/mapped_readonly_tuple_tests.rs"
+
+[[test]]
 name = "tuple_index_access_tests"
 path = "tests/tuple_index_access_tests.rs"
 
@@ -394,8 +410,16 @@ name = "array_isarray_mutual_subtype_narrowing_tests"
 path = "tests/array_isarray_mutual_subtype_narrowing_tests.rs"
 
 [[test]]
+name = "typeof_const_member_conditional_tests"
+path = "tests/typeof_const_member_conditional_tests.rs"
+
+[[test]]
 name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
+
+[[test]]
+name = "typeof_chained_indexed_access_alias_tests"
+path = "tests/typeof_chained_indexed_access_alias_tests.rs"
 
 [[test]]
 name = "typeof_import_commonjs_object_literal_export_tests"
@@ -566,6 +590,10 @@ name = "keyof_quoted_string_property_name_tests"
 path = "tests/keyof_quoted_string_property_name_tests.rs"
 
 [[test]]
+name = "keyof_well_known_symbol_key_tests"
+path = "tests/keyof_well_known_symbol_key_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 
@@ -604,6 +632,10 @@ path = "tests/recursive_conditional_mapped_infer_tests.rs"
 [[test]]
 name = "in_chain_narrows_unconstrained_type_param_tests"
 path = "tests/in_chain_narrows_unconstrained_type_param_tests.rs"
+
+[[test]]
+name = "in_operator_lhs_key_type_tests"
+path = "tests/in_operator_lhs_key_type_tests.rs"
 
 [[test]]
 name = "no_lib_async_promise_tests"
@@ -678,6 +710,10 @@ name = "generic_call_inference_tests"
 path = "tests/generic_call_inference_tests.rs"
 
 [[test]]
+name = "overload_inference_literal_preservation_tests"
+path = "tests/overload_inference_literal_preservation_tests.rs"
+
+[[test]]
 name = "issue_3768_generic_callback_outer_inference_tests"
 path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 
@@ -728,6 +764,10 @@ path = "tests/enum_member_cache_tests.rs"
 [[test]]
 name = "enum_merge_tests"
 path = "tests/enum_merge_tests.rs"
+
+[[test]]
+name = "const_enum_merge_ts2567_tests"
+path = "tests/const_enum_merge_ts2567_tests.rs"
 
 [[test]]
 name = "ts2450_const_enum_tests"
@@ -812,6 +852,10 @@ path = "tests/ts2344_literal_type_message.rs"
 [[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
+
+[[test]]
+name = "ts2344_keyof_constraint_display_tests"
+path = "tests/ts2344_keyof_constraint_display_tests.rs"
 
 [[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
@@ -914,6 +958,10 @@ name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
 
 [[test]]
+name = "cross_module_unimported_name_resolution_tests"
+path = "tests/cross_module_unimported_name_resolution_tests.rs"
+
+[[test]]
 name = "cross_file_intrinsic_identifier_tests"
 path = "tests/cross_file_intrinsic_identifier_tests.rs"
 
@@ -932,6 +980,10 @@ path = "tests/jsdoc_augments_empty_tests.rs"
 [[test]]
 name = "jsdoc_extends_constraint_tests"
 path = "tests/jsdoc_extends_constraint_tests.rs"
+
+[[test]]
+name = "jsdoc_template_constraint_enforcement_tests"
+path = "tests/jsdoc_template_constraint_enforcement_tests.rs"
 
 [[test]]
 name = "jsdoc_template_in_body_scope_tests"
@@ -1114,6 +1166,10 @@ name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
 
 [[test]]
+name = "intersection_mapped_alias_indexed_access_tests"
+path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
+
+[[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
 path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 
@@ -1188,6 +1244,10 @@ path = "tests/discriminant_literal_reference_narrowing_tests.rs"
 [[test]]
 name = "unique_symbol_discriminant_narrowing_tests"
 path = "tests/unique_symbol_discriminant_narrowing_tests.rs"
+
+[[test]]
+name = "wide_symbol_equality_no_unique_narrowing_tests"
+path = "tests/wide_symbol_equality_no_unique_narrowing_tests.rs"
 
 [[test]]
 name = "mixin_base_no_member_no_ts2416_tests"
@@ -1370,6 +1430,10 @@ name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
+name = "ts7053_unconstrained_type_param_index_tests"
+path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
+
+[[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
@@ -1380,6 +1444,10 @@ path = "tests/string_iterable_overload_matching_tests.rs"
 [[test]]
 name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
+
+[[test]]
+name = "override_accessor_property_kind_mismatch_ts2416_tests"
+path = "tests/override_accessor_property_kind_mismatch_ts2416_tests.rs"
 
 [[test]]
 name = "abstract_parameter_property_impl_tests"
@@ -1508,6 +1576,10 @@ path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 [[test]]
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
+
+[[test]]
+name = "jsdoc_enum_member_assignability_tests"
+path = "tests/jsdoc_enum_member_assignability_tests.rs"
 
 [lints]
 workspace = true
