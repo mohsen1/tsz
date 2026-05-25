@@ -411,6 +411,10 @@ pub enum IRNode {
         /// generator-local vars were hoisted. `tsc` does this when the async
         /// function captures `arguments` in the wrapper scope.
         multiline_callback: bool,
+        /// Directive prologues (e.g. `"use strict"`) extracted from the start of
+        /// the generator body. `tsc` places these inside the `__awaiter` callback
+        /// before the `var` declarations and before `__generator`.
+        directives: Vec<String>,
     },
 
     /// __generator helper body
