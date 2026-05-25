@@ -35,6 +35,52 @@ impl<'a> InferenceContext<'a> {
             .is_some_and(|info| info.constraint.is_none())
     }
 
+    /// Widen the covariant candidate and decide between the covariant and contra result.
+    ///
+    /// Called when both covariant and contra-variant candidates exist.
+    /// tsc calls `getWidenedType(covariantInference)` in `getInferredType` before
+    /// testing assignability to contra-candidates, so fresh object literals like
+    /// `{a:1,b:2}` are widened to `{a:number,b:number}` before the check.
+    /// Without widening, excess property checking rejects them against `{a:number}`.
+    fn resolve_covariant_against_contra(
+        &self,
+        covariant_result: TypeId,
+        concrete_contra_candidates: &[InferenceCandidate],
+        from_array_element: bool,
+        mut external_is_subtype: Option<&mut dyn FnMut(TypeId, TypeId) -> bool>,
+    ) -> TypeId {
+        let covariant_widened = if is_literal_type(self.interner, covariant_result) {
+            covariant_result
+        } else {
+            widening::widen_type_for_inference(self.interner, covariant_result)
+        };
+        let covariant_is_uninformative = matches!(
+            covariant_widened,
+            TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
+        );
+        let covariant_assignable_to_contra = !covariant_is_uninformative
+            && concrete_contra_candidates.iter().any(|c| {
+                if let Some(ref mut ext) = external_is_subtype {
+                    ext(covariant_widened, c.type_id)
+                } else {
+                    self.is_subtype(covariant_widened, c.type_id)
+                }
+            });
+        if !covariant_assignable_to_contra && !covariant_is_uninformative {
+            let contra_result = self.resolve_from_contra_candidates(concrete_contra_candidates);
+            if contra_result == TypeId::NEVER {
+                return covariant_result;
+            }
+        }
+        self.choose_covariant_or_contra(
+            covariant_widened,
+            concrete_contra_candidates,
+            covariant_assignable_to_contra,
+            covariant_is_uninformative,
+            from_array_element,
+        )
+    }
+
     /// Apply the shared "prefer covariant" decision used by both
     /// `compute_constraint_result` and `fix_current_variables_with`.
     ///
@@ -501,30 +547,13 @@ impl<'a> InferenceContext<'a> {
                 // P should be inferred from the function parameter (contra: Props),
                 // not from the object literal (co: { value: "C" }), because the
                 // object literal type is not assignable to Props.
-                let covariant_is_uninformative = matches!(
-                    covariant_result,
-                    TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
-                );
-                let covariant_assignable_to_contra = !covariant_is_uninformative
-                    && concrete_contra_candidates.iter().any(|c| {
-                        // Use the external (full checker) assignability test when
-                        // available, falling back to the simplified BCT is_subtype.
-                        // The BCT checker cannot resolve Lazy (interface/class) types
-                        // through their extends chains in all cases, so the full
-                        // checker is needed to correctly determine e.g. B <: A when
-                        // B extends A.
-                        if let Some(ref mut ext) = external_is_subtype {
-                            ext(covariant_result, c.type_id)
-                        } else {
-                            self.is_subtype(covariant_result, c.type_id)
-                        }
-                    });
-                self.choose_covariant_or_contra(
+                self.resolve_covariant_against_contra(
                     covariant_result,
                     &concrete_contra_candidates,
-                    covariant_assignable_to_contra,
-                    covariant_is_uninformative,
                     candidates.iter().any(|c| c.from_array_element),
+                    external_is_subtype
+                        .as_mut()
+                        .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
                 )
             } else {
                 covariant_result
@@ -1852,26 +1881,13 @@ impl<'a> InferenceContext<'a> {
                 );
                 // (TypeParameter filtering already done above)
                 if !concrete_contra_candidates.is_empty() {
-                    // Match tsc's getInferredType: prefer covariant ONLY IF it's
-                    // assignable to some contra-candidate. Otherwise use contra result.
-                    let covariant_is_uninformative = matches!(
-                        covariant_result,
-                        TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
-                    );
-                    let covariant_assignable_to_contra = !covariant_is_uninformative
-                        && concrete_contra_candidates.iter().any(|c| {
-                            if let Some(ref mut ext) = external_is_subtype {
-                                ext(covariant_result, c.type_id)
-                            } else {
-                                self.is_subtype(covariant_result, c.type_id)
-                            }
-                        });
-                    self.choose_covariant_or_contra(
+                    self.resolve_covariant_against_contra(
                         covariant_result,
                         &concrete_contra_candidates,
-                        covariant_assignable_to_contra,
-                        covariant_is_uninformative,
                         candidates.iter().any(|c| c.from_array_element),
+                        external_is_subtype
+                            .as_mut()
+                            .map(|e| e as &mut dyn FnMut(TypeId, TypeId) -> bool),
                     )
                 } else {
                     covariant_result

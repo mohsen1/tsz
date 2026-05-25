@@ -92,6 +92,48 @@ pub fn is_union_of_fresh_literals(types: &dyn TypeDatabase, type_id: TypeId) -> 
     }
 }
 
+/// Decide whether an array-element inference union should have its fresh literal
+/// members widened to their primitive base.
+///
+/// Returns `true` when the union has at least one literal member and every
+/// member is either a literal or one of the primitives that literal widening
+/// produces (`number` / `string` / `boolean` / `bigint`). This covers:
+/// - pure literal unions (`"a" | "b"`, `1 | 2`) — equivalent to
+///   `is_union_of_fresh_literals`; and
+/// - unions that mix fresh literals with an already-widened primitive, which is
+///   exactly the shape produced by spreading a widened array alongside a literal
+///   element (`number | "x"` from `[...numberArray, "x"]`). The widened
+///   primitive proves the array literal already carries a widened element, so
+///   the fresh literal siblings must widen too, matching tsc's
+///   `getWidenedLiteralType`.
+///
+/// A union whose non-literal members include `null` / `undefined` / objects is
+/// left alone, preserving the literal members for downstream narrowing (the
+/// conservative baseline for mixed literal+nullable element unions).
+pub fn array_element_union_widens_literals(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match types.lookup(type_id) {
+        Some(TypeData::Union(list_id)) => {
+            let members = types.type_list(list_id);
+            let mut has_literal = false;
+            for &member in members.iter() {
+                if is_literal_type(types, member) {
+                    has_literal = true;
+                } else if !matches!(
+                    member,
+                    TypeId::NUMBER | TypeId::STRING | TypeId::BOOLEAN | TypeId::BIGINT
+                ) {
+                    return false;
+                }
+            }
+            has_literal
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is a module namespace type (import * as ns).
 ///
 /// Matches: `TypeData::ModuleNamespace`(_)
