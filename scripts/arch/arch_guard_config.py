@@ -564,6 +564,14 @@ REGEX_LINE_COUNT_CHECKS = [
             / "tsz-checker"
             / "src"
             / "types"
+            / "type_checking"
+            / "indexed_access"
+            / "mapped_key_check.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
             / "property_access_type"
             / "helpers.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "lookup.rs",
