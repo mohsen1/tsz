@@ -1420,6 +1420,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             properties: shape.properties.to_vec(),
             string_index: shape.string_index,
             number_index: shape.number_index,
+            symbol_index: shape.symbol_index,
             symbol: shape.symbol,
             is_abstract: shape.is_abstract,
         };
