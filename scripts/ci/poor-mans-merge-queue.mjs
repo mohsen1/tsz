@@ -193,6 +193,64 @@ export function requiredCheckState(checks, requiredNames) {
   return { kind: "passed", reason: "required checks passed" };
 }
 
+function actionsRunIdFromUrl(url) {
+  const match = String(url || "").match(/\/actions\/runs\/(\d+)(?:\D|$)/);
+  return match ? match[1] : null;
+}
+
+export function pendingQueueRun(pr, statusContext) {
+  const status = (pr.statusCheckRollup || []).find((check) => (
+    check.__typename === "StatusContext"
+      && check.context === statusContext
+      && normalize(check.state) === "PENDING"
+  ));
+  if (!status?.targetUrl) return null;
+  const runId = actionsRunIdFromUrl(status.targetUrl);
+  return runId ? { runId, targetUrl: status.targetUrl } : null;
+}
+
+export function hasPendingPlaceholderQueueStatus(pr, statusContext) {
+  return (pr.statusCheckRollup || []).some((check) => (
+    check.__typename === "StatusContext"
+      && check.context === statusContext
+      && normalize(check.state) === "PENDING"
+      && !check.targetUrl
+  ));
+}
+
+export function queueRunIsActive(run) {
+  return normalize(run?.status) !== "COMPLETED";
+}
+
+export function activeBranchQueueRun(runs) {
+  return (runs || []).find((run) => queueRunIsActive(run)) || null;
+}
+
+export function activeSyntheticQueueRun(runs, headSha) {
+  return (runs || []).find((run) => (
+    queueRunIsActive(run) && (!headSha || run.headSha === headSha)
+  )) || null;
+}
+
+function activePendingQueueRun(repository, pr, options) {
+  const pendingRun = pendingQueueRun(pr, options.statusContext);
+  if (pendingRun) {
+    const run = readWorkflowRun(repository, pendingRun.runId);
+    if (!queueRunIsActive(run)) return null;
+    return {
+      ...pendingRun,
+      url: run.url || pendingRun.targetUrl,
+    };
+  }
+  if (!hasPendingPlaceholderQueueStatus(pr, options.statusContext)) return null;
+  const run = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranch(options, pr)));
+  if (!run) return null;
+  return {
+    runId: String(run.databaseId || ""),
+    url: run.url,
+  };
+}
+
 export function queueSkipReason(pr, requiredState, base) {
   if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
   if (pr.isDraft) return "draft PR";
@@ -254,6 +312,24 @@ function readPullRequest(repository, number) {
   ]);
 }
 
+function readWorkflowRun(repository, runId) {
+  return runGhJson([
+    "run", "view", runId,
+    "--repo", repository,
+    "--json", "databaseId,status,conclusion,url",
+  ]);
+}
+
+function readBranchWorkflowRuns(repository, branch) {
+  return runGhJson([
+    "run", "list",
+    "--repo", repository,
+    "--branch", branch,
+    "--limit", "20",
+    "--json", "databaseId,status,conclusion,headSha,url",
+  ]);
+}
+
 function readBranchOid(repository, branch) {
   return runGhJson([
     "api",
@@ -284,7 +360,10 @@ function postComment(repository, number, body) {
 }
 
 function invalidatePullRequest(repository, pr, options) {
-  if (options.dryRun) return;
+  if (options.dryRun) return { invalidated: false, skipped: false };
+  const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
+  const activeRun = activePendingQueueRun(repository, detailed, options);
+  if (activeRun) return { invalidated: false, skipped: true, activeRun };
   postStatus(
     repository,
     pr.headRefOid,
@@ -292,12 +371,19 @@ function invalidatePullRequest(repository, pr, options) {
     options.statusContext,
     `Waiting for ${options.base} synthetic merge test`,
   );
+  return { invalidated: true, skipped: false };
 }
 
 function invalidateOpen(repository, options) {
   const prs = readPullRequests(repository, options.base, options.maxPrs);
-  for (const pr of prs) invalidatePullRequest(repository, pr, options);
-  return { invalidated: prs.length };
+  let invalidated = 0;
+  let skippedActiveRuns = 0;
+  for (const pr of prs) {
+    const result = invalidatePullRequest(repository, pr, options);
+    if (result?.invalidated) invalidated += 1;
+    if (result?.skipped) skippedActiveRuns += 1;
+  }
+  return { invalidated, skippedActiveRuns };
 }
 
 function readQueueCandidates(repository, options) {
@@ -307,13 +393,19 @@ function readQueueCandidates(repository, options) {
       const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base);
       if (skipReason) return { pr, skipReason };
       const detailed = readPullRequest(repository, pr.number);
+      const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
+      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
+      if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
+      const activeRun = activePendingQueueRun(repository, detailed, options);
+      if (activeRun) {
+        return {
+          pr: detailed,
+          skipReason: `queue test already running (${activeRun.url})`,
+        };
+      }
       return {
         pr: detailed,
-        skipReason: queueSkipReason(
-          detailed,
-          requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks),
-          options.base,
-        ),
+        skipReason: null,
       };
     });
 }
@@ -365,15 +457,26 @@ function commitStatusRollup(repository, sha) {
   ];
 }
 
-function waitForSyntheticChecks(repository, mergeOid, options) {
+function waitForSyntheticChecks(repository, synthetic, options) {
   for (let attempt = 0; attempt < options.waitAttempts; attempt += 1) {
     const state = requiredCheckState(
-      commitStatusRollup(repository, mergeOid),
+      commitStatusRollup(repository, synthetic.mergeOid),
       options.mergeRequiredChecks,
     );
     if (state.kind === "passed") return state;
     if (state.kind === "failed") throw new Error(state.reason);
     if (attempt + 1 < options.waitAttempts) sleep(options.waitIntervalMs);
+  }
+  const activeRun = activeSyntheticQueueRun(
+    readBranchWorkflowRuns(repository, synthetic.branch),
+    synthetic.mergeOid,
+  );
+  if (activeRun) {
+    return {
+      kind: "pending",
+      reason: `timed out while synthetic run ${activeRun.databaseId || "(unknown)"} is still active`,
+      activeRun,
+    };
   }
   throw new Error(`timed out waiting for synthetic merge check(s): ${options.mergeRequiredChecks.join(", ")}`);
 }
@@ -405,7 +508,18 @@ function processOne(repository, options) {
     invalidatePullRequest(repository, pr, options);
     try {
       const synthetic = prepareSyntheticMerge(repository, pr, baseOid, options);
-      waitForSyntheticChecks(repository, synthetic.mergeOid, options);
+      const syntheticState = waitForSyntheticChecks(repository, synthetic, options);
+      if (syntheticState.activeRun) {
+        postStatus(
+          repository,
+          pr.headRefOid,
+          "pending",
+          options.statusContext,
+          `Waiting for synthetic run ${syntheticState.activeRun.databaseId || synthetic.mergeOid.slice(0, 12)}`,
+          syntheticState.activeRun.url || "",
+        );
+        return { selected: pr, pendingSynthetic: true, synthetic, activeRun: syntheticState.activeRun, skips };
+      }
       const refreshed = readPullRequest(repository, pr.number);
       const currentBase = readBranchOid(repository, options.base);
       if (currentBase !== baseOid) {
@@ -465,6 +579,9 @@ export function formatResult(result, options) {
   ];
   if (result.invalidated !== undefined) {
     lines.push(`Invalidated ${result.invalidated} open PR head(s).`);
+    if (result.skippedActiveRuns) {
+      lines.push(`Preserved ${result.skippedActiveRuns} active queue run status(es).`);
+    }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
   } else if (result.dryRun) {
@@ -475,6 +592,10 @@ export function formatResult(result, options) {
     lines.push(`Retest needed for #${result.selected.number}: base moved from \`${result.oldBaseOid.slice(0, 12)}\` to \`${result.newBaseOid.slice(0, 12)}\`.`);
   } else if (result.headMoved) {
     lines.push(`Retest needed for #${result.selected.number}: PR head moved during queue test.`);
+  } else if (result.pendingSynthetic) {
+    const runId = result.activeRun?.databaseId || "(unknown)";
+    const runUrl = result.activeRun?.url ? ` (${result.activeRun.url})` : "";
+    lines.push(`Preserved #${result.selected.number}: synthetic run ${runId}${runUrl} is still active after the queue wait window.`);
   } else if (result.failed) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }
@@ -493,8 +614,11 @@ function main() {
   let result;
   if (options.invalidatePr !== null) {
     const pr = readPullRequest(options.repository, options.invalidatePr);
-    invalidatePullRequest(options.repository, pr, options);
-    result = { invalidated: 1 };
+    const invalidation = invalidatePullRequest(options.repository, pr, options);
+    result = {
+      invalidated: invalidation?.invalidated ? 1 : 0,
+      skippedActiveRuns: invalidation?.skipped ? 1 : 0,
+    };
   } else if (options.invalidateOpen) {
     result = invalidateOpen(options.repository, options);
   } else {
