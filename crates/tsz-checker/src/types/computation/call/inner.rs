@@ -1525,6 +1525,18 @@ impl<'a> CheckerState<'a> {
         if let Some(return_type) = circular_recursive_call_return_type
             && call_result != TypeId::ERROR
         {
+            let immediately_called = self
+                .ctx
+                .arena
+                .parent_of(idx)
+                .and_then(|parent_idx| self.ctx.arena.get(parent_idx))
+                .and_then(|parent_node| self.ctx.arena.get_call_expr(parent_node))
+                .is_some_and(|parent_call| parent_call.expression == idx);
+            if common::is_callable_type(self.ctx.types, call_result)
+                || (immediately_called && call_result == TypeId::ANY)
+            {
+                return call_result;
+            }
             return return_type;
         }
         call_result

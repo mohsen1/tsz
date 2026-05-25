@@ -103,6 +103,39 @@ const updateIfChanged = <T>(t: T) => {
     );
 }
 
+#[test]
+fn recursive_generic_const_arrow_curried_thenable_no_error() {
+    assert_no_diagnostics(
+        r#"
+interface Thenable<Value> {
+    then<V>(
+        onFulfilled: (value: Value) => V | Thenable<V>,
+    ): Thenable<V>;
+}
+
+const toThenable = <Result, Input>(fn: (input: Input) => Result | Thenable<Result>) =>
+    (input: Input): Thenable<Result> => {
+        const result = fn(input);
+        return {
+            then<V>(onFulfilled: (value: Result) => V | Thenable<V>) {
+                return toThenable<V, Result>(onFulfilled)(result as Result);
+            }
+        };
+    };
+
+const toThenableInferred = <Result, Input>(fn: (input: Input) => Result | Thenable<Result>) =>
+    (input: Input): Thenable<Result> => {
+        const result = fn(input);
+        return {
+            then(onFulfilled) {
+                return toThenableInferred(onFulfilled)(result as Result);
+            }
+        };
+    };
+"#,
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Variant: different type parameter names (guards against hardcoding)
 // ---------------------------------------------------------------------------
