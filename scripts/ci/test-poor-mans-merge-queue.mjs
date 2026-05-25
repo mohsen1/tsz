@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import {
+  activeBranchQueueRun,
   formatResult,
+  hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
   parseArgs,
   queueRunIsActive,
@@ -81,9 +83,47 @@ assert.equal(
   }), "Queue Tested"),
   null,
 );
+assert.equal(
+  hasPendingPlaceholderQueueStatus(pr({
+    statusCheckRollup: [
+      {
+        __typename: "StatusContext",
+        context: "Queue Tested",
+        state: "PENDING",
+      },
+    ],
+  }), "Queue Tested"),
+  true,
+);
+assert.equal(
+  hasPendingPlaceholderQueueStatus(pr({
+    statusCheckRollup: [
+      {
+        __typename: "StatusContext",
+        context: "Queue Tested",
+        state: "PENDING",
+        targetUrl: "https://github.com/owner/repo/actions/runs/123456789",
+      },
+    ],
+  }), "Queue Tested"),
+  false,
+);
 assert.equal(queueRunIsActive({ status: "queued" }), true);
 assert.equal(queueRunIsActive({ status: "in_progress" }), true);
 assert.equal(queueRunIsActive({ status: "completed", conclusion: "cancelled" }), false);
+assert.deepEqual(
+  activeBranchQueueRun([
+    { databaseId: 1, status: "completed", conclusion: "cancelled", url: "https://github.example/runs/1" },
+    { databaseId: 2, status: "queued", conclusion: "", url: "https://github.example/runs/2" },
+  ]),
+  { databaseId: 2, status: "queued", conclusion: "", url: "https://github.example/runs/2" },
+);
+assert.equal(
+  activeBranchQueueRun([
+    { databaseId: 1, status: "completed", conclusion: "cancelled", url: "https://github.example/runs/1" },
+  ]),
+  null,
+);
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
 assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");

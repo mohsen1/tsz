@@ -209,18 +209,39 @@ export function pendingQueueRun(pr, statusContext) {
   return runId ? { runId, targetUrl: status.targetUrl } : null;
 }
 
+export function hasPendingPlaceholderQueueStatus(pr, statusContext) {
+  return (pr.statusCheckRollup || []).some((check) => (
+    check.__typename === "StatusContext"
+      && check.context === statusContext
+      && normalize(check.state) === "PENDING"
+      && !check.targetUrl
+  ));
+}
+
 export function queueRunIsActive(run) {
   return normalize(run?.status) !== "COMPLETED";
 }
 
-function activePendingQueueRun(repository, pr, statusContext) {
-  const pendingRun = pendingQueueRun(pr, statusContext);
-  if (!pendingRun) return null;
-  const run = readWorkflowRun(repository, pendingRun.runId);
-  if (!queueRunIsActive(run)) return null;
+export function activeBranchQueueRun(runs) {
+  return (runs || []).find((run) => queueRunIsActive(run)) || null;
+}
+
+function activePendingQueueRun(repository, pr, options) {
+  const pendingRun = pendingQueueRun(pr, options.statusContext);
+  if (pendingRun) {
+    const run = readWorkflowRun(repository, pendingRun.runId);
+    if (!queueRunIsActive(run)) return null;
+    return {
+      ...pendingRun,
+      url: run.url || pendingRun.targetUrl,
+    };
+  }
+  if (!hasPendingPlaceholderQueueStatus(pr, options.statusContext)) return null;
+  const run = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranch(options, pr)));
+  if (!run) return null;
   return {
-    ...pendingRun,
-    url: run.url || pendingRun.targetUrl,
+    runId: String(run.databaseId || ""),
+    url: run.url,
   };
 }
 
@@ -289,7 +310,17 @@ function readWorkflowRun(repository, runId) {
   return runGhJson([
     "run", "view", runId,
     "--repo", repository,
-    "--json", "status,conclusion,url",
+    "--json", "databaseId,status,conclusion,url",
+  ]);
+}
+
+function readBranchWorkflowRuns(repository, branch) {
+  return runGhJson([
+    "run", "list",
+    "--repo", repository,
+    "--branch", branch,
+    "--limit", "20",
+    "--json", "databaseId,status,conclusion,url",
   ]);
 }
 
@@ -325,7 +356,7 @@ function postComment(repository, number, body) {
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
-  const activeRun = activePendingQueueRun(repository, detailed, options.statusContext);
+  const activeRun = activePendingQueueRun(repository, detailed, options);
   if (activeRun) return { invalidated: false, skipped: true, activeRun };
   postStatus(
     repository,
@@ -359,7 +390,7 @@ function readQueueCandidates(repository, options) {
       const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
       const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
       if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
-      const activeRun = activePendingQueueRun(repository, detailed, options.statusContext);
+      const activeRun = activePendingQueueRun(repository, detailed, options);
       if (activeRun) {
         return {
           pr: detailed,
