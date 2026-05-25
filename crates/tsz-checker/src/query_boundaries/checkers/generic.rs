@@ -1,5 +1,5 @@
-use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
+use tsz_solver::{DefinitionStore, TypeId};
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -60,6 +60,122 @@ pub(crate) fn contains_named_or_bound_type_parameter(
 /// Get the operand of a `keyof T` type.
 pub(crate) fn keyof_operand(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
     tsz_solver::type_queries::keyof_inner_type(db, type_id)
+}
+
+pub(crate) fn jsx_element_type_constraint_accepts_component_or_intrinsic_keys(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_arg: TypeId,
+    constraint: TypeId,
+) -> bool {
+    surface_contains_def_name(db, def_store, constraint, "ElementType", &mut Vec::new())
+        && surface_contains_component_type_application(db, def_store, type_arg, &mut Vec::new())
+        && surface_contains_intrinsic_element_keys(db, def_store, type_arg, &mut Vec::new())
+}
+
+fn surface_contains_component_type_application(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if visited.contains(&type_id) {
+        return false;
+    }
+    visited.push(type_id);
+
+    if let Some(app) = crate::query_boundaries::common::type_application(db, type_id)
+        && type_has_def_name(db, def_store, app.base, "ComponentType")
+    {
+        return true;
+    }
+
+    surface_children(db, type_id)
+        .into_iter()
+        .any(|child| surface_contains_component_type_application(db, def_store, child, visited))
+}
+
+fn surface_contains_intrinsic_element_keys(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if visited.contains(&type_id) {
+        return false;
+    }
+    visited.push(type_id);
+
+    if type_has_def_name(db, def_store, type_id, "IntrinsicElementsKeys") {
+        return true;
+    }
+
+    if let Some(operand) = keyof_operand(db, type_id)
+        && surface_contains_def_name(db, def_store, operand, "IntrinsicElements", &mut Vec::new())
+    {
+        return true;
+    }
+
+    surface_children(db, type_id)
+        .into_iter()
+        .any(|child| surface_contains_intrinsic_element_keys(db, def_store, child, visited))
+}
+
+fn surface_contains_def_name(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    expected: &str,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if visited.contains(&type_id) {
+        return false;
+    }
+    visited.push(type_id);
+
+    if type_has_def_name(db, def_store, type_id, expected) {
+        return true;
+    }
+
+    surface_children(db, type_id)
+        .into_iter()
+        .any(|child| surface_contains_def_name(db, def_store, child, expected, visited))
+}
+
+fn surface_children(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<TypeId> {
+    let mut children = Vec::new();
+    if let Some(members) = crate::query_boundaries::common::union_members(db, type_id) {
+        children.extend(members);
+    }
+    if let Some(members) = crate::query_boundaries::common::intersection_members(db, type_id) {
+        children.extend(members);
+    }
+    if let Some(app) = crate::query_boundaries::common::type_application(db, type_id) {
+        children.push(app.base);
+        children.extend(app.args.iter().copied());
+    }
+    if let Some((object, index)) = index_access_components(db, type_id) {
+        children.push(object);
+        children.push(index);
+    }
+    if let Some(operand) = keyof_operand(db, type_id) {
+        children.push(operand);
+    }
+    children
+}
+
+fn type_has_def_name(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    expected: &str,
+) -> bool {
+    let candidate = crate::query_boundaries::common::type_application(db, type_id)
+        .map_or(type_id, |app| app.base);
+    crate::query_boundaries::common::lazy_def_id(db, candidate)
+        .or_else(|| def_store.find_def_for_type(candidate))
+        .and_then(|def_id| def_store.get_name(def_id))
+        .is_some_and(|name| db.resolve_atom_ref(name).as_ref() == expected)
 }
 
 /// Get the extends type and false type of a conditional type.

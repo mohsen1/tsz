@@ -114,7 +114,10 @@ impl BinderState {
                     pre_condition_flow,
                     loop_data.condition,
                 );
-                self.add_antecedent(post_loop, pre_condition_flow);
+                // Normal fallthrough from a `do ... while` loop occurs only
+                // when the bottom condition is false, so the post-loop edge
+                // must carry the false-condition flow rather than the raw
+                // pre-condition body flow.
                 self.add_antecedent(post_loop, false_flow);
             }
         } else {

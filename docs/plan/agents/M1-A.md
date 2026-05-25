@@ -24,20 +24,46 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-21 10:38 UTC ready queue: `#9828`, `#9827`, `#9814`, `#9808`,
-  `#9804`, and `#9799`.
-- Label hygiene queue: `42` open PRs with generated/noncanonical `agent:*`
-  labels and `7` open PRs with no `agent:*` label. Start with the newest
-  missing-label PRs `#9829`, `#9825`, `#9824`, `#9822`, `#9821`, `#9820`,
-  and `#9817`.
-- WIP-title queue: `#9822`, `#9803`, and `#9639`. These have no `WIP` label,
-  so treat the title as WIP until the owner removes it with a signed status
-  comment.
-- Secondary issue context: `#9818`, `#8868`, `#7596`, `#7378`, `#9770`,
+- 2026-05-25 18:55 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#9465` merged.
+  - `#9465` landed on 2026-05-25 as
+    `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
+    excess-property check (#8725)`. Its synthetic queue branch
+    `automation/merge-queue/pr-9465` was deleted after merge.
+  - `#9559` is merged; the former M1-A JSX branch is no longer an active
+    landing target.
+  - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
+    delete superseded suffixed queue branches for open PRs when the suffix no
+    longer matches current `main`; the latest dry run reports zero stale queue
+    branches and preserves no active queue runs.
+  - `#9230` merged on 2026-05-25 and is no longer an active queue unblocker.
+  - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
+    `#9804`, `#9799`) is fully merged.
+  - The old WIP-title queue (`#9822`, `#9803`, `#9639`) is resolved by merge
+    or closure.
+  - Agent label audit is clean: no missing, multiple, or noncanonical
+    `agent:*` labels on open PRs.
+  - WIP-state comment audit is clean.
+- Current PR-garden surfaces to inspect before issue backlog:
+  - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
+    Its stale synthetic branch was cleaned after merge.
+  - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
+    `mergeable=MERGEABLE` include `#9632`, `#9912`, `#10078`, `#10081`,
+    `#10084`, `#10085`, `#10087`, `#10126`, and `#10147`. These currently
+    belong to other lanes; do not take them over unless the owner asks or a
+    stale branch needs a signed handoff.
+  - Queue branch cleanup currently skips open PR branches
+    `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10085`, `pr-10147`,
+    `pr-9632`, `pr-9848`, and `pr-9912`.
+  - Queue branch cleanup dry runs should use
+    `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
+    branches do not accumulate.
+- Secondary issue context remains `#9818`, `#8868`, `#7596`, `#7378`, `#9770`,
   `#9752`, `#9703`, and `#9701`.
 - Expected output: comments, label fixes, closed duplicate/stale PRs, or
   ready-for-review cleanup. Avoid code changes unless a PR needs a tiny repair
-  to become mergeable.
+  to become mergeable. Do not take over another lane's implementation PR unless
+  it is stale and you leave a signed handoff/status comment first.
 
 ## Existing Work To Inspect First
 

@@ -382,6 +382,9 @@ mod computed_prop_name_tests;
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_infer_callable_arity_tests.rs"]
+mod conditional_infer_callable_arity_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_variance_tests.rs"]
 mod conditional_keyof_variance_tests;
 #[cfg(test)]
