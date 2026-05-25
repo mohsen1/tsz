@@ -1531,15 +1531,17 @@ impl<'a> CheckerState<'a> {
                                 Self::parse_jsdoc_import_type(import_base)
                         {
                             self.report_jsdoc_import_type_constraint_error(
-                                expr,
-                                angle_idx,
-                                &arg_strs,
-                                &module_specifier,
-                                &member_name,
-                                &typedef_info,
-                                comment.pos,
-                                comment.end,
-                                &source_text,
+                                crate::jsdoc::diagnostics_import_type_constraints::JsdocImportTypeConstraintDiagnostic {
+                                    expr,
+                                    angle_idx,
+                                    arg_strs: &arg_strs,
+                                    module_specifier: &module_specifier,
+                                    member_name: &member_name,
+                                    typedef_info: &typedef_info,
+                                    comment_pos: comment.pos,
+                                    comment_end: comment.end,
+                                    source_text: &source_text,
+                                },
                             );
                         }
                         continue;

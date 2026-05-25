@@ -4,19 +4,34 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::jsdoc::types::JsdocTypedefInfo;
 use crate::state::CheckerState;
 
+pub(super) struct JsdocImportTypeConstraintDiagnostic<'a> {
+    pub(super) expr: &'a str,
+    pub(super) angle_idx: usize,
+    pub(super) arg_strs: &'a [&'a str],
+    pub(super) module_specifier: &'a str,
+    pub(super) member_name: &'a str,
+    pub(super) typedef_info: &'a JsdocTypedefInfo,
+    pub(super) comment_pos: u32,
+    pub(super) comment_end: u32,
+    pub(super) source_text: &'a str,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn report_jsdoc_import_type_constraint_error(
         &mut self,
-        expr: &str,
-        angle_idx: usize,
-        arg_strs: &[&str],
-        module_specifier: &str,
-        member_name: &str,
-        typedef_info: &JsdocTypedefInfo,
-        comment_pos: u32,
-        comment_end: u32,
-        source_text: &str,
+        request: JsdocImportTypeConstraintDiagnostic<'_>,
     ) {
+        let JsdocImportTypeConstraintDiagnostic {
+            expr,
+            angle_idx,
+            arg_strs,
+            module_specifier,
+            member_name,
+            typedef_info,
+            comment_pos,
+            comment_end,
+            source_text,
+        } = request;
         let factory = self.ctx.types.factory();
         let mut scope_updates = Vec::new();
         for tp in &typedef_info.template_params {
