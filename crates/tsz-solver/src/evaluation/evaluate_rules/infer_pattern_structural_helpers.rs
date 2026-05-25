@@ -486,12 +486,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             };
             let mut local = base.clone();
-            let mut local_visited = visited.clone();
             if !self.match_infer_pattern(
                 source_type,
                 pattern_prop.type_id,
                 &mut local,
-                &mut local_visited,
+                visited,
                 checker,
             ) {
                 return false;
@@ -535,12 +534,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     && alias != source
                 {
                     let mut alias_bindings = bindings.clone();
-                    let mut alias_visited = visited.clone();
                     if self.match_infer_pattern(
                         alias,
                         pattern,
                         &mut alias_bindings,
-                        &mut alias_visited,
+                        visited,
                         checker,
                     ) && alias_bindings.len() > initial_binding_len
                     {
