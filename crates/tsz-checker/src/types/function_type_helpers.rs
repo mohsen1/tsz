@@ -6,6 +6,7 @@ use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 
 /// Context for TS2366/TS2355/TS7030 function return completeness checks.
@@ -33,6 +34,70 @@ pub(crate) struct FunctionReturnCheckCtx {
 }
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let mut stack = Vec::new();
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            let Some(&stmt_idx) = block.statements.nodes.last() else {
+                return;
+            };
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return;
+            }
+            let Some(ret) = self.ctx.arena.get_return_statement(stmt_node) else {
+                return;
+            };
+            if ret.expression.is_some() {
+                stack.push(ret.expression);
+            }
+        } else {
+            stack.push(body_idx);
+        }
+
+        while let Some(expr_idx) = stack.pop() {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            match expr_node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+                        self.get_type_of_node(binary.right);
+                    } else if matches!(
+                        binary.operator_token,
+                        k if k == SyntaxKind::AmpersandAmpersandToken as u16
+                            || k == SyntaxKind::BarBarToken as u16
+                    ) {
+                        stack.push(binary.left);
+                        stack.push(binary.right);
+                    }
+                }
+                syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    if let Some(unary) = self.ctx.arena.get_unary_expr(expr_node) {
+                        stack.push(unary.operand);
+                    }
+                }
+                syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
+                        stack.push(assertion.expression);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Extract a type predicate from JSDoc `@returns {x is Type}` / `@return {this is Entry}`.
     ///
     /// Parse JSDoc `@return` for type predicates and build `TypePredicate` with parameter index.
@@ -984,5 +1049,80 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
                 .is_some_and(|info| info.is_const)
         })
+    }
+
+    pub(crate) fn class_property_arrow_lexical_this_type(
+        &mut self,
+        arrow_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let (property_idx, class_idx) = self.class_property_arrow_owner(arrow_idx)?;
+        let property_node = self.ctx.arena.get(property_idx)?;
+        let prop = self.ctx.arena.get_property_decl(property_node)?;
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class_data = self.ctx.arena.get_class(class_node)?;
+        let is_static = self.has_static_modifier(&prop.modifiers);
+
+        // When the arrow function is itself currently being typed, the arrow
+        // node is on `node_resolution_stack`. Triggering a fresh class instance
+        // (or constructor) type build here would recursively re-enter
+        // `get_class_instance_type_inner`, which in turn calls
+        // `get_type_of_node(prop.initializer)` for this same arrow; that
+        // re-entry hits the circular-reference guard and poisons the cached
+        // class shape. Use the already-cached class type or the enclosing-class
+        // snapshot instead.
+        if self.ctx.node_resolution_stack.contains(&arrow_idx) {
+            let cache = if is_static {
+                &self.ctx.class_constructor_type_cache
+            } else {
+                &self.ctx.class_instance_type_cache
+            };
+            return cache.get(&class_idx).copied().or_else(|| {
+                if is_static {
+                    return None;
+                }
+                self.ctx
+                    .enclosing_class
+                    .as_ref()
+                    .filter(|info| info.class_idx == class_idx)
+                    .and_then(|info| info.cached_instance_this_type)
+            });
+        }
+
+        Some(if is_static {
+            self.get_class_constructor_type(class_idx, class_data)
+        } else {
+            self.get_class_instance_type(class_idx, class_data)
+        })
+    }
+
+    fn class_property_arrow_owner(&self, arrow_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let mut current = arrow_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let class_idx = self.ctx.arena.get_extended(parent)?.parent;
+                let class_node = self.ctx.arena.get(class_idx)?;
+                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && class_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return None;
+                }
+                return Some((parent, class_idx));
+            }
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+            {
+                return None;
+            }
+
+            current = parent;
+        }
+
+        None
     }
 }
