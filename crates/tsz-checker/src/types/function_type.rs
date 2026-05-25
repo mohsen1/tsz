@@ -162,132 +162,25 @@ impl<'a> CheckerState<'a> {
         let this_atom = self.ctx.types.intern_string("this");
         let closure_already_checked =
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
-        // Setup contextual typing context, evaluating compound types first.
-        let mut contextual_signature_type_params = None;
-        let mut contextual_signature_shape = None;
+        let (
+            contextual_helper_type,
+            contextual_signature_type_params,
+            contextual_signature_shape,
+            mut has_jsdoc_type_function,
+        ) = self.function_contextual_type_context(
+            idx,
+            contextual_type,
+            is_function_declaration,
+            is_closure,
+        );
+        let mut ctx_helper = contextual_helper_type.map(|evaluated_type| {
+            ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
+            )
+        });
         let mut contextual_signature_type_param_updates = Vec::new();
-        let mut has_jsdoc_type_function = false;
-        let mut ctx_helper = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::type_checking_utilities::{
-                EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
-            };
-
-            let preserve_raw_mixed_context =
-                crate::query_boundaries::common::union_members(self.ctx.types, ctx_type)
-                    .is_some_and(|members| {
-                        let has_callable = members.iter().any(|&member| {
-                            crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                member,
-                            )
-                        });
-                        let has_non_callable = members.iter().any(|&member| {
-                            !crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                member,
-                            )
-                        });
-                        has_callable && has_non_callable
-                    });
-            let preserve_raw_signature_context =
-                preserve_raw_mixed_context || self.raw_contextual_signature_available(ctx_type);
-
-            let evaluated_type = if preserve_raw_signature_context {
-                ctx_type
-            } else if type_application(self.ctx.types, ctx_type).is_some() {
-                self.evaluate_application_type(ctx_type)
-            } else if let Some(def_id) = lazy_def_id(self.ctx.types, ctx_type) {
-                self.resolve_and_insert_def_type(def_id)
-                    .unwrap_or_else(|| self.judge_evaluate(ctx_type))
-            } else if matches!(
-                classify_for_evaluation(self.ctx.types, ctx_type),
-                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
-            ) {
-                self.judge_evaluate(ctx_type)
-            } else {
-                self.evaluate_contextual_type(ctx_type)
-            };
-            // Preserve original when evaluation degrades to UNKNOWN (unresolved conditionals)
-            let evaluated_type = if evaluated_type == TypeId::UNKNOWN {
-                ctx_type
-            } else {
-                evaluated_type
-            };
-
-            // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
-            let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
-            contextual_signature_shape =
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    evaluated_type,
-                );
-            let evaluated_type = if preserve_raw_signature_context {
-                evaluated_type
-            } else {
-                self.normalize_contextual_signature_with_env(evaluated_type)
-            };
-            let helper_probe = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                evaluated_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let evaluated_type = if helper_probe.get_this_type().is_none()
-                && helper_probe.get_return_type().is_none()
-                && helper_probe.get_parameter_type(0).is_none()
-                && helper_probe.get_rest_parameter_type(0).is_none()
-                && !crate::query_boundaries::common::is_union_type(self.ctx.types, evaluated_type)
-                && !crate::query_boundaries::common::is_intersection_type(
-                    self.ctx.types,
-                    evaluated_type,
-                ) {
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    evaluated_type,
-                )
-                .map(|shape| self.ctx.types.factory().function(shape))
-                .unwrap_or(evaluated_type)
-            } else {
-                evaluated_type
-            };
-
-            contextual_signature_type_params =
-                self.contextual_type_params_from_expected(evaluated_type);
-            Some(ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                evaluated_type,
-                self.ctx.compiler_options.no_implicit_any,
-            ))
-        } else if self.is_js_file() && (is_function_declaration || is_closure) {
-            // In JS/checkJs, JSDoc `@type {FunctionType}` can live either on a
-            // function declaration or on an enclosing variable statement for a
-            // function expression (`const f = function() {}`), so support both.
-            if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
-                contextual_signature_type_params =
-                    self.contextual_type_params_from_expected(evaluated_type);
-                has_jsdoc_type_function = true;
-                Some(ContextualTypeContext::with_expected_and_options(
-                    self.ctx.types,
-                    evaluated_type,
-                    self.ctx.compiler_options.no_implicit_any,
-                ))
-            } else if is_closure {
-                self.jsdoc_callable_type_annotation_for_node(idx)
-                    .map(|evaluated_type| {
-                        contextual_signature_type_params =
-                            self.contextual_type_params_from_expected(evaluated_type);
-                        has_jsdoc_type_function = true;
-                        ContextualTypeContext::with_expected_and_options(
-                            self.ctx.types,
-                            evaluated_type,
-                            self.ctx.compiler_options.no_implicit_any,
-                        )
-                    })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
         // Contextually typed closures can acquire generic signatures even without
         // explicit `<T>` syntax. This is required for parity with TypeScript in
