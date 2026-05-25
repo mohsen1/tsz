@@ -580,6 +580,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "checkers"
             / "generic_checker"
+            / "mod.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
             / "recursive_heritage_constraint.rs",
             ROOT
             / "crates"
