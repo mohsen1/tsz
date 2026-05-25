@@ -775,13 +775,22 @@ impl<'a> CheckerState<'a> {
 
             // If parameter has an initializer in an ambient function, emit TS2371
             // TSC anchors the error at the parameter name, not the initializer.
+            let name = param.name;
             if param.initializer.is_some() {
                 self.error_at_node(
-                    param.name,
+                    name,
                     "A parameter initializer is only allowed in a function or constructor implementation.",
                     2371, // TS2371
                 );
             }
+
+            // Defaults nested inside a destructuring binding pattern
+            // (`{ mult = 1 }`, `[a = 1]`, nested) are equally illegal in a
+            // body-less signature; recurse so they are reported too.
+            crate::types_domain::type_node_helpers::check_binding_pattern_initializers(
+                &mut self.ctx,
+                name,
+            );
         }
     }
 

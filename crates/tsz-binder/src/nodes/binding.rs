@@ -673,266 +673,24 @@ impl BinderState {
 
             // If statement - build flow graph for type narrowing
             k if k == syntax_kind_ext::IF_STATEMENT => {
-                self.record_flow(idx);
-                if let Some(if_stmt) = arena.get_if_statement(node) {
-                    use tracing::trace;
-
-                    // Bind the condition expression (record identifiers in it)
-                    self.bind_expression(arena, if_stmt.expression);
-
-                    // Save the pre-condition flow
-                    let pre_condition_flow = self.current_flow;
-                    trace!(
-                        pre_condition_flow = pre_condition_flow.0,
-                        "if statement: pre_condition_flow",
-                    );
-
-                    // Create TRUE_CONDITION flow for the then branch
-                    let true_flow = self.create_flow_condition(
-                        flow_flags::TRUE_CONDITION,
-                        pre_condition_flow,
-                        if_stmt.expression,
-                    );
-                    trace!(
-                        true_flow = true_flow.0,
-                        "if statement: created TRUE_CONDITION flow",
-                    );
-
-                    // Bind the then branch with narrowed flow
-                    self.current_flow = true_flow;
-                    trace!("if statement: binding then branch with TRUE_CONDITION flow");
-                    self.bind_node(arena, if_stmt.then_statement);
-                    let after_then_flow = self.current_flow;
-                    trace!(
-                        after_then_flow = after_then_flow.0,
-                        "if statement: after_then_flow",
-                    );
-
-                    // Handle else branch if present
-                    let after_else_flow = if if_stmt.else_statement.is_none() {
-                        // No else branch - false condition goes directly to merge
-                        self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            if_stmt.expression,
-                        )
-                    } else {
-                        // Create FALSE_CONDITION flow for the else branch
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            if_stmt.expression,
-                        );
-                        trace!(
-                            false_flow = false_flow.0,
-                            "if statement: created FALSE_CONDITION flow",
-                        );
-
-                        // Bind the else branch with narrowed flow
-                        self.current_flow = false_flow;
-                        trace!("if statement: binding else branch with FALSE_CONDITION flow");
-                        self.bind_node(arena, if_stmt.else_statement);
-                        let result = self.current_flow;
-                        trace!(result = result.0, "if statement: after_else_flow",);
-                        result
-                    };
-
-                    // Create merge point for branches
-                    let merge_label = self.create_branch_label();
-                    trace!(
-                        merge_label = merge_label.0,
-                        "if statement: created merge label",
-                    );
-                    self.add_antecedent(merge_label, after_then_flow);
-                    self.add_antecedent(merge_label, after_else_flow);
-                    self.current_flow = merge_label;
-                }
+                self.bind_if_statement(arena, idx);
             }
 
             // While/do statement
             k if k == syntax_kind_ext::WHILE_STATEMENT || k == syntax_kind_ext::DO_STATEMENT => {
-                if let Some(loop_data) = arena.get_loop(node) {
-                    let _ = self.current_flow;
-                    let loop_label = self.create_loop_label();
-                    if self.current_flow.is_some() {
-                        self.add_antecedent(loop_label, self.current_flow);
-                    }
-                    self.current_flow = loop_label;
-
-                    // Create post-loop merge point for break targets
-                    let post_loop = self.create_branch_label();
-                    self.break_targets.push(post_loop);
-                    self.continue_targets.push(loop_label);
-
-                    if node.kind == syntax_kind_ext::DO_STATEMENT {
-                        self.bind_node(arena, loop_data.statement);
-                        self.bind_expression(arena, loop_data.condition);
-
-                        let pre_condition_flow = self.current_flow;
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        self.add_antecedent(loop_label, true_flow);
-
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        self.add_antecedent(post_loop, pre_condition_flow);
-                        self.add_antecedent(post_loop, false_flow);
-                    } else {
-                        self.bind_expression(arena, loop_data.condition);
-
-                        let pre_condition_flow = self.current_flow;
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        self.current_flow = true_flow;
-                        self.bind_node(arena, loop_data.statement);
-                        self.add_antecedent(loop_label, self.current_flow);
-
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        // FIX: Don't add pre_loop_flow as antecedent to merge_label
-                        // The exit path must go through false_flow to preserve narrowing
-                        self.add_antecedent(post_loop, false_flow);
-                    }
-
-                    self.break_targets.pop();
-                    self.continue_targets.pop();
-                    self.current_flow = post_loop;
-                }
+                self.bind_while_or_do_statement(arena, node);
             }
 
             // For statement
             k if k == syntax_kind_ext::FOR_STATEMENT => {
-                self.record_flow(idx);
-                if let Some(loop_data) = arena.get_loop(node) {
-                    self.enter_scope(ContainerKind::Block, idx);
-                    self.bind_node(arena, loop_data.initializer);
-
-                    let _ = self.current_flow;
-                    let loop_label = self.create_loop_label();
-                    if self.current_flow.is_some() {
-                        self.add_antecedent(loop_label, self.current_flow);
-                    }
-                    self.current_flow = loop_label;
-
-                    // Create post-loop merge point for break targets
-                    let post_loop = self.create_branch_label();
-                    self.break_targets.push(post_loop);
-                    let continue_target = if loop_data.incrementor.is_some() {
-                        self.create_branch_label()
-                    } else {
-                        loop_label
-                    };
-                    self.continue_targets.push(continue_target);
-
-                    if loop_data.condition.is_none() {
-                        self.bind_node(arena, loop_data.statement);
-                        self.add_antecedent(continue_target, self.current_flow);
-                        if loop_data.incrementor.is_some() {
-                            self.current_flow = continue_target;
-                        }
-                        self.bind_expression(arena, loop_data.incrementor);
-                        self.add_antecedent(loop_label, self.current_flow);
-                        self.add_antecedent(post_loop, loop_label);
-                        self.add_antecedent(post_loop, self.current_flow);
-                    } else {
-                        self.bind_expression(arena, loop_data.condition);
-                        let pre_condition_flow = self.current_flow;
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        self.current_flow = true_flow;
-                        self.bind_node(arena, loop_data.statement);
-                        self.add_antecedent(continue_target, self.current_flow);
-                        if loop_data.incrementor.is_some() {
-                            self.current_flow = continue_target;
-                        }
-                        self.bind_expression(arena, loop_data.incrementor);
-                        self.add_antecedent(loop_label, self.current_flow);
-
-                        let false_flow = self.create_flow_condition(
-                            flow_flags::FALSE_CONDITION,
-                            pre_condition_flow,
-                            loop_data.condition,
-                        );
-                        // FIX: Don't add pre_loop_flow as antecedent to merge_label
-                        // The exit path must go through false_flow to preserve narrowing
-                        self.add_antecedent(post_loop, false_flow);
-                    }
-
-                    self.break_targets.pop();
-                    self.continue_targets.pop();
-                    self.current_flow = post_loop;
-                    self.exit_scope(arena);
-                }
+                self.bind_for_statement(arena, node, idx);
             }
 
             // For-in/for-of
             k if k == syntax_kind_ext::FOR_IN_STATEMENT
                 || k == syntax_kind_ext::FOR_OF_STATEMENT =>
             {
-                self.record_flow(idx);
-                if let Some(for_data) = arena.get_for_in_of(node) {
-                    self.enter_scope(ContainerKind::Block, idx);
-                    self.bind_node(arena, for_data.initializer);
-                    let loop_label = self.create_loop_label();
-                    if self.current_flow.is_some() {
-                        self.add_antecedent(loop_label, self.current_flow);
-                    }
-                    self.current_flow = loop_label;
-
-                    // Create post-loop merge point for break targets
-                    let post_loop = self.create_branch_label();
-                    self.break_targets.push(post_loop);
-                    self.continue_targets.push(loop_label);
-
-                    // Match tsc's bindForInOrForOfStatement: post-loop only gets
-                    // the loop label as antecedent (representing "iterator exhausted").
-                    // The end-of-body flow only feeds back to the loop label, NOT
-                    // directly to post-loop. Previously, adding end-of-body to
-                    // post-loop bypassed the LOOP_LABEL's fixed-point analysis and
-                    // introduced un-narrowed types after the loop.
-                    self.add_antecedent(post_loop, loop_label);
-
-                    self.bind_expression(arena, for_data.expression);
-                    // For for-in statements, the expression acts as a truthiness
-                    // guard: the loop body only executes when the expression is
-                    // not null/undefined.  Create a TRUE_CONDITION flow node so
-                    // that references to the expression variable inside the body
-                    // are narrowed to exclude null/undefined (matching tsc).
-                    if k == syntax_kind_ext::FOR_IN_STATEMENT && for_data.expression.is_some() {
-                        let true_flow = self.create_flow_condition(
-                            flow_flags::TRUE_CONDITION,
-                            self.current_flow,
-                            for_data.expression,
-                        );
-                        self.current_flow = true_flow;
-                    }
-                    if for_data.initializer.is_some() {
-                        let flow = self.create_flow_assignment(for_data.initializer);
-                        self.current_flow = flow;
-                    }
-                    self.bind_node(arena, for_data.statement);
-                    self.add_antecedent(loop_label, self.current_flow);
-
-                    self.break_targets.pop();
-                    self.continue_targets.pop();
-                    self.current_flow = post_loop;
-                    self.exit_scope(arena);
-                }
+                self.bind_for_in_or_for_of_statement(arena, node, idx);
             }
 
             // Switch statement
@@ -1054,42 +812,17 @@ impl BinderState {
             k if k == syntax_kind_ext::RETURN_STATEMENT
                 || k == syntax_kind_ext::THROW_STATEMENT =>
             {
-                self.record_flow(idx);
-                if let Some(ret) = arena.get_return_statement(node)
-                    && ret.expression.is_some()
-                {
-                    tracing::debug!(
-                        return_idx = idx.0,
-                        expr_idx = ret.expression.0,
-                        "Binding return expression"
-                    );
-                    self.bind_node(arena, ret.expression);
-                }
-                // For return statements inside IIFEs, redirect flow to the return
-                // target label. This ensures the IIFE's return doesn't make the
-                // outer function's flow unreachable.
-                if node.kind == syntax_kind_ext::RETURN_STATEMENT
-                    && let Some(&return_target) = self.return_targets.last()
-                {
-                    self.add_antecedent(return_target, self.current_flow);
-                }
-                self.current_flow = self.unreachable_flow;
+                self.bind_return_or_throw_statement(arena, node, idx);
             }
 
             // Break statement - jump to break target and mark unreachable
             k if k == syntax_kind_ext::BREAK_STATEMENT => {
-                if let Some(&break_target) = self.break_targets.last() {
-                    self.add_antecedent(break_target, self.current_flow);
-                }
-                self.current_flow = self.unreachable_flow;
+                self.bind_break_statement();
             }
 
             // Continue statement - jump to continue target and mark unreachable
             k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
-                if let Some(&continue_target) = self.continue_targets.last() {
-                    self.add_antecedent(continue_target, self.current_flow);
-                }
-                self.current_flow = self.unreachable_flow;
+                self.bind_continue_statement();
             }
 
             // Binary expressions - traverse into operands
@@ -2165,22 +1898,33 @@ impl BinderState {
                 ContainerKind::Module => {
                     // Find the symbol for this module/namespace
                     if let Some(sym_id) = self.node_symbols.get(&ctx.container_node.0) {
-                        let export_all = self
-                            .scope_chain
-                            .get(self.current_scope_idx)
-                            .and_then(|ctx| arena.get(ctx.container_node))
-                            .and_then(|node| arena.get_module(node))
-                            .is_some_and(|module| {
-                                let is_external = arena.get(module.name).is_some_and(|name_node| {
-                                    name_node.kind == SyntaxKind::StringLiteral as u16
-                                        || name_node.kind
-                                            == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+                        let export_all = self.in_global_augmentation
+                            || self
+                                .scope_chain
+                                .get(self.current_scope_idx)
+                                .and_then(|ctx| arena.get(ctx.container_node))
+                                .and_then(|node| arena.get_module(node))
+                                .is_some_and(|module| {
+                                    let is_external =
+                                        arena.get(module.name).is_some_and(|name_node| {
+                                            name_node.kind == SyntaxKind::StringLiteral as u16
+                                                || name_node.kind
+                                                    == SyntaxKind::NoSubstitutionTemplateLiteral
+                                                        as u16
+                                        });
+                                    let is_ambient = arena.has_modifier_ref(
+                                        module.modifiers.as_ref(),
+                                        SyntaxKind::DeclareKeyword,
+                                    ) || is_external;
+                                    // Implicit export only applies while the ambient body
+                                    // is still an export context (no explicit export
+                                    // declaration/assignment); see the helper for the rule.
+                                    is_ambient
+                                        && !Self::ambient_module_body_disables_export_context(
+                                            arena,
+                                            module.body,
+                                        )
                                 });
-                                arena.has_modifier_ref(
-                                    module.modifiers.as_ref(),
-                                    SyntaxKind::DeclareKeyword,
-                                ) || is_external
-                            });
 
                         // Filter exports: only include symbols with is_exported = true or EXPORT_VALUE flag
                         let mut exports = SymbolTable::new();

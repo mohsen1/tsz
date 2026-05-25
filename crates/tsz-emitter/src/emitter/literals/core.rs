@@ -48,11 +48,14 @@ impl<'a> Printer<'a> {
         let emit_text = ident.original_text.as_deref().unwrap_or(original_text);
 
         // Check if this variable has been renamed for block scoping (ES5 for-of shadowing)
+        let namespace_local_var_shadow = self.is_shadowed_by_namespace_local_var(original_text);
         if let Some(renamed) = self.ctx.block_scope_state.get_emitted_name(original_text) {
             // Use write_identifier so source map name recording still works.
             // When renamed differs from original, the source map records the original
             // name so debuggers can map back to the source.
-            if renamed != *original_text {
+            if namespace_local_var_shadow && Self::emitted_name_is_export_qualified(&renamed) {
+                self.write_identifier(emit_text);
+            } else if renamed != *original_text {
                 if let Some(source_pos) = self.take_pending_source_pos() {
                     self.writer
                         .write_node_with_name(&renamed, source_pos, original_text);
@@ -78,6 +81,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .namespace_exported_names
                 .contains(original_text.as_str())
@@ -91,6 +95,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .namespace_parent_exported_names
                 .contains(original_text.as_str())
@@ -104,6 +109,7 @@ impl<'a> Printer<'a> {
             self.write_identifier(emit_text);
         } else if self.in_namespace_iife
             && !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && let Some(qualifier) = self
                 .namespace_ancestor_export_qualifiers
                 .get(original_text.as_str())
@@ -113,6 +119,7 @@ impl<'a> Printer<'a> {
             self.write(".");
             self.write_identifier(emit_text);
         } else if !self.suppress_ns_qualification
+            && !namespace_local_var_shadow
             && self
                 .commonjs_exported_var_names
                 .contains(original_text.as_str())
@@ -138,6 +145,10 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emitted_name_is_export_qualified(name: &str) -> bool {
+        name.starts_with("exports.") || name.contains('.')
+    }
+
     pub(in crate::emitter) fn write_identifier_by_id(&mut self, id: IdentifierId) {
         if let Some(ident) = self.arena.identifiers.get(id as usize) {
             self.write_identifier(&ident.escaped_text);
@@ -146,16 +157,10 @@ impl<'a> Printer<'a> {
 
     pub(in crate::emitter) fn emit_bigint_literal(&mut self, node: &Node) {
         if let Some(lit) = self.arena.get_literal(node) {
-            // Strip numeric separators: 1_000_000n → 1000000n
-            // Only strip for targets below ES2021 — separators are valid ES2021+ syntax.
-            let text = if lit.text.contains('_') && !self.ctx.options.target.supports_es2021() {
-                lit.text.chars().filter(|&c| c != '_').collect::<String>()
-            } else {
-                lit.text.clone()
-            };
-
-            // TSC converts binary/octal BigInt literals to decimal form,
-            // and lowercases hex BigInt literals.
+            // BigInt literal emit uses tsc's canonical pseudo-bigint text,
+            // independent of target: separators are removed, binary/octal
+            // forms become decimal, and hex is lowercased.
+            let text = normalized_bigint_literal_text(&lit.text);
             if let Some(converted) = Self::convert_bigint_literal(&text) {
                 self.write(&converted);
             } else {
@@ -183,26 +188,26 @@ impl<'a> Printer<'a> {
                 // Binary → decimal
                 let digits = &without_n[2..];
                 if digits.is_empty() {
-                    return None;
+                    return Some("0n".to_string());
                 }
-                let value = u128::from_str_radix(digits, 2).ok()?;
+                let value = radix_digits_to_decimal_string(digits, 2)?;
                 Some(format!("{value}n"))
             }
             b'o' | b'O' => {
                 // Octal → decimal
                 let digits = &without_n[2..];
                 if digits.is_empty() {
-                    return None;
+                    return Some("0n".to_string());
                 }
-                let value = u128::from_str_radix(digits, 8).ok()?;
+                let value = radix_digits_to_decimal_string(digits, 8)?;
                 Some(format!("{value}n"))
             }
             b'x' | b'X' => {
                 // Hex → lowercase hex
-                let lowered = without_n.to_lowercase();
-                if lowered == *without_n {
-                    return None;
+                if without_n.len() == 2 {
+                    return Some("0x0n".to_string());
                 }
+                let lowered = without_n.to_lowercase();
                 Some(format!("{lowered}n"))
             }
             _ => None,
@@ -908,6 +913,49 @@ fn decimal_literal_has_exponent(text: &str) -> bool {
     text.contains('e') || text.contains('E')
 }
 
+fn normalized_bigint_literal_text(text: &str) -> String {
+    if text.contains('_') {
+        text.chars().filter(|&c| c != '_').collect()
+    } else {
+        text.to_string()
+    }
+}
+
+fn radix_digits_to_decimal_string(digits: &str, radix: u32) -> Option<String> {
+    debug_assert!((2..=36).contains(&radix));
+    let mut decimal = vec![0u8];
+
+    for digit in digits.bytes() {
+        let value = match digit {
+            b'0'..=b'9' => u32::from(digit - b'0'),
+            b'a'..=b'z' => u32::from(digit - b'a') + 10,
+            b'A'..=b'Z' => u32::from(digit - b'A') + 10,
+            _ => return None,
+        };
+        if value >= radix {
+            return None;
+        }
+
+        let mut carry = value;
+        for place in decimal.iter_mut().rev() {
+            let next = u32::from(*place) * radix + carry;
+            *place = (next % 10) as u8;
+            carry = next / 10;
+        }
+        while carry > 0 {
+            decimal.insert(0, (carry % 10) as u8);
+            carry /= 10;
+        }
+    }
+
+    Some(
+        decimal
+            .into_iter()
+            .map(|digit| char::from(b'0' + digit))
+            .collect(),
+    )
+}
+
 fn trim_unterminated_regex_recovery_suffix(text: &str) -> &str {
     if !text.starts_with('/') || text[1..].contains('/') {
         return text;
@@ -930,6 +978,7 @@ fn has_unterminated_codepoint_escape(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::{normalized_bigint_literal_text, radix_digits_to_decimal_string};
     use crate::output::printer::{PrintOptions, Printer};
     use tsz_parser::ParserState;
     fn parse_test_source<S: Into<String>>(
@@ -1196,6 +1245,67 @@ mod tests {
                 "Decimal numeric separator exponent should contain {expected}\nGot: {output}"
             );
         }
+    }
+
+    #[test]
+    fn bigint_separators_are_canonicalized_even_for_esnext() {
+        let source = "\
+const separatedBin = 0b010_10_1n;
+const separatedOct = 0o1234_567n;
+const separatedDec = 123_456__789n;
+const separatedHex = 0x0_ABCDEFn;
+";
+        let (parser, root) = parse_test_source(source);
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in [
+            "const separatedBin = 21n;",
+            "const separatedOct = 342391n;",
+            "const separatedDec = 123456789n;",
+            "const separatedHex = 0x0abcdefn;",
+        ] {
+            assert!(
+                output.contains(expected),
+                "BigInt literal emit should contain {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_empty_prefixed_bigint_literals_match_tsc_recovery_text() {
+        let source = "const emptyBinary = 0bn;\nconst emptyOct = 0on;\nconst emptyHex = 0xn;\n";
+        let (parser, root) = parse_test_source(source);
+        let mut printer = Printer::new(&parser.arena, PrintOptions::default());
+        printer.set_source_text(source);
+        printer.print(root);
+        let output = printer.finish().code;
+
+        for expected in [
+            "const emptyBinary = 0n;",
+            "const emptyOct = 0n;",
+            "const emptyHex = 0x0n;",
+        ] {
+            assert!(
+                output.contains(expected),
+                "Malformed BigInt recovery emit should contain {expected}\nGot: {output}"
+            );
+        }
+    }
+
+    #[test]
+    fn bigint_radix_conversion_is_not_limited_to_machine_integers() {
+        assert_eq!(
+            radix_digits_to_decimal_string(
+                &normalized_bigint_literal_text(
+                    "1_00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+                ),
+                2,
+            ),
+            Some("340282366920938463463374607431768211456".to_string())
+        );
     }
 
     #[test]

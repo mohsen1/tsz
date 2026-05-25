@@ -1015,10 +1015,22 @@ impl<'a> DeclarationEmitter<'a> {
             && !type_params.nodes.is_empty()
         {
             self.emit_type_parameters(type_params);
+        } else {
+            let jsdoc_template_params =
+                self.jsdoc_template_params_for_class_declaration(class_idx, class);
+            if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
         }
 
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
+            let jsdoc_extends_type =
+                self.jsdoc_extends_type_for_class_declaration(class_idx, class);
+            self.emit_class_heritage_clauses(
+                heritage,
+                extends_alias.as_deref(),
+                jsdoc_extends_type.as_deref(),
+            );
         }
 
         self.write(" {");
@@ -1031,7 +1043,12 @@ impl<'a> DeclarationEmitter<'a> {
             hc.nodes.iter().any(|&clause_idx| {
                 self.arena
                     .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        h.token == SyntaxKind::ExtendsKeyword as u16
+                            && h.types.nodes.iter().any(|&type_idx| {
+                                !(self.source_is_js_file && self.heritage_type_is_null(type_idx))
+                            })
+                    })
             })
         });
         self.method_names_with_overloads = rustc_hash::FxHashSet::default();
@@ -1054,6 +1071,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_js_array_subclass_constructor_overloads_if_needed(
             &class.members,
             class.heritage_clauses.as_ref(),
@@ -1483,10 +1501,22 @@ impl<'a> DeclarationEmitter<'a> {
             && !type_params.nodes.is_empty()
         {
             self.emit_type_parameters(type_params);
+        } else {
+            let jsdoc_template_params =
+                self.jsdoc_template_params_for_class_declaration(class_idx, class);
+            if !jsdoc_template_params.is_empty() {
+                self.emit_jsdoc_template_parameters(&jsdoc_template_params);
+            }
         }
 
         if let Some(ref heritage) = class.heritage_clauses {
-            self.emit_class_heritage_clauses(heritage, extends_alias.as_deref());
+            let jsdoc_extends_type =
+                self.jsdoc_extends_type_for_class_declaration(class_idx, class);
+            self.emit_class_heritage_clauses(
+                heritage,
+                extends_alias.as_deref(),
+                jsdoc_extends_type.as_deref(),
+            );
         }
 
         self.write(" {");
@@ -1499,7 +1529,12 @@ impl<'a> DeclarationEmitter<'a> {
             hc.nodes.iter().any(|&clause_idx| {
                 self.arena
                     .get_heritage_clause_at(clause_idx)
-                    .is_some_and(|h| h.token == SyntaxKind::ExtendsKeyword as u16)
+                    .is_some_and(|h| {
+                        h.token == SyntaxKind::ExtendsKeyword as u16
+                            && h.types.nodes.iter().any(|&type_idx| {
+                                !(self.source_is_js_file && self.heritage_type_is_null(type_idx))
+                            })
+                    })
             })
         });
         self.method_names_with_overloads = FxHashSet::default();
@@ -1522,6 +1557,7 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_private_identifier_marker();
         }
 
+        self.emit_js_any_base_index_signature_if_needed(class.heritage_clauses.as_ref());
         self.emit_ordered_class_members_with_js_constructor_assignment_properties(&class.members);
         if self.class_has_private_identifier_member(&class.members)
             && delay_private_identifier_marker
@@ -2059,13 +2095,13 @@ impl<'a> DeclarationEmitter<'a> {
                         }
                         continue;
                     }
-                    // When a variable has a class expression initializer with no explicit
-                    // type annotation, tsc synthesizes a class declaration using the
-                    // binding name. This covers anonymous and same-name class expressions:
-                    // `export const C = class { }`, `export const C = class C { }`,
-                    // generic class expressions, and class expressions with heritage.
+                    // In JS declaration emit, a variable with a class expression initializer
+                    // and no explicit annotation is surfaced as an exported class using the
+                    // binding name. TS source keeps the variable shape and emits a structural
+                    // constructor object type.
                     let is_exported = self.should_emit_export_keyword();
-                    if decl.type_annotation.is_none()
+                    if self.source_is_js_file
+                        && decl.type_annotation.is_none()
                         && self.emit_js_named_class_expression_declaration(
                             decl.name,
                             decl.initializer,

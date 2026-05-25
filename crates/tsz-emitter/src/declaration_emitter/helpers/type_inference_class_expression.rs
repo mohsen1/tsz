@@ -511,6 +511,29 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn class_expression_has_type_parameter_modifiers(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        let Some(class) = self.arena.get_class(expr_node) else {
+            return false;
+        };
+        let Some(type_params) = class.type_parameters.as_ref() else {
+            return false;
+        };
+
+        type_params.nodes.iter().copied().any(|param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|param_node| self.arena.get_type_parameter(param_node))
+                .and_then(|param| param.modifiers.as_ref())
+                .is_some_and(|modifiers| !modifiers.nodes.is_empty())
+        })
+    }
+
     fn class_member_is_static(&self, member_idx: NodeIndex) -> bool {
         if let Some(info) = self.class_member_info(member_idx) {
             return info.is_static;

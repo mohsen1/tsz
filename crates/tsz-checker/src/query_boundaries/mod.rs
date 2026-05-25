@@ -13,6 +13,7 @@
 //! `docs/architecture/QUERY_BOUNDARY_INVENTORY.md`.
 //!
 pub(crate) mod assignability;
+pub(crate) mod assignability_alias_display;
 pub(crate) mod capabilities;
 pub(crate) mod checkers;
 pub(crate) mod class;
@@ -23,9 +24,11 @@ pub(crate) mod definite_assignment;
 pub(crate) mod definition_identity;
 pub(crate) mod diagnostics;
 pub(crate) mod dispatch;
+pub(crate) mod enum_analysis;
 pub(crate) mod environment;
 pub(crate) mod flow;
 pub(crate) mod flow_analysis;
+pub(crate) mod function_returns;
 pub(crate) mod index_signature;
 pub(crate) mod inference;
 pub(crate) mod intersection_display;

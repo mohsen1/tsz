@@ -436,6 +436,15 @@ impl<'a> TypeResolver for CheckerContext<'a> {
     ) -> Option<tsz_solver::TypeId> {
         use tsz_binder::symbol_flags;
 
+        // A type alias flagged as unconditionally-infinite (TS2589 at its
+        // definition) resolves to the error type for every use, mirroring tsc's
+        // collapse of the alias to the error type. This covers both the
+        // evaluator and the relation resolution paths, so use sites do not
+        // cascade into spurious assignability diagnostics.
+        if self.definition_store.is_depth_poisoned(def_id) {
+            return Some(tsz_solver::TypeId::ERROR);
+        }
+
         // Convert DefId to SymbolId using the reverse mapping.
         // Fallback: if the DefId was created by `interner.reference(SymbolRef(N))`,
         // the raw DefId value equals the SymbolId. In that case, use the SymbolId

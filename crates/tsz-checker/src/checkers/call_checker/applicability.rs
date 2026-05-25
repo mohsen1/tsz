@@ -161,6 +161,40 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Resolve a call, routing through the arg-source-aware path when any
+    /// argument is a type-annotated source (typed identifier, `as`/`satisfies`
+    /// assertion, or `as const`). Those sources carry non-fresh literals that
+    /// inference must not re-widen. Falls back to the plain adapter when no
+    /// marker is set, preserving its behavior exactly.
+    pub(crate) fn resolve_call_with_checker_adapter_maybe_arg_sources(
+        &mut self,
+        func_type: TypeId,
+        arg_types: &[TypeId],
+        force_bivariant_callbacks: bool,
+        contextual_type: Option<TypeId>,
+        actual_this_type: Option<TypeId>,
+        arg_source_is_type_annotation: &[bool],
+    ) -> tsz_solver::operations::CallWithCheckerResult {
+        if arg_source_is_type_annotation.iter().any(|&m| m) {
+            self.resolve_call_with_checker_adapter_and_arg_sources(
+                func_type,
+                arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+                arg_source_is_type_annotation,
+            )
+        } else {
+            self.resolve_call_with_checker_adapter(
+                func_type,
+                arg_types,
+                force_bivariant_callbacks,
+                contextual_type,
+                actual_this_type,
+            )
+        }
+    }
+
     pub(crate) fn resolve_new_with_checker_adapter(
         &mut self,
         type_id: TypeId,

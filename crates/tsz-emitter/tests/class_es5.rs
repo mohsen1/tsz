@@ -33,6 +33,50 @@ fn emit_class_with(
 }
 
 #[test]
+fn test_derived_constructor_using_wraps_es5_super_and_initializers() {
+    let source = r#"
+class C extends A {
+    y = 1;
+    constructor(value) {
+        using x = null;
+        super();
+        this.y = value;
+    }
+}
+"#;
+    let output = emit_class(source);
+
+    assert!(
+        output.contains("var _this = this;"),
+        "Derived constructor with using should capture this before the resource region.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_1 = { stack: [], error: void 0, hasError: false };"),
+        "Derived constructor with using should create a disposable env.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "try {\n            var x = __addDisposableResource(env_1, null, false);\n            _this = _super.call(this) || this;\n            _this.y = 1;\n            _this.y = value;\n        }"
+        ),
+        "The resource region should wrap using registration, super lowering, field initializers, and remaining body statements.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "catch (e_1) {\n            env_1.error = e_1;\n            env_1.hasError = true;\n        }"
+        ),
+        "Derived constructor resource region should preserve disposal errors.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("finally {\n            __disposeResources(env_1);\n        }"),
+        "Derived constructor resource region should dispose resources.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var x = null;"),
+        "Using declarations inside the region must not fall back to plain var lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_resource_methods_use_disposable_context() {
     let source = r#"
 class C {

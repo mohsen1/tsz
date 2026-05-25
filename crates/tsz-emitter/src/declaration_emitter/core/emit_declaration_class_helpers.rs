@@ -75,6 +75,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        let mut static_members = if self.source_is_js_file {
+            self.js_class_instance_member_emit_order(static_members)
+        } else {
+            static_members
+        };
         static_members.extend(constructors);
         if self.source_is_js_file {
             static_members.extend(self.js_class_instance_member_emit_order(instance_members));

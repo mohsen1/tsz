@@ -140,6 +140,8 @@ impl<'a> Printer<'a> {
                 es5_emitter.set_block_scope_reserved_names(
                     self.ctx.block_scope_state.visible_reserved_names(),
                 );
+                es5_emitter
+                    .set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
                 es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
                 es5_emitter.set_async_generator_inner_name_counts(
                     self.async_generator_inner_name_counts.clone(),
@@ -358,6 +360,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_block_scope_reserved_names(
                 self.ctx.block_scope_state.visible_reserved_names(),
             );
+            es5_emitter.set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
             es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
             es5_emitter.set_async_generator_inner_name_counts(
                 self.async_generator_inner_name_counts.clone(),
@@ -498,6 +501,7 @@ impl<'a> Printer<'a> {
             .set_block_scope_shadowed_names(self.ctx.block_scope_state.visible_original_names());
         es5_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
+        es5_emitter.set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
         es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
         es5_emitter
             .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());

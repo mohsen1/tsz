@@ -1551,34 +1551,58 @@ pub fn collect_inline_exported_var_names(
 ) -> Vec<String> {
     let mut names = Vec::new();
     for &stmt_idx in statements {
-        let Some(node) = arena.get(stmt_idx) else {
-            continue;
-        };
+        collect_inline_exported_var_names_from_statement(
+            arena,
+            stmt_idx,
+            statements,
+            preserve_const_enums,
+            &mut names,
+        );
+    }
+    names
+}
+
+fn collect_inline_exported_var_names_from_statement(
+    arena: &NodeArena,
+    stmt_idx: NodeIndex,
+    source_statements: &[NodeIndex],
+    preserve_const_enums: bool,
+    names: &mut Vec<String>,
+) {
+    let Some(node) = arena.get(stmt_idx) else {
+        return;
+    };
+
+    match node.kind {
         // Direct: export let/const/var x = ... (including `export declare const`)
-        // In CJS, all exported names become `exports.X` properties — even `declare`
-        // exports that have no runtime initializer. tsc qualifies reads of these
-        // names as `exports.X` and wraps calls as `(0, exports.X)()`.
-        if node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+        // In CJS, all exported names become `exports.X` properties, even recovered
+        // exported variables under control-flow wrappers. tsc qualifies reads of
+        // these names as `exports.X` and wraps calls as `(0, exports.X)()`.
+        k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
             if let Some(var_stmt) = arena.get_variable(node)
                 && arena.has_modifier(&var_stmt.modifiers, SyntaxKind::ExportKeyword)
             {
                 for &decl_idx in &var_stmt.declarations.nodes {
-                    collect_declaration_names(arena, decl_idx, &mut names);
+                    collect_declaration_names(arena, decl_idx, names);
                 }
             }
         }
         // Wrapped: ExportDeclaration { clause: ... }
-        else if node.kind == syntax_kind_ext::EXPORT_DECLARATION
-            && let Some(export_decl) = arena.get_export_decl(node)
-            && !export_decl.is_type_only
-            && export_decl.module_specifier.is_none()
-            && let Some(clause_node) = arena.get(export_decl.export_clause)
-        {
+        k if k == syntax_kind_ext::EXPORT_DECLARATION => {
+            let Some(export_decl) = arena.get_export_decl(node) else {
+                return;
+            };
+            if export_decl.is_type_only || export_decl.module_specifier.is_some() {
+                return;
+            }
+            let Some(clause_node) = arena.get(export_decl.export_clause) else {
+                return;
+            };
             if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT
                 && let Some(var_stmt) = arena.get_variable(clause_node)
             {
                 for &decl_idx in &var_stmt.declarations.nodes {
-                    collect_declaration_names(arena, decl_idx, &mut names);
+                    collect_declaration_names(arena, decl_idx, names);
                 }
             }
             // ExportDeclaration { clause: ImportEqualsDeclaration }
@@ -1588,21 +1612,154 @@ pub fn collect_inline_exported_var_names(
                 && let Some(name) = get_identifier_text(arena, import_decl.import_clause)
             {
                 if import_decl.is_type_only {
-                    continue;
+                    return;
                 }
                 if import_alias_resolves_to_exported_type_only(
                     arena,
                     import_decl.module_specifier,
-                    statements,
+                    source_statements,
                     preserve_const_enums,
                 ) {
-                    continue;
+                    return;
                 }
                 names.push(name);
             }
         }
+        k if k == syntax_kind_ext::BLOCK => {
+            if let Some(block) = arena.get_block(node) {
+                for &inner_idx in &block.statements.nodes {
+                    collect_inline_exported_var_names_from_statement(
+                        arena,
+                        inner_idx,
+                        source_statements,
+                        preserve_const_enums,
+                        names,
+                    );
+                }
+            }
+        }
+        k if k == syntax_kind_ext::IF_STATEMENT => {
+            if let Some(if_stmt) = arena.get_if_statement(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    if_stmt.then_statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    if_stmt.else_statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::LABELED_STATEMENT => {
+            if let Some(labeled) = arena.get_labeled_statement(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    labeled.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::TRY_STATEMENT => {
+            if let Some(try_stmt) = arena.get_try(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.try_block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.catch_clause,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    try_stmt.finally_block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::CATCH_CLAUSE => {
+            if let Some(catch_clause) = arena.get_catch_clause(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    catch_clause.block,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            if let Some(loop_data) = arena.get_loop(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    loop_data.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::FOR_IN_STATEMENT || k == syntax_kind_ext::FOR_OF_STATEMENT => {
+            if let Some(for_in_of) = arena.get_for_in_of(node) {
+                collect_inline_exported_var_names_from_statement(
+                    arena,
+                    for_in_of.statement,
+                    source_statements,
+                    preserve_const_enums,
+                    names,
+                );
+            }
+        }
+        k if k == syntax_kind_ext::SWITCH_STATEMENT => {
+            if let Some(switch_stmt) = arena.get_switch(node)
+                && let Some(case_block_node) = arena.get(switch_stmt.case_block)
+                && let Some(block_data) = arena.blocks.get(case_block_node.data_index as usize)
+            {
+                for &clause_idx in &block_data.statements.nodes {
+                    collect_inline_exported_var_names_from_statement(
+                        arena,
+                        clause_idx,
+                        source_statements,
+                        preserve_const_enums,
+                        names,
+                    );
+                }
+            }
+        }
+        k if k == syntax_kind_ext::CASE_CLAUSE || k == syntax_kind_ext::DEFAULT_CLAUSE => {
+            if let Some(clause) = arena.get_case_clause(node) {
+                for &inner_idx in &clause.statements.nodes {
+                    collect_inline_exported_var_names_from_statement(
+                        arena,
+                        inner_idx,
+                        source_statements,
+                        preserve_const_enums,
+                        names,
+                    );
+                }
+            }
+        }
+        // Function, class, and namespace bodies have their own binding/export scopes.
+        _ => {}
     }
-    names
 }
 
 /// Emit the exports initialization line

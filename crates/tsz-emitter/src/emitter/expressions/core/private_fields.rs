@@ -4,6 +4,7 @@ use tsz_parser::parser::{NodeIndex, NodeList, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
 /// Result of extracting a private field access from a (possibly parenthesized) node.
+#[derive(Clone)]
 struct PrivateFieldAccess {
     /// The receiver expression node index (e.g., `this` or `A.getInstance()`)
     expression: NodeIndex,
@@ -11,6 +12,13 @@ struct PrivateFieldAccess {
     clean_name: String,
     /// The weakmap variable name
     weakmap_name: String,
+}
+
+struct PrivateDestructuringTarget {
+    target: NodeIndex,
+    access: PrivateFieldAccess,
+    receiver_temp: String,
+    setter_value: String,
 }
 
 enum OptionalChainSegment {
@@ -128,6 +136,230 @@ impl<'a> Printer<'a> {
             }
         }
         self.write(")");
+    }
+
+    fn collect_private_destructuring_targets(
+        &self,
+        idx: NodeIndex,
+        targets: &mut Vec<(NodeIndex, PrivateFieldAccess)>,
+    ) {
+        if idx.is_none() {
+            return;
+        }
+        if let Some(access) = self.try_extract_private_field_access(idx) {
+            targets.push((idx, access));
+            return;
+        }
+
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.arena.get_parenthesized(node) {
+                    self.collect_private_destructuring_targets(paren.expression, targets);
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.collect_private_destructuring_targets(assertion.expression, targets);
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.arena.get_binary_expr(node)
+                    && binary.operator_token == SyntaxKind::EqualsToken as u16
+                {
+                    self.collect_private_destructuring_targets(binary.left, targets);
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                if let Some(literal) = self.arena.get_literal_expr(node) {
+                    for &element in &literal.elements.nodes {
+                        self.collect_private_destructuring_targets(element, targets);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                if let Some(pattern) = self.arena.get_binding_pattern(node) {
+                    for &element in &pattern.elements.nodes {
+                        self.collect_private_destructuring_targets(element, targets);
+                    }
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.arena.get_property_assignment(node) {
+                    self.collect_private_destructuring_targets(prop.initializer, targets);
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                if let Some(spread) = self.arena.get_spread(node) {
+                    self.collect_private_destructuring_targets(spread.expression, targets);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn emit_private_destructuring_setter_target(&mut self, target: &PrivateDestructuringTarget) {
+        self.write("({ set value(");
+        self.write(&target.setter_value);
+        self.write(") { ");
+        self.write_helper("__classPrivateFieldSet");
+        self.write("(");
+        self.write(&target.receiver_temp);
+        self.write(", ");
+        self.emit_private_state_var(&target.access.weakmap_name, &target.access.clean_name);
+        self.write(", ");
+        self.write(&target.setter_value);
+        self.emit_private_field_set_close(&target.access.clean_name);
+        self.write("; } }).value");
+    }
+
+    fn emit_private_destructuring_pattern(
+        &mut self,
+        idx: NodeIndex,
+        targets: &[PrivateDestructuringTarget],
+    ) {
+        if let Some(target) = targets.iter().find(|target| target.target == idx) {
+            self.emit_private_destructuring_setter_target(target);
+            return;
+        }
+
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        match node.kind {
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                if let Some(paren) = self.arena.get_parenthesized(node) {
+                    self.write("(");
+                    self.emit_private_destructuring_pattern(paren.expression, targets);
+                    self.write(")");
+                }
+            }
+            k if k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                if let Some(assertion) = self.arena.get_type_assertion(node) {
+                    self.emit_private_destructuring_pattern(assertion.expression, targets);
+                }
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                if let Some(binary) = self.arena.get_binary_expr(node)
+                    && binary.operator_token == SyntaxKind::EqualsToken as u16
+                {
+                    self.emit_private_destructuring_pattern(binary.left, targets);
+                    self.write(" = ");
+                    self.emit(binary.right);
+                    return;
+                }
+                self.emit(idx);
+            }
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
+                if let Some(literal) = self.arena.get_literal_expr(node) {
+                    self.write("{ ");
+                    for (i, &element) in literal.elements.nodes.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        self.emit_private_destructuring_pattern(element, targets);
+                    }
+                    self.write(" }");
+                }
+            }
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
+                if let Some(literal) = self.arena.get_literal_expr(node) {
+                    self.write("[");
+                    for (i, &element) in literal.elements.nodes.iter().enumerate() {
+                        if i > 0 {
+                            self.write(", ");
+                        }
+                        if !element.is_none() {
+                            self.emit_private_destructuring_pattern(element, targets);
+                        }
+                    }
+                    self.write("]");
+                }
+            }
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                if let Some(prop) = self.arena.get_property_assignment(node) {
+                    let name_node = self.arena.get(prop.name);
+                    if name_node.is_some_and(|n| {
+                        n.kind == tsz_parser::parser::syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                    }) {
+                        self.emit(prop.name);
+                    } else {
+                        self.emit_property_key_name(prop.name);
+                    }
+                    self.write(": ");
+                    self.emit_private_destructuring_pattern(prop.initializer, targets);
+                }
+            }
+            k if k == syntax_kind_ext::SPREAD_ELEMENT
+                || k == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                if let Some(spread) = self.arena.get_spread(node) {
+                    self.write("...");
+                    self.emit_private_destructuring_pattern(spread.expression, targets);
+                }
+            }
+            _ => self.emit(idx),
+        }
+    }
+
+    fn emit_private_field_destructuring_assignment(
+        &mut self,
+        left: NodeIndex,
+        right: NodeIndex,
+    ) -> bool {
+        let Some(left_node) = self.arena.get(left) else {
+            return false;
+        };
+        if !matches!(
+            left_node.kind,
+            syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                | syntax_kind_ext::OBJECT_BINDING_PATTERN
+        ) {
+            return false;
+        }
+
+        let mut raw_targets = Vec::new();
+        self.collect_private_destructuring_targets(left, &mut raw_targets);
+        if raw_targets.is_empty() {
+            return false;
+        }
+
+        let targets = raw_targets
+            .into_iter()
+            .map(|(target, access)| PrivateDestructuringTarget {
+                target,
+                access,
+                receiver_temp: self.make_unique_name_hoisted_assignment(),
+                setter_value: self.make_unique_name_fresh(),
+            })
+            .collect::<Vec<_>>();
+
+        for target in &targets {
+            self.write(&target.receiver_temp);
+            self.write(" = ");
+            self.emit_private_receiver(target.access.expression, &target.access.clean_name);
+            self.write(", ");
+        }
+        self.emit_private_destructuring_pattern(left, &targets);
+        self.write(" = ");
+        self.emit(right);
+        true
     }
 
     /// Emit a private field unary mutation (++ or --).
@@ -469,6 +701,15 @@ impl<'a> Printer<'a> {
                 self.emit_private_field_set_close(&clean_name);
                 return;
             }
+        }
+
+        // ES2015+ can keep native destructuring syntax, but private field
+        // assignment targets still need to route writes through the SET helper.
+        if !self.ctx.target_es5
+            && binary.operator_token == SyntaxKind::EqualsToken as u16
+            && self.emit_private_field_destructuring_assignment(binary.left, binary.right)
+        {
+            return;
         }
 
         // ES2015-ES2017: lower object rest assignment patterns.

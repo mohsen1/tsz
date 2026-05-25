@@ -568,6 +568,10 @@ impl<'a> DeclarationEmitter<'a> {
                 if self.stmt_has_export_modifier(target_stmt_node) {
                     continue;
                 }
+                if target_stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION {
+                    deferred_statements.insert(target_stmt_idx);
+                    continue;
+                }
                 if target_stmt_node.kind != syntax_kind_ext::FUNCTION_DECLARATION
                     && self.statement_has_attached_jsdoc(source_file, target_stmt_node)
                 {

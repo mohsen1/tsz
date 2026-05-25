@@ -1126,6 +1126,7 @@ impl<'a> CheckerState<'a> {
                 .map(|&(idx, flags, _, _, _)| (idx, flags))
                 .collect();
             self.check_merged_enum_declaration_diagnostics(&local_declarations_for_enums);
+            self.check_enum_namespace_export_collisions(&local_declarations_for_enums);
 
             let mut conflicts = FxHashSet::default();
             let mut propagate_type_alias_conflict_to_namespaces = false;

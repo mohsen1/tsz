@@ -754,6 +754,9 @@ impl<'a> LoweringPass<'a> {
             }
             k if k == syntax_kind_ext::JSX_EXPRESSION => {
                 if let Some(expr) = self.arena.get_jsx_expression(node) {
+                    if self.ctx.target_es5 && expr.dot_dot_dot_token {
+                        self.transforms.helpers_mut().mark_spread_array();
+                    }
                     self.visit(expr.expression);
                 }
             }

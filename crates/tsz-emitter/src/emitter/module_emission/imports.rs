@@ -308,6 +308,15 @@ impl<'a> Printer<'a> {
             return Vec::new();
         }
 
+        let usage = self.scan_jsx_usage();
+        if !usage.needs_jsx
+            && !usage.needs_jsxs
+            && !usage.needs_fragment
+            && !usage.needs_create_element
+        {
+            return Vec::new();
+        }
+
         self.jsx_pragmas.classic_factory_roots(
             self.ctx.options.jsx_factory.as_deref(),
             self.ctx.options.jsx_fragment_factory.as_deref(),
@@ -559,126 +568,7 @@ impl<'a> Printer<'a> {
         // value usage. This matches tsc which erases namespace import aliases
         // when the alias is only referenced in type positions.
         let stripped = crate::import_usage::strip_type_only_content(haystack);
-        Self::contains_alias_value_reference_before_shadow(&stripped, &name)
-    }
-
-    fn contains_alias_value_reference_before_shadow(haystack: &str, ident: &str) -> bool {
-        if ident.is_empty() {
-            return false;
-        }
-
-        let mut search_from = 0usize;
-        while let Some(rel) = haystack[search_from..].find(ident) {
-            let pos = search_from + rel;
-            if Self::is_standalone_identifier_at(haystack, ident, pos) {
-                if Self::identifier_occurrence_is_binding(haystack, pos) {
-                    // A second `import <ident> = ...` re-declares the same
-                    // alias; it doesn't shadow the original import — both
-                    // refer to the same name. tsc treats this as a duplicate
-                    // diagnostic but still emits the first value-bearing
-                    // import. Skip past this binding and keep searching for a
-                    // genuine value reference (e.g., `<ident>.foo`).
-                    if Self::binding_is_import_redeclaration(haystack, pos) {
-                        search_from = pos + ident.len();
-                        continue;
-                    }
-                    return false;
-                }
-                return true;
-            }
-            search_from = pos + ident.len();
-        }
-        false
-    }
-
-    fn binding_is_import_redeclaration(haystack: &str, pos: usize) -> bool {
-        let bytes = haystack.as_bytes();
-        let mut p = pos;
-        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
-            p -= 1;
-        }
-        let preceding = &haystack[..p];
-        if !preceding.ends_with("import") {
-            return false;
-        }
-        let start = p - "import".len();
-        let before_keyword_ok = start == 0
-            || haystack[..start]
-                .chars()
-                .next_back()
-                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
-        if !before_keyword_ok {
-            return false;
-        }
-
-        let mut after = pos;
-        while after < bytes.len()
-            && (bytes[after] == b'_'
-                || bytes[after] == b'$'
-                || bytes[after].is_ascii_alphanumeric())
-        {
-            after += 1;
-        }
-        while after < bytes.len() && bytes[after].is_ascii_whitespace() {
-            after += 1;
-        }
-        bytes.get(after) == Some(&b'=')
-    }
-
-    fn is_standalone_identifier_at(haystack: &str, ident: &str, pos: usize) -> bool {
-        let before_ok = if pos == 0 {
-            true
-        } else {
-            haystack[..pos].chars().next_back().is_none_or(|ch| {
-                !(ch == '_' || ch == '$' || ch == '.' || ch.is_ascii_alphanumeric())
-            })
-        };
-        let after_idx = pos + ident.len();
-        let after_ok = if after_idx >= haystack.len() {
-            true
-        } else {
-            haystack[after_idx..]
-                .chars()
-                .next()
-                .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()))
-        };
-        before_ok && after_ok
-    }
-
-    fn identifier_occurrence_is_binding(haystack: &str, pos: usize) -> bool {
-        let bytes = haystack.as_bytes();
-        let mut p = pos;
-        while p > 0 && bytes[p - 1].is_ascii_whitespace() {
-            p -= 1;
-        }
-
-        let preceding = &haystack[..p];
-        for keyword in [
-            "var",
-            "let",
-            "const",
-            "function",
-            "class",
-            "enum",
-            "namespace",
-            "module",
-            "import",
-        ] {
-            if !preceding.ends_with(keyword) {
-                continue;
-            }
-            let start = p - keyword.len();
-            let before_keyword_ok = start == 0
-                || haystack[..start]
-                    .chars()
-                    .next_back()
-                    .is_none_or(|ch| !(ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()));
-            if before_keyword_ok {
-                return true;
-            }
-        }
-
-        false
+        crate::import_usage::contains_identifier_occurrence_before_shadow(&stripped, &name)
     }
 
     /// Get the source text after an import node (skipping to the next line).
@@ -1003,7 +893,13 @@ impl<'a> Printer<'a> {
                 if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                     has_value_binding = true;
                 } else {
-                    let value_specs = self.collect_value_specifiers(&named_imports.elements);
+                    let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
+                    if self.ctx.options.type_only_nodes.is_empty()
+                        && !self.source_is_js_file
+                        && !self.ctx.options.verbatim_module_syntax
+                    {
+                        value_specs = self.filter_value_specs_by_usage(node, &value_specs);
+                    }
                     if !value_specs.is_empty() {
                         has_value_binding = true;
                     }
@@ -1062,7 +958,9 @@ impl<'a> Printer<'a> {
         // counter values on imports that use their own namespace name.
         let module_var = self.next_commonjs_module_var(&module_spec);
         self.register_commonjs_named_import_substitutions(node, &module_var);
-        let is_default_only_ast = clause.name.is_some() && clause.named_bindings.is_none();
+        let has_runtime_named_bindings =
+            self.import_clause_has_runtime_named_bindings(node, clause);
+        let is_default_only_ast = clause.name.is_some() && !has_runtime_named_bindings;
         let mut is_named_default_only_ast = false;
         if clause.name.is_none()
             && clause.named_bindings.is_some()
@@ -1070,7 +968,13 @@ impl<'a> Printer<'a> {
             && let Some(named_imports) = self.arena.get_named_imports(bindings_node)
             && named_imports.name.is_none()
         {
-            let value_specs = self.collect_value_specifiers(&named_imports.elements);
+            let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
+            if self.ctx.options.type_only_nodes.is_empty()
+                && !self.source_is_js_file
+                && !self.ctx.options.verbatim_module_syntax
+            {
+                value_specs = self.filter_value_specs_by_usage(node, &value_specs);
+            }
             is_named_default_only_ast = !value_specs.is_empty()
                 && value_specs.iter().all(|&spec_idx| {
                     self.arena.get(spec_idx).is_some_and(|spec_node| {
@@ -1114,15 +1018,7 @@ impl<'a> Printer<'a> {
         // With esModuleInterop, this requires __importStar to wrap the require call
         // so both .default and named exports are accessible.
         let has_default = clause.name.is_some();
-        let has_named_bindings = clause.named_bindings.is_some()
-            && self.arena.get(clause.named_bindings).is_some_and(|n| {
-                n.kind != syntax_kind_ext::NAMESPACE_IMPORT
-                    && self
-                        .arena
-                        .get_named_imports(n)
-                        .is_some_and(|ni| ni.name.is_none() || !ni.elements.nodes.is_empty())
-            });
-        let use_import_star = es_module_interop && has_default && has_named_bindings;
+        let use_import_star = es_module_interop && has_default && has_runtime_named_bindings;
 
         // Emit: const module_1 = __importStar(require("module"));
         // OR:   const module_1 = require("module");
@@ -1176,16 +1072,21 @@ impl<'a> Printer<'a> {
             return;
         }
 
-        for &spec_idx in &named_imports.elements.nodes {
+        let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
+        if self.ctx.options.type_only_nodes.is_empty()
+            && !self.source_is_js_file
+            && !self.ctx.options.verbatim_module_syntax
+        {
+            value_specs = self.filter_value_specs_by_usage(node, &value_specs);
+        }
+
+        for spec_idx in value_specs {
             let Some(spec_node) = self.arena.get(spec_idx) else {
                 continue;
             };
             let Some(spec) = self.arena.get_specifier(spec_node) else {
                 continue;
             };
-            if spec.is_type_only {
-                continue;
-            }
             let Some(local_name_node) = self.arena.get(spec.name) else {
                 continue;
             };
@@ -1224,6 +1125,36 @@ impl<'a> Printer<'a> {
             self.commonjs_named_import_substitutions
                 .insert(local_ident.escaped_text.to_string(), substitution);
         }
+    }
+
+    fn import_clause_has_runtime_named_bindings(
+        &self,
+        node: &Node,
+        clause: &tsz_parser::parser::node::ImportClauseData,
+    ) -> bool {
+        if clause.named_bindings.is_none() {
+            return false;
+        }
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return false;
+        };
+        if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+            return true;
+        }
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return true;
+        };
+        if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
+            return true;
+        }
+        let mut value_specs = self.collect_value_specifiers(&named_imports.elements);
+        if self.ctx.options.type_only_nodes.is_empty()
+            && !self.source_is_js_file
+            && !self.ctx.options.verbatim_module_syntax
+        {
+            value_specs = self.filter_value_specs_by_usage(node, &value_specs);
+        }
+        !value_specs.is_empty()
     }
 
     pub(in crate::emitter) fn emit_import_equals_declaration(&mut self, node: &Node) {
@@ -1853,17 +1784,19 @@ impl<'a> Printer<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Printer;
-
     #[test]
     fn import_alias_redeclaration_requires_import_equals() {
-        assert!(Printer::contains_alias_value_reference_before_shadow(
-            "import M = Z.I;\nM.bar();",
-            "M",
-        ));
-        assert!(!Printer::contains_alias_value_reference_before_shadow(
-            "import M from \"pkg\";\nM.bar();",
-            "M",
-        ));
+        assert!(
+            crate::import_usage::contains_identifier_occurrence_before_shadow(
+                "import M = Z.I;\nM.bar();",
+                "M",
+            )
+        );
+        assert!(
+            !crate::import_usage::contains_identifier_occurrence_before_shadow(
+                "import M from \"pkg\";\nM.bar();",
+                "M",
+            )
+        );
     }
 }

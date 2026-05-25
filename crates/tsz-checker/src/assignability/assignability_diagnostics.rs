@@ -2155,6 +2155,19 @@ impl<'a> CheckerState<'a> {
                 failure_reason: Some(reason),
             };
         }
+
+        // The abstract→non-abstract constructor rejection lives in a checker
+        // override (it needs symbol abstractness) and is detected on the raw
+        // declared types, so the structural failure walk over the evaluated
+        // inputs produces no reason. Surface the structured reason directly so
+        // the TS2517 elaboration is rendered after the top-level TS2322/TS2345.
+        if let Some(reason) = self.abstract_constructor_assignment_failure_reason(source, target) {
+            return crate::query_boundaries::assignability::AssignabilityFailureAnalysis {
+                weak_union_violation: false,
+                failure_reason: Some(reason),
+            };
+        }
+
         let (prepared_source, prepared_target) = self.prepare_assignability_inputs(source, target);
 
         // Keep failure analysis on the same relation boundary as `is_assignable_to`
@@ -2425,6 +2438,21 @@ impl<'a> CheckerState<'a> {
             });
         }
         None
+    }
+
+    /// Produce the structured reason for an abstract-constructor-to-concrete
+    /// assignment failure when the checker's abstract-constructor override
+    /// rejects the relation. The override is the single source of truth for
+    /// the abstractness decision (it resolves symbol flags and unwraps
+    /// application/type-query chains), so this stays in sync with the relation
+    /// itself rather than re-deriving the shape from the printer.
+    pub(crate) fn abstract_constructor_assignment_failure_reason(
+        &self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<tsz_solver::SubtypeFailureReason> {
+        (self.abstract_constructor_assignability_override(source, target, None) == Some(false))
+            .then_some(tsz_solver::SubtypeFailureReason::AbstractConstructorAssignment)
     }
 
     pub(crate) fn checker_only_assignability_may_apply(

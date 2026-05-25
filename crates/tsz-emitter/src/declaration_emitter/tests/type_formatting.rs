@@ -1815,3 +1815,60 @@ fn parenthesized_function_param_and_return_type_preserved() {
         "Expected parens on return type: {out}"
     );
 }
+
+// =============================================================================
+// Named-tuple union inside mapped-type constraint
+// =============================================================================
+// tsc always emits mapped-type constraints on a single line.  The
+// `indent_level`-based multiline named-tuple formatting must NOT fire when
+// emitting a constraint/name-type/as-clause position inside a mapped type.
+
+/// Mapped type with a union-of-named-tuples constraint must keep the
+/// constraint on a single line, matching tsc output.
+#[test]
+fn mapped_type_named_tuple_union_constraint_stays_inline() {
+    let output = emit_dts("export type M = { [K in [x: string] | [y: number]]: K };");
+    // The constraint must appear inline.
+    assert!(
+        output.contains("[x: string] | [y: number]"),
+        "Named-tuple union constraint must stay on a single line: {output}"
+    );
+    // Must not be split across lines.
+    assert!(
+        !output.contains("[x: string]\n") && !output.contains("[y: number]\n    |"),
+        "Named-tuple union constraint must not be split across lines: {output}"
+    );
+}
+
+/// Same fix applies when the iteration variable is named `P` instead of `K`.
+/// Proves the fix is not sensitive to the iteration variable name.
+#[test]
+fn mapped_type_named_tuple_union_constraint_stays_inline_renamed_var() {
+    let output = emit_dts("export type M = { [P in [a: string] | [b: number]]: P };");
+    assert!(
+        output.contains("[a: string] | [b: number]"),
+        "Named-tuple union constraint must stay inline regardless of iteration var name: {output}"
+    );
+}
+
+/// A union-of-named-tuples used as a top-level type alias must be preserved
+/// in output (no regression for non-mapped-type positions).
+#[test]
+fn top_level_named_tuple_union_keeps_format() {
+    let output = emit_dts("export type T = [x: string] | [y: number];");
+    assert!(
+        output.contains("[x: string]") && output.contains("[y: number]"),
+        "Top-level named-tuple union must be present in output: {output}"
+    );
+}
+
+/// Mapped type with an `as` clause containing a named-tuple union must
+/// also stay on a single line.
+#[test]
+fn mapped_type_named_tuple_union_as_clause_stays_inline() {
+    let output = emit_dts("export type M = { [K in string as [x: string] | [y: number]]: K };");
+    assert!(
+        output.contains("[x: string] | [y: number]"),
+        "Named-tuple union in mapped-type as-clause must stay inline: {output}"
+    );
+}
