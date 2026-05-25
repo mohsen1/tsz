@@ -204,7 +204,7 @@ impl<'a> CheckerState<'a> {
                     | syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
             )
         );
-        let actual_this_type = self.access_receiver_type(unwrapped_tag);
+        let actual_this_type = self.call_site_receiver_type(call_target_type, unwrapped_tag);
 
         // For tagged templates, the tag function parameters are:
         //   param[0] = TemplateStringsArray (always)

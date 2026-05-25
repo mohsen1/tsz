@@ -1134,6 +1134,32 @@ impl<'a> CheckerState<'a> {
         Some(self.get_type_of_node(access.expression))
     }
 
+    /// Receiver type for non-call-expression call sites (decorators, tagged
+    /// templates) that need to decide whether to thread `actual_this_type`.
+    ///
+    /// Returns `Some(receiver)` only when `callee_type` carries an explicit,
+    /// non-trivial `this:` constraint AND the callee expression is a property
+    /// or element access. Both conditions must hold to avoid perturbing
+    /// generic inference for the dominant `this`-less or bare-identifier case.
+    ///
+    /// A `this:` constraint is trivial when it is `any`, `unknown`, `void`,
+    /// `undefined`, `null`, or `error` — the same set the solver's call
+    /// resolver already treats as "no real receiver required."
+    pub(crate) fn call_site_receiver_type(
+        &mut self,
+        callee_type: TypeId,
+        callee_expr: NodeIndex,
+    ) -> Option<TypeId> {
+        if crate::query_boundaries::class_type::callable_requires_explicit_receiver(
+            self.ctx.types,
+            callee_type,
+        ) {
+            self.access_receiver_type(callee_expr)
+        } else {
+            None
+        }
+    }
+
     /// Compute the type of a node using an explicit [`TypingRequest`] instead of
     /// mutating ambient context fields.
     pub fn get_type_of_node_with_request(
