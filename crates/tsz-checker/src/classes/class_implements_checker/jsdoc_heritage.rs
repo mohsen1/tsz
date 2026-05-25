@@ -15,6 +15,29 @@ use tsz_solver::TypeId;
 /// A JSDoc template parameter: `(name, has_default, constraint_expr)`.
 type JsDocTemplateParam = (String, bool, Option<String>);
 
+/// A resolved JSDoc `@implements` heritage target.
+///
+/// The structural rule: `@implements {T}` must run the same conformance
+/// check regardless of whether `T` was declared as a TS class/interface/
+/// type alias (a binder symbol) or as a JSDoc `@typedef` alias (no binder
+/// symbol; resolved via the JSDoc typedef table). Resolution materializes
+/// the heritage type up front so the caller only branches on the small
+/// number of places the diagnostic actually differs.
+pub(crate) enum JsDocImplementsTarget {
+    /// The target is a class with private or protected members. Implementing
+    /// such a class is a TS2720 ("did you mean to extend") error before any
+    /// member-shape check runs.
+    PrivateOrProtectedClass { target_display_name: String },
+    /// The target's instance/interface type is materialized and ready for
+    /// the structural conformance check. `is_class` selects the
+    /// class-vs-interface phrasing of the missing-member diagnostic.
+    Materialized {
+        interface_type: TypeId,
+        target_display_name: String,
+        is_class: bool,
+    },
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsdoc_extends_tag_type_arguments(&mut self, class_idx: NodeIndex) {
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
@@ -1114,6 +1137,114 @@ impl<'a> CheckerState<'a> {
         (names, missing_positions)
     }
 
+    /// Resolve the name written inside a JSDoc `@implements {T}` tag to a
+    /// conformance target. The same rule applies regardless of how T was
+    /// declared: a TS class/interface/type alias/enum (binder symbol), or a
+    /// JSDoc `@typedef` (resolved through the JSDoc typedef table). When
+    /// both forms could resolve the name, the binder wins so existing
+    /// class-target semantics (private/protected → TS2720) are preserved.
+    /// Returns `None` when neither resolution path produces a target — the
+    /// caller silently skips such entries, matching tsc's behavior for
+    /// unresolved heritage names in JS files.
+    pub(crate) fn resolve_jsdoc_implements_target(
+        &mut self,
+        target_name: &str,
+    ) -> Option<JsDocImplementsTarget> {
+        let sym_id = if let Some(sym) = self.ctx.binder.file_locals.get(target_name) {
+            Some(sym)
+        } else if target_name.contains('.') {
+            // Qualified name (e.g., `NS.I` from `@import * as NS`).
+            self.resolve_jsdoc_entity_name_symbol(target_name)
+        } else {
+            None
+        };
+
+        if let Some(sym_id) = sym_id {
+            let lib_binders = self.get_lib_binders();
+            if let Some((symbol_flags, symbol_declarations, target_display_name)) = self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                .map(|symbol| {
+                    (
+                        symbol.flags,
+                        symbol.declarations.clone(),
+                        symbol.escaped_name.clone(),
+                    )
+                })
+            {
+                let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
+
+                if is_class {
+                    // Implementing a class with private/protected members is
+                    // TS2720 regardless of structural shape.
+                    let has_private_members = symbol_declarations.iter().any(|&decl_idx| {
+                        self.ctx
+                            .arena
+                            .get(decl_idx)
+                            .filter(|node| node.kind == syntax_kind_ext::CLASS_DECLARATION)
+                            .and_then(|node| self.ctx.arena.get_class(node))
+                            .is_some_and(|base_class_data| {
+                                self.class_has_private_or_protected_members(base_class_data)
+                            })
+                    });
+                    if has_private_members {
+                        return Some(JsDocImplementsTarget::PrivateOrProtectedClass {
+                            target_display_name,
+                        });
+                    }
+                }
+
+                // Materialize the interface type. For classes,
+                // `get_type_of_symbol` returns the constructor type, so we
+                // walk to the class declaration and use its instance type
+                // instead.
+                let interface_type = if is_class {
+                    symbol_declarations
+                        .iter()
+                        .find_map(|&decl_idx| {
+                            let node = self.ctx.arena.get(decl_idx)?;
+                            if node.kind != syntax_kind_ext::CLASS_DECLARATION {
+                                return None;
+                            }
+                            let target_class_data = self.ctx.arena.get_class(node)?;
+                            Some(self.get_class_instance_type(decl_idx, target_class_data))
+                        })
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    let raw_type = self.get_type_of_symbol(sym_id);
+                    self.evaluate_type_for_assignability(raw_type)
+                };
+                return Some(JsDocImplementsTarget::Materialized {
+                    interface_type,
+                    target_display_name,
+                    is_class,
+                });
+            }
+        }
+
+        // Fall back to JSDoc `@typedef` resolution, scoped to the current
+        // source file. tsc resolves `@implements {T}` in the same scope as the
+        // class: file-local `@typedef T` is visible, but typedefs declared in
+        // unrelated files are not. Walking the global typedef table would
+        // surface typedefs tsc never sees and produce spurious TS2420/TS2416
+        // in the conformance check.
+        let typedef_info = self.ctx.arena.source_files.first().and_then(|sf| {
+            let comments = sf.comments.clone();
+            let source_text = sf.text.to_string();
+            self.resolve_jsdoc_typedef_info(target_name, &comments, &source_text)
+        });
+        if let Some((typedef_type, _type_params)) = typedef_info {
+            let interface_type = self.evaluate_type_for_assignability(typedef_type);
+            return Some(JsDocImplementsTarget::Materialized {
+                interface_type,
+                target_display_name: target_name.to_string(),
+                is_class: false,
+            });
+        }
+
+        None
+    }
+
     /// Check JSDoc `@implements` tags on a class declaration (JS files only).
     /// This is the JSDoc equivalent of syntactic `implements` clauses.
     /// Reports TS2420 (missing interface members), TS2416 (incompatible member types),
@@ -1193,82 +1324,37 @@ impl<'a> CheckerState<'a> {
         }
 
         for target_name in &implements_names {
-            // Resolve the target symbol - first try flat lookup, then qualified name resolution
-            let sym_id = if let Some(sym) = self.ctx.binder.file_locals.get(target_name) {
-                Some(sym)
-            } else if target_name.contains('.') {
-                // Try to resolve as a qualified name (e.g., "NS.I" from @import * as NS)
-                self.resolve_jsdoc_entity_name_symbol(target_name)
-            } else {
-                None
-            };
-
-            let Some(sym_id) = sym_id else {
-                continue;
-            };
-            let lib_binders = self.get_lib_binders();
-            let Some((symbol_flags, symbol_declarations, target_display_name)) = self
-                .get_cross_file_symbol(sym_id)
-                .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
-                .map(|symbol| {
-                    (
-                        symbol.flags,
-                        symbol.declarations.clone(),
-                        symbol.escaped_name.clone(),
-                    )
-                })
-            else {
+            // Resolve the target. The JSDoc `@implements` heritage rule is:
+            // when `@implements {T}` is attached to a class, tsc runs the same
+            // conformance check it runs for the TS `class X implements T`
+            // form, regardless of whether T was declared as a TS
+            // class/interface/type alias (a binder symbol) or as a JSDoc
+            // `@typedef` alias (no binder symbol; resolved via the JSDoc
+            // typedef table). Try the binder first; fall back to JSDoc.
+            let target = self.resolve_jsdoc_implements_target(target_name);
+            let Some(target) = target else {
                 continue;
             };
 
-            let is_class = (symbol_flags & tsz_binder::symbol_flags::CLASS) != 0;
-
-            // Check for private/protected members (TS2720 — should extend, not implement)
-            let mut has_private_members = false;
-            if is_class {
-                for &decl_idx in &symbol_declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(base_class_data) = self.ctx.arena.get_class(node)
-                        && self.class_has_private_or_protected_members(base_class_data)
-                    {
-                        has_private_members = true;
-                    }
+            let (interface_type, target_display_name, is_class) = match target {
+                JsDocImplementsTarget::PrivateOrProtectedClass {
+                    target_display_name,
+                } => {
+                    let message = format!(
+                        "Class '{class_name}' incorrectly implements class '{target_display_name}'. Did you mean to extend '{target_display_name}' and inherit its members as a subclass?"
+                    );
+                    self.error_at_node(
+                        class_error_idx,
+                        &message,
+                        diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
+                    );
+                    continue;
                 }
-            }
-
-            if has_private_members {
-                let message = format!(
-                    "Class '{class_name}' incorrectly implements class '{target_display_name}'. Did you mean to extend '{target_display_name}' and inherit its members as a subclass?"
-                );
-                self.error_at_node(
-                    class_error_idx,
-                    &message,
-                    diagnostic_codes::CLASS_INCORRECTLY_IMPLEMENTS_CLASS_DID_YOU_MEAN_TO_EXTEND_AND_INHERIT_ITS_MEMBER,
-                );
-                continue;
-            }
-
-            // Get the interface/class type and check members.
-            // For classes, get_type_of_symbol returns the constructor type, so we need
-            // to use get_class_instance_type to get the instance shape with members.
-            let interface_type = if is_class {
-                // Find the class declaration and get its instance type
-                let mut instance_type = None;
-                for &decl_idx in &symbol_declarations {
-                    if let Some(node) = self.ctx.arena.get(decl_idx)
-                        && node.kind == syntax_kind_ext::CLASS_DECLARATION
-                        && let Some(target_class_data) = self.ctx.arena.get_class(node)
-                    {
-                        instance_type =
-                            Some(self.get_class_instance_type(decl_idx, target_class_data));
-                        break;
-                    }
-                }
-                instance_type.unwrap_or(TypeId::ERROR)
-            } else {
-                let raw_type = self.get_type_of_symbol(sym_id);
-                self.evaluate_type_for_assignability(raw_type)
+                JsDocImplementsTarget::Materialized {
+                    interface_type,
+                    target_display_name,
+                    is_class,
+                } => (interface_type, target_display_name, is_class),
             };
 
             let mut missing_members: Vec<String> = Vec::new();

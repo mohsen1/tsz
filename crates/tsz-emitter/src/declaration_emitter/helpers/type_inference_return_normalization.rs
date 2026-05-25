@@ -426,6 +426,25 @@ impl<'a> DeclarationEmitter<'a> {
         binder.get_global_type("Promise") == Some(sym_id) && binder.lib_symbol_ids.contains(&sym_id)
     }
 
+    pub(in crate::declaration_emitter) fn evaluated_literal_return_type_text_for_returned_identifier(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+        return_type_id: tsz_solver::types::TypeId,
+    ) -> Option<String> {
+        let interner = self.type_interner?;
+        let returned_identifier = self.function_body_unique_return_identifier(func_body)?;
+        self.function_parameter_type_text(func, returned_identifier)
+            .or_else(|| self.reference_declared_type_annotation_text(returned_identifier))?;
+        let evaluated_return =
+            self.evaluate_type_id_structurally_for_declaration_emit(return_type_id)?;
+        if !tsz_solver::type_queries::is_literal_or_literal_union_type(interner, evaluated_return) {
+            return None;
+        }
+
+        Some(self.print_type_id_expanded_for_inferred_declaration(evaluated_return))
+    }
+
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
