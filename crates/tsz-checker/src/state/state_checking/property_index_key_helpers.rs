@@ -33,4 +33,9 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::create_string_literal_type(self.ctx.types, prop_name);
         self.diagnostic_relation_boolean_guard(prop_literal, key_type)
     }
+
+    pub(super) fn index_value_type_is_deferred(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::is_index_access_type(self.ctx.types, type_id)
+            || crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id)
+    }
 }
