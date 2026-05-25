@@ -339,6 +339,7 @@ impl<'a> DeclarationEmitter<'a> {
                 if ast_type_text
                     .as_ref()
                     .is_some_and(|type_text| type_text.contains(" & "))
+                    || self.class_expression_has_type_parameter_modifiers(expr_idx)
                     || self
                         .arena
                         .get_class(expr_node)
@@ -952,7 +953,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| Some(self.print_type_id(method_type_id)))
     }
 
-    fn enclosing_method_for_node(
+    pub(in crate::declaration_emitter) fn enclosing_method_for_node(
         &self,
         node_idx: NodeIndex,
     ) -> Option<&tsz_parser::parser::node::MethodDeclData> {

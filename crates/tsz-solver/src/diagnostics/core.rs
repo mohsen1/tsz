@@ -236,6 +236,15 @@ pub enum SubtypeFailureReason {
         /// unconstrained (no useful elaboration to emit).
         target_constraint: Option<TypeId>,
     },
+    /// An abstract constructor type was assigned to a non-abstract
+    /// constructor type. The relation correctly fails, but the only
+    /// explanation tsc gives is the TS2517 elaboration line after the
+    /// top-level TS2322/TS2345 message. The abstractness decision needs
+    /// checker symbol context, so this reason is produced at the checker
+    /// boundary rather than by the structural subtype walk. The source and
+    /// target types come from the diagnostic context, so this variant carries
+    /// no payload.
+    AbstractConstructorAssignment,
 }
 
 /// Diagnostic severity level.
@@ -424,6 +433,7 @@ pub mod codes {
 
     // Type assignability
     pub use dc::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE as ARG_NOT_ASSIGNABLE;
+    pub use dc::CANNOT_ASSIGN_AN_ABSTRACT_CONSTRUCTOR_TYPE_TO_A_NON_ABSTRACT_CONSTRUCTOR_TYPE as ABSTRACT_CONSTRUCTOR_ASSIGNMENT;
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
@@ -554,7 +564,8 @@ impl SubtypeFailureReason {
             | Self::RecursionLimitExceeded
             | Self::ParameterCountMismatch { .. }
             | Self::TooManyParameters { .. }
-            | Self::IndexAccessTypeParameterMismatch { .. } => codes::TYPE_NOT_ASSIGNABLE,
+            | Self::IndexAccessTypeParameterMismatch { .. }
+            | Self::AbstractConstructorAssignment => codes::TYPE_NOT_ASSIGNABLE,
             Self::NoCommonProperties { .. } => codes::NO_COMMON_PROPERTIES,
             Self::ExcessProperty { .. } => codes::EXCESS_PROPERTY,
             Self::ReadonlyToMutableAssignment { .. } => codes::READONLY_TO_MUTABLE,
@@ -885,6 +896,17 @@ impl SubtypeFailureReason {
                     ));
                 }
                 diag
+            }
+            Self::AbstractConstructorAssignment => {
+                // TS2322 top-level + TS2517 elaboration explaining the failure.
+                PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::ABSTRACT_CONSTRUCTOR_ASSIGNMENT,
+                    vec![],
+                ))
             }
         }
     }

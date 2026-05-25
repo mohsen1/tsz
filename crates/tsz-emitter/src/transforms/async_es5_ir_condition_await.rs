@@ -71,6 +71,23 @@ impl<'a> AsyncES5Transformer<'a> {
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
     ) {
+        self.process_while_statement_in_async_with_label(
+            idx,
+            cases,
+            current_statements,
+            current_label,
+            None,
+        );
+    }
+
+    pub(super) fn process_while_statement_in_async_with_label(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        labeled_continue: Option<&str>,
+    ) {
         let Some(node) = self.arena.get(idx) else {
             return;
         };
@@ -133,6 +150,11 @@ impl<'a> AsyncES5Transformer<'a> {
             break_label: exit_placeholder,
             continue_label: loop_label,
         };
+        let label_stack_len = self.labeled_continue_targets.len();
+        if let Some(label) = labeled_continue {
+            self.labeled_continue_targets
+                .push((label.to_string(), loop_label));
+        }
         self.process_loop_body_statement_in_async(
             loop_data.statement,
             cases,
@@ -140,6 +162,7 @@ impl<'a> AsyncES5Transformer<'a> {
             current_label,
             loop_control,
         );
+        self.labeled_continue_targets.truncate(label_stack_len);
 
         current_statements.push(Self::generator_break_statement(loop_label));
 

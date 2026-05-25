@@ -54,14 +54,34 @@ impl<'a> CheckerState<'a> {
     }
 
     fn react_component_alias_def_has_react_origin(&self, def_id: tsz_solver::DefId) -> bool {
-        self.ctx
-            .definition_store
-            .get_symbol_id(def_id)
-            .is_some_and(|raw| {
-                let sym_id = tsz_binder::SymbolId(raw);
-                self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                    || self.symbol_parent_chain_contains_name(sym_id, "React")
-            })
+        // Single DashMap lookup: extract both symbol_id and file_id in one shot.
+        let Some(def_info) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        let Some(raw) = def_info.symbol_id else {
+            return false;
+        };
+        let sym_id = tsz_binder::SymbolId(raw);
+
+        if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) {
+            return true;
+        }
+        if self.symbol_parent_chain_contains_name(sym_id, "React") {
+            return true;
+        }
+
+        // Cross-file fallback: when the React type is declared in a referenced
+        // module file (e.g., `react16.d.ts` loaded via `/// <reference path>`),
+        // its binder is in `all_binders` but NOT in `lib_binders`. Look up the
+        // owning binder via the definition's `file_id` and traverse the parent
+        // chain within that binder.
+        let Some(file_id) = def_info.file_id else {
+            return false;
+        };
+        let Some(binder) = self.ctx.get_binder_for_file(file_id as usize) else {
+            return false;
+        };
+        self.symbol_parent_chain_contains_name_in_binder(sym_id, "React", binder)
     }
 
     fn symbol_parent_chain_contains_name(
@@ -83,6 +103,33 @@ impl<'a> CheckerState<'a> {
                 .ctx
                 .binder
                 .get_symbol_with_libs(parent, &lib_binders)
+                .is_some_and(|parent_symbol| parent_symbol.escaped_name == name)
+            {
+                return true;
+            }
+            sym_id = parent;
+            depth += 1;
+        }
+        false
+    }
+
+    fn symbol_parent_chain_contains_name_in_binder(
+        &self,
+        mut sym_id: tsz_binder::SymbolId,
+        name: &str,
+        binder: &tsz_binder::BinderState,
+    ) -> bool {
+        let mut depth = 0;
+        while depth < 16 {
+            let Some(symbol) = binder.get_symbol(sym_id) else {
+                return false;
+            };
+            let parent = symbol.parent;
+            if parent.is_none() {
+                return false;
+            }
+            if binder
+                .get_symbol(parent)
                 .is_some_and(|parent_symbol| parent_symbol.escaped_name == name)
             {
                 return true;

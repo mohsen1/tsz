@@ -1908,19 +1908,59 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if stmt_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                if self.variable_statement_source_using_flags(stmt_node) != 0 {
+                    return true;
+                }
                 let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
                     continue;
                 };
                 for &decl_list_idx in &var_stmt.declarations.nodes {
                     if let Some(decl_list_node) = self.arena.get(decl_list_idx)
-                        && (decl_list_node.flags as u32 & node_flags::USING) != 0
+                        && let Some(decl_list) = self.arena.get_variable(decl_list_node)
                     {
-                        return true;
+                        let flags = decl_list.declarations.nodes.iter().fold(
+                            decl_list_node.flags as u32,
+                            |flags, &decl_idx| {
+                                flags | self.arena.get_variable_declaration_flags(decl_idx)
+                            },
+                        );
+                        if (flags & node_flags::USING) != 0 {
+                            return true;
+                        }
                     }
                 }
             }
         }
         false
+    }
+
+    pub(in crate::emitter) fn variable_statement_source_using_flags(&self, node: &Node) -> u32 {
+        if node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+            return 0;
+        }
+        let Some(source_text) = self.source_text else {
+            return 0;
+        };
+        let start = (node.pos as usize).min(source_text.len());
+        let end = (node.end as usize).min(source_text.len());
+        let text = source_text[start..end].trim_start();
+        if text.starts_with("await using")
+            && text
+                .as_bytes()
+                .get("await using".len())
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$')
+        {
+            return node_flags::AWAIT_USING;
+        }
+        if text.starts_with("using")
+            && text
+                .as_bytes()
+                .get("using".len())
+                .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_' && *byte != b'$')
+        {
+            return node_flags::USING;
+        }
+        0
     }
 
     /// Check if a statement list contains any `await using` declarations.

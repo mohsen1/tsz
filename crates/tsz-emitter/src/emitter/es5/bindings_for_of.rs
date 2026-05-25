@@ -7,6 +7,19 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
+    pub(in crate::emitter) fn preallocate_iterator_return_temps_for_statements(
+        &mut self,
+        statements: &[NodeIndex],
+    ) {
+        if !self.ctx.target_es5 || !self.ctx.options.downlevel_iteration {
+            return;
+        }
+
+        for &stmt_idx in statements {
+            self.visit_for_of_return_temp_prealloc(stmt_idx);
+        }
+    }
+
     pub(in crate::emitter) fn preallocate_nested_iterator_return_temps(
         &mut self,
         stmt_idx: NodeIndex,
@@ -652,6 +665,28 @@ impl<'a> Printer<'a> {
                     {
                         // Check if name is a binding pattern (array or object destructuring)
                         if self.is_binding_pattern(decl.name) {
+                            if self.binding_pattern_is_empty(decl.name) {
+                                let temp_name = self.get_temp_var_name();
+                                if !first {
+                                    self.write(", ");
+                                }
+                                first = false;
+                                self.write(&temp_name);
+                                self.write(" = ");
+                                if self.arena.get(decl.name).is_some_and(|node| {
+                                    node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                }) {
+                                    self.write_helper("__read");
+                                    self.write("(");
+                                    self.write(result_name);
+                                    self.write(".value, 0)");
+                                } else {
+                                    self.write(result_name);
+                                    self.write(".value");
+                                }
+                                continue;
+                            }
+
                             // For downlevelIteration with binding patterns, use __read
                             // Transform: var [a = 0, b = 1] = _c.value
                             // Into: var _d = __read(_c.value, 2), _e = _d[0], a = _e === void 0 ? 0 : _e, ...
@@ -685,11 +720,29 @@ impl<'a> Printer<'a> {
             );
             self.write_semicolon();
         } else {
-            self.emit_expression(initializer);
-            self.write(" = ");
-            self.write(result_name);
-            self.write(".value");
-            self.write_semicolon();
+            // Assignment-target patterns: ARRAY_LITERAL_EXPRESSION or OBJECT_LITERAL_EXPRESSION.
+            // When the pattern is empty (`[] of x` or `{} of x`), tsc emits just
+            // `result.value;` to advance the iterator without creating any bindings.
+            let is_empty_literal = if init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                self.arena
+                    .get_literal_expr(init_node)
+                    .is_some_and(|lit| lit.elements.nodes.is_empty())
+            } else {
+                false
+            };
+            if is_empty_literal {
+                self.write(result_name);
+                self.write(".value");
+                self.write_semicolon();
+            } else {
+                self.emit_expression(initializer);
+                self.write(" = ");
+                self.write(result_name);
+                self.write(".value");
+                self.write_semicolon();
+            }
         }
     }
 
@@ -913,6 +966,27 @@ impl<'a> Printer<'a> {
                     {
                         if self.is_binding_pattern(decl.name) {
                             if let Some(pattern_node) = self.arena.get(decl.name) {
+                                if self.binding_pattern_is_empty(decl.name) {
+                                    let temp_name = self.get_temp_var_name();
+                                    if !first {
+                                        self.write(", ");
+                                    }
+                                    first = false;
+                                    self.write(&temp_name);
+                                    self.write(" = ");
+                                    if pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                                        && self.ctx.options.downlevel_iteration
+                                    {
+                                        self.write_helper("__read");
+                                        self.write("(");
+                                        self.write(&element_expr);
+                                        self.write(", 0)");
+                                    } else {
+                                        self.write(&element_expr);
+                                    }
+                                    continue;
+                                }
+
                                 // Object patterns: for single-property patterns, use element_expr
                                 // directly. For multi-property, create a temp.
                                 if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {

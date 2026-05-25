@@ -826,6 +826,94 @@ let onlyA: E.A = both;
 }
 
 #[test]
+fn test_ts2322_enum_member_union_proper_subset_renders_member_union() {
+    // `E.A | E.B` is a proper subset of the three-member enum `E`, so tsc
+    // renders the target as the member union, not the bare enum name `E`.
+    let messages = ts2322_messages(
+        r#"
+enum E { A, B, C }
+declare const e: E;
+const x: E.A | E.B = e;
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("Type 'E' is not assignable to type 'E.A | E.B'.")),
+        "expected proper-subset enum member union target to render as 'E.A | E.B', got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|m| !m.contains("is not assignable to type 'E'.")),
+        "proper-subset enum member union must not collapse to bare 'E', got: {messages:#?}"
+    );
+}
+
+#[test]
+fn test_ts2345_enum_member_union_proper_subset_renders_member_union() {
+    // Same rule on the TS2345 parameter path.
+    let messages: Vec<String> = get_all_diagnostics(
+        r#"
+enum E { A, B, C }
+declare const e: E;
+function f(x: E.A | E.B) {}
+f(e);
+"#,
+    )
+    .into_iter()
+    .filter_map(|(code, message)| (code == 2345).then_some(message))
+    .collect();
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("parameter of type 'E.A | E.B'")),
+        "expected TS2345 parameter to render as 'E.A | E.B', got: {messages:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_enum_member_union_covering_all_members_collapses_to_enum() {
+    // A union covering every member of the enum may collapse to the bare
+    // enum name, matching tsc.
+    let messages = ts2322_messages(
+        r#"
+enum E { A, B, C }
+declare const e: E;
+const x: E.A | E.B | E.C = "nope";
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|m| m.contains("is not assignable to type 'E'.")),
+        "expected full-coverage enum member union to collapse to bare 'E', got: {messages:#?}"
+    );
+}
+
+#[test]
+fn test_ts2322_enum_member_union_subset_renamed_enum() {
+    // The rule is structural, not keyed on the spelling `E`/`A`/`B`.
+    let messages = ts2322_messages(
+        r#"
+enum Color { Red, Green, Blue }
+declare const c: Color;
+const x: Color.Red | Color.Green = c;
+"#,
+    );
+
+    assert!(
+        messages.iter().any(
+            |m| m.contains("Type 'Color' is not assignable to type 'Color.Red | Color.Green'.")
+        ),
+        "expected renamed enum subset to render as 'Color.Red | Color.Green', got: {messages:#?}"
+    );
+}
+
+#[test]
 fn test_ts2322_numeric_literal_union_alias_source_display_preserved_for_property_assignment() {
     let diagnostics = get_all_diagnostics(
         r#"

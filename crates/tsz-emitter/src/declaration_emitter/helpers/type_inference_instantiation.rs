@@ -61,7 +61,17 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(left_parts);
         }
 
-        let right_parts = self.short_circuit_operand_type_parts(binary.right, depth + 1)?;
+        if operator == SyntaxKind::BarBarToken as u16
+            && !left_parts.is_empty()
+            && left_parts
+                .iter()
+                .all(|part| Self::short_circuit_or_excludes_left_type(&part.text))
+        {
+            return self.short_circuit_operand_type_parts(binary.right, depth + 1);
+        }
+
+        let right_parts =
+            self.short_circuit_operand_type_parts_widening_literals(binary.right, depth + 1)?;
 
         let (include_right_parts, widen_right_parts) = if operator == SyntaxKind::BarBarToken as u16
         {
@@ -316,6 +326,23 @@ impl<'a> DeclarationEmitter<'a> {
         expr_idx: NodeIndex,
         depth: u32,
     ) -> Option<Vec<ShortCircuitTypePart>> {
+        self.short_circuit_operand_type_parts_inner(expr_idx, depth, false)
+    }
+
+    fn short_circuit_operand_type_parts_widening_literals(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<Vec<ShortCircuitTypePart>> {
+        self.short_circuit_operand_type_parts_inner(expr_idx, depth, true)
+    }
+
+    fn short_circuit_operand_type_parts_inner(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+        widen_direct_literals: bool,
+    ) -> Option<Vec<ShortCircuitTypePart>> {
         if depth > 8 {
             return None;
         }
@@ -333,7 +360,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(parts);
         }
 
-        let text = self.short_circuit_operand_type_text(expr_idx)?;
+        let text = self.short_circuit_operand_type_text_at(expr_idx, 0, widen_direct_literals)?;
         let mut parts = Self::split_top_level_union_type_parts(&text)
             .into_iter()
             .map(|text| ShortCircuitTypePart {
@@ -584,25 +611,34 @@ impl<'a> DeclarationEmitter<'a> {
             .join(" | ")
     }
 
-    fn short_circuit_operand_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        self.short_circuit_operand_type_text_at(expr_idx, 0)
-    }
-
     fn short_circuit_operand_type_text_at(
         &self,
         expr_idx: NodeIndex,
         depth: u32,
+        widen_direct_literals: bool,
     ) -> Option<String> {
         if depth > 8 {
             return None;
         }
         let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+        if widen_direct_literals
+            && let Some(text) = self.short_circuit_widened_literal_initializer_type_text(expr_idx)
+        {
+            return Some(text);
+        }
+
         self.short_circuit_const_literal_reference_type_text(expr_idx)
             .or_else(|| self.js_literal_type_text(expr_idx))
             .or_else(|| self.preferred_expression_type_text(expr_idx))
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
+                if widen_direct_literals
+                    && let Some(text) =
+                        self.short_circuit_widened_literal_initializer_type_text(expr_idx)
+                {
+                    return Some(text);
+                }
                 self.short_circuit_const_literal_reference_type_text(expr_idx)
                     .or_else(|| self.js_literal_type_text(expr_idx))
                     .or_else(|| self.preferred_expression_type_text(expr_idx))

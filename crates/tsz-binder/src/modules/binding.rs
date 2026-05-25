@@ -397,6 +397,11 @@ impl BinderState {
             return;
         };
 
+        // Implicit export of non-`export`-marked members only applies while the
+        // ambient body is still an export context; see the helper for the rule.
+        let ambient_export_context = is_ambient_module
+            && !Self::ambient_module_body_disables_export_context(arena, body_idx);
+
         for &stmt_idx in statements {
             if let Some(stmt_node) = arena.get(stmt_idx) {
                 // Check for export modifier
@@ -438,7 +443,7 @@ impl BinderState {
                     }
                     _ => false,
                 };
-                if is_ambient_module {
+                if ambient_export_context {
                     is_exported = true;
                 }
 
@@ -895,6 +900,54 @@ impl BinderState {
                 }
             }
         }
+    }
+
+    /// Whether an ambient module/namespace body contains a statement that turns
+    /// off implicit export, i.e. tsc's `hasExportDeclarations`. When true, the
+    /// body is in explicit-export mode: only `export`-marked bindings are visible.
+    ///
+    /// Disabling statements recognized here are the "bare" re-export forms —
+    /// `export = expr`, `export { ... }`, and `export *` / `export * as ns`. An
+    /// `export <declaration>` (`export const`/`function`/`class`/... — which the
+    /// parser models as an `EXPORT_DECLARATION` wrapping the declaration) is just a
+    /// declaration with an export modifier and does NOT disable implicit export of
+    /// its siblings; the discriminator is whether the export clause is itself a
+    /// declaration.
+    ///
+    /// `export default <…>` is intentionally NOT treated as disabling. tsc does
+    /// disable the export context for a default *export assignment*, but tsz's
+    /// synthesized-`default` cross-file resolution does not yet model the resulting
+    /// module shape, so honoring it here regresses default imports of an ambient
+    /// module's local binding (e.g. `export default <namespace>`). Until that path
+    /// is fixed, a body whose only export is `export default …` falls back to the
+    /// existing implicit-export behavior. Tracked under #9742.
+    pub(crate) fn ambient_module_body_disables_export_context(
+        arena: &NodeArena,
+        body_idx: NodeIndex,
+    ) -> bool {
+        let disables = |stmt_node: &Node| match stmt_node.kind {
+            syntax_kind_ext::EXPORT_ASSIGNMENT => arena
+                .get_export_assignment(stmt_node)
+                .is_none_or(|assignment| assignment.is_export_equals),
+            syntax_kind_ext::EXPORT_DECLARATION => {
+                arena.get_export_decl(stmt_node).is_some_and(|export_decl| {
+                    !export_decl.is_default_export
+                        && arena
+                            .get(export_decl.export_clause)
+                            .is_none_or(|clause| !Self::is_declaration(clause.kind))
+                })
+            }
+            _ => false,
+        };
+        arena
+            .get_module_block_at(body_idx)
+            .and_then(|block| block.statements.as_ref())
+            .is_some_and(|stmts| {
+                stmts
+                    .nodes
+                    .iter()
+                    .any(|&stmt_idx| arena.get(stmt_idx).is_some_and(disables))
+            })
     }
 
     /// Check if any modifier in a `NodeList` is the export keyword.

@@ -1268,8 +1268,12 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let display = self.format_type(member);
-            let is_anonymous = display.starts_with('{');
+            let is_anonymous =
+                crate::query_boundaries::checkers::jsx::contains_anonymous_object_surface(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    member,
+                );
             let property_count = shape.properties.len();
             let score = (is_anonymous, property_count, required_count);
             if score < best_score {
@@ -1900,5 +1904,30 @@ impl<'a> CheckerState<'a> {
             anchor_idx,
         );
         Some(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn jsx_props_target_selection_avoids_anonymous_display_prefix_decision() {
+        let source = include_str!("validation.rs");
+        let formatted_member_call = ["format_type", "(member)"].join("");
+        let starts_with_object = [".starts_with", "('{')"].join("");
+        let inline_forbidden = format!("{formatted_member_call}{starts_with_object}");
+        for forbidden in [
+            inline_forbidden,
+            [
+                "let display = self.format_type(member);",
+                "let is_anonymous = display.starts_with('{');",
+            ]
+            .join("\n"),
+        ] {
+            assert!(
+                !source.contains(&forbidden),
+                "JSX props target selection must use TypeId/query facts, \
+                 not formatted anonymous-object display prefixes: found {forbidden}"
+            );
+        }
     }
 }

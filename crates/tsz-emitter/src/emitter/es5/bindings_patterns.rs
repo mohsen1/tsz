@@ -50,6 +50,66 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_es5_empty_binding_element_value(
+        &mut self,
+        elem: &BindingElementData,
+        key_idx: NodeIndex,
+        temp_name: &str,
+        computed_key_temp: Option<&str>,
+        first: Option<&mut bool>,
+    ) {
+        if let Some(first) = first {
+            if !*first {
+                self.write(", ");
+            }
+            *first = false;
+        } else {
+            self.write(", ");
+        }
+
+        let is_empty_array = self
+            .arena
+            .get(elem.name)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN);
+
+        let value_name = self.get_temp_var_name();
+        self.write(&value_name);
+        self.write(" = ");
+        if is_empty_array && self.ctx.options.downlevel_iteration && elem.initializer.is_none() {
+            self.write_helper("__read");
+            self.write("(");
+            self.emit_assignment_target_es5_with_computed(key_idx, temp_name, computed_key_temp);
+            self.write(", 0)");
+        } else {
+            self.emit_assignment_target_es5_with_computed(key_idx, temp_name, computed_key_temp);
+        }
+
+        if elem.initializer.is_some() {
+            let defaulted_name = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&defaulted_name);
+            self.write(" = ");
+            self.write(&value_name);
+            self.write(" === void 0 ? ");
+            self.emit_expression(elem.initializer);
+            self.write(" : ");
+            self.write(&value_name);
+
+            let empty_name = self.get_temp_var_name();
+            self.write(", ");
+            self.write(&empty_name);
+            self.write(" = ");
+            if is_empty_array && self.ctx.options.downlevel_iteration {
+                self.write_helper("__read");
+                self.write("(");
+                self.write(&defaulted_name);
+                self.write(", 0)");
+            } else {
+                self.write(&defaulted_name);
+            }
+        }
+    }
+
     /// Emit a single binding element for ES5 object destructuring
     pub(in crate::emitter) fn emit_es5_binding_element(
         &mut self,
@@ -69,6 +129,17 @@ impl<'a> Printer<'a> {
         let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
+            if self.binding_pattern_is_empty(elem.name) {
+                self.emit_es5_empty_binding_element_value(
+                    elem,
+                    key_idx,
+                    temp_name,
+                    computed_key_temp.as_deref(),
+                    None,
+                );
+                return Some(rest_prop);
+            }
+
             let value_name = self.get_temp_var_name();
             self.write(", ");
             self.write(&value_name);
@@ -508,6 +579,17 @@ impl<'a> Printer<'a> {
         let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
+            if self.binding_pattern_is_empty(elem.name) {
+                self.emit_es5_empty_binding_element_value(
+                    elem,
+                    key_idx,
+                    temp_name,
+                    computed_key_temp.as_deref(),
+                    Some(first),
+                );
+                return Some(rest_prop);
+            }
+
             let value_name = self.get_temp_var_name();
             if !*first {
                 self.write(", ");
@@ -1141,6 +1223,15 @@ impl<'a> Printer<'a> {
         for param in &transforms.params {
             if let Some(initializer) = param.initializer {
                 if let Some(pattern) = param.pattern {
+                    if self.binding_pattern_is_empty(pattern) {
+                        self.write(&param.name);
+                        self.write(" = ");
+                        self.emit_expression(initializer);
+                        self.write(";");
+                        self.write_line();
+                        continue;
+                    }
+
                     let has_object_rest = self.binding_target_contains_object_rest(pattern);
                     // Special case: rest-only array pattern `[...r] = null`.
                     // When the default is `null` (a keyword literal), tsc inlines:
@@ -1485,6 +1576,52 @@ impl<'a> Printer<'a> {
         let rest_prop = self.es5_rest_prop_for_key(key_idx, computed_key_temp.as_deref());
 
         if self.is_binding_pattern(elem.name) {
+            if self.binding_pattern_is_empty(elem.name) {
+                let value_name = self.get_temp_var_name();
+                self.emit_param_assignment_prefix(started);
+                self.write(&value_name);
+                self.write(" = ");
+                self.emit_assignment_target_es5_with_computed(
+                    key_idx,
+                    temp_name,
+                    computed_key_temp.as_deref(),
+                );
+
+                let source_name = if elem.initializer.is_some() {
+                    let default_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&default_name);
+                    self.write(" = ");
+                    self.write(&value_name);
+                    self.write(" === void 0 ? ");
+                    self.emit_expression(elem.initializer);
+                    self.write(" : ");
+                    self.write(&value_name);
+                    default_name
+                } else {
+                    value_name
+                };
+
+                let empty_name = self.get_temp_var_name();
+                self.write(", ");
+                self.write(&empty_name);
+                self.write(" = ");
+                if self
+                    .arena
+                    .get(elem.name)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
+                    && self.ctx.options.downlevel_iteration
+                {
+                    self.write_helper("__read");
+                    self.write("(");
+                    self.write(&source_name);
+                    self.write(", 0)");
+                } else {
+                    self.write(&source_name);
+                }
+                return Some(rest_prop);
+            }
+
             if elem.initializer.is_none()
                 && self.can_inline_param_nested_source(elem.name)
                 && let Some(source_name) = self.param_object_binding_source_expr(

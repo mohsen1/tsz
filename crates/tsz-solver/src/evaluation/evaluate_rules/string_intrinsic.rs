@@ -48,6 +48,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.interner().union(transformed)
             }
 
+            // `never` is the empty union. String mappings distribute over their
+            // union argument (tsc maps `Union | Never` member-wise), and mapping
+            // zero members yields zero members, so `Uppercase<never>` = `never`.
+            // This is the empty-union edge of the distribution handled above; it
+            // cannot arrive as a `Union` member because `never` is absorbed out
+            // of non-empty unions, so it needs its own arm.
+            TypeData::Intrinsic(IntrinsicKind::Never) => TypeId::NEVER,
+
             // String literal types - apply the transformation
             TypeData::Literal(LiteralValue::String(atom)) => {
                 let s = self.interner().resolve_atom_ref(atom);
@@ -91,9 +99,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 self.apply_string_intrinsic_to_template_literal(kind, spans)
             }
 
-            // The intrinsic string type passes through unchanged but wrapped in the intrinsic
-            // so we preserve the Uppercase/Lowercase constraint (e.g. `string extends Uppercase<string>` is false).
-            TypeData::Intrinsic(IntrinsicKind::String) => {
+            // `string` and `any` arguments stay a *deferred* string-mapping type so the
+            // case constraint survives (e.g. `string extends Uppercase<string>` is false,
+            // and `const x: Uppercase<any> = "x"` is an error). Collapsing `any` to `any`
+            // here would silence that constraint and accept every string (#9668). The
+            // relation layer enforces membership via the fixed-point check, treating an
+            // `any` argument like `string` for the pattern set.
+            TypeData::Intrinsic(IntrinsicKind::String | IntrinsicKind::Any) => {
                 self.interner().string_intrinsic(kind, evaluated_arg)
             }
 

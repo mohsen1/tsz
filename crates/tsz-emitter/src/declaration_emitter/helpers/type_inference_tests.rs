@@ -152,6 +152,60 @@ fn types_versions_self_back_reference_detection_requires_package_root_reexport()
 }
 
 #[test]
+fn types_versions_mapped_index_path_prints_package_root_specifier() {
+    let temp_id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "tsz-types-versions-public-specifier-{}-{}",
+        std::process::id(),
+        temp_id
+    ));
+    let package_root = root.join("node_modules").join("ext");
+    let types_dir = package_root.join("ts3.1");
+    std::fs::create_dir_all(&types_dir).expect("create typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "types": "index",
+            "typesVersions": {
+                ">=3.1.0-0": { "index": ["ts3.1/index"] }
+            }
+        }"#,
+    )
+    .expect("write package json");
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../other";"#)
+        .expect("write mapped declaration");
+    std::fs::write(package_root.join("other.d.ts"), r#"export interface A2 {}"#)
+        .expect("write reexport target declaration");
+
+    let parser = ParserState::new("main.ts".to_string(), String::new());
+    let emitter = DeclarationEmitter::new(&parser.arena);
+    let current_path = root.join("main.ts");
+    let mapped_path = types_dir.join("index.d.ts");
+
+    assert_eq!(
+        emitter.package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf-8"),
+            mapped_path.to_str().expect("mapped path utf-8"),
+        ),
+        Some("ext".to_string())
+    );
+    assert_eq!(
+        emitter.package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf-8"),
+            package_root
+                .join("other.d.ts")
+                .to_str()
+                .expect("other path utf-8"),
+        ),
+        Some("ext".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn empty_object_union_arm_expands_missing_quoted_property() {
     let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
 

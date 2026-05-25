@@ -3086,6 +3086,185 @@ fn test_colocated_infer_three_function_params_intersect_renamed() {
     assert_eq!(result, expected);
 }
 
+// =============================================================================
+// Cross-position infer variance (#9700). A single `infer` name appearing in
+// both a covariant slot (object property) and a contravariant slot (function
+// parameter) must intersect its candidates, matching tsc's `inferTypes`:
+// when a type variable has any contravariant occurrence its candidates are
+// intersected, otherwise they are unioned.
+// =============================================================================
+
+fn make_obj(interner: &TypeInterner, props: &[(&str, TypeId)]) -> TypeId {
+    let props = props
+        .iter()
+        .map(|(name, ty)| PropertyInfo::new(interner.intern_string(name), *ty))
+        .collect();
+    interner.object(props)
+}
+
+/// `{ v: string; f: (x: number) => void }` extends
+/// `{ v: infer U; f: (x: infer U) => void } ? U : never`.
+/// `U` is covariant in `v` and contravariant in `f`'s parameter, so the
+/// candidates intersect: `U = string & number`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_intersects() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("v", infer_u),
+            ("f", make_void_fn(&interner, &[("x", infer_u)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("v", TypeId::STRING),
+            ("f", make_void_fn(&interner, &[("x", TypeId::NUMBER)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        interner.intersection2(TypeId::STRING, TypeId::NUMBER)
+    );
+}
+
+/// Same rule, renamed type variable and renamed properties — proves the fix is
+/// structural and not keyed on `U`/`v`/`f`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_intersects_renamed() {
+    let interner = TypeInterner::new();
+    let infer_q = make_infer(&interner, "Q");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("a", infer_q),
+            ("g", make_void_fn(&interner, &[("p", infer_q)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("a", TypeId::STRING),
+            ("g", make_void_fn(&interner, &[("p", TypeId::NUMBER)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_q,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(
+        result,
+        interner.intersection2(TypeId::STRING, TypeId::NUMBER)
+    );
+}
+
+/// Same shape but with matching candidates: covariant `string` and contravariant
+/// `string` intersect to `string` — no spurious narrowing to `never`.
+#[test]
+fn test_infer_covariant_prop_contravariant_param_same_candidate() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(
+        &interner,
+        &[
+            ("v", infer_u),
+            ("f", make_void_fn(&interner, &[("x", infer_u)])),
+        ],
+    );
+    let check_obj = make_obj(
+        &interner,
+        &[
+            ("v", TypeId::STRING),
+            ("f", make_void_fn(&interner, &[("x", TypeId::STRING)])),
+        ],
+    );
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, TypeId::STRING);
+}
+
+/// Pure-covariant control: two property slots with no contravariant occurrence
+/// must still union (not intersect).
+#[test]
+fn test_infer_two_covariant_props_still_union() {
+    let interner = TypeInterner::new();
+    let infer_u = make_infer(&interner, "U");
+
+    let extends_obj = make_obj(&interner, &[("v", infer_u), ("w", infer_u)]);
+    let check_obj = make_obj(&interner, &[("v", TypeId::STRING), ("w", TypeId::NUMBER)]);
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_u,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
+/// A return-position `infer` stays covariant even when the same object also has
+/// a contravariant parameter occurrence for a *different* variable: `R` (return)
+/// unions, `A` (parameter) is unaffected here. Confirms variance is tracked
+/// per-name and that return positions do not flip.
+#[test]
+fn test_infer_return_position_is_covariant() {
+    let interner = TypeInterner::new();
+    let infer_r = make_infer(&interner, "R");
+
+    // { g: () => infer R; h: () => infer R }
+    let g_fn = interner.function(crate::types::FunctionShape::new(Vec::new(), infer_r));
+    let h_fn = interner.function(crate::types::FunctionShape::new(Vec::new(), infer_r));
+    let extends_obj = make_obj(&interner, &[("g", g_fn), ("h", h_fn)]);
+
+    let check_g = interner.function(crate::types::FunctionShape::new(Vec::new(), TypeId::STRING));
+    let check_h = interner.function(crate::types::FunctionShape::new(Vec::new(), TypeId::NUMBER));
+    let check_obj = make_obj(&interner, &[("g", check_g), ("h", check_h)]);
+
+    let cond = ConditionalType {
+        check_type: check_obj,
+        extends_type: extends_obj,
+        true_type: infer_r,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+
+    assert_eq!(result, interner.union2(TypeId::STRING, TypeId::NUMBER));
+}
+
 #[test]
 fn function_intrinsic_extends_callable_in_conditional_types() {
     use crate::types::{FunctionShape, ParamInfo};
@@ -3120,5 +3299,307 @@ fn function_intrinsic_extends_callable_in_conditional_types() {
         result,
         TypeId::STRING,
         "conditional types keep tsc's Function-extends-callable true branch"
+    );
+}
+
+// =============================================================================
+// Optional source element vs required pattern element (issue #9732)
+// =============================================================================
+
+fn make_rest_element(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: false,
+        rest: true,
+    }
+}
+
+fn make_optional_element(type_id: TypeId) -> crate::types::TupleElement {
+    crate::types::TupleElement {
+        type_id,
+        name: None,
+        optional: true,
+        rest: false,
+    }
+}
+
+/// Reported bug: `[number?, string?] extends [infer A, ...unknown[]] ? A : never`
+/// → `never` (false branch). tsz previously returned `number | undefined` (true branch).
+#[test]
+fn test_optional_source_prefix_does_not_match_required_pattern_slot() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+
+    let pattern = interner.tuple(vec![
+        make_tuple_element(infer_a),
+        make_rest_element(rest_unknown),
+    ]);
+    let source = interner.tuple(vec![
+        make_optional_element(TypeId::NUMBER),
+        make_optional_element(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "[number?, string?] extends [infer A, ...unknown[]] must take the false branch: \
+         source min length (0) < pattern required prefix (1)"
+    );
+}
+
+/// Same rule with a renamed infer variable (`Elem`) and non-`never` false branch (`"NONE"`).
+/// Proves the rule is structural, not keyed on the name "A".
+#[test]
+fn test_optional_source_prefix_renamed_infer_var_and_false_branch() {
+    let interner = TypeInterner::new();
+    let infer_elem = make_infer(&interner, "Elem");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+    let none_type = interner.literal_string("NONE");
+
+    let pattern = interner.tuple(vec![
+        make_tuple_element(infer_elem),
+        make_rest_element(rest_unknown),
+    ]);
+    let source = interner.tuple(vec![
+        make_optional_element(TypeId::BOOLEAN),
+        make_optional_element(TypeId::SYMBOL),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_elem,
+        false_type: none_type,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result, none_type,
+        "[boolean?, symbol?] extends [infer Elem, ...unknown[]] must resolve to false branch \"NONE\""
+    );
+}
+
+/// Single-element optional source: `[number?] extends [infer A, ...unknown[]]` → false.
+#[test]
+fn test_single_optional_source_element_does_not_match_required_prefix() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+
+    let pattern = interner.tuple(vec![
+        make_tuple_element(infer_a),
+        make_rest_element(rest_unknown),
+    ]);
+    let source = interner.tuple(vec![make_optional_element(TypeId::NUMBER)]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "[number?] extends [infer A, ...unknown[]] must take the false branch"
+    );
+}
+
+/// CONTROL — required leading element: `[number, string?] extends [infer A, ...unknown[]]`
+/// must take the TRUE branch and bind A = number.
+#[test]
+fn test_required_leading_source_element_matches_required_prefix_slot() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+
+    let pattern = interner.tuple(vec![
+        make_tuple_element(infer_a),
+        make_rest_element(rest_unknown),
+    ]);
+    let source = interner.tuple(vec![
+        make_tuple_element(TypeId::NUMBER),
+        make_optional_element(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "[number, string?] extends [infer A, ...unknown[]] should bind A = number (true branch)"
+    );
+}
+
+/// CONTROL — all required: `[number, string] extends [infer A, infer B]`
+/// must take the true branch (both elements required in source and pattern).
+#[test]
+fn test_all_required_elements_match_no_rest() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+
+    let pattern = interner.tuple(vec![
+        make_tuple_element(infer_a),
+        make_tuple_element(make_infer(&interner, "B")),
+    ]);
+    let source = interner.tuple(vec![
+        make_tuple_element(TypeId::NUMBER),
+        make_tuple_element(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "[number, string] extends [infer A, infer B] should bind A = number (true branch)"
+    );
+}
+
+/// No-rest case bug: `[number?] extends [infer A] ? A : never` → `never`.
+/// Pattern has a single required element; source has a single optional element.
+#[test]
+fn test_optional_source_does_not_match_required_no_rest_pattern() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+
+    let pattern = interner.tuple(vec![make_tuple_element(infer_a)]);
+    let source = interner.tuple(vec![make_optional_element(TypeId::NUMBER)]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "[number?] extends [infer A] (no rest) must take the false branch"
+    );
+}
+
+/// CONTROL — no-rest required: `[number] extends [infer A] ? A : never` → number.
+#[test]
+fn test_required_source_matches_required_no_rest_pattern() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+
+    let pattern = interner.tuple(vec![make_tuple_element(infer_a)]);
+    let source = interner.tuple(vec![make_tuple_element(TypeId::NUMBER)]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "[number] extends [infer A] (no rest) should bind A = number (true branch)"
+    );
+}
+
+/// Suffix slot bug: `[number?, string?] extends [...unknown[], infer A] ? A : never` → `never`.
+/// The pattern's required suffix element cannot be satisfied by an optional trailing source slot.
+#[test]
+fn test_optional_source_suffix_does_not_match_required_suffix_pattern_slot() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+
+    // Pattern: [...unknown[], infer A] — rest at index 0, A is suffix (required)
+    let pattern = interner.tuple(vec![
+        make_rest_element(rest_unknown),
+        make_tuple_element(infer_a),
+    ]);
+    let source = interner.tuple(vec![
+        make_optional_element(TypeId::NUMBER),
+        make_optional_element(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::NEVER,
+        "[number?, string?] extends [...unknown[], infer A] must take the false branch: \
+         trailing optional source slot cannot satisfy required suffix pattern slot"
+    );
+}
+
+/// CONTROL — suffix required: `[number, string] extends [...unknown[], infer A] ? A : never`
+/// → string (true branch, A = string from the required trailing element).
+#[test]
+fn test_required_source_suffix_matches_required_suffix_pattern_slot() {
+    let interner = TypeInterner::new();
+    let infer_a = make_infer(&interner, "A");
+    let rest_unknown = interner.array(TypeId::UNKNOWN);
+
+    let pattern = interner.tuple(vec![
+        make_rest_element(rest_unknown),
+        make_tuple_element(infer_a),
+    ]);
+    let source = interner.tuple(vec![
+        make_tuple_element(TypeId::NUMBER),
+        make_tuple_element(TypeId::STRING),
+    ]);
+
+    let cond = ConditionalType {
+        check_type: source,
+        extends_type: pattern,
+        true_type: infer_a,
+        false_type: TypeId::NEVER,
+        is_distributive: false,
+    };
+
+    let result = evaluate_type(&interner, interner.conditional(cond));
+    assert_eq!(
+        result,
+        TypeId::STRING,
+        "[number, string] extends [...unknown[], infer A] should bind A = string (true branch)"
     );
 }

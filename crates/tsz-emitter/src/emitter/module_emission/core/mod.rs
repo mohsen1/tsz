@@ -1144,13 +1144,14 @@ impl<'a> Printer<'a> {
             if export_assign.is_export_equals {
                 self.write("module.exports = ");
             } else {
-                // `export default expr` — use `exports.X` when the identifier was
-                // inlined (`exports.x = val;`), local name otherwise.
+                // `export default expr` — use `exports.X` for CommonJS-exported
+                // variables because no stable local binding is emitted for them.
+                // Non-variable values keep their local declaration binding.
                 if let Some(expr_node) = self.arena.get(export_assign.expression)
                     && expr_node.kind == SyntaxKind::Identifier as u16
                 {
                     let ident = self.get_identifier_text_idx(export_assign.expression);
-                    if self.ctx.module_state.inlined_var_exports.contains(&ident) {
+                    if self.commonjs_exported_var_names.contains(ident.as_str()) {
                         self.write_export_binding_start("default");
                         if self.in_system_execute_body {
                             self.write(&ident);

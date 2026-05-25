@@ -34,6 +34,7 @@ pub use parse_health::ParseHealth;
 mod import_extension_flags;
 mod lib_queries;
 mod module_entity;
+mod package_resolution;
 mod request_cache;
 mod resolver;
 mod source_file_symbol_type_cache_scope;
@@ -492,6 +493,15 @@ pub struct CheckerContext<'a> {
     /// Prevents infinite recursion when a JSDoc `@typedef` references itself
     /// (e.g., `@typedef {... | Json[]} Json`).
     pub jsdoc_typedef_resolving: RefCell<rustc_hash::FxHashSet<String>>,
+
+    /// Recursion guard for *generic* JSDoc `@typedef` resolution, mapping the
+    /// typedef name currently being expanded to the `DefId` of its lazy alias.
+    /// A self-recursive generic application such as `@typedef {{ next: Box<T> |
+    /// null }} Box` must resolve the inner `Box<T>` to a deferred
+    /// `Application(Lazy(DefId), args)` instead of eagerly re-expanding the body,
+    /// which would otherwise recurse until the stack overflows. The solver then
+    /// resolves the alias coinductively, keyed by `(DefId, type args)`.
+    pub jsdoc_generic_typedef_resolving: RefCell<rustc_hash::FxHashMap<String, DefId>>,
 
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
@@ -1305,12 +1315,11 @@ pub struct CheckerContext<'a> {
     /// gate instead of tsz's normal coarser policy.
     pub in_satisfies_operand: bool,
 
-    /// When true, preserve literal types instead of widening.
-    /// Set during evaluation of compound expression branches (conditional `?:`,
-    /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
-    /// `"a" | "b"` instead of `string`.
+    /// Preserve literal types instead of widening. Set during compound
+    /// expression branches (conditional `?:`, logical `||`/`&&`/`??`).
     pub preserve_literal_types: bool,
-
+    /// Preserve primitive literal operands for logical `const` initializers.
+    pub preserve_logical_operand_literals: bool,
     /// When true, identifier resolution should return the symbol's declared
     /// type (when one is explicitly annotated) rather than a flow-narrowed
     /// type. Set during class property initializer evaluation so that
@@ -1822,7 +1831,11 @@ impl ProgramContext {
             .collect();
 
         for (file_idx, binder) in self.all_binders.iter().enumerate() {
+            let arena = self.all_arenas.get(file_idx).map(Arc::as_ref);
             for (name, &sym_id) in binder.file_locals.iter() {
+                if !binder.cross_file_local_is_visible(arena, file_idx, name, sym_id) {
+                    continue;
+                }
                 file_locals_index
                     .entry(name.to_string())
                     .or_insert_with(|| {

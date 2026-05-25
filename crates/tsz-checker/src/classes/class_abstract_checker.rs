@@ -7,6 +7,7 @@
 
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
@@ -753,5 +754,145 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    /// Resolve, for a `super.member` access, whether the member the chain binds
+    /// to is declared `abstract`. tsc emits TS2513 in that case because an
+    /// abstract member has no base implementation to dispatch to via `super`.
+    ///
+    /// Abstractness is decided by the *nearest* base class that declares the
+    /// member: a concrete override in a closer base shadows an abstract
+    /// ancestor declaration (`super.m` then dispatches to the concrete one).
+    ///
+    /// Emit TS2513 when a `super.member` access resolves to an abstract base
+    /// member. tsc decides this in `checkPropertyAccessibility` from the resolved
+    /// member's modifier flags and gives it priority over the field-via-super
+    /// (TS2855) diagnostic. Non-method members keep the legacy ES5 TS2340 path
+    /// where `super` is more limited. Returns `true` (access denied, diagnostic
+    /// emitted) so the caller can stop further accessibility checks.
+    pub(crate) fn report_abstract_member_via_super(
+        &mut self,
+        object_expr: NodeIndex,
+        property_name: &str,
+        error_node: NodeIndex,
+        class_idx: NodeIndex,
+        is_static: bool,
+    ) -> bool {
+        if !self.is_super_expression(object_expr) {
+            return false;
+        }
+        let Some((decl_class_idx, member_display, is_method)) =
+            self.abstract_super_member(class_idx, property_name, is_static)
+        else {
+            return false;
+        };
+        if !is_method && self.ctx.compiler_options.target.is_es5() {
+            return false;
+        }
+        use crate::diagnostics::{diagnostic_messages, format_message};
+        let class_name = self.get_class_name_with_type_params_from_decl(decl_class_idx);
+        let message = format_message(
+            diagnostic_messages::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
+            &[&member_display, &class_name],
+        );
+        self.error_at_node(
+            error_node,
+            &message,
+            diagnostic_codes::ABSTRACT_METHOD_IN_CLASS_CANNOT_BE_ACCESSED_VIA_SUPER_EXPRESSION,
+        );
+        true
+    }
+
+    /// `base_class_idx` is the class the `super` receiver resolves to (the
+    /// direct base of the enclosing class). Returns the declaring class index,
+    /// the member display name, and whether the member is a plain method (vs an
+    /// accessor/field) when the bound member is abstract. The method flag lets
+    /// the caller preserve the legacy ES5 TS2340 path for non-method members.
+    pub(crate) fn abstract_super_member(
+        &mut self,
+        base_class_idx: NodeIndex,
+        property_name: &str,
+        is_static: bool,
+    ) -> Option<(NodeIndex, String, bool)> {
+        let mut visited = FxHashSet::default();
+        let mut current = Some(base_class_idx);
+        while let Some(class_idx) = current {
+            if !visited.insert(class_idx) {
+                break;
+            }
+            if let Some((member_idx, display_name)) =
+                self.class_own_member_decl(class_idx, property_name, is_static)
+            {
+                if !Self::member_is_abstract_in_arena(self.ctx.arena, member_idx) {
+                    return None;
+                }
+                let is_method = self
+                    .ctx
+                    .arena
+                    .get(member_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::METHOD_DECLARATION);
+                return Some((class_idx, display_name, is_method));
+            }
+            current = self.get_base_class_idx(class_idx);
+        }
+        None
+    }
+
+    /// Find a class's own (non-inherited) member declaration matching `name`
+    /// and static-ness, returning its node index and display name.
+    fn class_own_member_decl(
+        &mut self,
+        class_idx: NodeIndex,
+        target_name: &str,
+        target_is_static: bool,
+    ) -> Option<(NodeIndex, String)> {
+        let member_nodes = self
+            .ctx
+            .arena
+            .get_class_at(class_idx)?
+            .members
+            .nodes
+            .clone();
+        for member_idx in member_nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let resolved = match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_property_decl(member_node)
+                    .map(|p| (p.name, p.modifiers.clone())),
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .ctx
+                    .arena
+                    .get_method_decl(member_node)
+                    .map(|m| (m.name, m.modifiers.clone())),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.ctx
+                        .arena
+                        .get_accessor(member_node)
+                        .map(|a| (a.name, a.modifiers.clone()))
+                }
+                _ => None,
+            };
+            let Some((name_idx, modifiers)) = resolved else {
+                continue;
+            };
+            if self.has_static_modifier(&modifiers) != target_is_static {
+                continue;
+            }
+            let name = self
+                .get_property_name(name_idx)
+                .or_else(|| self.get_property_name_resolved(name_idx));
+            if name.as_deref() != Some(target_name) {
+                continue;
+            }
+            let display_name = self
+                .get_member_name_display_text(name_idx)
+                .unwrap_or_else(|| target_name.to_string());
+            return Some((member_idx, display_name));
+        }
+        None
     }
 }

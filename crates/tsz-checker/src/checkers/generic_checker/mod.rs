@@ -1293,6 +1293,7 @@ impl<'a> CheckerState<'a> {
 mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
 mod conditional_constraint_helpers;
+mod constraint_display_helpers;
 mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;
