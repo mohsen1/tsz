@@ -531,6 +531,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "classes"
             / "class_implements_checker"
+            / "core.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "class_implements_checker"
             / "jsdoc_heritage.rs",
             ROOT
             / "crates"
