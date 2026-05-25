@@ -42,11 +42,9 @@ scripts/agents/list-owned-work.sh M4-B
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
-    `26373943878` attempt 2 has moved past runner-backed setup; `emit`,
-    `project-compile-canary`, the active conformance shards, and the active
-    fourslash shards passed. `conformance-aggregate` and `fourslash-aggregate`
-    are queued after the earlier
-    `conformance-aggregate` incomplete-coverage failure was rerun.
+    `26373943878` attempt 2 completed successfully after the earlier
+    `conformance-aggregate` incomplete-coverage failure was rerun. Exact-head
+    ready-review CI is green, but required `Queue Tested` remains pending.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
   merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
   reason.
@@ -70,8 +68,8 @@ scripts/agents/list-owned-work.sh M4-B
   landed only after exact-head required checks are complete and green. For
   `#10078`, required `Queue Tested` is still pending because auto-merge is not
   armed; do not arm it under the lane rules while a required status is pending.
-  `#10058` and `#9945` have green exact-head ready-review CI but are still
-  blocked by required `Queue Tested`.
+  `#10058`, `#9945`, and `#9230` have green exact-head ready-review CI but are
+  still blocked by required `Queue Tested`.
 - M1-B depends on this lane for checker relation gateway cleanup.
 - `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
   ownership unless explicitly handed off.
