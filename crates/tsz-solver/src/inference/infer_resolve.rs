@@ -49,7 +49,11 @@ impl<'a> InferenceContext<'a> {
         from_array_element: bool,
         mut external_is_subtype: Option<&mut dyn FnMut(TypeId, TypeId) -> bool>,
     ) -> TypeId {
-        let covariant_widened = widening::widen_type_for_inference(self.interner, covariant_result);
+        let covariant_widened = if is_literal_type(self.interner, covariant_result) {
+            covariant_result
+        } else {
+            widening::widen_type_for_inference(self.interner, covariant_result)
+        };
         let covariant_is_uninformative = matches!(
             covariant_widened,
             TypeId::NEVER | TypeId::UNKNOWN | TypeId::ANY
@@ -62,6 +66,12 @@ impl<'a> InferenceContext<'a> {
                     self.is_subtype(covariant_widened, c.type_id)
                 }
             });
+        if !covariant_assignable_to_contra && !covariant_is_uninformative {
+            let contra_result = self.resolve_from_contra_candidates(concrete_contra_candidates);
+            if contra_result == TypeId::NEVER {
+                return covariant_result;
+            }
+        }
         self.choose_covariant_or_contra(
             covariant_widened,
             concrete_contra_candidates,

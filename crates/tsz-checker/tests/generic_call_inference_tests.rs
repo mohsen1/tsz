@@ -4991,3 +4991,43 @@ const _b: number = r.b;
         "aliased contra shape should not prevent covariant win after widening. Got: {diags:#?}"
     );
 }
+
+#[test]
+fn co_contra_never_contra_does_not_override_covariant_literal() {
+    let source = r#"
+type A = { kind: "a" };
+type B = { kind: "b" };
+declare const a: A;
+declare const b: B;
+declare function fab(arg: A | B): void;
+declare function foo<T>(x: { kind: T }, f: (arg: { kind: T }) => void): void;
+foo(a, fab);
+foo(b, fab);
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "contra evidence that collapses to never must not override useful covariant literals. Got: {diags:#?}"
+    );
+}
+
+#[test]
+fn co_contra_primitive_literal_probe_preserves_union_assignability() {
+    let source = r#"
+declare const branch:
+  <T, U extends T>(_: { test: T, if: (t: T) => t is U, then: (u: U) => void }) => void;
+declare const x: "a" | "b";
+branch({
+  test: x,
+  if: (t): t is "a" => t === "a",
+  then: u => {
+    let test1: "a" = u;
+  }
+});
+"#;
+    let diags = relevant_diagnostics(source);
+    assert!(
+        diags.is_empty(),
+        "primitive literal covariant evidence should be probed as the literal, not widened past its union constraint. Got: {diags:#?}"
+    );
+}
