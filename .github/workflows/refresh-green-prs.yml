@@ -1,11 +1,6 @@
 name: Refresh Green PRs
 
 on:
-  push:
-    branches: [main]
-  schedule:
-    # Drain at most one stale green PR per run, away from the top of the hour.
-    - cron: '7,27,47 * * * *'
   workflow_dispatch:
     inputs:
       dry_run:

@@ -1,6 +1,6 @@
 //! JSX unit tests.
 
-use crate::test_utils::{check_source, check_source_diagnostics};
+use crate::test_utils::{check_multi_file, check_source, check_source_diagnostics};
 
 fn check_jsx(source: &str) -> Vec<crate::diagnostics::Diagnostic> {
     use crate::context::CheckerOptions;
@@ -1467,6 +1467,106 @@ fn jsx_class_overload_synthesized_children_not_excess() {
     );
 }
 
+/// React-style class components whose instance exposes `Readonly<P>` props use
+/// JSX constructor applicability diagnostics for props mismatches. Missing props
+/// anchor at the tag and explicit excess props anchor at the failing attribute,
+/// both as TS2769 rather than whole-object TS2322.
+#[test]
+fn jsx_readonly_class_component_props_mismatch_reports_ts2769() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+        declare namespace React {
+            type ReactNode = JSX.Element | string | number | null;
+            class Component<P> {
+                constructor(props: P);
+                props: Readonly<P> & Readonly<{ children?: ReactNode }>;
+                render(): ReactNode;
+            }
+        }
+        type NewElementConstructor<P> = new (props: P) => React.Component<P>;
+        declare namespace JSX {
+            interface Element {}
+            interface ElementClass { render(): React.ReactNode; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { div: {}; }
+            type ElementType = string | NewElementConstructor<any>;
+        }
+
+        class RenderTitle extends React.Component<{ title: string }> {
+            render() { return this.props.title; }
+        }
+        <RenderTitle />;
+        <RenderTitle title="ok" />;
+        <RenderTitle excessProp />;
+        "#,
+    );
+    let ts2769_count = diagnostics.iter().filter(|diag| diag.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 2,
+        "Missing and excess class props should report TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 || diag.code == 2741),
+        "Class props mismatch should not fall back to TS2322/TS2741, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsx_readonly_class_component_react16_order_props_mismatch_reports_ts2769() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type Readonly<T> = { readonly [P in keyof T]: T[P]; };
+        declare namespace React {
+            type ReactNode = JSX.Element | string | number | null;
+            class Component<P, S> {
+                constructor(props: Readonly<P>);
+                constructor(props: P, context?: any);
+                readonly props: Readonly<{ children?: ReactNode }> & Readonly<P>;
+                render(): ReactNode;
+            }
+        }
+        type NewElementConstructor<P> =
+            | ((props: P) => React.ReactNode)
+            | (new (props: P) => React.Component<P, any>);
+        declare namespace JSX {
+            interface Element {}
+            interface ElementClass { render(): React.ReactNode; }
+            interface ElementAttributesProperty { props: {}; }
+            interface IntrinsicElements { div: {}; }
+            type ElementType = string | NewElementConstructor<any>;
+        }
+
+        class RenderTitle extends React.Component<{ title: string }, {}> {
+            render() { return this.props.title; }
+        }
+        <RenderTitle />;
+        <RenderTitle title="ok" />;
+        <RenderTitle extra />;
+
+        class Caption extends React.Component<{ label: string }, {}> {
+            render() { return this.props.label; }
+        }
+        <Caption />;
+        <Caption label="ok" />;
+        <Caption spare />;
+        "#,
+    );
+    let ts2769_count = diagnostics.iter().filter(|diag| diag.code == 2769).count();
+    assert_eq!(
+        ts2769_count, 4,
+        "React16-order readonly class props mismatches should report TS2769, got: {diagnostics:?}"
+    );
+    assert!(
+        !diagnostics
+            .iter()
+            .any(|diag| diag.code == 2322 || diag.code == 2741),
+        "React16-order readonly class props mismatch should not fall back to TS2322/TS2741, got: {diagnostics:?}"
+    );
+}
+
 /// JSX class components with multi-construct overloads must consult
 /// `static defaultProps` and treat its keys as supplied. A `<Comp />` call
 /// with no attributes must not fail overload resolution just because the
@@ -1784,6 +1884,57 @@ fn jsx_library_managed_attributes_function_variable_display_uses_param_props() {
     );
 }
 
+#[test]
+fn jsx_element_type_lma_without_metadata_uses_raw_function_props_for_excess() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        type MergePropTypes<P, T> = P;
+        type Defaultize<P, D> = P;
+        declare namespace PropTypes {
+            type InferProps<T> = any;
+        }
+        type CustomElementConstructor<P> =
+            | ((props: P) => JSX.Element | string)
+            | (new (props: P) => { render(): JSX.Element | string });
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements { div: {}; }
+            interface IntrinsicAttributes {}
+            type ElementType = string | CustomElementConstructor<any>;
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? Defaultize<MergePropTypes<P, PropTypes.InferProps<T>>, D>
+                    : C extends { propTypes: infer T; }
+                        ? MergePropTypes<P, PropTypes.InferProps<T>>
+                        : C extends { defaultProps: infer D; }
+                            ? Defaultize<P, D>
+                            : P;
+        }
+
+        const Caption = ({ label }: { label: string }) => label;
+        <Caption spare />;
+        "#,
+    );
+    let ts2322: Vec<_> = diagnostics
+        .iter()
+        .filter(|diag| diag.code == 2322)
+        .collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected one excess-prop TS2322, got: {diagnostics:?}"
+    );
+    let message = &ts2322[0].message_text;
+    assert!(
+        message.contains("IntrinsicAttributes & { label: string; }"),
+        "Expected TS2322 to target raw function props, got: {ts2322:?}"
+    );
+    assert!(
+        !message.contains("propTypes: infer") && !message.contains("CustomElementConstructor"),
+        "TS2322 should not expose unresolved LMA or ElementType constructor text, got: {ts2322:?}"
+    );
+}
+
 /// Reproduces conformance test `compiler/ignoredJsxAttributes.tsx`. When a
 /// function component has no `propTypes`/`defaultProps`, TS2741's target-type
 /// display must use the props alias (`Props`), not the unevaluated
@@ -1842,6 +1993,45 @@ fn jsx_library_managed_attributes_function_component_with_index_signature_props_
     assert!(
         ts2741.message_text.contains("required in type 'Props'"),
         "TS2741 should display the named props alias 'Props', got: {ts2741:?}"
+    );
+}
+
+/// Generic component parameters keep the raw
+/// `LibraryManagedAttributes<T, P>` display. When the raw component is a type
+/// parameter constrained to a function component, `P` is the first parameter
+/// type (`{}` here), not the constraint function type itself.
+#[test]
+fn jsx_generic_component_parameter_lma_display_uses_props_parameter() {
+    let diagnostics = check_jsx_strict(
+        r#"
+        declare namespace JSX {
+            interface Element {}
+            interface IntrinsicElements {}
+            interface IntrinsicAttributes {}
+            type LibraryManagedAttributes<C, P> =
+                C extends { propTypes: infer T; defaultProps: infer D; }
+                    ? P
+                    : C extends { propTypes: infer T; }
+                        ? P
+                        : C extends { defaultProps: infer D; }
+                            ? P
+                            : P;
+        }
+
+        function f1<T extends (props: {}) => JSX.Element>(Component: T) {
+            return <Component />;
+        }
+        "#,
+    );
+    let diag = diagnostics
+        .iter()
+        .find(|diag| diag.code == 2322)
+        .expect("expected TS2322 for generic LibraryManagedAttributes target");
+    assert!(
+        diag.message_text
+            .contains("LibraryManagedAttributes<T, {}>")
+            && !diag.message_text.contains("(props: {})"),
+        "Expected raw LMA display to preserve props parameter, got: {diag:?}"
     );
 }
 
@@ -3310,5 +3500,160 @@ let k = <Comp>hello<A /></Comp>;
         !ts2747.message_text.contains("Element;"),
         "TS2747 message must NOT include a trailing semicolon; got: {}",
         ts2747.message_text
+    );
+}
+
+fn cross_file_jsx_opts() -> crate::context::CheckerOptions {
+    use tsz_common::checker_options::JsxMode;
+    crate::context::CheckerOptions {
+        jsx_mode: JsxMode::Preserve,
+        strict_null_checks: true,
+        ..Default::default()
+    }
+}
+
+// Plain project file (not a lib), so its binder is in `all_binders` but not `lib_binders`.
+const REACT_DECL: &str = r#"
+declare namespace React {
+    type ReactNode = ReactElement<any> | string | number | null;
+    interface ReactElement<P> { props: P; }
+    type ComponentState = any;
+    interface Component<P = {}, S = ComponentState> {
+        readonly props: P;
+        state: S;
+        render(): ReactNode;
+    }
+    interface ComponentClass<P = {}, S = ComponentState> {
+        new(props: P, context?: any): Component<P, S>;
+        defaultProps?: Partial<P>;
+    }
+    interface StatelessComponent<P = {}> {
+        (props: P & { children?: ReactNode }, context?: any): ReactElement<any> | null;
+        defaultProps?: Partial<P>;
+    }
+    type ComponentType<P = {}> = ComponentClass<P> | StatelessComponent<P>;
+    type ReactType<P = any> = string | ComponentType<P>;
+}
+declare namespace JSX {
+    interface Element extends React.ReactElement<any> {}
+    interface ElementClass extends React.Component<any> {
+        render(): React.ReactNode;
+    }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements {
+        a: {};
+        button: {};
+    }
+}
+"#;
+
+#[test]
+fn cross_file_component_type_union_no_ts2786() {
+    // `React.ComponentType<P1> | React.ComponentType<P2>` where `ComponentType`
+    // lives in a separate project file (not a lib binder).
+    let entry = r#"
+interface P1 { p?: boolean; c?: string; }
+interface P2 { p?: boolean; c?: any; d?: any; }
+var C: React.ComponentType<P1> | React.ComponentType<P2>;
+const a = <C p={true} />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentType union from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_react_type_union_with_string_no_ts2786() {
+    // `React.ReactType` (= `string | ComponentType<P>`) from a cross-file binder.
+    let entry = r#"
+declare const props: { component: React.ReactType };
+const Comp: React.ReactType = props.component;
+const elem = <Comp />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ReactType from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_component_class_generic_no_ts2786() {
+    // `React.ComponentClass<P>` used directly as a JSX component type from a
+    // cross-file binder — also exercises the `react_component_alias_application_props_arg`
+    // path that calls `react_component_alias_def_has_react_origin`.
+    let entry = r#"
+interface Props { x?: number; }
+declare const Widget: React.ComponentClass<Props>;
+const elem = <Widget x={1} />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentClass from cross-file decl must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_component_type_alias_renamed_param_no_ts2786() {
+    // Same as `cross_file_component_type_union_no_ts2786` but with a renamed
+    // type-parameter to prove the fix is not keyed on the name "P".
+    let entry = r#"
+interface Foo { a?: string; }
+interface Bar { a?: number; }
+var C: React.ComponentType<Foo> | React.ComponentType<Bar>;
+const elem = <C />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        !diags.iter().any(|d| d.code == 2786),
+        "React.ComponentType union with renamed type arg must not emit TS2786; got: {diags:?}"
+    );
+}
+
+#[test]
+fn cross_file_non_react_namespace_component_type_still_emits_ts2786() {
+    // Cross-file React alias detection must not over-eagerly skip TS2786 for
+    // function components with invalid return types.
+    //
+    // Setup: the cross-file React lib (REACT_DECL) is present as file 0.  The
+    // entry file declares a function with an incompatible return type.  TS2786
+    // must still fire because `BadComp` is not a React alias type.
+    let entry = r#"
+declare namespace JSX {
+    interface Element { ok: true; }
+    interface ElementClass { render(): Element; }
+    interface ElementAttributesProperty { props: {}; }
+    interface IntrinsicElements {}
+}
+declare function BadComp(props: {}): number;
+const elem = <BadComp />;
+"#;
+    let diags = check_multi_file(
+        &[("react.d.ts", REACT_DECL), ("test.tsx", entry)],
+        "test.tsx",
+        cross_file_jsx_opts(),
+    );
+    assert!(
+        diags.iter().any(|d| d.code == 2786),
+        "Function component returning non-JSX type must still emit TS2786 when cross-file React lib is present; got: {diags:?}"
     );
 }

@@ -18,6 +18,8 @@ pub mod conditional;
 pub mod index_access;
 pub mod infer_pattern;
 mod infer_pattern_helpers;
+mod infer_pattern_object_match;
+mod infer_pattern_template_match;
 pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;

@@ -253,8 +253,8 @@ pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
-pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::format::{TypeFormatter, format_excess_property_name};
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
@@ -332,6 +332,9 @@ mod template_expansion_tests;
 #[cfg(test)]
 #[path = "../tests/template_literal_comprehensive_test.rs"]
 mod template_literal_comprehensive_test;
+#[cfg(test)]
+#[path = "../tests/template_literal_infer_capture_tests.rs"]
+mod template_literal_infer_capture_tests;
 #[cfg(test)]
 #[path = "../tests/template_literal_subtype_tests.rs"]
 mod template_literal_subtype_tests;

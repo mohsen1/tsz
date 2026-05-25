@@ -451,6 +451,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) -> (u32, String) {
+        let prop_display = tsz_solver::format_excess_property_name(prop_name);
         let type_str = self.excess_property_target_display_for_site(target, idx);
         let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
         if !self.has_syntax_parse_errors()
@@ -461,7 +462,7 @@ impl<'a> CheckerState<'a> {
             return (
                 diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_BUT_DOES_NOT_EXIST_IN_TYPE_DID,
                 format!(
-                    "Object literal may only specify known properties, but '{prop_name}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
+                    "Object literal may only specify known properties, but '{prop_display}' does not exist in type '{type_str}'. Did you mean to write '{suggestion}'?"
                 ),
             );
         }
@@ -469,7 +470,7 @@ impl<'a> CheckerState<'a> {
         (
             diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE,
             format!(
-                "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+                "Object literal may only specify known properties, and '{prop_display}' does not exist in type '{type_str}'."
             ),
         )
     }
@@ -2072,9 +2073,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
+        let prop_display = tsz_solver::format_excess_property_name(prop_name);
         let type_str = self.excess_property_target_display_for_site(target, idx);
         let message = format!(
-            "Object literal may only specify known properties, and '{prop_name}' does not exist in type '{type_str}'."
+            "Object literal may only specify known properties, and '{prop_display}' does not exist in type '{type_str}'."
         );
         self.emit_render_request(
             idx,
@@ -2456,7 +2458,18 @@ impl<'a> CheckerState<'a> {
                         object_type,
                     )
                 })
-                .unwrap_or(object_type);
+                // An unconstrained type parameter has the base constraint
+                // `unknown`; tsc displays "type 'unknown'", not the parameter name.
+                .unwrap_or_else(|| {
+                    if crate::query_boundaries::common::is_type_parameter(
+                        self.ctx.types,
+                        object_type,
+                    ) {
+                        TypeId::UNKNOWN
+                    } else {
+                        object_type
+                    }
+                });
         let object_str = self
             .object_literal_initializer_display_type_for_receiver(expr_idx)
             .map(|init_type| self.format_type_for_assignability_message(init_type))
