@@ -426,10 +426,7 @@ fn load_json_weights(path: &Path) -> Option<ShardWeights> {
             else {
                 continue;
             };
-            weights
-                .path_weights
-                .entry(file.replace('\\', "/"))
-                .or_insert(weight);
+            weights.path_weights.insert(file.replace('\\', "/"), weight);
         }
     }
 
@@ -1922,6 +1919,31 @@ mod tests {
         assert!(is_appledouble_file(Path::new("._bar.js")));
         assert!(!is_appledouble_file(Path::new("foo.ts")));
         assert!(!is_appledouble_file(Path::new("dir/regular.js")));
+    }
+
+    #[test]
+    fn result_timings_override_stale_path_weights() {
+        let file = tempfile::NamedTempFile::new().expect("weights file");
+        std::fs::write(
+            file.path(),
+            serde_json::json!({
+                "path_weights": {
+                    "TypeScript/tests/cases/compiler/foo.ts": 10_000.0
+                },
+                "results": [{
+                    "file": "TypeScript/tests/cases/compiler/foo.ts",
+                    "elapsed_ms": 25.0
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write weights");
+
+        let weights = load_json_weights(file.path()).expect("weights should load");
+        let path = Path::new("/repo/TypeScript/tests/cases/compiler/foo.ts");
+        let test_dir = Path::new("/repo/TypeScript/tests/cases");
+
+        assert_eq!(historical_path_weight(&weights, path, test_dir), Some(25.0));
     }
 
     fn with_temp_cwd<F, T>(create_fast_binary: bool, f: F) -> T
