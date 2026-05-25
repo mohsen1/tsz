@@ -756,6 +756,20 @@ REGEX_LINE_COUNT_CHECKS = [
             / "tsz-checker"
             / "src"
             / "state"
+            / "type_analysis"
+            / "core.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "type_analysis"
+            / "type_param_defaults.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
             / "state_checking"
             / "property.rs",
             ROOT
