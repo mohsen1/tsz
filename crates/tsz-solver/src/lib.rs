@@ -192,7 +192,7 @@ pub mod computation {
         get_contextual_signature_cached_with_compat_checker,
         get_contextual_signature_for_arity_cached_with_compat_checker,
         get_contextual_signature_for_arity_with_compat_checker,
-        get_contextual_signature_with_compat_checker,
+        get_contextual_signature_with_compat_checker, overload_failure_return_type,
     };
 }
 
@@ -253,8 +253,8 @@ pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
-pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::format::{TypeFormatter, format_excess_property_name};
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
@@ -381,6 +381,9 @@ mod computed_prop_name_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/conditional_infer_callable_arity_tests.rs"]
+mod conditional_infer_callable_arity_tests;
 #[cfg(test)]
 #[path = "../tests/conditional_keyof_variance_tests.rs"]
 mod conditional_keyof_variance_tests;

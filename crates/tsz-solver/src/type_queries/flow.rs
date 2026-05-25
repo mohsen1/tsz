@@ -965,6 +965,22 @@ fn types_are_comparable_for_assertion_inner(
         return true;
     }
 
+    // A template-literal type (and string-intrinsic mapping type such as
+    // `Uppercase<S>`) is a subtype of `string`. For assertion comparability
+    // tsc widens the source literal to its base primitive, so any string-domain
+    // type (`string`, a string literal, a template-literal, or a string
+    // intrinsic) sufficiently overlaps a template-literal/string-intrinsic
+    // target — e.g. `"x" as `a${number}b`` is legal even though the literal
+    // text does not match the pattern. This is the assertion-only widening
+    // rule; the strict comparable relation is intentionally unchanged.
+    if is_string_domain_type(db, source)
+        && is_string_domain_type(db, target)
+        && (is_template_or_string_intrinsic(db, source)
+            || is_template_or_string_intrinsic(db, target))
+    {
+        return true;
+    }
+
     // The `object` primitive overlaps with any non-primitive type, including
     // `{}` and arbitrary object/array shapes. tsc's `isTypeComparableTo`
     // treats `object` as a supertype of all object-like values for assertion
@@ -1606,6 +1622,33 @@ fn signatures_are_comparable(
         }
     }
     types_are_comparable_inner(db, source.return_type, target.return_type, depth + 1)
+}
+
+/// Whether `type_id` is a template-literal type or a string-intrinsic mapping
+/// type (`Uppercase`/`Lowercase`/`Capitalize`/`Uncapitalize`). Both are
+/// subtypes of `string` whose membership is pattern-defined.
+fn is_template_or_string_intrinsic(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        db.lookup(type_id),
+        Some(TypeData::TemplateLiteral(_) | TypeData::StringIntrinsic { .. })
+    )
+}
+
+/// Whether `type_id` belongs to the `string` domain for assertion overlap:
+/// the `string` primitive, a string-literal type, or a pattern-defined string
+/// subtype (template-literal / string-intrinsic). A literal source widens to
+/// its base primitive at the assertion site, so each of these overlaps a
+/// template-literal target.
+fn is_string_domain_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    type_id == TypeId::STRING
+        || matches!(
+            db.lookup(type_id),
+            Some(
+                TypeData::Literal(crate::types::LiteralValue::String(_))
+                    | TypeData::TemplateLiteral(_)
+                    | TypeData::StringIntrinsic { .. }
+            )
+        )
 }
 
 /// Check if a base primitive type is comparable to a literal or other form of that primitive.

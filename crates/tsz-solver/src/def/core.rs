@@ -607,6 +607,14 @@ pub struct DefinitionStore {
     /// `"a"|"b"` but tsc shows the expanded union, not `T2`).
     computed_alias_bodies: DefDashSet<TypeId>,
 
+    /// Set of type-alias `DefId`s whose instantiation is unconditionally
+    /// infinite (e.g. `type A<T> = T extends infer X ? A<X & B> : never`).
+    /// The checker records these when it emits TS2589 at the alias definition;
+    /// the evaluator then resolves every `Alias<...>` application of a poisoned
+    /// def to the error type so use sites do not cascade into spurious TS2322,
+    /// matching tsc's collapse of the alias to the error type.
+    depth_poisoned_defs: DefDashSet<DefId>,
+
     /// Reverse index: `file_id` -> `Vec<DefId>` for per-file definition lookups.
     ///
     /// Populated during `register()` when the `DefinitionInfo` has a `file_id`.
@@ -864,6 +872,7 @@ impl DefinitionStore {
             symbol_mappings_snapshot: Mutex::new(None),
             body_to_alias: DefDashMap::default(),
             computed_alias_bodies: DefDashSet::default(),
+            depth_poisoned_defs: DefDashSet::default(),
             shape_to_def: DefDashMap::default(),
             file_to_defs: DefDashMap::with_capacity_and_hasher(file_capacity, Default::default()),
             class_to_constructor: DefDashMap::with_capacity_and_hasher(
@@ -1079,6 +1088,27 @@ impl DefinitionStore {
             );
             self.bump_generation();
         }
+    }
+
+    /// Mark a type-alias `DefId` as having an unconditionally-infinite
+    /// instantiation (TS2589). Every later application of this def resolves to
+    /// the error type.
+    pub fn mark_depth_poisoned(&self, id: DefId) {
+        if self.depth_poisoned_defs.insert(id) {
+            self.bump_generation();
+        }
+    }
+
+    /// Whether the given `DefId` was flagged via [`mark_depth_poisoned`].
+    pub fn is_depth_poisoned(&self, id: DefId) -> bool {
+        self.depth_poisoned_defs.contains(&id)
+    }
+
+    /// Whether any def has been flagged via [`mark_depth_poisoned`]. Used as a
+    /// cheap guard so hot evaluation paths skip per-application poison checks
+    /// when nothing is poisoned (the overwhelmingly common case).
+    pub fn has_any_depth_poisoned(&self) -> bool {
+        !self.depth_poisoned_defs.is_empty()
     }
 
     /// Update the type parameters for a definition.

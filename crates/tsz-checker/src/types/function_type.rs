@@ -3,12 +3,12 @@ mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
 
-use crate::computation::complex::{
-    expression_needs_contextual_return_type, is_contextually_sensitive,
+use super::function_type_helpers::{
+    ExpressionBodyReturnCheckCtx, FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx,
+    GeneratorBodyReturnCheckCtx,
 };
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
-use crate::diagnostics::format_message;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
@@ -17,70 +17,6 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{TypeId, TypeParamInfo};
 impl<'a> CheckerState<'a> {
-    pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return;
-        };
-        let mut stack = Vec::new();
-        if body_node.kind == syntax_kind_ext::BLOCK {
-            let Some(block) = self.ctx.arena.get_block(body_node) else {
-                return;
-            };
-            let Some(&stmt_idx) = block.statements.nodes.last() else {
-                return;
-            };
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                return;
-            };
-            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
-                return;
-            }
-            let Some(ret) = self.ctx.arena.get_return_statement(stmt_node) else {
-                return;
-            };
-            if ret.expression.is_some() {
-                stack.push(ret.expression);
-            }
-        } else {
-            stack.push(body_idx);
-        }
-
-        while let Some(expr_idx) = stack.pop() {
-            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
-            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-                continue;
-            };
-            match expr_node.kind {
-                syntax_kind_ext::BINARY_EXPRESSION => {
-                    let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
-                        continue;
-                    };
-                    if binary.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
-                        self.get_type_of_node(binary.right);
-                    } else if matches!(
-                        binary.operator_token,
-                        k if k == SyntaxKind::AmpersandAmpersandToken as u16
-                            || k == SyntaxKind::BarBarToken as u16
-                    ) {
-                        stack.push(binary.left);
-                        stack.push(binary.right);
-                    }
-                }
-                syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
-                    if let Some(unary) = self.ctx.arena.get_unary_expr(expr_node) {
-                        stack.push(unary.operand);
-                    }
-                }
-                syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::SATISFIES_EXPRESSION => {
-                    if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
-                        stack.push(assertion.expression);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
     /// Get type of function declaration/expression/arrow.
     pub(crate) fn get_type_of_function(&mut self, idx: NodeIndex) -> TypeId {
         self.get_type_of_function_impl(idx, &TypingRequest::NONE)
@@ -226,132 +162,25 @@ impl<'a> CheckerState<'a> {
         let this_atom = self.ctx.types.intern_string("this");
         let closure_already_checked =
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
-        // Setup contextual typing context, evaluating compound types first.
-        let mut contextual_signature_type_params = None;
-        let mut contextual_signature_shape = None;
+        let (
+            contextual_helper_type,
+            contextual_signature_type_params,
+            contextual_signature_shape,
+            mut has_jsdoc_type_function,
+        ) = self.function_contextual_type_context(
+            idx,
+            contextual_type,
+            is_function_declaration,
+            is_closure,
+        );
+        let mut ctx_helper = contextual_helper_type.map(|evaluated_type| {
+            ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
+            )
+        });
         let mut contextual_signature_type_param_updates = Vec::new();
-        let mut has_jsdoc_type_function = false;
-        let mut ctx_helper = if let Some(ctx_type) = contextual_type {
-            use crate::query_boundaries::type_checking_utilities::{
-                EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
-            };
-
-            let preserve_raw_mixed_context =
-                crate::query_boundaries::common::union_members(self.ctx.types, ctx_type)
-                    .is_some_and(|members| {
-                        let has_callable = members.iter().any(|&member| {
-                            crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                member,
-                            )
-                        });
-                        let has_non_callable = members.iter().any(|&member| {
-                            !crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                member,
-                            )
-                        });
-                        has_callable && has_non_callable
-                    });
-            let preserve_raw_signature_context =
-                preserve_raw_mixed_context || self.raw_contextual_signature_available(ctx_type);
-
-            let evaluated_type = if preserve_raw_signature_context {
-                ctx_type
-            } else if type_application(self.ctx.types, ctx_type).is_some() {
-                self.evaluate_application_type(ctx_type)
-            } else if let Some(def_id) = lazy_def_id(self.ctx.types, ctx_type) {
-                self.resolve_and_insert_def_type(def_id)
-                    .unwrap_or_else(|| self.judge_evaluate(ctx_type))
-            } else if matches!(
-                classify_for_evaluation(self.ctx.types, ctx_type),
-                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
-            ) {
-                self.judge_evaluate(ctx_type)
-            } else {
-                self.evaluate_contextual_type(ctx_type)
-            };
-            // Preserve original when evaluation degrades to UNKNOWN (unresolved conditionals)
-            let evaluated_type = if evaluated_type == TypeId::UNKNOWN {
-                ctx_type
-            } else {
-                evaluated_type
-            };
-
-            // Evaluate Application types in rest params (solver's NoopResolver can't resolve these)
-            let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
-            contextual_signature_shape =
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    evaluated_type,
-                );
-            let evaluated_type = if preserve_raw_signature_context {
-                evaluated_type
-            } else {
-                self.normalize_contextual_signature_with_env(evaluated_type)
-            };
-            let helper_probe = ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                evaluated_type,
-                self.ctx.compiler_options.no_implicit_any,
-            );
-            let evaluated_type = if helper_probe.get_this_type().is_none()
-                && helper_probe.get_return_type().is_none()
-                && helper_probe.get_parameter_type(0).is_none()
-                && helper_probe.get_rest_parameter_type(0).is_none()
-                && !crate::query_boundaries::common::is_union_type(self.ctx.types, evaluated_type)
-                && !crate::query_boundaries::common::is_intersection_type(
-                    self.ctx.types,
-                    evaluated_type,
-                ) {
-                crate::query_boundaries::checkers::call::get_contextual_signature(
-                    self.ctx.types,
-                    evaluated_type,
-                )
-                .map(|shape| self.ctx.types.factory().function(shape))
-                .unwrap_or(evaluated_type)
-            } else {
-                evaluated_type
-            };
-
-            contextual_signature_type_params =
-                self.contextual_type_params_from_expected(evaluated_type);
-            Some(ContextualTypeContext::with_expected_and_options(
-                self.ctx.types,
-                evaluated_type,
-                self.ctx.compiler_options.no_implicit_any,
-            ))
-        } else if self.is_js_file() && (is_function_declaration || is_closure) {
-            // In JS/checkJs, JSDoc `@type {FunctionType}` can live either on a
-            // function declaration or on an enclosing variable statement for a
-            // function expression (`const f = function() {}`), so support both.
-            if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
-                contextual_signature_type_params =
-                    self.contextual_type_params_from_expected(evaluated_type);
-                has_jsdoc_type_function = true;
-                Some(ContextualTypeContext::with_expected_and_options(
-                    self.ctx.types,
-                    evaluated_type,
-                    self.ctx.compiler_options.no_implicit_any,
-                ))
-            } else if is_closure {
-                self.jsdoc_callable_type_annotation_for_node(idx)
-                    .map(|evaluated_type| {
-                        contextual_signature_type_params =
-                            self.contextual_type_params_from_expected(evaluated_type);
-                        has_jsdoc_type_function = true;
-                        ContextualTypeContext::with_expected_and_options(
-                            self.ctx.types,
-                            evaluated_type,
-                            self.ctx.compiler_options.no_implicit_any,
-                        )
-                    })
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
         // Contextually typed closures can acquire generic signatures even without
         // explicit `<T>` syntax. This is required for parity with TypeScript in
@@ -479,14 +308,18 @@ impl<'a> CheckerState<'a> {
             && let Some(owner_jsdoc) = self.find_jsdoc_for_function(owner_target)
         {
             let factory = self.ctx.types.factory();
+            let constraint_strs = Self::jsdoc_template_constraint_strings(&owner_jsdoc);
             for (name, is_const, default_str) in Self::jsdoc_template_type_params(&owner_jsdoc) {
                 let atom = self.ctx.types.intern_string(&name);
                 let default = default_str
                     .as_deref()
                     .and_then(|s| self.resolve_jsdoc_reference(s));
+                let constraint = constraint_strs
+                    .get(&name)
+                    .and_then(|s| self.resolve_jsdoc_reference(s));
                 let info = TypeParamInfo {
                     name: atom,
-                    constraint: None,
+                    constraint,
                     default,
                     is_const,
                 };
@@ -503,14 +336,18 @@ impl<'a> CheckerState<'a> {
             if !template_names.is_empty() {
                 let mut jsdoc_type_params = Vec::with_capacity(template_names.len());
                 let factory = self.ctx.types.factory();
+                let constraint_strs = Self::jsdoc_template_constraint_strings(jsdoc);
                 for (name, is_const, default_str) in template_names {
                     let atom = self.ctx.types.intern_string(&name);
                     let default = default_str
                         .as_deref()
                         .and_then(|s| self.resolve_jsdoc_reference(s));
+                    let constraint = constraint_strs
+                        .get(&name)
+                        .and_then(|s| self.resolve_jsdoc_reference(s));
                     let info = TypeParamInfo {
                         name: atom,
-                        constraint: None,
+                        constraint,
                         default,
                         is_const,
                     };
@@ -1487,65 +1324,16 @@ impl<'a> CheckerState<'a> {
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
 
-        // Push this_type BEFORE parameter initializer checks so that default
-        // values like `a = this.getNumber()` see the correct `this` type and
-        // don't trigger false TS2683.
-        let implicit_this = if is_arrow_function {
-            outer_this_type
-        } else {
-            this_type.or_else(|| {
-                ctx_helper.as_ref().and_then(|h| h.get_this_type())
-                    .or(js_constructor_instance_type)
-                    .or(js_prototype_owner_instance_type)
-                    .or_else(|| {
-                        // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
-                        let mut current = idx;
-                        for _ in 0..3 {
-                            let parent = self.ctx.arena.get_extended(current)?.parent;
-                            let parent_node = self.ctx.arena.get(parent)?;
-                            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
-                                if let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                                    && binary.right == current && self.is_assignment_operator(binary.operator_token) {
-                                        let left = binary.left;
-                                        if let Some(left_node) = self.ctx.arena.get(left)
-                                            && (left_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
-                                                    if let Some(proto_node) = self.ctx.arena.get(access.expression)
-                                                        && (proto_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                            || proto_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                        && let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node)
-                                                        && let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument)
-                                                        && let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node)
-                                                        && proto_ident.escaped_text == "prototype" {
-                                                            let constructor_type = self.get_type_of_node(proto_access.expression);
-                                                            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
-                                                                proto_access.expression,
-                                                                constructor_type,
-                                                                &[],
-                                                            ) {
-                                                                return Some(instance_type);
-                                                            }
-                                                        }
-                                                    let receiver = self.get_type_of_node(access.expression);
-                                                    if receiver != tsz_solver::TypeId::ERROR {
-                                                        return Some(receiver);
-                                                    }
-                                                }
-                                    }
-                                break; // Only check immediate assignment parent
-                            } else if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                current = parent; // Skip parens
-                                continue;
-                            }
-                            break;
-                        }
-                        None
-                    })
-            })
-        };
-
-        let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
+        let contextual_this_type = ctx_helper.as_ref().and_then(|h| h.get_this_type());
+        let implicit_this = self.implicit_function_this_type(
+            idx,
+            is_arrow_function,
+            outer_this_type,
+            this_type,
+            contextual_this_type,
+            js_constructor_instance_type,
+            js_prototype_owner_instance_type,
+        );
 
         // Push `this` unless we already did so early from an explicit `this:` annotation.
         if !pushed_this_type && let Some(tt) = implicit_this {
@@ -1914,144 +1702,24 @@ impl<'a> CheckerState<'a> {
             // this_type was already pushed early (before parameter initializer checks)
             // so we don't need to push it again here
 
-            // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
-            // return statements should be checked against TReturn (R), not the full Generator type.
-            // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
-            //
-            // For async functions with return type Promise<T>, return statements should be checked
-            // against T, not Promise<T>. The function body returns T, which gets auto-wrapped.
             let contextual_void_return_exception = !has_type_annotation
                 && jsdoc_return_context.is_none()
                 && has_contextual_return
                 && return_context_for_circularity == Some(TypeId::VOID);
-            let body_return_type = if is_generator && has_type_annotation {
-                let original_type = annotated_return_type.unwrap_or(return_type);
-                // TS2505: A generator cannot have a 'void' type annotation.
-                if original_type == TypeId::VOID || return_type == TypeId::VOID {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        type_annotation,
-                        "A generator cannot have a 'void' type annotation.",
-                        diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
-                    );
-                    TypeId::ANY // Use ANY to suppress return statement checks
-                } else {
-                    // Use the pre-expansion annotated return type because
-                    // evaluate_application_type() may have expanded Generator<Y,R,N>
-                    // into its structural object form, which get_generator_return_type_argument
-                    // can't recognise (it needs an Application type).
-                    self.get_generator_return_type_argument(original_type)
-                        .unwrap_or(return_type)
-                }
-            } else if is_async_for_context && has_type_annotation {
-                // Unwrap Promise<T> to T for async function return type checking.
-                // Use the pre-expansion annotated return type because
-                // evaluate_application_type() may have expanded Promise<T> into its
-                // structural object form, which unwrap_promise_type() can't recognise.
-                let original_type = annotated_return_type.unwrap_or(return_type);
-                self.unwrap_promise_type(original_type)
-                    .unwrap_or(return_type)
-            } else if is_async_for_context
-                && has_contextual_return
-                && return_context_for_circularity
-                    .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN)
-            {
-                // Contextually-typed async function (e.g., JSDoc @type or callback):
-                // use the contextual return type (already unwrapped from Promise)
-                // for body return-statement checking. This matches tsc's behavior
-                // where `return 0` in `async (): string => { return 0 }` is checked
-                // against `string`, not the inferred type.
-                return_context_for_circularity.expect("is_some_and guard ensures Some")
-            } else if is_async_for_context
-                && has_contextual_return
-                && return_context_for_circularity == Some(TypeId::VOID)
-            {
-                // Async void-return contextual callbacks are allowed to return values.
-                TypeId::ANY
-            } else if is_async_for_context {
-                // For non-contextually-typed async functions, unwrap Promise from
-                // the inferred return type for body checking.
-                self.unwrap_async_return_type_for_body(return_type)
-            } else if contextual_void_return_exception {
-                // Contextual `() => void` callbacks are allowed to return values.
-                // Skip statement-level return assignability and let the outer
-                // function-type assignability relation handle the ergonomics.
-                TypeId::ANY
-            } else if is_generator
-                && !has_type_annotation
-                && has_contextual_return
-                && let Some(early_t) = early_gen_return_type
-                && early_t != TypeId::ANY
-                && early_t != TypeId::UNKNOWN
-            {
-                // Contextually-typed sync generator (no annotation): use
-                // unwrapped contextual `TReturn` from outer
-                // `Generator<Y, TReturn, N>` for body return checks. Without
-                // this, `f1<0,0,1>(function* () { return 0 })` widens 0 → number
-                // and the call site reports a false TS2345. Mirrors the async
-                // and annotated-generator branches above.
-                early_t
-            } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
-            {
-                // When a sync function carries its own JSDoc `@type {function(...): T}`
-                // (e.g. a method shorthand whose owning property declares the method's
-                // type), check block-body returns against the contextual return type.
-                // Mirrors the async branch above. Function expressions whose contextual
-                // type comes from outside (callback parameters) are excluded so we
-                // don't double-report at the inner return AND the call site.
-                let has_direct_callable_jsdoc = !is_async_for_context
-                    && !is_generator
-                    && has_contextual_return
-                    && !has_type_annotation
-                    && jsdoc_return_context.is_none()
-                    && self
-                        .jsdoc_callable_type_annotation_for_node_direct(idx)
-                        .is_some();
-                let sync_ctx = has_direct_callable_jsdoc
-                    .then_some(return_context_for_circularity)
-                    .flatten()
-                    .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN);
-                // Use the pre-evaluation annotated return type when available.
-                // evaluate_application_type() (line 1305) expands Application
-                // types (e.g., Promise<U>) into structural object forms, which
-                // destroys the Application wrapper needed for correct type
-                // display in TS2322 messages.
-                sync_ctx.unwrap_or_else(|| annotated_return_type.unwrap_or(return_type))
-            } else {
-                // When the return type was purely inferred from the body (no
-                // annotation, no contextual type, no JSDoc @returns), push ANY
-                // so that check_return_statement skips the assignability check.
-                // Checking a return expression against its own inferred type is
-                // circular and can produce false positives when contextual typing
-                // widens inner types differently than non-contextual inference.
-                TypeId::ANY
-            };
-
-            // When the body return type contains the polymorphic `this` type
-            // (e.g. from `async (): Promise<this> => this`), substitute it
-            // with the concrete `this` type from the enclosing class so that
-            // the return-statement assignability check compares against the
-            // same concrete type that the `this` keyword expression resolves to.
-            // Only apply when the function has an explicit type annotation;
-            // contextually-typed functions may carry `ThisType` from their
-            // contextual signature but substituting would produce false positives.
-            let body_return_type = if (has_type_annotation || jsdoc_return_context.is_some())
-                && crate::query_boundaries::common::contains_this_type(
-                    self.ctx.types,
-                    body_return_type,
-                ) {
-                if let Some(concrete_this) = self.current_this_type() {
-                    crate::query_boundaries::common::substitute_this_type(
-                        self.ctx.types,
-                        body_return_type,
-                        concrete_this,
-                    )
-                } else {
-                    body_return_type
-                }
-            } else {
-                body_return_type
-            };
+            let body_return_type = self.function_body_return_type(FunctionBodyReturnTypeCtx {
+                idx,
+                is_generator,
+                has_type_annotation,
+                annotated_return_type,
+                return_type,
+                type_annotation,
+                is_async_for_context,
+                has_contextual_return,
+                contextual_void_return_exception,
+                return_context_for_circularity,
+                jsdoc_return_context,
+                early_gen_return_type,
+            });
 
             self.push_return_type(body_return_type);
 
@@ -2088,310 +1756,16 @@ impl<'a> CheckerState<'a> {
                 .then_some(body_return_type)
                 .or(jsdoc_return_context)
                 .or(return_context_for_circularity);
-            if expected_expression_return_type.is_some()
-                && let Some(body_node) = self.ctx.arena.get(body)
-                && body_node.kind != syntax_kind_ext::BLOCK
-            {
-                let raw_expected_return_type =
-                    expected_expression_return_type.expect("is_some checked in outer condition");
-                let expected_return_type = if crate::query_boundaries::common::is_index_access_type(
-                    self.ctx.types,
-                    raw_expected_return_type,
-                ) {
-                    let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
-                    if evaluated != TypeId::ERROR {
-                        evaluated
-                    } else {
-                        raw_expected_return_type
-                    }
-                } else {
-                    raw_expected_return_type
-                };
-                if expected_return_type != TypeId::ANY
-                    && !self.type_contains_error(expected_return_type)
-                {
-                    // In JS/checkJs, expression-bodied arrows can carry inline JSDoc casts
-                    // (e.g. `/** @type {T} */(expr)`); use that annotated type when present.
-                    let mut actual_return_node = body;
-                    let mut actual_return_uses_jsdoc_cast = false;
-                    let actual_return = (if let Some(ty) =
-                        self.jsdoc_type_annotation_for_node_direct(actual_return_node)
-                    {
-                        actual_return_uses_jsdoc_cast = true;
-                        Some(ty)
-                    } else {
-                        // Parenthesized expression wrappers can separate the annotation
-                        // from the final body node in `.js` files (for cast-like syntax).
-                        let mut found = None;
-                        while let Some(parent_idx) = self
-                            .ctx
-                            .arena
-                            .get_extended(actual_return_node)
-                            .map(|ext| ext.parent)
-                        {
-                            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                                break;
-                            };
-                            if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                break;
-                            }
-                            actual_return_node = parent_idx;
-                            if let Some(ty) =
-                                self.jsdoc_type_annotation_for_node_direct(actual_return_node)
-                            {
-                                actual_return_uses_jsdoc_cast = true;
-                                found = Some(ty);
-                                break;
-                            }
-                        }
-                        found
-                    })
-                    .unwrap_or_else(|| {
-                        // For explicit annotations/JSDoc, type the body under that
-                        // return context so literal expressions are preserved.
-                        // For contextual-return-only closures, read the raw body type
-                        // and let the later assignability check report on the whole
-                        // expression instead of a nested contextualized subexpression.
-                        let can_apply_contextual_body =
-                            !self.type_has_unresolved_inference_holes(expected_return_type);
-                        let literal_sensitive_return =
-                            crate::query_boundaries::common::literal_value(
-                                self.ctx.types,
-                                expected_return_type,
-                            )
-                            .is_some()
-                                || crate::query_boundaries::common::enum_def_id(
-                                    self.ctx.types,
-                                    expected_return_type,
-                                )
-                                .is_some()
-                                || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
-                                    self.ctx.types,
-                                    expected_return_type,
-                                ) && expected_return_type != TypeId::SYMBOL)
-                                || expected_return_type == TypeId::NEVER
-                                || crate::query_boundaries::common::union_list_id(
-                                    self.ctx.types,
-                                    expected_return_type,
-                                )
-                                .is_some_and(|list_id| {
-                                    self.ctx.types.type_list(list_id).iter().any(|&member| {
-                                        crate::query_boundaries::common::is_literal_type(
-                                            self.ctx.types,
-                                            member,
-                                        ) || crate::query_boundaries::common::enum_def_id(
-                                            self.ctx.types,
-                                            member,
-                                        )
-                                        .is_some()
-                                    })
-                                });
-                        let concrete_return_context = expected_return_type != TypeId::ANY
-                            && expected_return_type != TypeId::UNKNOWN
-                            && !crate::query_boundaries::common::contains_type_parameters(
-                                self.ctx.types,
-                                expected_return_type,
-                            );
-                        let keep_contextual_body = has_type_annotation
-                            || jsdoc_return_context.is_some()
-                            || literal_sensitive_return
-                            || (can_apply_contextual_body
-                                && (is_contextually_sensitive(self, body)
-                                    || (concrete_return_context
-                                        && expression_needs_contextual_return_type(self, body))));
-                        let body_request = if keep_contextual_body {
-                            TypingRequest::with_contextual_type(expected_return_type)
-                        } else {
-                            TypingRequest::NONE
-                        };
-                        let prev_preserve_literals = self.ctx.preserve_literal_types;
-                        if keep_contextual_body {
-                            self.ctx.preserve_literal_types = true;
-                        }
-                        if body_request.is_empty() {
-                            self.invalidate_expression_for_contextual_retry(body);
-                        }
-                        let t = self.get_type_of_node_with_request(body, &body_request);
-                        self.ctx.preserve_literal_types = prev_preserve_literals;
-                        t
-                    });
-                    // For async expression-bodied arrows, unwrap Promise from the
-                    // actual return type, matching check_return_statement behavior.
-                    // `async (): Promise<T> => p` where p is Promise<T>: the body
-                    // expression type is Promise<T> but the expected type is T
-                    // (already unwrapped). We must unwrap the actual type too so
-                    // the assignability check compares T vs T, not Promise<T> vs T.
-                    let actual_return = if is_async_for_context {
-                        // Use union-aware unwrapping so `[0] | Promise<never>`
-                        // becomes `[0] | never` = `[0]`, not kept as-is.
-                        self.unwrap_async_return_type_for_body(actual_return)
-                    } else {
-                        actual_return
-                    };
-                    // Suppress the inner return type check when the expected type has
-                    // unresolved inference holes, OR when the actual return is callable
-                    // but expected is not (function-to-non-function shape mismatch),
-                    // OR when the body is a simple expression (not object/array literal
-                    // or block). tsc reports simple expression-bodied arrow return type
-                    // mismatches as TS2345 on the argument, not TS2322 on the body.
-                    let body_is_simple_expression =
-                        self.ctx.arena.get(body).is_some_and(|body_node| {
-                            let effective_kind =
-                                if body_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                    self.ctx
-                                        .arena
-                                        .get_parenthesized(body_node)
-                                        .and_then(|paren| self.ctx.arena.get(paren.expression))
-                                        .map(|inner| inner.kind)
-                                        .unwrap_or(body_node.kind)
-                                } else {
-                                    body_node.kind
-                                };
-                            effective_kind != syntax_kind_ext::BLOCK
-                                && effective_kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                                && effective_kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
-                        });
-                    let suppress_contextual_return_check = !has_type_annotation
-                        && jsdoc_return_context.is_none()
-                        && (self.type_has_unresolved_inference_holes(expected_return_type)
-                            || (crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                actual_return,
-                            ) && !crate::query_boundaries::common::is_callable_type(
-                                self.ctx.types,
-                                expected_return_type,
-                            ))
-                            || body_is_simple_expression);
-                    let use_generic_return_mismatch = !has_type_annotation
-                        && jsdoc_return_context.is_none()
-                        && self.ctx.arena.get(body).is_some_and(|body_node| {
-                            body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                        })
-                        && self.type_has_unresolved_inference_holes(expected_return_type);
-                    if contextual_void_return_exception {
-                        // Contextual `() => void` callbacks may return a value.
-                        // Don't report a direct body-vs-void mismatch here.
-                    } else if suppress_contextual_return_check {
-                        // Leave callback return inference to the generic/reverse-mapped
-                        // inference pass when the expected return still contains
-                        // unresolved placeholders.
-                    } else if use_generic_return_mismatch {
-                        let conditional_branch_mismatch = self
-                            .ctx
-                            .arena
-                            .get(body)
-                            .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
-                            .is_some_and(|cond| {
-                                let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
-                                let return_req =
-                                    TypingRequest::with_contextual_type(expected_return_type);
-                                let mut when_true =
-                                    self.get_type_of_node_with_request(cond.when_true, &return_req);
-                                let mut when_false = self
-                                    .get_type_of_node_with_request(cond.when_false, &return_req);
-                                snap.rollback(&mut self.ctx.diagnostic_state());
-                                if is_async_for_context {
-                                    when_true =
-                                        self.unwrap_promise_type(when_true).unwrap_or(when_true);
-                                    when_false =
-                                        self.unwrap_promise_type(when_false).unwrap_or(when_false);
-                                }
-                                !self.is_assignable_to(when_true, expected_return_type)
-                                    || !self.is_assignable_to(when_false, expected_return_type)
-                            });
-                        if conditional_branch_mismatch
-                            && !self.is_nested_same_wrapper_application_assignment(
-                                actual_return,
-                                expected_return_type,
-                            )
-                            && let Some(loc) = self.get_source_location(body)
-                        {
-                            let src_str = self.format_type(actual_return);
-                            let tgt_str = self.format_type(expected_return_type);
-                            let message = format_message(
-                                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                    &[&src_str, &tgt_str],
-                                );
-                            self.ctx.diagnostics.push(crate::diagnostics::Diagnostic::error(
-                                    self.ctx.file_name.clone(),
-                                    loc.start,
-                                    loc.length(),
-                                    message,
-                                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                ));
-                        }
-                    } else {
-                        // For expression-bodied arrows/functions, use exact anchoring
-                        // to prevent assignment_anchor_node from walking up to the
-                        // enclosing arrow function. TSC reports the error at the body
-                        // expression (e.g. `'foo'` in `(): number => 'foo'`), not at
-                        // the arrow function itself.
-                        // For conditional bodies, use source elaboration so TS2322 is
-                        // reported at the specific failing branch.
-                        // EXCEPTION: When the function expression is the RHS of an
-                        // assignment (e.g., `A.prototype.foo = function() {}`), use
-                        // assignment anchor rewriting so the error is reported at the
-                        // assignment level, matching tsc behavior.
-                        let body_is_conditional = self
-                            .ctx
-                            .arena
-                            .get(body)
-                            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
-                        let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
-                        // For diagnostic anchoring, drill through outer
-                        // parenthesized/satisfies/assertion wrappers so the
-                        // reported position lands on the innermost expression
-                        // (e.g. `{}` in `(({}) satisfies unknown)`), matching
-                        // tsc's behavior.
-                        let inner_body = if actual_return_uses_jsdoc_cast {
-                            actual_return_node
-                        } else {
-                            self.ctx.arena.skip_parenthesized_and_assertions(body)
-                        };
-                        let assignability_ok = if body_is_conditional || is_rhs_assignment {
-                            self.check_assignable_or_report_at(
-                                actual_return,
-                                expected_return_type,
-                                body,
-                                body,
-                            )
-                        } else {
-                            self.check_assignable_or_report_at_exact_anchor(
-                                actual_return,
-                                expected_return_type,
-                                inner_body,
-                                inner_body,
-                            )
-                        };
-                        if !assignability_ok {
-                            // Find and store any new TS2322 diagnostics from this check
-                            for diag in self.ctx.diagnostics.iter().rev() {
-                                if diag.code
-                                    == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                                    && let Some(body_node) = self.ctx.arena.get(body)
-                                    && diag.start >= body_node.pos
-                                    && diag.start < body_node.end
-                                {
-                                    self.ctx
-                                        .callback_return_type_errors
-                                        .push(diag.clone());
-                                    break;
-                                }
-                            }
-                        }
-                        if assignability_ok
-                            && let Some(body_node) = self.ctx.arena.get(body)
-                            && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-                        {
-                            self.check_conditional_return_branches_against_type(
-                                body,
-                                expected_return_type,
-                                is_async_for_context,
-                            );
-                        }
-                    }
-                }
-            }
+            self.check_expression_body_return_type(ExpressionBodyReturnCheckCtx {
+                idx,
+                body,
+                is_closure,
+                has_type_annotation,
+                is_async_for_context,
+                contextual_void_return_exception,
+                expected_expression_return_type,
+                jsdoc_return_context,
+            });
             // Skip body checking for function declarations — they are checked via
             // check_function_declaration which maintains the full type param scope chain.
             if !is_function_declaration {
@@ -2490,83 +1864,19 @@ impl<'a> CheckerState<'a> {
                     snap.rollback(&mut self.ctx.diagnostic_state());
                 }
 
-                // For annotated generator expressions, check that Generator<TYield, any, any>
-                // is assignable to the declared return type.
-                if is_generator && has_type_annotation {
-                    let declared_type = annotated_return_type.unwrap_or(return_type);
-                    let yield_t = self.ctx.current_yield_type();
-                    let error_node = if type_annotation != NodeIndex::NONE {
-                        type_annotation
-                    } else {
-                        idx
-                    };
-                    self.check_generator_return_type_assignability(
+                final_generator_yield_type =
+                    self.check_generator_body_return(GeneratorBodyReturnCheckCtx {
+                        is_generator,
+                        has_type_annotation,
+                        annotated_return_type,
+                        return_type,
+                        type_annotation,
+                        idx,
                         function_is_async,
-                        yield_t,
-                        declared_type,
-                        error_node,
-                    );
-                }
-
-                // For unannotated generator expressions, determine the inferred yield type
-                // and emit TS7055/TS7025 if TYield is 'any'.
-                // TS7055 and TS7057 are independent — TS7055 fires at function name when
-                // TYield is implicit any, while TS7057 fires per-expression.
-                if is_generator && !has_type_annotation {
-                    let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
-                    // Compute inferred yield type; skip widening when contextual
-                    // yield type preserved literals (`yield 0` stays `0` not `number`).
-                    let inferred_yield = if yield_types.is_empty() {
-                        TypeId::NEVER
-                    } else {
-                        self.ctx.types.factory().union(yield_types)
-                    };
-                    let widened = if early_yield_type.is_some() {
-                        inferred_yield
-                    } else {
-                        self.widen_literal_type(inferred_yield)
-                    };
-                    let final_yield = if !self.ctx.strict_null_checks()
-                        && crate::query_boundaries::common::is_only_null_or_undefined(
-                            self.ctx.types,
-                            widened,
-                        ) {
-                        TypeId::ANY
-                    } else {
-                        widened
-                    };
-                    final_generator_yield_type = Some(final_yield);
-                    // Suppress TS7055 when TS7057 was already emitted for a yield
-                    // in this generator. tsc emits one or the other, not both:
-                    // TS7057 covers the per-expression case; TS7055 is for the
-                    // function-level "yield type is implicitly any" case.
-                    if final_yield == TypeId::ANY
-                        && self.ctx.no_implicit_any()
-                        && !self.is_js_file()
-                        && !self.ctx.generator_had_ts7057
-                        // Suppress TS7055/TS7025 when the generator has a contextual
-                        // yield type — the yield type is implicitly provided by context,
-                        // not truly missing.
-                        && early_yield_type.is_none()
-                    {
-                        use crate::diagnostics::diagnostic_codes;
-                        if let Some(name) = &name_for_error {
-                            // TS7055: Named generator's yield type is implicitly 'any'
-                            self.error_at_node_msg(
-                                name_node.unwrap_or(idx),
-                                diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
-                                &[name, "any"],
-                            );
-                        } else {
-                            // TS7025: Unnamed generator expression
-                            self.error_at_node_msg(
-                                idx,
-                                diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
-                                &["any"],
-                            );
-                        }
-                    }
-                }
+                        early_yield_type,
+                        name_node,
+                        name_for_error: name_for_error.as_deref(),
+                    });
 
                 // Restore outer generator's yield collection state
                 self.ctx.generator_yield_operand_types = saved_yield_collection;
@@ -2597,156 +1907,20 @@ impl<'a> CheckerState<'a> {
             self.ctx.function_owned_this_stack.pop();
         }
 
-        // In JS files, functions that reference `arguments` in their body should accept
-        // any number of extra arguments (TSC adds an implicit rest parameter).
-        // Only add if the function doesn't already have a rest parameter.
-        // Some call sites compute function types before body checking has set
-        // `js_body_uses_arguments` (notably function expressions in variable initializers).
-        // Always pre-walk the body as a fallback so JS implicit rest parameter inference
-        // remains stable across declaration/expression contexts.
-        let uses_arguments =
-            self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
-        if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
-            params.push(ParamInfo {
-                name: None,
-                type_id: self.ctx.types.factory().array(TypeId::ANY),
-                optional: true,
-                rest: true,
-            });
-        }
+        self.append_js_arguments_rest_param(body, &mut params);
         // Restore the arguments tracking flag
         self.ctx.js_body_uses_arguments = saved_uses_arguments;
 
-        // Create function type using TypeInterner
-        // For annotated return types, use the original un-evaluated type so callers see
-        // Promise<T>, Array<T>, etc. as Application types. This preserves type identity
-        // for await unwrapping and generic type parameter extraction.
-        // For inferred return types (no annotation), use the inferred type as-is.
-        let mut final_return_type = if !has_type_annotation && function_is_generator {
-            // Unannotated generators should remain permissive until full
-            // Generator<Y, R, N>/AsyncGenerator<Y, R, N> inference is implemented.
-            // However, we must return a Generator-like type to avoid suppressing TS2322
-            // when the generator is returned or yielded to a context expecting something else.
-            // Use void for TReturn: unannotated generators have no explicit return value,
-            // so TReturn is void (matching tsc). This ensures generator.return() is callable
-            // without arguments, since void-typed params are effectively optional.
-            let gen_name = if function_is_async {
-                "AsyncGenerator"
-            } else {
-                "Generator"
-            };
-            // Ensure the lib type is loaded/resolved (side effect: populates file_locals).
-            let _resolved = self.resolve_lib_type_by_name(gen_name);
-            // Use Lazy(DefId) as the Application base instead of the resolved TypeId.
-            // resolve_lib_type_by_name returns a fully expanded structural interface body,
-            // which loses the Generator identity during type relations. Lazy(DefId) preserves
-            // the symbolic reference so evaluate_application can properly instantiate it.
-            let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx.types.factory().lazy(def_id)
-            });
-            if let Some(base) = lazy_base {
-                // Use contextual generator type params when available, otherwise
-                // fall back to defaults (any/void/unknown).
-                // For TReturn, prefer the body-inferred return type (from return
-                // statements) over the contextual type, falling back to void when
-                // neither is available. This ensures generic type parameters like
-                // `Ret` in `<Ret>(f: () => Generator<never, Ret, never>)` get
-                // inferred from the generator body's return statements.
-                let yield_t = final_generator_yield_type.unwrap_or(TypeId::ANY);
-                // For TReturn: prefer the body-inferred return type when concrete (not
-                // UNKNOWN/VOID/UNDEFINED), falling back to the contextual TReturn, then VOID.
-                // Also exclude `any` when a contextual TReturn is available - the inferred
-                // `any` may be stale from an earlier type-checking pass where the variable
-                // `next = yield ...` was typed as `any` before contextual types were set.
-                let body_return_t = if return_type != TypeId::UNKNOWN
-                    && return_type != TypeId::VOID
-                    && return_type != TypeId::UNDEFINED
-                    && !(return_type == TypeId::ANY && early_gen_return_type.is_some())
-                {
-                    // Widen literal body-inferred returns: `return 1;` →
-                    // TReturn = number. Preserve unique symbols. Also
-                    // preserve when contextual TReturn is a real type — tsc
-                    // pins T from the call-site type-arg, widening defeats
-                    // the pin. `void` is treated as no-constraint (matches
-                    // tsc's widening behavior for `() => Generator<_, void, _>`).
-                    let contextual_pins_return = early_gen_return_type.is_some_and(|t| {
-                        t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN
-                    });
-                    let preserve = contextual_pins_return
-                        || crate::query_boundaries::common::is_unique_symbol_type(
-                            self.ctx.types,
-                            return_type,
-                        );
-                    let widened = if preserve {
-                        return_type
-                    } else {
-                        self.widen_literal_type(return_type)
-                    };
-                    Some(widened)
-                } else {
-                    None
-                };
-                let return_t = body_return_t
-                    .or(early_gen_return_type)
-                    .unwrap_or(TypeId::VOID);
-                let next_t = early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
-                self.ctx
-                    .types
-                    .factory()
-                    .application(base, vec![yield_t, return_t, next_t])
-            } else {
-                TypeId::ANY
-            }
-        } else {
-            annotated_return_type.unwrap_or(return_type)
-        };
-        // Unannotated async functions infer Promise<T>, where T is inferred from
-        // return statements in the function body.
-        if !has_type_annotation && function_is_async && !function_is_generator {
-            // Async functions implicitly await their return values. If the body
-            // returns Promise<T> (e.g., `async () => fetch(url)`), the runtime
-            // awaits it to get T, then the async wrapper produces Promise<T> —
-            // NOT Promise<Promise<T>>. Unwrap any existing Promise layer first.
-            let had_promise_wrapper =
-                if let Some(inner) = self.unwrap_promise_type(final_return_type) {
-                    final_return_type = inner;
-                    true
-                } else {
-                    false
-                };
-            // Widen literal return types before re-wrapping in Promise, matching
-            // tsc's async return-type inference: `async () => 0` infers
-            // `() => Promise<number>`, not `() => Promise<0>`. Skip widening when
-            // the body already produced a `Promise<T>` — the inner T either came
-            // from contextual typing (which preserved literals intentionally) or
-            // from a Promise-returning expression whose type is already stable.
-            // Also preserve `unique symbol` types: tsc does not widen them to
-            // `symbol` in async return-type inference; widening breaks
-            // `uniqueSymbolsDeclarations.ts` (the solver's generic widen_type
-            // walks UniqueSymbol → SYMBOL, which is right for mutable-binding
-            // contexts but wrong here).
-            if !had_promise_wrapper
-                && !crate::query_boundaries::common::is_unique_symbol_type(
-                    self.ctx.types,
-                    final_return_type,
-                )
-            {
-                final_return_type = self.widen_literal_type(final_return_type);
-            }
-            // Resolve the real Promise type from lib files when available,
-            // so that the return type is structurally compatible with PromiseLike<T>.
-            // Fall back to synthetic PROMISE_BASE only without lib files.
-            let promise_base = self
-                .ctx
-                .lib_promise_type_ref()
-                .unwrap_or(TypeId::PROMISE_BASE);
-            final_return_type = self
-                .ctx
-                .types
-                .factory()
-                .application(promise_base, vec![final_return_type]);
-        }
+        let final_return_type = self.final_function_return_type(FunctionFinalReturnTypeCtx {
+            has_type_annotation,
+            function_is_async,
+            function_is_generator,
+            annotated_return_type,
+            return_type,
+            final_generator_yield_type,
+            early_gen_return_type,
+            early_gen_next_type,
+        });
 
         let shape = FunctionShape {
             type_params,
@@ -2781,86 +1955,6 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(enclosing_type_param_updates);
 
         return_with_cleanup!(function_type)
-    }
-
-    fn class_property_arrow_owner(&self, arrow_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
-        let mut current = arrow_idx;
-        for _ in 0..16 {
-            let parent = self.ctx.arena.get_extended(current)?.parent;
-            let parent_node = self.ctx.arena.get(parent)?;
-
-            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                let class_idx = self.ctx.arena.get_extended(parent)?.parent;
-                let class_node = self.ctx.arena.get(class_idx)?;
-                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION
-                    && class_node.kind != syntax_kind_ext::CLASS_EXPRESSION
-                {
-                    return None;
-                }
-                return Some((parent, class_idx));
-            }
-
-            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
-                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
-                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
-            {
-                return None;
-            }
-
-            current = parent;
-        }
-
-        None
-    }
-
-    fn class_property_arrow_lexical_this_type(&mut self, arrow_idx: NodeIndex) -> Option<TypeId> {
-        let (property_idx, class_idx) = self.class_property_arrow_owner(arrow_idx)?;
-        let property_node = self.ctx.arena.get(property_idx)?;
-        let prop = self.ctx.arena.get_property_decl(property_node)?;
-        let class_node = self.ctx.arena.get(class_idx)?;
-        let class_data = self.ctx.arena.get_class(class_node)?;
-        let is_static = self.has_static_modifier(&prop.modifiers);
-
-        // When the arrow function is itself currently being typed, the arrow
-        // node is on `node_resolution_stack`. Triggering a fresh class instance
-        // (or constructor) type build here would recursively re-enter
-        // `get_class_instance_type_inner`, which in turn calls
-        // `get_type_of_node(prop.initializer)` for this same arrow — that
-        // re-entry hits the circular-reference guard in
-        // `get_type_of_node_with_request` and returns `TypeId::ERROR`, which
-        // is then stored on the rebuilt class shape as the property's type.
-        // The broken shape gets cached in `class_instance_type_cache` and
-        // poisons every subsequent property access on the class.
-        //
-        // Use the already-cached class type (built earlier during environment
-        // setup), or — if member checking has invalidated that cache — fall
-        // back to the snapshot saved on `EnclosingClassInfo`. Returning `None`
-        // lets `get_type_of_function_impl` fall back to `current_this_type`,
-        // which is safe for arrows that don't reference `this`.
-        if self.ctx.node_resolution_stack.contains(&arrow_idx) {
-            let cache = if is_static {
-                &self.ctx.class_constructor_type_cache
-            } else {
-                &self.ctx.class_instance_type_cache
-            };
-            return cache.get(&class_idx).copied().or_else(|| {
-                if is_static {
-                    return None;
-                }
-                self.ctx
-                    .enclosing_class
-                    .as_ref()
-                    .filter(|info| info.class_idx == class_idx)
-                    .and_then(|info| info.cached_instance_this_type)
-            });
-        }
-
-        Some(if is_static {
-            self.get_class_constructor_type(class_idx, class_data)
-        } else {
-            self.get_class_instance_type(class_idx, class_data)
-        })
     }
 }
 

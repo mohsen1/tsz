@@ -460,6 +460,7 @@ impl<'a> DiagnosticBuilder<'a> {
 
     /// Create an "Excess property" diagnostic.
     pub fn excess_property(&mut self, prop_name: &str, target: TypeId) -> TypeDiagnostic {
+        let prop_name = crate::diagnostics::format::format_excess_property_name(prop_name);
         let target_str = self.format_excess_property_target(target);
         TypeDiagnostic::error(
             format!(

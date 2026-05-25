@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 
 const DEFAULT_STALE_MINUTES = 45;
 const DEFAULT_MAX_RUNS = 100;
+const DEFAULT_GH_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 const ACTIVE_STATUSES = ["in_progress", "queued"];
 
 function usage() {
@@ -84,8 +85,16 @@ function parseArgs(argv) {
 function runGhJson(args) {
   const result = spawnSync("gh", args, {
     encoding: "utf8",
+    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (result.error) {
+    const command = `gh ${args.join(" ")}`;
+    if (result.error.code === "ENOBUFS") {
+      throw new Error(`${command} exceeded ${DEFAULT_GH_MAX_BUFFER_BYTES} bytes of output`);
+    }
+    throw result.error;
+  }
   if (result.status !== 0) {
     throw new Error(
       [

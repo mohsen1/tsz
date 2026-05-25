@@ -227,6 +227,11 @@ struct ApplicationEvalContext {
     /// Whether display-alias bookkeeping should prefer the `Application`
     /// form. True only for non-conditional type-alias applications.
     prefer_application_display_alias: bool,
+    /// Set when `app.base` is a `TypeQuery` (i.e. `typeof ClassName<T>`).
+    /// For `TypeQuery`-based applications the caller wants the constructor
+    /// type, not the instance type, so `extract_class_instance_body` must
+    /// be skipped.
+    base_is_type_query: bool,
 }
 
 /// Common opening preamble for the homomorphic-mapped shortcuts:
@@ -395,6 +400,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     pub const fn with_flag_depth_on_app_cycle(mut self) -> Self {
         self.flag_depth_on_app_cycle = true;
         self
+    }
+
+    /// True when this evaluator is running the TS2589 depth-detection pass
+    /// (see `with_flag_depth_on_app_cycle`). Callers in other modules use this
+    /// to drive self-referential recursion that normal evaluation defers.
+    pub(crate) const fn is_depth_detection_pass(&self) -> bool {
+        self.flag_depth_on_app_cycle
     }
 
     /// Preserve evaluated application display aliases with already-expanded
@@ -935,7 +947,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         app_base: TypeId,
     ) -> ApplicationEvalContext {
         let type_params = self.resolver.get_lazy_type_params(def_id);
-        let resolved = self.resolver.resolve_lazy(def_id, self.interner);
+        let base_is_type_query =
+            matches!(self.interner.lookup(app_base), Some(TypeData::TypeQuery(_)));
+        // For `typeof ClassName<T>` (TypeQuery base), use `resolve_type_query` to get
+        // the constructor type rather than the instance type that `resolve_lazy` returns
+        // for classes. Type-position references (`ClassName<T>`) continue to use
+        // `resolve_lazy` which correctly provides the instance type.
+        let resolved = if base_is_type_query {
+            if let Some(TypeData::TypeQuery(sym_ref)) = self.interner.lookup(app_base) {
+                self.resolver
+                    .resolve_type_query(sym_ref, self.interner)
+                    .or_else(|| self.resolver.resolve_lazy(def_id, self.interner))
+            } else {
+                self.resolver.resolve_lazy(def_id, self.interner)
+            }
+        } else {
+            self.resolver.resolve_lazy(def_id, self.interner)
+        };
         let def_kind = self.resolver.get_def_kind(def_id);
         let is_type_alias_def = matches!(def_kind, Some(DefKind::TypeAlias));
         let resolved_has_conditional_body = resolved.is_some_and(|body| {
@@ -960,6 +988,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             resolved,
             is_type_alias_def,
             prefer_application_display_alias,
+            base_is_type_query,
         }
     }
 
@@ -995,10 +1024,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 resolved,
                 type_params,
                 ctx.prefer_application_display_alias,
+                ctx.base_is_type_query,
             )
         } else if let Some(resolved) = ctx.resolved {
             // Lite-resolver fallback: extract type parameters from the
             // resolved type's properties.
+            //
+            // For `typeof ClassExpr<T>` (TypeQuery base, Callable resolved type),
+            // use per-signature instantiation so that the class type parameters
+            // stored in `sig.type_params` are CONSUMED rather than SHADOWED.
+            // `instantiate_generic` calls `TypeInstantiator` which calls
+            // `enter_shadowing_scope(&sig.type_params)`, blocking substitution
+            // of those names from the outer substitution built from extracted params.
+            if ctx.base_is_type_query
+                && matches!(self.interner.lookup(resolved), Some(TypeData::Callable(_)))
+                && !args.is_empty()
+            {
+                if let Some(specialized) = self.try_instantiate_callable_type_params(resolved, args)
+                {
+                    let evaluated = self.evaluate(specialized);
+                    return ApplicationEvalOutcome::Computed(evaluated);
+                }
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
             let extracted_params = self.extract_type_params_from_type(resolved);
             if !extracted_params.is_empty() && extracted_params.len() == args.len() {
                 self.evaluate_application_with_extracted_params(
@@ -1029,6 +1077,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         resolved: TypeId,
         type_params: &[TypeParamInfo],
         prefer_application_display_alias: bool,
+        base_is_type_query: bool,
     ) -> ApplicationEvalOutcome {
         let expanded_args = self.prepare_expanded_args_for_body(resolved, args);
         let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
@@ -1065,7 +1114,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // not the class constructor type. Only applies for
         // `DefKind::Class`; interfaces with construct signatures keep
         // their Callable shape intact.
-        let effective_body = self.extract_class_instance_body(def_id, resolved);
+        //
+        // Exception: when the base is a `TypeQuery` (`typeof ClassName<T>`),
+        // the caller wants the constructor type — skipping extraction keeps
+        // the specialized constructor so `InstanceType<typeof Cls<T>>` can
+        // correctly reduce to the class instance type via conditional infer.
+        let effective_body = if base_is_type_query {
+            resolved
+        } else {
+            self.extract_class_instance_body(def_id, resolved)
+        };
 
         // Homomorphic mapped-type union distribution: when the alias body
         // is `{ [K in keyof T]: ... }` and T's argument resolves to a
@@ -2072,6 +2130,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span {
                         self.collect_type_params(*inner, seen, params);
+                    }
+                }
+            }
+            TypeData::Callable(cs_id) => {
+                // Collect the type parameters declared by construct and call signatures.
+                // This handles `typeof ClassName<T>` where the constructor type is a
+                // Callable whose signatures own the class type parameters.
+                let shape = self.interner.callable_shape(cs_id);
+                for sig in shape
+                    .construct_signatures
+                    .iter()
+                    .chain(shape.call_signatures.iter())
+                {
+                    for tp in &sig.type_params {
+                        if !seen.contains(&tp.name) {
+                            seen.insert(tp.name);
+                            params.push(*tp);
+                        }
                     }
                 }
             }
@@ -3083,12 +3159,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // Quick check: does any element need evaluation or structural normalization?
         // Also triggers when a rest element holds a concrete Tuple that must be
-        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]`.
+        // flattened — e.g. `[L, ...R]` after infer-binding R to `[1, 2]` — or a
+        // union of concrete tuples that must be distributed — e.g.
+        // `[0, ...([2] | [3, 4]), 1]` fans out into `[0, 2, 1] | [0, 3, 4, 1]`.
+        // See `union_is_fully_spreadable` for which unions qualify (tuple
+        // members only; array-unions and generic spreads are left alone to
+        // match tsc).
         // ReadonlyType(Tuple) rest elements are already caught by is_evaluable_meta_type.
         let needs_eval = elements.iter().any(|elem| {
             Self::is_evaluable_meta_type(self.interner, elem.type_id)
                 || (elem.rest
-                    && matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_))))
+                    && (matches!(self.interner.lookup(elem.type_id), Some(TypeData::Tuple(_)))
+                        || Self::union_is_fully_spreadable(self.interner, elem.type_id)))
         });
         if !needs_eval {
             return original_type_id;
@@ -3160,7 +3242,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     let mut spread_alternatives: Vec<Vec<TupleElement>> =
                         Vec::with_capacity(members.len());
                     for &member in members.iter() {
-                        match self.interner.lookup(member) {
+                        let member_inner =
+                            crate::type_queries::data::unwrap_readonly(self.interner, member);
+                        match self.interner.lookup(member_inner) {
                             Some(TypeData::Tuple(inner_list_id)) => {
                                 spread_alternatives
                                     .push(self.interner.tuple_list(inner_list_id).to_vec());
@@ -3242,6 +3326,31 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     .collect(),
             )
         }
+    }
+
+    /// A union is "fully spreadable" when it is non-empty and every member is a
+    /// concrete tuple type (possibly `readonly`-wrapped). Such a union in spread
+    /// position distributes into one tuple per member — `[a, ...(X | Y), b]`
+    /// becomes `[a, ...X, b] | [a, ...Y, b]` — because the members have
+    /// differing fixed shapes that a single tuple cannot encode.
+    ///
+    /// Members that are bare arrays are intentionally excluded: tsc keeps a
+    /// union-of-arrays rest as a single rest element (e.g.
+    /// `[a, b, ...(X[] | Y[])]` stays put rather than fanning out), since an
+    /// unbounded rest already encodes the union without distribution.
+    /// Unions containing a generic type parameter or any other non-tuple member
+    /// are likewise left undistributed, matching tsc's lazy handling of generic
+    /// spreads.
+    fn union_is_fully_spreadable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+        let Some(TypeData::Union(list_id)) = db.lookup(type_id) else {
+            return false;
+        };
+        let members = db.type_list(list_id);
+        !members.is_empty()
+            && members.iter().all(|&member| {
+                let inner = crate::type_queries::data::unwrap_readonly(db, member);
+                matches!(db.lookup(inner), Some(TypeData::Tuple(_)))
+            })
     }
 
     fn tuple_spread_alternative_count(&self, type_id: TypeId) -> Option<usize> {

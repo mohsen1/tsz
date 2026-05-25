@@ -1,0 +1,72 @@
+name: Refresh Green PRs
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report the next PR without updating branches or auto-merge.
+        type: boolean
+        default: true
+      max_prs:
+        description: Maximum open PRs to inspect.
+        type: number
+        default: 200
+      verbose:
+        description: Include skip reasons in the step summary.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+concurrency:
+  group: refresh-green-prs-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: refresh-one-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Refresh one stale green PR
+        env:
+          # Apply mode needs a real automation token so the branch update emits
+          # a pull_request synchronize event and the PR's required checks run.
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
+          HAS_AUTOMATION_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN != '' }}
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          MAX_PRS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_prs || 200 }}
+          VERBOSE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose || false }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dry_run="${DRY_RUN_INPUT}"
+          if [[ "${dry_run}" != "true" && "${HAS_AUTOMATION_TOKEN}" != "true" ]]; then
+            echo "::warning::TSZ_PR_AUTOMATION_TOKEN is not configured; forcing dry-run because GITHUB_TOKEN branch updates do not trigger pull_request CI."
+            dry_run=true
+          fi
+
+          args=(
+            --repository "${REPOSITORY}"
+            --base main
+            --max-prs "${MAX_PRS_INPUT}"
+            --max-refreshes 1
+          )
+          if [[ "${dry_run}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          if [[ "${VERBOSE_INPUT}" == "true" ]]; then
+            args+=(--verbose)
+          fi
+
+          node scripts/ci/refresh-green-prs.mjs "${args[@]}" | tee -a "${GITHUB_STEP_SUMMARY}"

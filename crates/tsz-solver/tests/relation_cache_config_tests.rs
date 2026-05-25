@@ -85,6 +85,23 @@ fn unflagged_compatibility_policy_matches_empty_legacy_flags() {
     );
 }
 
+#[test]
+fn legacy_flag_constructor_stores_typed_relation_flags() {
+    let policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE,
+    );
+    let config = policy.cache_config();
+
+    assert!(config.flags.contains(RelationFlags::STRICT_NULL_CHECKS));
+    assert!(
+        config
+            .flags
+            .contains(RelationFlags::DISABLE_METHOD_BIVARIANCE)
+    );
+    assert!(!config.flags.contains(RelationFlags::STRICT_ANY_PROPAGATION));
+}
+
 // =============================================================================
 // 1. Every behavior-affecting setting must change the key
 // =============================================================================
@@ -569,6 +586,20 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
     assert!(!disabled.allow_bivariant_param_count());
     assert!(!disabled.allow_erased_generic_signature_retry());
     assert!(!disabled.strict_readonly_identity());
+}
+
+#[test]
+fn relation_policy_legacy_packed_flags_accessor_preserves_input_bits() {
+    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
+        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
+    let policy = RelationPolicy::from_flags(packed);
+
+    assert_eq!(
+        policy.legacy_packed_flags(),
+        packed,
+        "compatibility edges should observe the exact legacy bit layout",
+    );
 }
 
 #[test]

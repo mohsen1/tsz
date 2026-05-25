@@ -741,6 +741,16 @@ impl<'a> DeclarationEmitter<'a> {
         let package_name = trailing_parts[..package_len].join("/");
         let package_relative_parts = trailing_parts[package_len..].to_vec();
         let relative_path = package_relative_parts.join("/");
+        if let Some(specifier) = self.package_types_versions_specifier_for_relative_path(
+            &package_root,
+            &package_name,
+            &relative_path,
+        ) {
+            return Some((root_key, specifier));
+        }
+        if self.package_types_versions_root_reexports_relative_path(&package_root, &relative_path) {
+            return Some((root_key, package_name));
+        }
         if self.package_json_decl_entry_matches(&package_root, &relative_path) {
             return Some((root_key, package_name));
         }
@@ -870,6 +880,213 @@ impl<'a> DeclarationEmitter<'a> {
             .trim_start_matches("./")
             .trim_start_matches('/')
             .to_string()
+    }
+
+    fn package_types_versions_specifier_for_relative_path(
+        &self,
+        package_root: &std::path::Path,
+        package_name: &str,
+        relative_path: &str,
+    ) -> Option<String> {
+        let package_json_path = package_root.join("package.json");
+        let package_json_text = std::fs::read_to_string(package_json_path).ok()?;
+        let package_json = serde_json::from_str::<serde_json::Value>(&package_json_text).ok()?;
+        let types_versions = package_json.get("typesVersions")?.as_object()?;
+        let normalized_relative =
+            Self::normalize_package_relative_path(&self.strip_ts_extensions(relative_path));
+
+        let mut candidates = Vec::new();
+        for mappings in types_versions
+            .values()
+            .filter_map(|value| value.as_object())
+        {
+            for (pattern, targets) in mappings {
+                let Some(targets) = targets.as_array() else {
+                    continue;
+                };
+                for target in targets.iter().filter_map(|value| value.as_str()) {
+                    let Some(public_subpath) =
+                        self.reverse_types_versions_target(pattern, target, &normalized_relative)
+                    else {
+                        continue;
+                    };
+                    let specifier = Self::types_versions_public_package_specifier(
+                        package_name,
+                        &public_subpath,
+                    );
+                    candidates.push((
+                        public_subpath.matches('/').count(),
+                        public_subpath.len(),
+                        specifier,
+                    ));
+                }
+            }
+        }
+
+        candidates.sort();
+        candidates
+            .into_iter()
+            .map(|(_, _, specifier)| specifier)
+            .next()
+    }
+
+    fn reverse_types_versions_target(
+        &self,
+        pattern: &str,
+        target: &str,
+        relative_path: &str,
+    ) -> Option<String> {
+        let normalized_target =
+            Self::normalize_package_relative_path(&self.strip_ts_extensions(target));
+        if let Some((target_prefix, target_suffix)) = normalized_target.split_once('*') {
+            if !relative_path.starts_with(target_prefix) || !relative_path.ends_with(target_suffix)
+            {
+                return None;
+            }
+            let wildcard_end = relative_path.len() - target_suffix.len();
+            let wildcard = &relative_path[target_prefix.len()..wildcard_end];
+            if let Some((pattern_prefix, pattern_suffix)) = pattern.split_once('*') {
+                return Some(format!("{pattern_prefix}{wildcard}{pattern_suffix}"));
+            }
+            return Some(pattern.to_string());
+        }
+
+        if normalized_target == relative_path {
+            return Some(pattern.to_string());
+        }
+
+        None
+    }
+
+    fn package_types_versions_root_reexports_relative_path(
+        &self,
+        package_root: &std::path::Path,
+        relative_path: &str,
+    ) -> bool {
+        let package_json_path = package_root.join("package.json");
+        let Ok(package_json_text) = std::fs::read_to_string(package_json_path) else {
+            return false;
+        };
+        let Ok(package_json) = serde_json::from_str::<serde_json::Value>(&package_json_text) else {
+            return false;
+        };
+        let Some(types_versions) = package_json
+            .get("typesVersions")
+            .and_then(|v| v.as_object())
+        else {
+            return false;
+        };
+        let relative_path =
+            Self::normalize_package_relative_path(&self.strip_ts_extensions(relative_path));
+
+        for mappings in types_versions
+            .values()
+            .filter_map(|value| value.as_object())
+        {
+            let Some(targets) = mappings.get("index").or_else(|| mappings.get("*")) else {
+                continue;
+            };
+            let Some(targets) = targets.as_array() else {
+                continue;
+            };
+            for target in targets.iter().filter_map(|value| value.as_str()) {
+                let target = target.replace('*', "index");
+                for candidate in
+                    Self::type_printing_types_versions_target_file_candidates(package_root, &target)
+                {
+                    let Ok(content) = std::fs::read_to_string(&candidate) else {
+                        continue;
+                    };
+                    let Some(module_specifier) =
+                        Self::type_printing_single_export_star_module(&content)
+                    else {
+                        continue;
+                    };
+                    let Some(reexport_path) =
+                        Self::type_printing_resolve_package_relative_declaration(
+                            package_root,
+                            &candidate,
+                            &module_specifier,
+                        )
+                    else {
+                        continue;
+                    };
+                    let reexport_path = reexport_path.to_string_lossy().replace('\\', "/");
+                    let reexport_path = self.strip_ts_extensions(&reexport_path);
+                    if reexport_path.ends_with(&format!("/{relative_path}")) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    fn type_printing_types_versions_target_file_candidates(
+        package_root: &std::path::Path,
+        target: &str,
+    ) -> Vec<std::path::PathBuf> {
+        let target = target.trim_start_matches("./");
+        if target.ends_with(".d.ts") || target.ends_with(".ts") {
+            return vec![package_root.join(target)];
+        }
+        vec![
+            package_root.join(format!("{target}.d.ts")),
+            package_root.join(format!("{target}.ts")),
+            package_root.join(target).join("index.d.ts"),
+            package_root.join(target).join("index.ts"),
+        ]
+    }
+
+    fn type_printing_single_export_star_module(content: &str) -> Option<String> {
+        content.lines().find_map(|line| {
+            let trimmed = line.trim().trim_end_matches(';').trim();
+            if !trimmed.starts_with("export * from ") {
+                return None;
+            }
+            let (_, module_specifier) = trimmed.rsplit_once(" from ")?;
+            Some(
+                module_specifier
+                    .trim()
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_string(),
+            )
+        })
+    }
+
+    fn type_printing_resolve_package_relative_declaration(
+        package_root: &std::path::Path,
+        from_file: &std::path::Path,
+        module_specifier: &str,
+    ) -> Option<std::path::PathBuf> {
+        let from_dir = from_file.parent()?;
+        let base = from_dir.join(module_specifier);
+        if !base.starts_with(package_root) {
+            return None;
+        }
+        for candidate in [
+            base.with_extension("d.ts"),
+            base.with_extension("ts"),
+            base.join("index.d.ts"),
+            base.join("index.ts"),
+        ] {
+            if candidate.is_file() {
+                return Some(candidate.canonicalize().unwrap_or(candidate));
+            }
+        }
+        None
+    }
+
+    fn types_versions_public_package_specifier(package_name: &str, subpath: &str) -> String {
+        let subpath = Self::normalize_package_relative_path(subpath);
+        let subpath = subpath.strip_suffix("/index").unwrap_or(&subpath);
+        if subpath.is_empty() || subpath == "index" {
+            package_name.to_string()
+        } else {
+            format!("{package_name}/{subpath}")
+        }
     }
 
     pub(in crate::declaration_emitter) fn declaration_runtime_relative_path(

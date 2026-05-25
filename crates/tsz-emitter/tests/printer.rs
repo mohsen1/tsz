@@ -2222,10 +2222,56 @@ fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
 }
 
 #[test]
+fn invalid_namespace_static_class_enum_and_namespace_modifiers_are_preserved() {
+    let source = r#"namespace N {
+    public class PublicClass { }
+    private class PrivateClass { }
+    static class StaticClass { }
+    static namespace Inner { export var value = 1; }
+    static enum Color { Red }
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("class PublicClass"),
+        "Invalid public modifier on namespace class should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class PrivateClass"),
+        "Invalid private modifier on namespace class should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("public class") && !output.contains("private class"),
+        "Access modifiers on namespace classes must not survive JS emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static class StaticClass"),
+        "Invalid static modifier on namespace class should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static let Inner;"),
+        "Invalid static modifier on nested namespace binding should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static let Color;"),
+        "Invalid static modifier on namespace enum binding should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn invalid_namespace_static_modifiers_are_erased_for_es5() {
     let source = r#"namespace N {
     static var staticValue: number = 1;
     static function staticFn(x: string) { }
+    static class StaticClass { }
+    static namespace Inner { export var value = 1; }
+    static enum Color { Red }
 }"#;
     let output = parse_lower_print(source, PrintOptions::es5());
 
@@ -2238,7 +2284,15 @@ fn invalid_namespace_static_modifiers_are_erased_for_es5() {
         "ES5 namespace function recovery should erase invalid static.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("static var") && !output.contains("static function"),
+        output.contains("var Inner;"),
+        "ES5 namespace recovery should still emit the nested namespace binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var Color;"),
+        "ES5 namespace recovery should still emit the enum binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static "),
         "ES5 namespace output must not preserve invalid static modifiers.\nOutput:\n{output}"
     );
 }

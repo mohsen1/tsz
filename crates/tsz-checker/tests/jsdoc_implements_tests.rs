@@ -147,3 +147,120 @@ class B {
         "Expected no TS2720 in .ts file for @implements JSDoc tag, got: {codes:?}"
     );
 }
+
+/// @implements with a `@typedef` target — missing member should emit TS2420.
+/// The target is a JSDoc structural alias, not a TS class/interface, so
+/// the conformance check must consult the JSDoc typedef table.
+#[test]
+fn test_jsdoc_implements_typedef_missing_member_emits_ts2420() {
+    let codes = check_js(
+        r#"
+/** @typedef {{ run(): void }} Runnable */
+/** @implements {Runnable} */
+class Task {
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2420),
+        "Expected TS2420 for class missing typedef member, got: {codes:?}"
+    );
+}
+
+/// @implements with a `@typedef` target — incompatible member type should emit TS2416.
+#[test]
+fn test_jsdoc_implements_typedef_incompatible_member_emits_ts2416() {
+    let codes = check_js(
+        r#"
+/** @typedef {{ run(): void }} Runnable */
+/** @implements {Runnable} */
+class Task {
+    /** @type {number} */
+    run = 5;
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2416),
+        "Expected TS2416 for class with incompatible typedef member, got: {codes:?}"
+    );
+}
+
+/// Renamed identifiers (`Mover`/`Car`) — same structural rule must hold.
+#[test]
+fn test_jsdoc_implements_typedef_renamed_identifiers() {
+    let codes = check_js(
+        r#"
+/** @typedef {{ drive(): void }} Mover */
+/** @implements {Mover} */
+class Car {
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2420),
+        "Expected TS2420 for renamed-identifier typedef target, got: {codes:?}"
+    );
+}
+
+/// Negative control — class correctly satisfies the typedef shape.
+#[test]
+fn test_jsdoc_implements_typedef_satisfied_no_error() {
+    let codes = check_js(
+        r#"
+/** @typedef {{ run(): void }} Runnable */
+/** @implements {Runnable} */
+class Task {
+    run() {}
+}
+"#,
+    );
+    assert!(
+        !codes.contains(&2420) && !codes.contains(&2416) && !codes.contains(&2720),
+        "Expected no implements diagnostics for satisfied typedef, got: {codes:?}"
+    );
+}
+
+/// Multiple missing members from a typedef shape.
+#[test]
+fn test_jsdoc_implements_typedef_multiple_missing_members() {
+    let codes = check_js(
+        r#"
+/** @typedef {{ run(): void, stop(): void }} Runnable */
+/** @implements {Runnable} */
+class Task {
+    run() {}
+}
+"#,
+    );
+    assert!(
+        codes.contains(&2420),
+        "Expected TS2420 for typedef shape with multiple missing members, got: {codes:?}"
+    );
+}
+
+/// Mixing a class target and a typedef target on the same class.
+#[test]
+fn test_jsdoc_implements_mixed_class_and_typedef_targets() {
+    let codes = check_js(
+        r#"
+class Stoppable {
+    stop() {}
+}
+/** @typedef {{ run(): void }} Runnable */
+
+/**
+ * @implements {Stoppable}
+ * @implements {Runnable}
+ */
+class Task {
+    stop() {}
+}
+"#,
+    );
+    // Missing `run` from Runnable typedef → TS2420.
+    assert!(
+        codes.contains(&2420),
+        "Expected TS2420 from missing typedef member while class target is satisfied, got: {codes:?}"
+    );
+}

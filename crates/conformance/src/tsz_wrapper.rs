@@ -8,6 +8,9 @@ use crate::tsc_results::DiagnosticFingerprint;
 use std::collections::HashMap;
 use std::path::Path;
 
+mod path_helpers;
+use path_helpers::is_windows_absolute_path;
+
 /// Result of compiling a test file
 #[derive(Debug, Clone)]
 pub struct CompilationResult {
@@ -1540,9 +1543,6 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
         .or_else(|| caps.name("code2"))
         .or_else(|| caps.name("code3"))
         .and_then(|m| m.as_str().parse::<u32>().ok())?;
-    if code == 2430 && is_extra_signature_inheritance_line(line) {
-        return None;
-    }
     if let Some(rule) = classify_parity(code, line, MatchScope::RawLine) {
         return match rule.action {
             ParityAction::Drop => None,
@@ -1550,11 +1550,6 @@ fn retained_diagnostic_code_from_line(line: &str, mode: DiagnosticLineMode) -> O
         };
     }
     Some(code)
-}
-
-fn is_extra_signature_inheritance_line(line: &str) -> bool {
-    line.contains("Interface 'I' incorrectly extends interface 'A'.")
-        || line.contains("Interface 'I' incorrectly extends interface 'B'.")
 }
 
 /// Parse @symlink associations from raw test file content.
@@ -1982,20 +1977,6 @@ pub fn parse_batch_output(
         crashed: false,
         options,
     }
-}
-
-/// Check if a filename is a Windows-style absolute path (e.g., `A:/foo/bar.ts`, `C:\dir\file.ts`).
-///
-/// TSC conformance tests use Windows drive-letter paths to test cross-drive scenarios.
-/// On Unix, these paths cannot represent real filesystem locations — tsc's virtual
-/// filesystem also can't find files at these paths via `include` patterns, so it
-/// emits TS18003 ("No inputs found in config file").
-fn is_windows_absolute_path(path: &str) -> bool {
-    let bytes = path.as_bytes();
-    bytes.len() >= 3
-        && bytes[0].is_ascii_alphabetic()
-        && bytes[1] == b':'
-        && (bytes[2] == b'/' || bytes[2] == b'\\')
 }
 
 #[cfg(test)]

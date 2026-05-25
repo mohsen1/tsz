@@ -360,6 +360,12 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
+        if let Some(display) =
+            Self::jsx_library_managed_application_simplified_display(&raw_display)
+        {
+            return Some(display);
+        }
+
         // When the managed props conditional remains in display form, the
         // concrete function props are the final fallback branch.
         if let Some(display) = Self::jsx_final_conditional_else_display(&raw_display) {
@@ -409,7 +415,91 @@ impl<'a> CheckerState<'a> {
 
         let colon = last_top_level_colon?;
         let tail = display[colon + ':'.len_utf8()..].trim();
-        (tail.starts_with('{') && tail.ends_with('}')).then(|| tail.to_string())
+        Self::jsx_object_display_from_tail(tail)
+            .or_else(|| Self::jsx_last_conditional_object_else_display(display))
+    }
+
+    fn jsx_library_managed_application_simplified_display(display: &str) -> Option<String> {
+        let args = Self::jsx_top_level_application_args(display, "LibraryManagedAttributes")?;
+        if args.len() != 2 {
+            return None;
+        }
+        let props_display = Self::jsx_final_conditional_else_display(args[1].trim())
+            .or_else(|| Self::jsx_last_conditional_object_else_display(args[1].trim()))?;
+        Some(format!(
+            "LibraryManagedAttributes<{}, {}>",
+            args[0].trim(),
+            props_display
+        ))
+    }
+
+    fn jsx_top_level_application_args<'b>(display: &'b str, name: &str) -> Option<Vec<&'b str>> {
+        let prefix = format!("{name}<");
+        let body = display.strip_prefix(&prefix)?.strip_suffix('>')?;
+        let mut args = Vec::new();
+        let mut start = 0usize;
+        let mut angle_depth = 0i32;
+        let mut paren_depth = 0i32;
+        let mut brace_depth = 0i32;
+        let mut bracket_depth = 0i32;
+
+        for (idx, ch) in body.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' => angle_depth -= 1,
+                '(' => paren_depth += 1,
+                ')' => paren_depth -= 1,
+                '{' => brace_depth += 1,
+                '}' => brace_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                ',' if angle_depth == 0
+                    && paren_depth == 0
+                    && brace_depth == 0
+                    && bracket_depth == 0 =>
+                {
+                    args.push(body[start..idx].trim());
+                    start = idx + ','.len_utf8();
+                }
+                _ => {}
+            }
+        }
+        args.push(body[start..].trim());
+        Some(args)
+    }
+
+    fn jsx_last_conditional_object_else_display(display: &str) -> Option<String> {
+        let mut candidate = None;
+        for (idx, ch) in display.char_indices() {
+            if ch != ':' {
+                continue;
+            }
+            let tail = display[idx + ':'.len_utf8()..].trim_start();
+            if let Some(object_display) = Self::jsx_object_display_from_tail(tail) {
+                candidate = Some(object_display);
+            }
+        }
+        candidate
+    }
+
+    fn jsx_object_display_from_tail(tail: &str) -> Option<String> {
+        if !tail.starts_with('{') {
+            return None;
+        }
+        let mut depth = 0i32;
+        for (idx, ch) in tail.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(tail[..idx + ch.len_utf8()].trim().to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
     }
 
     fn get_jsx_component_props_display_text_from_function_initializer(
