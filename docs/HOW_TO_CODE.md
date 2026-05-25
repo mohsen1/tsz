@@ -120,7 +120,8 @@ Hot paths in the solver and checker are allocation-sensitive. Prefer `&str`, `Co
 
 ### Keep functions short
 
-Target: under 50 lines per function, under 2000 lines per file. Long match arms are a sign you need a helper, a visitor, or a classifier.
+Target: under 50 lines per function. Files have a hard 2000-line ceiling; long
+match arms are a sign you need a helper, a visitor, or a classifier.
 
 ---
 

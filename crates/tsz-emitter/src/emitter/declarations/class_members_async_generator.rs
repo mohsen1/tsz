@@ -17,7 +17,7 @@ impl<'a> Printer<'a> {
         };
         let inner_name =
             (!method_name.is_empty()).then(|| self.next_async_generator_inner_name(&method_name));
-        let move_params_to_generator = self.async_generator_params_need_forwarding(params);
+        let move_params_to_generator = self.async_params_need_generator_forwarding(params);
         let body_is_empty_single_line = self
             .arena
             .get(body)

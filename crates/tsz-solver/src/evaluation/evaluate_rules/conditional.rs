@@ -4,13 +4,13 @@
 //! Including distributive conditional types over union types.
 
 use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_generic, instantiate_type_with_infer,
+    TypeSubstitution, instantiate_generic, instantiate_type, instantiate_type_with_infer,
 };
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
-    TypeParamInfo,
+    CallSignature, CallableShape, ConditionalType, ObjectShape, ObjectShapeId, ParamInfo,
+    PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use crate::visitor::{callable_shape_id, function_shape_id};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -316,10 +316,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
-                if matches!(
+                // A bare `infer X` extends clause always matches, so tsc takes the
+                // true branch with `X` bound to the check type. Normal evaluation
+                // defers when the check type is still a free type parameter (the
+                // conditional has no concrete input yet). During the TS2589
+                // depth-detection pass the alias body is evaluated with its type
+                // parameters left free, so deferring here hides unconditionally
+                // recursive aliases like `type A<T> = T extends infer X ? A<X & B>
+                // : never` from the recursion guard. In that pass, bind `X` to the
+                // free type parameter and follow the true branch so the guard can
+                // observe the re-applied alias and surface TS2589.
+                let check_is_unresolved_param = matches!(
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-                ) {
+                );
+                let drive_recursion_for_depth_check = self.is_depth_detection_pass()
+                    && matches!(
+                        self.interner().lookup(check_type),
+                        Some(TypeData::TypeParameter(_))
+                    );
+                if check_is_unresolved_param && !drive_recursion_for_depth_check {
                     return self.interner().conditional(*cond);
                 }
 
@@ -1242,12 +1258,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         };
         let app = self.interner().type_application(app_id);
-        let def_id = match self.interner().lookup(app.base)? {
-            TypeData::Lazy(def_id) => Some(def_id),
-            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
-            _ => None,
-        }?;
-        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        // For TypeQuery bases (e.g. `typeof ClassName<T>`), always use
+        // `resolve_type_query` to get the CONSTRUCTOR type. `resolve_lazy` would
+        // return the INSTANCE type for classes (via `class_instance_types`), so
+        // `InstanceType<typeof Class<T>>` would fail its constructor constraint check.
+        let (def_id_opt, resolved, base_is_type_query) = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => {
+                let r = self.resolver().resolve_lazy(def_id, self.interner())?;
+                (Some(def_id), r, false)
+            }
+            TypeData::TypeQuery(sym_ref) => {
+                let def_id_opt = self.resolver().symbol_to_def_id(sym_ref);
+                let r = self
+                    .resolver()
+                    .resolve_type_query(sym_ref, self.interner())?;
+                (def_id_opt, r, true)
+            }
+            _ => return None,
+        };
         if app.args.len() == 1
             && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(resolved)
             && let Some(TypeData::TypeParameter(tp)) = self.interner().lookup(obj)
@@ -1262,9 +1290,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return Some(direct);
             }
         }
-        let type_params = self
-            .resolver()
-            .get_lazy_type_params(def_id)
+        // For TypeQuery-based Applications (e.g. `typeof ClassExpr<T>`), use
+        // per-signature instantiation so that the class type parameters stored in
+        // `sig.type_params` are CONSUMED rather than SHADOWED. The standard
+        // `instantiate_generic` path calls `TypeInstantiator` which calls
+        // `enter_shadowing_scope(&sig.type_params)`, blocking substitution of those
+        // names from an outer substitution.
+        if base_is_type_query {
+            let instantiate_result = self.try_instantiate_callable_type_params(resolved, &app.args);
+            if let Some(specialized) = instantiate_result {
+                let evaluated = self.evaluate(specialized);
+                return (evaluated != type_id).then_some(evaluated);
+            }
+            // If per-sig instantiation didn't apply (e.g., resolved is not a
+            // Callable), fall through to the generic path below.
+        }
+
+        let type_params = def_id_opt
+            .and_then(|def_id| self.resolver().get_lazy_type_params(def_id))
             .filter(|params| params.len() == app.args.len())
             .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
         if type_params.len() != app.args.len() {
@@ -1281,6 +1324,93 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let evaluated = self.evaluate(instantiated);
         (evaluated != type_id).then_some(evaluated)
+    }
+
+    /// Instantiate a `Callable` type's signatures using per-signature substitution.
+    ///
+    /// When `typeof ClassExpr<T>` appears as the check type of a conditional like
+    /// `InstanceType<typeof ClassExpr<T>>`, the class's type parameters live inside
+    /// `sig.type_params` on the constructor signatures. The standard
+    /// `instantiate_generic` path calls `TypeInstantiator` which calls
+    /// `enter_shadowing_scope(&sig.type_params)`, adding those names to the shadowed
+    /// set and preventing them from being substituted.
+    ///
+    /// This method bypasses that by building a substitution from each signature's own
+    /// `type_params` and applying it to the signature's parts individually (the same
+    /// approach as the checker's `instantiate_signature`). Type params are consumed
+    /// (set to `Vec::new()`) in the output signatures so the resulting Callable is
+    /// fully concrete with respect to the supplied `type_args`.
+    ///
+    /// Returns `Some(new_callable_id)` when at least one construct signature was
+    /// successfully instantiated; returns `None` otherwise (wrong arg count, not a
+    /// Callable, etc.).
+    pub(in crate::evaluation) fn try_instantiate_callable_type_params(
+        &mut self,
+        callable_id: TypeId,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        let cs_id = match self.interner().lookup(callable_id)? {
+            TypeData::Callable(cs_id) => cs_id,
+            _ => return None,
+        };
+        let shape = self.interner().callable_shape(cs_id);
+
+        fn instantiate_sig(
+            interner: &dyn crate::construction::TypeDatabase,
+            sig: &CallSignature,
+            type_args: &[TypeId],
+        ) -> Option<CallSignature> {
+            if sig.type_params.len() != type_args.len() {
+                return None;
+            }
+            let subst = TypeSubstitution::from_args(interner, &sig.type_params, type_args);
+            let params: Vec<ParamInfo> = sig
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    type_id: instantiate_type(interner, p.type_id, &subst),
+                    ..*p
+                })
+                .collect();
+            let return_type = instantiate_type(interner, sig.return_type, &subst);
+            let this_type = sig.this_type.map(|t| instantiate_type(interner, t, &subst));
+            Some(CallSignature {
+                type_params: Vec::new(),
+                params,
+                return_type,
+                this_type,
+                type_predicate: sig.type_predicate,
+                is_method: sig.is_method,
+            })
+        }
+
+        let mut new_construct_sigs: Vec<CallSignature> = Vec::new();
+        let mut any_changed = false;
+        for sig in shape.construct_signatures.iter() {
+            match instantiate_sig(self.interner(), sig, type_args) {
+                Some(new_sig) => {
+                    any_changed = true;
+                    new_construct_sigs.push(new_sig);
+                }
+                None => {
+                    new_construct_sigs.push(sig.clone());
+                }
+            }
+        }
+        if !any_changed {
+            return None;
+        }
+
+        let new_shape = CallableShape {
+            construct_signatures: new_construct_sigs,
+            call_signatures: shape.call_signatures.to_vec(),
+            properties: shape.properties.to_vec(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
+            symbol: shape.symbol,
+            is_abstract: shape.is_abstract,
+        };
+        Some(self.interner().callable(new_shape))
     }
 
     /// Check if this is a primitive type vs Function/callable target.
@@ -1966,11 +2096,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     extends_elem.optional.then_some(TypeId::UNDEFINED)
                 } else if check_elements.len() == 1 && !check_elements[0].rest {
                     let elem = &check_elements[0];
-                    Some(if elem.optional {
-                        self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                    // Optional source cannot fill a required pattern slot.
+                    if elem.optional && !extends_elem.optional {
+                        None
                     } else {
-                        elem.type_id
-                    })
+                        let ty = if elem.optional {
+                            self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                        } else {
+                            elem.type_id
+                        };
+                        Some(ty)
+                    }
                 } else {
                     None
                 }
@@ -1995,6 +2131,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             if check_elements.len() == 1 && !check_elements[0].rest {
                                 let elem = &check_elements[0];
+                                if elem.optional && !extends_elem.optional {
+                                    return self.evaluate(cond.false_type);
+                                }
                                 let elem_type = if elem.optional {
                                     self.interner().union2(elem.type_id, TypeId::UNDEFINED)
                                 } else {
