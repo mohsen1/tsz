@@ -42,9 +42,9 @@ scripts/agents/list-owned-work.sh M4-B
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
-    `26373943878` attempt 2 still has `unit` in progress plus
-    `cargo-shear`, `node-harness-prep`, and `dist-binaries` queued after the
-    earlier `conformance-aggregate` incomplete-coverage failure was rerun.
+    `26373943878` attempt 2 still has `cargo-shear`, `node-harness-prep`, and
+    `dist-binaries` queued after the earlier `conformance-aggregate`
+    incomplete-coverage failure was rerun.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
   merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
   reason.
