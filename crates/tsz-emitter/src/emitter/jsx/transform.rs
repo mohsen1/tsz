@@ -168,18 +168,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             self.write("children: ");
-            if is_jsxs {
-                self.bracketed(|emitter| {
-                    for (i, child) in children.iter().enumerate() {
-                        if i > 0 {
-                            emitter.write(", ");
-                        }
-                        emitter.emit_jsx_child_as_expression(*child);
-                    }
-                });
-            } else {
-                self.emit_jsx_child_as_expression(children[0]);
-            }
+            self.emit_jsx_children_value(children, children, is_jsxs);
         }
 
         self.write(" }");
@@ -228,18 +217,7 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 self.write("children: ");
-                if is_jsxs {
-                    self.bracketed(|emitter| {
-                        for (i, child) in children.iter().enumerate() {
-                            if i > 0 {
-                                emitter.write(", ");
-                            }
-                            emitter.emit_jsx_child_as_expression(*child);
-                        }
-                    });
-                } else {
-                    self.emit_jsx_child_as_expression(children[0]);
-                }
+                self.emit_jsx_children_value(children, children, is_jsxs);
             }
             self.write(" }");
             return;
@@ -313,18 +291,7 @@ impl<'a> Printer<'a> {
                 self.write(", ");
             }
             self.write("{ children: ");
-            if is_jsxs {
-                self.bracketed(|emitter| {
-                    for (i, child) in children.iter().enumerate() {
-                        if i > 0 {
-                            emitter.write(", ");
-                        }
-                        emitter.emit_jsx_child_as_expression(*child);
-                    }
-                });
-            } else {
-                self.emit_jsx_child_as_expression(children[0]);
-            }
+            self.emit_jsx_children_value(children, children, is_jsxs);
             self.write(" }");
         }
 
@@ -746,15 +713,18 @@ impl<'a> Printer<'a> {
                 }
                 if is_cjs {
                     let mut text = String::new();
+                    let decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
                     // Base module import for createElement fallback (key-after-spread)
                     if usage.needs_create_element {
                         let base_var = self.jsx_cjs_base_var();
-                        text.push_str(&format!("const {base_var} = require(\"{source}\");\n"));
+                        text.push_str(&format!(
+                            "{decl_keyword} {base_var} = require(\"{source}\");\n"
+                        ));
                     }
                     if usage.needs_jsx || usage.needs_jsxs || usage.needs_fragment {
                         let var_name = self.jsx_cjs_runtime_var();
                         text.push_str(&format!(
-                            "const {var_name} = require(\"{source}/jsx-runtime\");\n"
+                            "{decl_keyword} {var_name} = require(\"{source}/jsx-runtime\");\n"
                         ));
                     }
                     Some(text)
@@ -800,15 +770,18 @@ impl<'a> Printer<'a> {
                 let file_name_line = self.jsx_dev_file_name_text().unwrap_or_default();
                 if is_cjs {
                     let mut text = String::new();
+                    let decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
                     // Base module import for createElement fallback (key-after-spread)
                     if usage.needs_create_element {
                         let base_var = self.jsx_cjs_base_var();
-                        text.push_str(&format!("const {base_var} = require(\"{source}\");\n"));
+                        text.push_str(&format!(
+                            "{decl_keyword} {base_var} = require(\"{source}\");\n"
+                        ));
                     }
                     if usage.needs_jsx || usage.needs_jsxs || usage.needs_fragment {
                         let var_name = self.jsx_cjs_runtime_var();
                         text.push_str(&format!(
-                            "const {var_name} = require(\"{source}/jsx-dev-runtime\");\n"
+                            "{decl_keyword} {var_name} = require(\"{source}/jsx-dev-runtime\");\n"
                         ));
                     }
                     text.push_str(&file_name_line);
@@ -879,7 +852,7 @@ impl<'a> Printer<'a> {
                             usage.needs_create_element = true;
                         } else {
                             let children = self.collect_jsx_children(&jsx.children.nodes);
-                            if children.len() > 1 {
+                            if self.jsx_children_need_array(&children) {
                                 usage.needs_jsxs = true;
                             } else {
                                 usage.needs_jsx = true;
@@ -892,7 +865,7 @@ impl<'a> Printer<'a> {
                     // Fragments also use _jsx or _jsxs
                     if let Some(frag) = self.arena.get_jsx_fragment(node) {
                         let children = self.collect_jsx_children(&frag.children.nodes);
-                        if children.len() > 1 {
+                        if self.jsx_children_need_array(&children) {
                             usage.needs_jsxs = true;
                         } else {
                             usage.needs_jsx = true;

@@ -93,19 +93,20 @@ impl<'a> Printer<'a> {
             return 0;
         }
 
-        let needs_class_reference = static_initializer_nodes.iter().any(|idx| {
-            contains_this_reference(self.arena, *idx)
-                || contains_async_arrow_function(self.arena, *idx)
-        });
-        let needs_super_reference = self.class_has_non_null_extends(class)
+        let externalized_static_initializers = self.ctx.options.legacy_decorators
+            && !self.collect_class_decorators(&class.modifiers).is_empty();
+        let needs_class_reference = !externalized_static_initializers
+            && static_initializer_nodes.iter().any(|idx| {
+                contains_this_reference(self.arena, *idx)
+                    || contains_async_arrow_function(self.arena, *idx)
+            });
+        let needs_super_reference = !externalized_static_initializers
+            && self.class_has_non_null_extends(class)
             && static_initializer_nodes
                 .iter()
                 .any(|idx| contains_super_reference(self.arena, *idx));
-        let externalized_static_initializers = self.ctx.options.legacy_decorators
-            && !self.collect_class_decorators(&class.modifiers).is_empty();
 
-        usize::from(needs_class_reference)
-            + usize::from(needs_super_reference && !externalized_static_initializers)
+        usize::from(needs_class_reference) + usize::from(needs_super_reference)
     }
 
     fn class_static_initializer_nodes_for_temp_plan(&self, class: &ClassData) -> Vec<NodeIndex> {

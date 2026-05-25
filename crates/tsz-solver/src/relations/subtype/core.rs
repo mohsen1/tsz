@@ -29,8 +29,8 @@ use crate::visitor::{
     enum_components, function_shape_id, index_access_parts, intersection_list_id, intrinsic_kind,
     is_this_type, keyof_inner_type, lazy_def_id, literal_value, mapped_type_id, object_shape_id,
     object_with_index_shape_id, readonly_inner_type, string_intrinsic_components,
-    template_literal_id, tuple_list_id, type_param_info, type_query_symbol, union_list_id,
-    unique_symbol_ref,
+    template_literal_id, template_literal_spans_full_string_domain, tuple_list_id, type_param_info,
+    type_query_symbol, union_list_id, unique_symbol_ref,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::limits;
@@ -1510,6 +1510,17 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         if let Some(s_kind) = intrinsic_kind(self.interner, source) {
             if self.is_boxed_primitive_subtype(s_kind, target) {
+                return SubtypeResult::True;
+            }
+            // `string` is assignable to a template literal that spans the full
+            // string domain (e.g. `` `${string}${string}` ``): any string can
+            // be partitioned across the all-`${string}` placeholders. A lone
+            // `${string}` already collapses to `string` at construction, so
+            // this covers the multi-placeholder case. Mirrors tsc, which treats
+            // such a template as mutually assignable with `string`.
+            if s_kind == IntrinsicKind::String
+                && template_literal_spans_full_string_domain(self.interner, target)
+            {
                 return SubtypeResult::True;
             }
             // `object` keyword is structurally equivalent to `{}` (empty object).

@@ -7,6 +7,15 @@ impl<'a> CheckerContext<'a> {
         crate::query_boundaries::common::contains_lazy_def_id(self.types, type_id, def_id)
     }
 
+    /// Whether `type_id` references any type-alias `DefId` flagged as
+    /// unconditionally-infinite (TS2589). Such aliases are error types in tsc,
+    /// so assignments involving them must not produce structural mismatches.
+    pub(crate) fn type_involves_depth_poisoned_def(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::common::collect_lazy_def_ids(self.types, type_id)
+            .into_iter()
+            .any(|def_id| self.definition_store.is_depth_poisoned(def_id))
+    }
+
     pub(crate) fn lookup_env_eval_cache(&self, type_id: TypeId) -> Option<EnvEvalCacheEntry> {
         self.env_eval_cache.borrow().get(&type_id).copied()
     }

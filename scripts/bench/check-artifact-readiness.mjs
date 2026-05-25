@@ -25,8 +25,8 @@ import {
   PROJECT_ROWS_BY_NAME,
 } from "./project-rows.mjs";
 import {
+  hasCompletePhaseMetadata,
   isGreen,
-  isIncompleteCompat,
 } from "./row-utils.mjs";
 
 const args = process.argv.slice(2);
@@ -53,10 +53,11 @@ function loadArtifact() {
 function rowState(row, duplicate = false) {
   if (!row) return "missing";
   if (duplicate) return "gray";
-  if (row.status) return "red";
-  if (isIncompleteCompat(row)) return "gray";
+  if (row.artifact_missing === true) return "gray";
   const compat = row.compatibility;
   if (!compat) return "gray";
+  if (!hasCompletePhaseMetadata(compat)) return "gray";
+  if (row.status) return "red";
   if (isGreen(row)) return "green";
   if (compat.state === "yellow" || compat.state === "red") return compat.state;
   return "gray";

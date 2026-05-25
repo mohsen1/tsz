@@ -19,6 +19,255 @@ fn transform_and_print(source: &str) -> String {
     }
 }
 
+#[test]
+fn labeled_while_continue_inside_nested_loop_targets_outer_async_case() {
+    let output = transform_and_print(
+        "async function f() { outer: while (x) { await y; while (z) { continue outer; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "Nested loops inside an async-lowered labeled loop must rewrite `continue outer` to the outer loop's generator continue target.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue outer;"),
+        "The labeled continue must not remain as raw JS inside the generator body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn element_access_with_suspended_index_captures_object_before_yield() {
+    let output = transform_and_print("async function f() { z = x[await y]; }");
+
+    assert!(
+        output.contains("var _a;"),
+        "Suspended element access must hoist a temp for the object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = x;") && output.contains("return [4 /*yield*/, y];"),
+        "The object expression must be evaluated before yielding the index.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("z = _a[") && output.contains(".sent()];"),
+        "The resumed assignment must index into the captured object using the sent value.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn block_return_inside_async_body_lowers_to_generator_return() {
+    let output = transform_and_print("async function f() { { return; } }");
+
+    assert!(
+        output.contains("{\n            return [2 /*return*/];\n        }"),
+        "Nested blocks in async ES5 bodies should preserve braces but lower bare returns to generator return ops.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return;\n            }"),
+        "Raw JS returns inside the generator callback would bypass the __generator protocol.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn labeled_while_continue_rewrite_uses_user_chosen_label() {
+    let output = transform_and_print(
+        "async function f() { retry: while (x) { await y; while (z) { continue retry; } } }",
+    );
+
+    assert!(
+        output.contains("while (z) {") && output.contains("return [3 /*break*/, 0];"),
+        "The rewrite must be keyed by the active label target, not by a specific spelling.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue retry;"),
+        "The user-chosen label should be lowered to the generator jump.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn return_element_access_with_suspended_index_captures_user_chosen_object() {
+    let output = transform_and_print("async function f() { return receiver[await key]; }");
+
+    assert!(
+        output.contains("_a = receiver;") && output.contains("return [4 /*yield*/, key];"),
+        "Return expressions should capture the element object before the suspended index.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [2 /*return*/, _a[") && output.contains(".sent()]];"),
+        "The returned value should use the captured receiver and resumed index.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn block_return_expression_inside_async_body_keeps_return_value() {
+    let output = transform_and_print("async function f() { { return value; } }");
+
+    assert!(
+        output.contains("return [2 /*return*/, value];"),
+        "Nested block returns with values should lower to generator return ops with that value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return value;"),
+        "The original return expression must not be emitted raw inside the generator callback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn variable_initializer_element_access_with_suspended_index_captures_object() {
+    let output = transform_and_print("async function f() { var result = obj[await key]; }");
+
+    assert!(
+        output.contains("_a = obj;") && output.contains("return [4 /*yield*/, key];"),
+        "Variable initializers should preserve object-before-index evaluation order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("result = _a[") && output.contains(".sent()];"),
+        "The initializer assignment should use the captured object after resume.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn non_assignment_binary_with_suspended_element_index_keeps_normal_fallback() {
+    let output = transform_and_print("async function f() { return lhs() + obj[await key]; }");
+
+    assert!(
+        !output.contains("_a = obj;"),
+        "The element-object capture helper must not reorder unrelated binary-left side effects.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("lhs() + obj[") && output.contains(".sent()]"),
+        "Unsupported binary shapes should keep the existing expression fallback.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn block_return_await_inside_async_body_stays_on_state_machine_path() {
+    let output = transform_and_print("async function f() { { return await value; } }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, value];")
+            && output.contains("case 1: return [2 /*return*/, _a.sent()];"),
+        "Blocks containing suspending returns should be lowered through the async state machine.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return await value;"),
+        "Suspending block returns must not fall back to raw JS block emission.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_expression_with_suspended_constructor_yields_before_constructing() {
+    let output = transform_and_print("async function f() { new (await ctor)(arg); }");
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, ctor];")
+            && output.contains("case 1:")
+            && output.contains("new (_a.sent())(arg);"),
+        "A suspended constructor expression must yield the constructor before emitting the `new` call.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_expression_with_suspended_argument_uses_bind_apply() {
+    let output = transform_and_print("async function f() { new Factory(prefix, await value); }");
+
+    assert!(
+        output.contains("var _a, _b;"),
+        "Suspended new-expression arguments should reserve temps for `.bind` and prefix args.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = Factory.bind;")
+            && output.contains("_b = [void 0, prefix];")
+            && output.contains("return [4 /*yield*/, value];"),
+        "The constructor bind and prefix arguments must be captured before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("new (_a.apply(Factory, _b.concat([_c.sent()])))();"),
+        "The resumed constructor call should use tsc's bind/apply new-expression shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn awaited_new_expression_with_spread_lowers_to_bind_apply() {
+    let output = transform_and_print("async function f() { await new Factory(...args, tail); }");
+
+    assert!(
+        output.contains("new (Factory.bind.apply(Factory, __spreadArray(__spreadArray([void 0], args, false), [tail], false)))()"),
+        "Awaited ES5 new expressions with spread arguments must lower through constructor bind/apply before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("new Factory(...args"),
+        "Raw spread syntax must not survive in async ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn new_expression_with_suspended_element_constructor_index_captures_object() {
+    let output = transform_and_print("async function f() { new registry[await key](arg); }");
+
+    assert!(
+        output.contains("var _a;"),
+        "Suspended constructor element indexes should reserve a temp for the constructor object.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = registry;") && output.contains("return [4 /*yield*/, key];"),
+        "The constructor object must be captured before yielding the computed key.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("new _a[_b.sent()](arg);"),
+        "The resumed constructor should index into the captured object.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_literal_prefix_before_await_is_captured_before_yield() {
+    let output = transform_and_print("async function f() { x = [head, await tail, after]; }");
+
+    assert!(
+        output.contains("var _a;"),
+        "A prefix temp should be hoisted before the generator body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [head];\n                    return [4 /*yield*/, tail];"),
+        "Array elements before the suspending element must be evaluated before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent(), after]);"),
+        "After resume, the saved prefix should be concatenated with the sent value and suffix.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn array_literal_multiple_awaits_accumulates_prefix_between_yields() {
+    let output =
+        transform_and_print("async function f() { x = [await first, middle, await last]; }");
+
+    assert!(
+        output
+            .contains("_a = [_b.sent(), middle];\n                    return [4 /*yield*/, last];"),
+        "The resumed first await and intervening elements should be captured before the second yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _a.concat([_b.sent()]);"),
+        "The final resume should append to the accumulated prefix temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn spread_array_literal_with_suspending_spread_uses_spread_array_apply() {
+    let output = transform_and_print("async function f() { x = [...(await values), z]; }");
+
+    assert!(
+        output.contains("_a = [[]];\n                    return [4 /*yield*/, values];"),
+        "A suspending first spread still needs a captured spread-argument prefix.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "x = __spreadArray.apply(void 0, [__spreadArray.apply(void 0, _a.concat([(_b.sent()), true])), [z], false]);"
+        ),
+        "Spread array recomposition after resume should use the ES5 __spreadArray helper shape.\nOutput:\n{output}"
+    );
+}
+
 // Structural rule: when an async ES5 function contains a try statement where
 // any region (try, catch, finally) suspends on `await`, the generator state
 // machine must emit a 4-tuple `_a.trys.push([start, catch, finally, end])`
@@ -233,6 +482,13 @@ fn test_class_declaration_in_async_body_uses_structured_es5_assignment() {
 }
 
 fn transform_generator_and_print(source: &str) -> String {
+    transform_generator_with_downlevel_iteration_and_print(source, false)
+}
+
+fn transform_generator_with_downlevel_iteration_and_print(
+    source: &str,
+    downlevel_iteration: bool,
+) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
 
@@ -242,11 +498,71 @@ fn transform_generator_and_print(source: &str) -> String {
     {
         let mut transformer = AsyncES5Transformer::new(&parser.arena);
         transformer.set_source_text(source);
+        transformer.set_downlevel_iteration(downlevel_iteration);
         let ir = transformer.transform_generator_function(func_idx);
         IRPrinter::emit_to_string(&ir)
     } else {
         String::new()
     }
+}
+
+#[test]
+fn downlevel_iteration_captured_for_of_generator_uses_iterator_cleanup_and_loop_generator() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const i of [1,2,3]) { (() => i)(); yield i; } }",
+        true,
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (i)")
+            && output.contains("(function () { return i; })();")
+            && output.contains("return [4 /*yield*/, i];"),
+        "Captured block-scoped for-of iteration variables should get a per-iteration generator helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values([1, 2, 3])") && output.contains(".trys.push([1, 6, 7, 8]);"),
+        "Downlevel iteration inside the generator state machine must use iterator protocol setup and cleanup labels.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [5 /*yield**/, _loop_1(i)];"),
+        "The outer generator must delegate to the per-iteration helper so each captured `i` has its own binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (_b && !_b.done && (_c = _a.return)) _c.call(_a);"),
+        "Iterator cleanup must call the iterator return method when the state machine exits early.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn downlevel_iteration_captured_for_of_generator_uses_user_chosen_iteration_name() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const entry of list) { (() => entry)(); yield entry; } }",
+        true,
+    );
+
+    assert!(
+        output.contains("_loop_1 = function (entry)")
+            && output.contains("return [5 /*yield**/, _loop_1(entry)];")
+            && output.contains("return [4 /*yield*/, entry];"),
+        "Captured for-of lowering must be structural over the iteration binding, not keyed to `i`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__values(list)"),
+        "The iterable expression should flow through the iterator helper without relying on an array literal shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn downlevel_iteration_uncaptured_for_of_generator_does_not_synthesize_loop_helper() {
+    let output = transform_generator_with_downlevel_iteration_and_print(
+        "function * f() { for (const value of list) { yield value; } }",
+        true,
+    );
+
+    assert!(
+        !output.contains("_loop_1 = function"),
+        "The per-iteration helper is only needed when the iteration binding is captured by a nested function.\nOutput:\n{output}"
+    );
 }
 
 fn label_assignment_before(output: &str, needle: &str) -> String {
@@ -285,6 +601,61 @@ fn if_break_target_after(output: &str, needle: &str) -> String {
 
 fn count_substring(haystack: &str, needle: &str) -> usize {
     haystack.matches(needle).count()
+}
+
+#[test]
+fn generator_object_literal_prefix_before_yield_is_captured_before_resume() {
+    let output = transform_generator_and_print(
+        "function* f() { var x = { before: 1, value: yield 2, after: 3 }; }",
+    );
+
+    assert!(
+        output.contains("var x, _a;"),
+        "The object temp should be hoisted with the local declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = { before: 1 };") && output.contains("return [4 /*yield*/, 2];"),
+        "Properties before the suspending value must be assigned before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_a.value = _b.sent(),\n                    _a.after = 3,\n                    _a);"),
+        "After resume, the saved object should be mutated and returned from the comma expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_object_literal_computed_key_before_yield_is_captured() {
+    let output =
+        transform_generator_and_print("function* f() { var x = { before: 1, [key()]: yield 2 }; }");
+
+    assert!(
+        output.contains("var x, _a;\n    var _b;"),
+        "A computed key temp and object temp should use tsc's split hoist groups.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b = { before: 1 };\n                _a = key();\n                return [4 /*yield*/, 2];"),
+        "The computed key must be evaluated before yielding the property value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_b[_a] = _c.sent(),\n                    _b);"),
+        "The resumed value should assign through the captured computed key.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_object_literal_computed_suffix_uses_result_temp_after_resume() {
+    let output = transform_generator_and_print(
+        "function* f() { var x = { before: 1, value: yield 2, [key()]: 3 }; }",
+    );
+
+    assert!(
+        output.contains("var x, _a;\n    var _b;"),
+        "A suffix computed property should allocate a result temp after the saved object temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = (_b = (_a.value = _c.sent(),\n                    _a),\n                    _b[key()] = 3,\n                    _b);"),
+        "The computed suffix should operate on the resumed object temp, matching tsc's comma expression shape.\nOutput:\n{output}"
+    );
 }
 
 #[test]
@@ -821,6 +1192,42 @@ fn test_await_using_in_async_body_lowers_to_generator_disposable_region() {
 }
 
 #[test]
+fn test_using_in_generator_body_lowers_to_generator_disposable_region() {
+    let output = transform_generator_and_print(
+        "function * g() { using d = { [Symbol.dispose]() {} }; yield; }",
+    );
+
+    assert!(
+        output.contains("function g()"),
+        "ES5 generator declarations should drop the native asterisk.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var env_1, d, e_1;"),
+        "Generator resource names should be hoisted before the state machine.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_b.trys.push([1, 3, 4, 5]);"),
+        "Generator `using` should plan a try/finally region around the yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("d = __addDisposableResource(env_1"),
+        "Generator `using` declarations should register with __addDisposableResource.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/];"),
+        "Bare generator yield should match tsc's no-operand tuple shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__disposeResources(env_1);"),
+        "Generator finally region should dispose the resource stack.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function*") && !output.contains("using d"),
+        "Native generator/using syntax must not leak into ES5 output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_async_for_in_parenthesized_await_object_lowers_without_raw_fallback() {
     let output = transform_and_print(
         "async function f() { for (var k in (await getObj())) { await h(k); } }",
@@ -918,6 +1325,50 @@ fn test_return_await_call_argument_captures_identifier_callee_before_yield() {
     assert!(
         output.contains("[2 /*return*/, _a.apply(void 0, [_b.sent()])]"),
         "Resumed return should invoke the captured callee with the sent value: {output}"
+    );
+}
+
+#[test]
+fn test_async_exponentiation_suspension_uses_math_pow_apply() {
+    let output = transform_and_print("async function foo() { (await x) ** y; x ** await y; }");
+
+    assert!(
+        output.contains("_b = (_a = Math).pow;")
+            && output.contains("_b.apply(_a, [(_f.sent()), y]);"),
+        "Suspended left operand must capture `Math.pow` before yielding and resume through apply.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_d = (_c = Math).pow;")
+            && output.contains("_e = [x];")
+            && output.contains("_d.apply(_c, _e.concat([_f.sent()]));"),
+        "Suspended right operand must preserve the already-evaluated left argument before yielding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(" ** "),
+        "Async ES5 exponentiation lowering must not leave `**` in the output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_async_return_comma_suspension_preserves_sequence() {
+    let left_suspend = transform_and_print("async function foo() { return (await x), y; }");
+
+    assert!(
+        left_suspend.contains("return [2 /*return*/, ((_a.sent()), y)];"),
+        "A comma return with suspended left operand must return the whole comma expression as one generator value.\nOutput:\n{left_suspend}"
+    );
+    assert!(
+        !left_suspend.contains("return [2 /*return*/, (_a.sent()), y];"),
+        "The comma expression must not be split into multiple generator-op array elements.\nOutput:\n{left_suspend}"
+    );
+
+    let right_suspend = transform_and_print("async function foo() { return x, await y; }");
+    assert!(
+        right_suspend.contains("case 0:")
+            && right_suspend.contains("x;")
+            && right_suspend.contains("return [4 /*yield*/, y];")
+            && right_suspend.contains("case 1: return [2 /*return*/, _a.sent()];"),
+        "A comma return with suspended right operand must evaluate the left side before yielding and return the resumed right value.\nOutput:\n{right_suspend}"
     );
 }
 
@@ -1265,6 +1716,57 @@ fn discovery_generator_mode_ignores_body_without_yield() {
 #[test]
 fn discovery_body_contains_await_returns_false_for_pure_body() {
     assert!(!body_contains_await("async function f() { var x = 1; }"));
+}
+
+#[test]
+fn for_await_of_in_async_function_uses_async_iterator_state_machine() {
+    let output = transform_and_print("async function f() { let y; for await (const x of y) {} }");
+
+    assert!(
+        output.contains("__asyncValues(y)") && output.contains(".next()"),
+        "Plain `for await...of` must lower through the async iterator helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(".trys.push([0, 5, 6, 11]);")
+            && output.contains("if (!(!_a && !_b && (_c = y_1.return)))"),
+        "The lowered loop must protect iterator close with tsc's outer try/finally shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = _d;") && !output.contains("for await"),
+        "The iteration value should assign after the awaited `next()` result resumes.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn labeled_for_await_continue_targets_iteration_case() {
+    let output = transform_and_print(
+        "async function f() { let y; outer: for await (const x of y) { continue outer; } }",
+    );
+
+    assert!(
+        output.contains("x = _d;\n                    return [3 /*break*/, 3];"),
+        "A labeled continue targeting the for-await loop should jump to the loop iteration case.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("continue outer;"),
+        "The source-level labeled continue must not survive in ES5 async output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_await_in_async_generator_wraps_protocol_awaits() {
+    let output = transform_async_generator_inner_and_print(
+        "async function* f() { for await (const x of y) {} }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, __await(y_1.next())];"),
+        "Async generators must yield `__await(iterator.next())` for for-await protocol awaits.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, __await(_c.call(y_1))];"),
+        "Async generators must also wrap iterator `return()` awaits during cleanup.\nOutput:\n{output}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -1678,3 +2180,158 @@ fn async_for_block_scoped_initializer_is_not_var_hoisted() {
 // is emitted verbatim, not a state machine) is covered end-to-end by the
 // `es5-asyncFunctionForStatements` emit baseline (`forStatement0`); the
 // standalone IR-printer test harness cannot render verbatim AST references.
+
+// Structural rule: when a `switch` statement's case block suspends (await in an
+// async function, yield in a generator) — in a case-clause expression or a
+// clause body — tsc lowers it into the `__generator` state machine: the
+// discriminant is cached into a hoisted temp, dispatch `switch`es compare the
+// temp against each clause expression and `return [3 /*break*/, L]` to the
+// matched clause-body label, and each clause body lives at its own label with
+// `break` rewritten to a jump to the switch-end label. This is independent of
+// identifier spelling, which clause holds the suspension, and whether/where a
+// `default` clause appears.
+
+#[test]
+fn switch_with_await_in_clause_expression_lowers_to_dispatch_state_machine() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case await y: a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;"),
+        "Discriminant must be cached into a hoisted temp before dispatch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, y];"),
+        "A suspending case expression must yield before the dispatch switch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 2];"),
+        "Dispatch must compare the cached discriminant against the resumed case value and jump to the clause body label, emitted inline.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 3];"),
+        "With a default clause, the post-dispatch fallthrough must target the default body label.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case 2:")
+            && output.contains("case 3:")
+            && output.contains("case 4: return [2 /*return*/];"),
+        "Clause bodies and the end label must be laid out as sequential generator cases.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_lowering_is_not_keyed_on_identifier_spelling() {
+    // Same shape as above with every identifier renamed; the lowering must be
+    // structural, not name-keyed.
+    let output = transform_and_print(
+        "async function f() { switch (disc) { case await chosen: hit; break; default: miss; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = disc;"),
+        "Discriminant caching must work for any discriminant spelling.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, chosen];"),
+        "Renamed suspending case expression must still yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 2];"),
+        "Renamed shape must still produce the dispatch jump.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_with_await_in_clause_body_keeps_dispatch_synchronous() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case y: await a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;") && output.contains("case y: return [3 /*break*/, 1];"),
+        "When only a clause body suspends, the discriminant is still cached and the dispatch compares it synchronously.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, a];"),
+        "The clause body await must yield inside the clause's body label.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_without_default_falls_through_to_end_label() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { case y: a; break; case await z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("case y: return [3 /*break*/, 2];"),
+        "Non-suspending leading clause must dispatch in its own group.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "Suspending clause expression must start a new dispatch group after a yield.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 3];"),
+        "Second dispatch group must compare the resumed value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [3 /*break*/, 4];")
+            && output.contains("case 4: return [2 /*return*/];"),
+        "With no default, the post-dispatch fallthrough must target the switch-end label.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_default_fallthrough_without_break_sets_label() {
+    let output = transform_and_print(
+        "async function f() { switch (x) { default: c; case y: a; break; case await z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("c;") && output.contains("_b.label = 3;"),
+        "A non-terminating clause (default without break) must set `_b.label` so it falls through to the next case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn switch_discriminant_await_with_plain_body_keeps_switch_intact() {
+    let output = transform_and_print(
+        "async function f() { switch (await x) { case y: a; break; default: b; break; } }",
+    );
+
+    assert!(
+        output.contains("return [4 /*yield*/, x];"),
+        "A suspending discriminant must be yielded.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("switch (_a.sent()) {"),
+        "When only the discriminant suspends, the switch stays intact over the sent value.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return [3 /*break*/"),
+        "A non-suspending case block must not be lowered into a dispatch state machine.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn generator_switch_with_yield_lowers_like_async() {
+    let output = transform_generator_and_print(
+        "function* g() { switch (x) { case y: a; break; case yield z: b; break; } }",
+    );
+
+    assert!(
+        output.contains("_a = x;"),
+        "Generator-mode switch lowering must cache the discriminant just like async mode.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return [4 /*yield*/, z];"),
+        "A `yield` in a generator switch clause expression must yield before the dispatch.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("case _b.sent(): return [3 /*break*/, 3];"),
+        "Generator-mode dispatch must compare the resumed value identically to async mode.\nOutput:\n{output}"
+    );
+}

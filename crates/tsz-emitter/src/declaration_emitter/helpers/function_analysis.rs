@@ -1029,7 +1029,10 @@ impl<'a> DeclarationEmitter<'a> {
             };
             let base_is_namespace_import_alias = self
                 .value_reference_symbol(access.expression)
-                .is_some_and(|sym_id| self.is_namespace_import_alias_symbol(sym_id));
+                .is_some_and(|sym_id| self.is_namespace_import_alias_symbol(sym_id))
+                || self
+                    .import_equals_alias_target_text_for_identifier(access.expression)
+                    .is_some();
             if self
                 .value_reference_symbol_needs_typeof(access.name_or_argument)
                 .or_else(|| self.value_reference_symbol_needs_typeof(initializer))

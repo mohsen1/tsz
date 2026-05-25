@@ -287,6 +287,103 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn enclosing_string_literal_module_augmentation_spec(&self, idx: NodeIndex) -> Option<String> {
+        let mut current = idx;
+        for _ in 0..128 {
+            let ext = self.ctx.arena.get_extended(current)?;
+            let parent = ext.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::SOURCE_FILE {
+                return None;
+            }
+            if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module_decl) = self.ctx.arena.get_module(parent_node)
+                && self
+                    .ctx
+                    .arena
+                    .has_modifier_ref(module_decl.modifiers.as_ref(), SyntaxKind::DeclareKeyword)
+                && let Some(name_node) = self.ctx.arena.get(module_decl.name)
+                && (name_node.kind == SyntaxKind::StringLiteral as u16
+                    || name_node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16)
+                && let Some(literal) = self.ctx.arena.get_literal(name_node)
+                && self
+                    .ctx
+                    .binder
+                    .module_augmentations
+                    .contains_key(&literal.text)
+            {
+                return Some(literal.text.clone());
+            }
+            current = parent;
+        }
+        None
+    }
+
+    fn module_augmentation_symbol_matches_spec(
+        &self,
+        candidate_spec: &str,
+        augmentation_spec: &str,
+    ) -> bool {
+        candidate_spec == augmentation_spec
+            || crate::module_resolution::module_specifier_candidates(augmentation_spec)
+                .iter()
+                .any(|candidate| candidate == candidate_spec)
+    }
+
+    fn classify_type_position_symbol(&self, sym_id: SymbolId) -> TypeSymbolResolution {
+        let lib_binders = self.get_lib_binders();
+        let Some(symbol) = self
+            .get_cross_file_symbol(sym_id)
+            .or_else(|| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+        else {
+            return TypeSymbolResolution::NotFound;
+        };
+
+        let is_namespace_or_module = symbol.has_any_flags(
+            symbol_flags::MODULE | symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE,
+        );
+        let has_type = symbol.has_any_flags(symbol_flags::TYPE | symbol_flags::TYPE_ALIAS);
+        let has_value = symbol.has_any_flags(symbol_flags::VALUE);
+
+        if has_value && !has_type && !is_namespace_or_module {
+            TypeSymbolResolution::ValueOnly(sym_id)
+        } else {
+            TypeSymbolResolution::Type(sym_id)
+        }
+    }
+
+    fn resolve_module_augmentation_unqualified_type_symbol(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> Option<TypeSymbolResolution> {
+        let module_spec = self.enclosing_string_literal_module_augmentation_spec(idx)?;
+
+        for (&sym_id, candidate_spec) in self.ctx.binder.augmentation_target_modules.iter() {
+            if !self.module_augmentation_symbol_matches_spec(candidate_spec, &module_spec) {
+                continue;
+            }
+            let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+                continue;
+            };
+            if symbol.escaped_name != name {
+                continue;
+            }
+            let result = self.classify_type_position_symbol(sym_id);
+            if !matches!(result, TypeSymbolResolution::NotFound) {
+                return Some(result);
+            }
+        }
+
+        self.resolve_cross_file_export_from_file(
+            &module_spec,
+            name,
+            Some(self.ctx.current_file_idx),
+        )
+        .map(|sym_id| self.classify_type_position_symbol(sym_id))
+        .filter(|result| !matches!(result, TypeSymbolResolution::NotFound))
+    }
+
     /// Resolve an identifier node to its symbol ID.
     ///
     /// This function walks the scope chain from the identifier's location upward,
@@ -788,6 +885,10 @@ impl<'a> CheckerState<'a> {
             self.resolve_unqualified_name_in_enclosing_namespace_for_type_position(idx, name)
         {
             return TypeSymbolResolution::Type(sym_id);
+        }
+
+        if let Some(result) = self.resolve_module_augmentation_unqualified_type_symbol(idx, name) {
+            return result;
         }
 
         let ignore_libs = !self.ctx.has_lib_loaded();

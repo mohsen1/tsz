@@ -300,6 +300,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if let Some((defer_start, defer_end)) = self.arrow_concise_body_trailing_comment_defer_range
+            && end_pos == defer_start
+            && self
+                .jsx_trailing_line_comment_end(end_pos, defer_end)
+                .is_some()
+        {
+            return;
+        }
+
         if self.emit_jsx_trailing_comments_from_cursor(end_pos) {
             return;
         }
@@ -325,6 +334,74 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
         }
+    }
+
+    pub(in crate::emitter) fn direct_transformed_jsx_trailing_comment_range(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<(u32, u32)> {
+        let node = self.arena.get(idx)?;
+        let comment_start = self.transformed_jsx_trailing_comment_start(node)?;
+        let comment_end = self.jsx_trailing_line_comment_end(comment_start, u32::MAX)?;
+        Some((comment_start, comment_end))
+    }
+
+    fn transformed_jsx_trailing_comment_start(&self, node: &Node) -> Option<u32> {
+        match node.kind {
+            syntax_kind_ext::JSX_ELEMENT => {
+                let jsx = self.arena.get_jsx_element(node)?;
+                let closing = self.arena.get(jsx.closing_element)?;
+                Some(self.find_token_end_before_trivia(closing.pos, closing.end))
+            }
+            syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT => Some(
+                self.find_jsx_self_closing_tag_end(node)
+                    .unwrap_or_else(|| self.find_token_end_before_trivia(node.pos, node.end)),
+            ),
+            syntax_kind_ext::JSX_FRAGMENT => {
+                let jsx = self.arena.get_jsx_fragment(node)?;
+                let closing = self.arena.get(jsx.closing_fragment)?;
+                Some(self.find_token_end_before_trivia(closing.pos, closing.end))
+            }
+            _ => None,
+        }
+    }
+
+    fn jsx_trailing_line_comment_end(&self, start_pos: u32, scan_end: u32) -> Option<u32> {
+        let text = self.source_text?;
+        let bytes = text.as_bytes();
+        let limit = std::cmp::min(scan_end as usize, bytes.len());
+        let mut idx = self.comment_emit_idx;
+
+        while idx < self.all_comments.len() {
+            let comment = &self.all_comments[idx];
+            if comment.pos < start_pos {
+                idx += 1;
+                continue;
+            }
+
+            if comment.pos as usize >= limit {
+                return None;
+            }
+
+            let gap_start = std::cmp::min(start_pos as usize, bytes.len());
+            let gap_end = std::cmp::min(comment.pos as usize, bytes.len());
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| b == b'\n' || b == b'\r')
+            {
+                return None;
+            }
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| !matches!(b, b' ' | b'\t' | 0x0b | 0x0c))
+            {
+                return None;
+            }
+
+            return (!comment.is_multi_line).then_some(comment.end);
+        }
+
+        None
     }
 
     fn find_jsx_self_closing_tag_end(&self, node: &Node) -> Option<u32> {
@@ -395,6 +472,12 @@ impl<'a> Printer<'a> {
             {
                 break;
             }
+            if bytes[gap_start..gap_end]
+                .iter()
+                .any(|&b| !matches!(b, b' ' | b'\t' | 0x0b | 0x0c))
+            {
+                break;
+            }
 
             self.write_space();
             if let Ok(comment_text) =
@@ -427,6 +510,19 @@ impl<'a> Printer<'a> {
         let attrs_info = self.collect_jsx_attributes_info(attributes);
         let filtered_children = self.collect_jsx_children(children);
         let has_spread = attrs_info.has_spread;
+
+        if self.ctx.target_es5 && self.jsx_children_have_spread(&filtered_children) {
+            self.emit_create_element_apply_call(
+                &factory,
+                tag_name,
+                &attrs_info,
+                attributes,
+                attribute_comment_end,
+                children,
+                &filtered_children,
+            );
+            return;
+        }
 
         self.emit_jsx_factory_call_target(&factory);
         self.write("(");
@@ -468,6 +564,129 @@ impl<'a> Printer<'a> {
         self.write(")");
         if multiline_children {
             self.decrease_indent();
+        }
+    }
+
+    fn emit_create_element_apply_call(
+        &mut self,
+        factory: &str,
+        tag_name: NodeIndex,
+        attrs_info: &JsxAttrsInfo,
+        attributes: NodeIndex,
+        attribute_comment_end: u32,
+        all_children: &[NodeIndex],
+        filtered_children: &[NodeIndex],
+    ) {
+        self.emit_jsx_factory_call_target(factory);
+        self.write(".apply(");
+        self.emit_jsx_factory_apply_this_arg(factory);
+        self.write(", ");
+        self.emit_jsx_classic_apply_args_array(
+            tag_name,
+            attrs_info,
+            attributes,
+            attribute_comment_end,
+            all_children,
+            filtered_children,
+        );
+        self.write(")");
+    }
+
+    fn emit_jsx_factory_apply_this_arg(&mut self, factory: &str) {
+        if let Some((receiver, _)) = factory.rsplit_once('.') {
+            self.emit_jsx_factory_reference(receiver);
+        } else {
+            self.write("void 0");
+        }
+    }
+
+    fn emit_jsx_classic_apply_args_array(
+        &mut self,
+        tag_name: NodeIndex,
+        attrs_info: &JsxAttrsInfo,
+        attributes: NodeIndex,
+        attribute_comment_end: u32,
+        all_children: &[NodeIndex],
+        filtered_children: &[NodeIndex],
+    ) {
+        enum Segment {
+            Elements(Vec<NodeIndex>),
+            Spread(NodeIndex),
+        }
+
+        let mut segments = Vec::new();
+        let mut pending_elements = Vec::new();
+        for &child in all_children {
+            if !filtered_children.contains(&child) {
+                if self.is_empty_jsx_expression(child)
+                    && let Some(node) = self.arena.get(child)
+                {
+                    self.skip_comments_for_empty_jsx_expr(node);
+                }
+                continue;
+            }
+
+            if let Some(spread_expr) = self.jsx_child_spread_expression(child) {
+                if !pending_elements.is_empty() {
+                    segments.push(Segment::Elements(std::mem::take(&mut pending_elements)));
+                }
+                segments.push(Segment::Spread(spread_expr));
+            } else {
+                pending_elements.push(child);
+            }
+        }
+        if !pending_elements.is_empty() {
+            segments.push(Segment::Elements(pending_elements));
+        }
+
+        let first_spread_segment = segments
+            .iter()
+            .position(|segment| matches!(segment, Segment::Spread(_)))
+            .unwrap_or(segments.len());
+        for _ in first_spread_segment..segments.len() {
+            self.write_helper("__spreadArray");
+            self.write("(");
+        }
+
+        self.write("[");
+        self.emit_jsx_tag_name_as_argument(tag_name);
+        self.write(", ");
+        if attrs_info.attrs.is_empty() && !attrs_info.has_spread {
+            self.write("null");
+        } else if attrs_info.has_spread {
+            self.emit_jsx_spread_attrs_classic(&attrs_info.attrs);
+        } else {
+            self.emit_jsx_attrs_as_object(&attrs_info.attrs);
+        }
+        self.skip_jsx_attribute_line_comments(attributes, attribute_comment_end);
+
+        for segment in &segments {
+            match segment {
+                Segment::Elements(elements) => {
+                    for &child in elements {
+                        self.write(", ");
+                        self.emit_jsx_child_as_expression(child);
+                    }
+                }
+                Segment::Spread(_) => {
+                    break;
+                }
+            }
+        }
+        self.write("]");
+
+        for segment in segments.iter().skip(first_spread_segment) {
+            self.write(", ");
+            match segment {
+                Segment::Elements(elements) => {
+                    self.emit_jsx_children_plain_array(elements);
+                    self.write(", false)");
+                }
+                Segment::Spread(expr) => {
+                    self.emit(self.unwrap_spread_argument(*expr));
+                    self.write(", false)");
+                }
+            }
         }
     }
 
@@ -515,7 +734,7 @@ impl<'a> Printer<'a> {
 
         let children: Vec<NodeIndex> = jsx.children.nodes.to_vec();
         let filtered_children = self.collect_jsx_children(&children);
-        let is_jsxs = filtered_children.len() > 1;
+        let is_jsxs = self.jsx_children_need_array(&filtered_children);
         let is_cjs = self.ctx.is_effectively_commonjs()
             && !matches!(self.ctx.original_module_kind, Some(ModuleKind::System));
         let is_dev = matches!(self.effective_jsx_emit(), JsxEmit::ReactJsxDev);
@@ -546,18 +765,7 @@ impl<'a> Printer<'a> {
         self.write(", { ");
         if !filtered_children.is_empty() {
             self.write("children: ");
-            let child_sep = if is_jsxs {
-                JsxChildSep::CommaBetween
-            } else {
-                JsxChildSep::None
-            };
-            if is_jsxs {
-                self.write("[");
-            }
-            self.emit_jsx_children_interleaved(&children, &filtered_children, child_sep);
-            if is_jsxs {
-                self.write("]");
-            }
+            self.emit_jsx_children_value(&children, &filtered_children, is_jsxs);
             self.write(" ");
         } else {
             self.skip_empty_jsx_children_comments(&children);
@@ -595,7 +803,7 @@ impl<'a> Printer<'a> {
 
         let attrs_info = self.collect_jsx_attributes_info(attributes);
         let filtered_children = self.collect_jsx_children(children);
-        let is_jsxs = filtered_children.len() > 1;
+        let is_jsxs = self.jsx_children_need_array(&filtered_children);
 
         // Extract key from attributes
         let key_attr = attrs_info
@@ -667,18 +875,7 @@ impl<'a> Printer<'a> {
                     self.write(", ");
                 }
                 self.write("children: ");
-                let child_sep = if is_jsxs {
-                    JsxChildSep::CommaBetween
-                } else {
-                    JsxChildSep::None
-                };
-                if is_jsxs {
-                    self.write("[");
-                }
-                self.emit_jsx_children_interleaved(children, &filtered_children, child_sep);
-                if is_jsxs {
-                    self.write("]");
-                }
+                self.emit_jsx_children_value(children, &filtered_children, is_jsxs);
             } else {
                 self.skip_empty_jsx_children_comments(children);
             }
@@ -1332,6 +1529,124 @@ impl<'a> Printer<'a> {
                 self.skip_comments_for_empty_jsx_expr(node);
             }
         }
+    }
+
+    pub(in super::super) fn jsx_children_need_array(&self, children: &[NodeIndex]) -> bool {
+        children.len() > 1 || self.jsx_children_have_spread(children)
+    }
+
+    pub(in super::super) fn jsx_children_have_spread(&self, children: &[NodeIndex]) -> bool {
+        children
+            .iter()
+            .any(|&child| self.jsx_child_is_spread_expression(child))
+    }
+
+    pub(in super::super) fn jsx_child_is_spread_expression(&self, child: NodeIndex) -> bool {
+        self.jsx_child_spread_expression(child).is_some()
+    }
+
+    fn jsx_child_spread_expression(&self, child: NodeIndex) -> Option<NodeIndex> {
+        let node = self.arena.get(child)?;
+        if node.kind != syntax_kind_ext::JSX_EXPRESSION {
+            return None;
+        }
+        let expr = self.arena.get_jsx_expression(node)?;
+        (expr.dot_dot_dot_token && expr.expression.is_some()).then_some(expr.expression)
+    }
+
+    pub(in super::super) fn emit_jsx_children_value(
+        &mut self,
+        all_children: &[NodeIndex],
+        filtered_children: &[NodeIndex],
+        as_array: bool,
+    ) {
+        if !as_array {
+            self.emit_jsx_children_interleaved(all_children, filtered_children, JsxChildSep::None);
+            return;
+        }
+
+        if self.ctx.target_es5 && self.jsx_children_have_spread(filtered_children) {
+            self.skip_empty_jsx_children_comments(all_children);
+            self.emit_jsx_children_array_es5(filtered_children);
+            return;
+        }
+
+        self.write("[");
+        self.emit_jsx_children_interleaved(
+            all_children,
+            filtered_children,
+            JsxChildSep::CommaBetween,
+        );
+        self.write("]");
+    }
+
+    fn emit_jsx_children_array_es5(&mut self, filtered_children: &[NodeIndex]) {
+        enum Segment {
+            Elements(Vec<NodeIndex>),
+            Spread(NodeIndex),
+        }
+
+        let mut segments = Vec::new();
+        let mut pending_elements = Vec::new();
+        for &child in filtered_children {
+            if let Some(spread_expr) = self.jsx_child_spread_expression(child) {
+                if !pending_elements.is_empty() {
+                    segments.push(Segment::Elements(std::mem::take(&mut pending_elements)));
+                }
+                segments.push(Segment::Spread(spread_expr));
+            } else {
+                pending_elements.push(child);
+            }
+        }
+        if !pending_elements.is_empty() {
+            segments.push(Segment::Elements(pending_elements));
+        }
+
+        let Some(first_segment) = segments.first() else {
+            self.write("[]");
+            return;
+        };
+
+        let first_is_spread = matches!(first_segment, Segment::Spread(_));
+        let wrapper_count = segments.len().saturating_sub(1) + usize::from(first_is_spread);
+        for _ in 0..wrapper_count {
+            self.write_helper("__spreadArray");
+            self.write("(");
+        }
+
+        match first_segment {
+            Segment::Elements(elements) => self.emit_jsx_children_plain_array(elements),
+            Segment::Spread(expr) => {
+                self.write("[], ");
+                self.emit(self.unwrap_spread_argument(*expr));
+                self.write(", true)");
+            }
+        }
+
+        for segment in segments.iter().skip(1) {
+            self.write(", ");
+            match segment {
+                Segment::Elements(elements) => {
+                    self.emit_jsx_children_plain_array(elements);
+                    self.write(", false)");
+                }
+                Segment::Spread(expr) => {
+                    self.emit(self.unwrap_spread_argument(*expr));
+                    self.write(", true)");
+                }
+            }
+        }
+    }
+
+    fn emit_jsx_children_plain_array(&mut self, children: &[NodeIndex]) {
+        self.write("[");
+        for (i, &child) in children.iter().enumerate() {
+            if i > 0 {
+                self.write(", ");
+            }
+            self.emit_jsx_child_as_expression(child);
+        }
+        self.write("]");
     }
 
     /// Emit a JSX child as an expression in the `createElement` args.

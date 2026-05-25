@@ -481,6 +481,19 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             if tp.default.is_some() {
                 self.defaulted_placeholders.insert(placeholder_id);
             }
+
+            // Mirror tsc's `widenLiteralTypes` gate (checker.ts ~26595): when the
+            // type parameter is inferred purely from top-level positions and
+            // occurs at the top level of the return type, fresh literal candidates
+            // must NOT be widened. This preserves literal inferences such as
+            // `T = 'a'` so a conditional / `Exclude` parameter referencing the type
+            // parameter reduces to its real form (e.g. `'a' extends 'a' ? never :
+            // 'a'` -> `never`); a forbidden argument then reaches a `never`
+            // parameter and is rejected (TS2345). Inference from a nested position
+            // (callback return, array element, …) still widens.
+            if self.type_param_preserves_inferred_literal(func, tp.name) {
+                infer_ctx.mark_top_level_in_return_type_unfixed(var);
+            }
         }
 
         // Re-set declared constraints using the full substitution now that all
@@ -2265,7 +2278,24 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                                     }
                                 }
                             } else {
-                                widening::widen_literal_type(self.interner.as_type_database(), ty)
+                                // Mirror tsc's `widenLiteralTypes` gate (checker.ts
+                                // `getCovariantInference`): a fresh literal inferred purely
+                                // from top-level positions for a type parameter at the top
+                                // level of the return type is NOT widened, so `<T>(x: T): T`,
+                                // `<T>(x: T, y: T): T`, and `<T>(x: T extends 'a' ? never :
+                                // T): T` keep their literal (`'a'`, `1 | 2`, …). A literal
+                                // inferred from a nested position (callback return, array
+                                // element) or for a parameter not at the return's top level
+                                // is widened to its primitive, as before.
+                                let db = self.interner.as_type_database();
+                                let preserve = self
+                                    .type_param_preserves_inferred_literal(func, tp.name)
+                                    && !infer_ctx.all_candidates_from_array_elements(var);
+                                if preserve {
+                                    ty
+                                } else {
+                                    widening::widen_literal_type(db, ty)
+                                }
                             }
                         } else if self.inference_type_contains_fresh_object_or_array(ty)
                             && !infer_ctx.has_type_annotation_candidates(var)
@@ -2901,40 +2931,22 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
         let tracked_final_type_params: FxHashSet<_> =
             func.type_params.iter().map(|tp| tp.name).collect();
-        let mut instantiated_params: Vec<ParamInfo> = if final_arg_subst.is_empty() {
-            instantiated_params
-        } else {
-            instantiated_params
-                .into_iter()
-                .map(|param| {
-                    let evaluated = if self.function_like_type_param_appears_in_parameter_position(
-                        param.type_id,
-                        &tracked_final_type_params,
-                    ) {
-                        param.type_id
-                    } else {
-                        let normalized = self
-                            .normalize_inferred_placeholder_type(param.type_id, &final_arg_subst);
-                        // Evaluate Application types (conditional types) to resolve them
-                        // after instantiation, but skip plain type parameters to avoid
-                        // infinite loops in self-referential generic inference.
-                        if matches!(
-                            self.interner.lookup(normalized),
-                            Some(TypeData::Application(_))
-                        ) {
-                            self.interner.evaluate_type(normalized)
-                        } else {
-                            normalized
-                        }
-                    };
-                    ParamInfo {
-                        name: param.name,
-                        type_id: evaluated,
-                        optional: param.optional,
-                        rest: param.rest,
-                    }
-                })
-                .collect()
+        let mut instantiated_params: Vec<ParamInfo> = {
+            let mut finalized = Vec::with_capacity(instantiated_params.len());
+            for param in instantiated_params {
+                let type_id = self.finalize_instantiated_param_type(
+                    param.type_id,
+                    &final_arg_subst,
+                    &tracked_final_type_params,
+                );
+                finalized.push(ParamInfo {
+                    name: param.name,
+                    type_id,
+                    optional: param.optional,
+                    rest: param.rest,
+                });
+            }
+            finalized
         };
         if !final_subst.is_empty() {
             for (i, &arg_type) in arg_types.iter().enumerate() {

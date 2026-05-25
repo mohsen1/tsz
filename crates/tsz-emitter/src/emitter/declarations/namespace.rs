@@ -16,6 +16,19 @@ pub(in crate::emitter) use namespace_helpers::rewrite_enum_iife_for_namespace_ex
 use namespace_helpers::{find_next_code_module_keyword, find_unescaped_template_end};
 
 impl<'a> Printer<'a> {
+    fn namespace_body_has_using_declarations(&self, body_idx: NodeIndex) -> bool {
+        let Some(body_node) = self.arena.get(body_idx) else {
+            return false;
+        };
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return false;
+        };
+        block
+            .statements
+            .as_ref()
+            .is_some_and(|statements| self.block_has_using_declarations(statements))
+    }
+
     pub(in crate::emitter) fn emit_module_declaration(&mut self, node: &Node, idx: NodeIndex) {
         let Some(module) = self.arena.get_module(node) else {
             return;
@@ -45,6 +58,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        // Top-level using scopes already own disposable environment numbering.
+        // Emit namespaces that contain `using` through the statement printer path
+        // so the namespace-local resource region shares that numbering.
+        if self.ctx.target_es5 && self.in_top_level_using_scope {
+            self.emit_namespace_iife(module, None, None);
+            return;
+        }
+
         // ES5 target: Transform namespace to IIFE pattern
         if self.ctx.target_es5 {
             use crate::transforms::NamespaceES5Emitter;
@@ -58,16 +79,25 @@ impl<'a> Printer<'a> {
             es5_emitter.set_target_es5(self.ctx.target_es5);
             es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
             es5_emitter.set_transforms(self.transforms.clone());
-            es5_emitter.set_block_scope_shadowed_names(
-                self.ctx.block_scope_state.visible_original_names(),
-            );
+            // Do NOT seed the namespace emitter with outer visible_original_names() as
+            // block_scope_shadowed_names. The namespace IIFE creates an independent function
+            // scope; outer module-scope `var` names are naturally isolated by function
+            // scoping and do not need to appear in the shadow set. The correct shadowed
+            // names (references at function scope outside blocks inside the namespace body)
+            // are collected per-namespace by configure_ir_printer_scope via
+            // collect_namespace_block_scope_shadowed_names.
             es5_emitter.set_block_scope_reserved_names(
                 self.ctx.block_scope_state.visible_reserved_names(),
             );
+            es5_emitter.set_disposable_env_context(self.next_disposable_env_id);
             es5_emitter.set_const_enum_facts(
                 self.const_enum_values.clone(),
                 self.const_enum_import_aliases.clone(),
             );
+            if use_cjs {
+                let export_names = std::mem::take(&mut self.pending_cjs_namespace_export_names);
+                es5_emitter.set_commonjs_export_names(export_names);
+            }
             if let Some(export_names) = system_export_fold.as_deref() {
                 es5_emitter.set_system_export_folds(export_names.iter().map(String::as_str));
             }
@@ -85,7 +115,8 @@ impl<'a> Printer<'a> {
             if !ns_name.is_empty() {
                 // When the namespace name was already declared (e.g., by a
                 // function or class), suppress the `var` declaration.
-                if self.declared_namespace_names.contains(&ns_name) {
+                if self.declared_namespace_names.contains(&ns_name) || self.in_top_level_using_scope
+                {
                     es5_emitter.set_should_declare_var(false);
                 }
                 // Cross-block export sharing for ES5 path
@@ -112,9 +143,16 @@ impl<'a> Printer<'a> {
             } else {
                 es5_emitter.emit_namespace(idx)
             };
-            self.ctx
-                .block_scope_state
-                .reserve_names(es5_emitter.block_scope_reserved_names());
+            self.next_disposable_env_id = es5_emitter.disposable_env_counter();
+            for generated_name in es5_emitter.take_generated_disposable_env_names() {
+                self.generated_temp_names.insert(generated_name);
+            }
+            // Do NOT propagate namespace-internal block-scope reserved names back
+            // to the outer scope state. The namespace IIFE creates an independent
+            // function scope in ES5, so suffix renames inside it (e.g. `y_2` from
+            // `let [y] = ...` in N's body) are invisible to sibling namespaces.
+            // Syncing them back would cause sibling-namespace `let y` bindings to
+            // receive avoidable suffixes like `y_3` even when `y` is not in scope.
 
             // Write the namespace output line by line, letting the writer handle indentation.
             // IRPrinter generates relative indentation (nested constructs indented relative
@@ -352,7 +390,7 @@ impl<'a> Printer<'a> {
 
     /// Emit a namespace/module as an IIFE for ES6+ targets.
     /// `parent_name` is set when this is a nested namespace (e.g., Bar inside Foo).
-    fn emit_namespace_iife(
+    pub(in crate::emitter) fn emit_namespace_iife(
         &mut self,
         module: &tsz_parser::parser::node::ModuleData,
         parent_name: Option<&str>,
@@ -381,10 +419,10 @@ impl<'a> Printer<'a> {
         } else {
             false
         };
-        let cjs_export_name = if parent_name.is_none() {
-            self.pending_cjs_namespace_export_name.take()
+        let cjs_export_names = if parent_name.is_none() {
+            std::mem::take(&mut self.pending_cjs_namespace_export_names)
         } else {
-            None
+            Vec::new()
         };
         let system_export_fold = if parent_name.is_none() {
             self.pending_system_namespace_export_fold.take()
@@ -405,7 +443,8 @@ impl<'a> Printer<'a> {
         // Determine if we should emit a variable declaration for this namespace.
         // Skip if name already declared by class/function/enum (both at top level and
         // inside namespace IIFEs - e.g., merged class+namespace doesn't need extra let).
-        let should_declare = !self.declared_namespace_names.contains(&name);
+        let should_declare = !(self.declared_namespace_names.contains(&name)
+            || self.in_top_level_using_scope && parent_name.is_none());
         if should_declare {
             let keyword = if (self.in_namespace_iife || self.function_scope_depth > 0)
                 && !self.ctx.target_es5
@@ -414,6 +453,12 @@ impl<'a> Printer<'a> {
             } else {
                 "var"
             };
+            if self.should_emit_invalid_namespace_static_modifier_before_name(
+                module.name,
+                &module.modifiers,
+            ) {
+                self.write("static ");
+            }
             self.write(keyword);
             self.write(" ");
             self.write(&name);
@@ -476,7 +521,18 @@ impl<'a> Printer<'a> {
                 // Set the scope end so import alias reference searching is
                 // limited to this namespace body (not sibling namespaces).
                 if let Some(body_node) = self.arena.get(module.body) {
-                    self.namespace_scope_end = body_node.end;
+                    let block_scope_end = self
+                        .arena
+                        .get_module_block(body_node)
+                        .and_then(|block| block.statements.as_ref())
+                        .and_then(|statements| statements.nodes.last())
+                        .and_then(|last_stmt_idx| self.arena.get(*last_stmt_idx))
+                        .map(|last_stmt| {
+                            self.find_token_end_before_trivia(last_stmt.pos, last_stmt.end)
+                        });
+                    self.namespace_scope_end = block_scope_end.unwrap_or_else(|| {
+                        self.find_token_end_before_trivia(body_node.pos, body_node.end)
+                    });
                 }
                 let prev_parent_ns = self.parent_namespace_name.clone();
                 self.parent_namespace_name = parent_name
@@ -519,14 +575,11 @@ impl<'a> Printer<'a> {
             self.emit_system_export_folded_namespace_assignment(export_names, &name);
             self.write("));");
         } else if cjs_export_fold {
-            // CJS export fold: (N || (exports.N = N = {}))
-            let export_name = cjs_export_name.as_deref().unwrap_or(&name);
+            // CJS export fold: (N || (exports.Alias = exports.N = N = {}))
             self.write(&name);
-            self.write(" || (exports.");
-            self.write(export_name);
-            self.write(" = ");
-            self.write(&name);
-            self.write(" = {}));");
+            self.write(" || (");
+            self.emit_commonjs_export_folded_namespace_assignment(&cjs_export_names, &name);
+            self.write("));");
         } else if !suppress_default_merge
             && self.ctx.is_commonjs()
             && self
@@ -570,6 +623,23 @@ impl<'a> Printer<'a> {
         self.write("\", ");
         self.emit_system_export_folded_namespace_assignment(inner_names, name);
         self.write(")");
+    }
+
+    fn emit_commonjs_export_folded_namespace_assignment(
+        &mut self,
+        export_names: &[String],
+        name: &str,
+    ) {
+        let Some((export_name, inner_names)) = export_names.split_last() else {
+            self.write(name);
+            self.write(" = {}");
+            return;
+        };
+
+        self.write("exports.");
+        self.write(export_name);
+        self.write(" = ");
+        self.emit_commonjs_export_folded_namespace_assignment(inner_names, name);
     }
 
     /// Check if any declaration at any depth in the namespace body has the same
@@ -1284,6 +1354,60 @@ impl<'a> Printer<'a> {
         names
     }
 
+    fn collect_namespace_non_exported_local_var_names(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> rustc_hash::FxHashSet<String> {
+        let mut names = rustc_hash::FxHashSet::default();
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return names;
+        };
+        let Some(ref stmts) = block.statements else {
+            return names;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            if self.statement_has_export_modifier(stmt_node) {
+                continue;
+            }
+            let Some(var_data) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_data.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut binding_names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut binding_names);
+                    names.extend(binding_names);
+                }
+            }
+        }
+        names
+    }
+
+    pub(in crate::emitter) fn is_shadowed_by_namespace_local_var(&self, name: &str) -> bool {
+        self.namespace_local_var_shadow_stack
+            .iter()
+            .rev()
+            .any(|scope| scope.contains(name))
+    }
+
     fn collect_namespace_local_module_names(
         &self,
         body_node: &tsz_parser::parser::node::Node,
@@ -1738,6 +1862,8 @@ impl<'a> Printer<'a> {
             }
             // Remove locally-declared non-exported names — they shadow prior exports
             let local_names = self.collect_namespace_local_var_names(body_node);
+            let local_var_shadow_names =
+                self.collect_namespace_non_exported_local_var_names(body_node);
             for name in &local_names {
                 local_exports.remove(name);
                 parent_exports.remove(name);
@@ -1751,6 +1877,8 @@ impl<'a> Printer<'a> {
             self.namespace_exported_names = local_exports;
             self.namespace_parent_exported_names = parent_exports;
             self.namespace_ancestor_export_qualifiers = ancestor_qualifiers;
+            self.namespace_local_var_shadow_stack
+                .push(local_var_shadow_names);
             let (destructuring_export_temps, destructuring_export_temp_names) =
                 self.reserve_namespace_destructuring_export_temps(module);
 
@@ -1802,36 +1930,40 @@ impl<'a> Printer<'a> {
                 self.write_line();
             }
 
-            let namespace_using_region = if !self.ctx.options.target.supports_es2025()
-                && self.block_has_using_declarations(stmts)
-            {
-                let using_async = self.block_has_await_using(stmts);
-                let (env_name, error_name, result_name) =
-                    self.disposable_env_names_for_node(module.body);
-                let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
-                let prev_block_using_env = self
-                    .block_using_env
-                    .replace((env_name.clone(), using_async));
+            let has_using_declarations = self.block_has_using_declarations(stmts)
+                || self
+                    .reserved_disposable_env_names
+                    .contains_key(&module.body)
+                || self.namespace_body_has_using_declarations(module.body);
+            let namespace_using_region =
+                if !self.ctx.options.target.supports_es2025() && has_using_declarations {
+                    let using_async = self.block_has_await_using(stmts);
+                    let (env_name, error_name, result_name) =
+                        self.disposable_env_names_for_node(module.body);
+                    let env_decl_keyword = if self.ctx.target_es5 { "var" } else { "const" };
+                    let prev_block_using_env = self
+                        .block_using_env
+                        .replace((env_name.clone(), using_async));
 
-                self.write(env_decl_keyword);
-                self.write(" ");
-                self.write(&env_name);
-                self.write(" = { stack: [], error: void 0, hasError: false };");
-                self.write_line();
-                self.write("try {");
-                self.write_line();
-                self.increase_indent();
+                    self.write(env_decl_keyword);
+                    self.write(" ");
+                    self.write(&env_name);
+                    self.write(" = { stack: [], error: void 0, hasError: false };");
+                    self.write_line();
+                    self.write("try {");
+                    self.write_line();
+                    self.increase_indent();
 
-                Some((
-                    env_name,
-                    error_name,
-                    result_name,
-                    using_async,
-                    prev_block_using_env,
-                ))
-            } else {
-                None
-            };
+                    Some((
+                        env_name,
+                        error_name,
+                        result_name,
+                        using_async,
+                        prev_block_using_env,
+                    ))
+                } else {
+                    None
+                };
 
             for (stmt_i, &stmt_idx) in stmts.nodes.iter().enumerate() {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -2263,6 +2395,7 @@ impl<'a> Printer<'a> {
             }
 
             // Restore previous exported names
+            self.namespace_local_var_shadow_stack.pop();
             self.namespace_exported_names = prev_exported;
             self.namespace_parent_exported_names = prev_parent_exported;
             self.namespace_ancestor_export_qualifiers = prev_ancestor_qualifiers;

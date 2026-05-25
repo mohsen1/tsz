@@ -48,6 +48,31 @@ function f<T extends number, U extends 0 | 1 | 2>(t: T & U) {
 }
 
 #[test]
+fn numeric_literal_union_alias_source_preserves_alias_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+type NumericAlias = 1 | 2;
+declare const value: NumericAlias;
+const target: 3 = value;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        diag.message_text
+            .contains("Type 'NumericAlias' is not assignable to type '3'."),
+        "numeric literal union alias source should preserve alias display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Type '1 | 2'"),
+        "numeric literal union alias source should not be expanded, got: {diag:?}"
+    );
+}
+
+#[test]
 fn typed_array_cross_assignment_preserves_generic_display() {
     let diagnostics = diagnostics_for(
         r#"
@@ -82,6 +107,18 @@ arr_Int8Array = arr_Uint8Array;
             "Type 'Uint8Array<ArrayBuffer>' is not assignable to type 'Int8Array<ArrayBuffer>'."
         ),
         "typed array TS2322 should preserve generic type arguments, got: {diag:?}"
+    );
+}
+
+#[test]
+fn typed_array_property_mismatch_display_does_not_read_rendered_prefixes() {
+    let renderer_src =
+        include_str!("../error_reporter/render_failure/nested_application_property_mismatch.rs");
+    assert!(
+        !renderer_src.contains("starts_with(\"Int8Array<\")")
+            && !renderer_src.contains("starts_with(\"Uint8Array<\")")
+            && !renderer_src.contains("starts_with(\"BigUint64Array<\")"),
+        "typed-array property mismatch rendering must use definition identities, not formatted type prefixes"
     );
 }
 
@@ -1892,5 +1929,63 @@ const bad: [DifferentShape] = c;
     assert!(
         diagnostics.iter().any(|d| d.code == 2322),
         "Expected TS2322 for [PassThrough<NodeA|NodeB>] assigned to [DifferentShape], got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn callable_source_satisfies_callable_union_across_assignment_entrypoints() {
+    let diagnostics = diagnostics_for(
+        r#"
+type CallableNode<TProps> = (props: TProps) => string | number;
+type ConstructNode<TProps> = new (props: TProps) => { render(): string };
+type Elementish<TProps> = CallableNode<TProps> | ConstructNode<TProps>;
+type Props = { label: string };
+
+const Component = (props: Props) => 1;
+const initialized: Elementish<Props> = Component;
+
+let assigned!: Elementish<Props>;
+assigned = Component;
+
+declare function accepts(value: Elementish<Props>): void;
+accepts(Component);
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != 2322 && diag.code != 2345),
+        "Expected callable source to satisfy callable union arm through TS2322 and TS2345 paths, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn callable_source_does_not_satisfy_callable_union_arm_with_static_requirements() {
+    let diagnostics = diagnostics_for(
+        r#"
+type CallableWithStatic<TProps> = {
+    (props: TProps): number;
+    required: string;
+};
+type ConstructNode<TProps> = new (props: TProps) => { render(): string };
+type Elementish<TProps> = CallableWithStatic<TProps> | ConstructNode<TProps>;
+type Props = { label: string };
+
+const Component = (props: Props) => 1;
+const initialized: Elementish<Props> = Component;
+
+declare function accepts(value: Elementish<Props>): void;
+accepts(Component);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2322),
+        "Expected TS2322 when callable union arm has static requirements, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2345),
+        "Expected TS2345 when callable union arm has static requirements, got: {diagnostics:?}"
     );
 }

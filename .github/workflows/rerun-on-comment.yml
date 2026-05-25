@@ -15,6 +15,7 @@ on:
 
 permissions:
   actions: write
+  issues: write
   pull-requests: read
   contents: read
 
@@ -121,4 +122,4 @@ jobs:
           else
             body="Could not re-run CI. See workflow logs."
           fi
-          gh pr comment "${PR_NUMBER}" --repo "${REPO}" --body "${body}"
+          gh api -X POST "repos/${REPO}/issues/${PR_NUMBER}/comments" -f body="${body}"

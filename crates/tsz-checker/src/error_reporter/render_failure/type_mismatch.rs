@@ -384,7 +384,7 @@ impl<'a> CheckerState<'a> {
                     let prop_list: Vec<String> = ordered_names
                         .iter()
                         .take(display_count)
-                        .map(|name| self.missing_property_name_for_display(*name, target))
+                        .map(|name| self.missing_property_list_name_for_display(*name))
                         .collect();
                     let props_joined = prop_list.join(", ");
                     let message = if is_truncated {
@@ -443,8 +443,14 @@ impl<'a> CheckerState<'a> {
                 source_str = direct_source;
                 target_str = direct_target;
             }
-            if let Some((display_source, display_target)) =
-                self.declared_generic_alias_assignment_pair_display(idx, &source_str, &target_str)
+            if let Some((display_source, display_target)) = self
+                .declared_generic_alias_assignment_pair_display(
+                    idx,
+                    source,
+                    target,
+                    &source_str,
+                    &target_str,
+                )
             {
                 source_str = display_source;
                 target_str = display_target;

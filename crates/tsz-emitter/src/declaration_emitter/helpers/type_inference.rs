@@ -704,26 +704,30 @@ impl<'a> DeclarationEmitter<'a> {
         if type_id == tsz_solver::types::TypeId::ANY
             && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
         {
-            return type_text;
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if self.initializer_is_new_expression(initializer)
             && let Some(type_text) = self.construct_return_new_expression_type_text(initializer)
         {
-            return type_text;
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if self.object_literal_prefers_syntax_type_text(initializer)
             && let Some(type_text) =
                 self.rewrite_object_literal_computed_member_type_text(initializer, type_id)
         {
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if let Some(typeof_text) =
             self.typeof_prefix_for_value_entity(initializer, true, Some(type_id))
         {
-            return self.rewrite_exported_import_equals_type_text(typeof_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, typeof_text);
         }
 
         if self
@@ -732,7 +736,8 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
             && let Some(type_text) = self.infer_object_literal_type_text_at(initializer, 0)
         {
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         let widened = self.widen_unique_symbol_value_type_for_dts(type_id, 0);
@@ -740,7 +745,8 @@ impl<'a> DeclarationEmitter<'a> {
             && !self.inferred_declaration_preserves_initializer_type_arguments(initializer, type_id)
         {
             let type_text = self.print_type_id_for_inferred_declaration(widened);
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if (type_id == tsz_solver::types::TypeId::ANY
@@ -751,7 +757,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
             && let Some(type_text) = self.preferred_expression_type_text(initializer)
         {
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if type_id != tsz_solver::types::TypeId::ANY
@@ -768,7 +775,8 @@ impl<'a> DeclarationEmitter<'a> {
                     .unwrap_or(type_text);
                 let type_text =
                     self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
-                return self.rewrite_exported_import_equals_type_text(type_text);
+                return self
+                    .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
             }
             let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
             let type_text = self
@@ -776,7 +784,8 @@ impl<'a> DeclarationEmitter<'a> {
                 .unwrap_or(type_text);
             let type_text =
                 self.rewrite_call_receiver_default_import_aliases(initializer, type_text);
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         if (type_id != tsz_solver::types::TypeId::ANY
@@ -787,7 +796,8 @@ impl<'a> DeclarationEmitter<'a> {
             if let Some(expanded) =
                 self.expand_portable_mapped_object_text_in_current_context(&type_text)
             {
-                return self.rewrite_exported_import_equals_type_text(expanded);
+                return self
+                    .rewrite_initializer_exported_import_equals_type_text(initializer, expanded);
             }
             let type_text = self
                 .rewrite_const_assertion_object_index_value_union(initializer, &type_text)
@@ -795,7 +805,8 @@ impl<'a> DeclarationEmitter<'a> {
             let type_text = self
                 .enum_value_index_access_alias_type_text(&type_text)
                 .unwrap_or(type_text);
-            return self.rewrite_exported_import_equals_type_text(type_text);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, type_text);
         }
 
         let type_text = Self::strip_synthetic_anonymous_object_members(printed_type_text);
@@ -805,12 +816,13 @@ impl<'a> DeclarationEmitter<'a> {
         if let Some(expanded) =
             self.expand_portable_mapped_object_text_in_current_context(&type_text)
         {
-            return self.rewrite_exported_import_equals_type_text(expanded);
+            return self
+                .rewrite_initializer_exported_import_equals_type_text(initializer, expanded);
         }
         let type_text = self
             .enum_value_index_access_alias_type_text(&type_text)
             .unwrap_or(type_text);
-        self.rewrite_exported_import_equals_type_text(type_text)
+        self.rewrite_initializer_exported_import_equals_type_text(initializer, type_text)
     }
 
     fn inferred_declaration_preserves_initializer_type_arguments(
@@ -877,6 +889,95 @@ impl<'a> DeclarationEmitter<'a> {
             .fold(type_text, |text, (alias, target)| {
                 Self::replace_qualified_type_reference_text(&text, &alias, &target)
             })
+    }
+
+    fn rewrite_initializer_exported_import_equals_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_text: String,
+    ) -> String {
+        let type_text = self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+        self.rewrite_exported_import_equals_type_text(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn rewrite_initializer_import_equals_type_text(
+        &self,
+        initializer: NodeIndex,
+        type_text: String,
+    ) -> String {
+        let Some((target, alias)) = self.initializer_import_equals_alias_rewrite(initializer)
+        else {
+            return type_text;
+        };
+        Self::replace_qualified_type_reference_prefix_text(&type_text, &target, &alias)
+    }
+
+    fn initializer_import_equals_alias_rewrite(
+        &self,
+        initializer: NodeIndex,
+    ) -> Option<(String, String)> {
+        let initializer = self.skip_parenthesized_non_null_and_comma(initializer);
+        let node = self.arena.get(initializer)?;
+        match node.kind {
+            k if k == syntax_kind_ext::NEW_EXPRESSION || k == syntax_kind_ext::CALL_EXPRESSION => {
+                let call = self.arena.get_call_expr(node)?;
+                self.expression_import_equals_alias_rewrite(call.expression)
+            }
+            _ => self.expression_import_equals_alias_rewrite(initializer),
+        }
+    }
+
+    fn expression_import_equals_alias_rewrite(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(String, String)> {
+        let expr_idx = self.skip_parenthesized_non_null_and_comma(expr_idx);
+        let node = self.arena.get(expr_idx)?;
+        match node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                self.import_equals_alias_target_text_for_identifier(expr_idx)
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                let access = self.arena.get_access_expr(node)?;
+                self.expression_import_equals_alias_rewrite(access.expression)
+            }
+            _ => None,
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn import_equals_alias_target_text_for_identifier(
+        &self,
+        ident_idx: NodeIndex,
+    ) -> Option<(String, String)> {
+        let binder = self.binder?;
+        let ident_node = self.arena.get(ident_idx)?;
+        if ident_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let alias_name = self.get_identifier_text(ident_idx)?;
+        let scope_id = binder.find_enclosing_scope(self.arena, ident_idx)?;
+        let sym_id = self.resolve_name_in_scope_chain(binder, scope_id, &alias_name)?;
+        let symbol = binder.symbols.get(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+            return None;
+        }
+        let import_idx = symbol.declarations.iter().copied().find(|&decl_idx| {
+            self.arena
+                .get(decl_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION)
+        })?;
+        let import_node = self.arena.get(import_idx)?;
+        let import_decl = self.arena.get_import_decl(import_node)?;
+        let target_text = self.entity_name_text(import_decl.module_specifier)?;
+        if target_text == alias_name
+            || self
+                .arena
+                .get(import_decl.module_specifier)
+                .is_some_and(|node| node.kind == SyntaxKind::StringLiteral as u16)
+        {
+            return None;
+        }
+        Some((target_text, alias_name))
     }
 
     fn visible_import_equals_type_alias_rewrites(&self) -> Vec<(String, String)> {
@@ -1237,6 +1338,35 @@ impl<'a> DeclarationEmitter<'a> {
             let end = start + from.len();
             out.push_str(&type_text[search_start..start]);
             if Self::is_qualified_type_reference_boundary(type_text, start, end) {
+                out.push_str(to);
+            } else {
+                out.push_str(from);
+            }
+            search_start = end;
+        }
+
+        out.push_str(&type_text[search_start..]);
+        out
+    }
+
+    fn replace_qualified_type_reference_prefix_text(
+        type_text: &str,
+        from: &str,
+        to: &str,
+    ) -> String {
+        let mut out = String::with_capacity(type_text.len());
+        let mut search_start = 0;
+
+        while let Some(relative_idx) = type_text[search_start..].find(from) {
+            let start = search_start + relative_idx;
+            let end = start + from.len();
+            out.push_str(&type_text[search_start..start]);
+            let before = type_text[..start].chars().next_back();
+            let after = type_text[end..].chars().next();
+            let can_replace = !before.is_some_and(Self::is_qualified_type_reference_part)
+                && (after == Some('.')
+                    || !after.is_some_and(Self::is_qualified_type_reference_part));
+            if can_replace {
                 out.push_str(to);
             } else {
                 out.push_str(from);
