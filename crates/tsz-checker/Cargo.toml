@@ -302,6 +302,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_union_callback_context_tests"
+path = "tests/jsx_union_callback_context_tests.rs"
+
+[[test]]
 name = "jsx_import_source_namespace_tests"
 path = "tests/jsx_import_source_namespace_tests.rs"
 
@@ -1296,6 +1300,10 @@ path = "tests/template_literal_bigint_placeholder_tests.rs"
 [[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
+
+[[test]]
+name = "tagged_template_this_binding_tests"
+path = "tests/tagged_template_this_binding_tests.rs"
 
 [[test]]
 name = "template_literal_recursive_replace_tests"
