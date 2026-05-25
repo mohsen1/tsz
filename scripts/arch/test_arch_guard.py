@@ -1,8 +1,7 @@
-import pathlib
-import tempfile
-import unittest
-
-from arch_guard_test_support import ROOT, load_arch_guard_module
+from test_arch_guard_support import ROOT, load_arch_guard_module, pathlib, tempfile, unittest
+from test_arch_guard_counts import *
+from test_arch_guard_policy import *
+from test_arch_guard_projects import *
 
 
 class ArchGuardCompatCheckerBoundaryTests(unittest.TestCase):

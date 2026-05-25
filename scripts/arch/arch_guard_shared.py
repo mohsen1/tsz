@@ -266,7 +266,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/computation/call/inner.rs",
             "crates/tsz-checker/src/types/computation/call_inference.rs",
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
-            "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
@@ -507,9 +506,19 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Merge-repaired against current main after #10039 reduced live
-        # quarantine callers; future work should ratchet this back down.
-        3353,
+        # Bumped by 2 for the deferred-conditional diagnostic-display fix
+        # (`is_conditional_type` guards in the assignment-target display path,
+        # matching the existing direct-call pattern in type_display.rs).
+        #
+        # Ratcheted down by 5 after literal alias / literal widening
+        # diagnostic display probes moved through query_boundaries::diagnostics.
+        #
+        # Ratcheted down by 14 after branch refresh removed stale direct
+        # common references.
+        #
+        # Ratcheted down by 2 during the #9281 current-main refresh after
+        # the split guard tests caught slack in the live count.
+        3356,
     ),
 ]
 
@@ -801,7 +810,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
                 "let mut alias_visited = visited.clone();",
             ),
             (
-                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_object_helpers.rs",
                 "let mut alias_visited = visited.clone();",
             ),
         ),

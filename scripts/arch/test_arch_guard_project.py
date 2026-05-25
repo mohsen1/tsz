@@ -2,7 +2,7 @@ import pathlib
 import tempfile
 import unittest
 
-from arch_guard_test_support import ROOT, load_arch_guard_module
+from test_arch_guard_support import ROOT, load_arch_guard_module
 
 
 class ArchGuardProjectDashboardRowTests(unittest.TestCase):

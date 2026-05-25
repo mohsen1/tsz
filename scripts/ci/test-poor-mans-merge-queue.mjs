@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   activeBranchQueueRun,
   activeSyntheticQueueRun,
+  failureCommentBody,
   formatResult,
   hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
   parseArgs,
+  queueBranchPrNumber,
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
@@ -39,7 +41,17 @@ function pr(overrides = {}) {
   };
 }
 
+const originalAgentName = process.env.AGENT_NAME;
+delete process.env.AGENT_NAME;
 assert.equal(parseArgs(["--repository", "owner/repo"]).repository, "owner/repo");
+assert.equal(parseArgs(["--repository", "owner/repo"]).agentName, "M1-A");
+if (originalAgentName === undefined) {
+  delete process.env.AGENT_NAME;
+} else {
+  process.env.AGENT_NAME = originalAgentName;
+}
+assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
+assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.deepEqual(
   parseArgs(["--no-default-pr-required-checks", "--pr-required-check", "lint"]).prRequiredChecks,
   ["lint"],
@@ -49,6 +61,9 @@ assert.deepEqual(
   ["CI Summary"],
 );
 assert.equal(parseArgs(["--invalidate-pr", "123"]).invalidatePr, 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123"), 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-extra"), null);
+assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
 
 assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
 assert.equal(requiredCheckState([check({ status: "IN_PROGRESS", conclusion: "" })], ["CI Summary"]).kind, "pending");
@@ -145,6 +160,8 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
+assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
 assert.match(
   formatResult({
@@ -163,6 +180,21 @@ assert.match(
   }, parseArgs(["--repository", "owner/repo", "--invalidate-open"])),
   /Preserved 2 active queue run status/,
 );
+
+const cleanupFormat = formatResult({
+  cleanupQueueBranches: true,
+  deletions: [
+    { branch: "automation/merge-queue/pr-1", number: 1, state: "closed", merged: true },
+  ],
+  dryRun: true,
+  skippedActiveRuns: 1,
+  skippedOpen: 2,
+  skippedUnrecognized: 1,
+  skips: [],
+  wouldDelete: 1,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupFormat, /Would delete 1 stale queue branch/);
+assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
 assert.match(
   formatResult({

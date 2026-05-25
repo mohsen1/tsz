@@ -2,7 +2,7 @@ import pathlib
 import tempfile
 import unittest
 
-from arch_guard_test_support import ROOT, load_arch_guard_module
+from test_arch_guard_support import ROOT, load_arch_guard_module
 
 
 class ArchGuardDebugPrintMacroTests(unittest.TestCase):
@@ -172,7 +172,7 @@ class ArchGuardVisitedCloneTests(unittest.TestCase):
         )
         self.assertIn(
             (
-                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_object_helpers.rs",
                 "let mut alias_visited = visited.clone();",
             ),
             allowlist,

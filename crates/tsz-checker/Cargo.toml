@@ -34,6 +34,10 @@ name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 
 [[test]]
+name = "block_body_callback_literal_widening_tests"
+path = "tests/block_body_callback_literal_widening_tests.rs"
+
+[[test]]
 name = "extract_alias_distributive_mapped_tests"
 path = "tests/extract_alias_distributive_mapped_tests.rs"
 
@@ -464,6 +468,10 @@ path = "tests/ts2322_pair_disambiguation_widening_tests.rs"
 [[test]]
 name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
+
+[[test]]
+name = "spread_rest_diagnostics_tests"
+path = "tests/spread_rest_diagnostics_tests.rs"
 
 [[test]]
 name = "thisless_functions_not_context_sensitive_tests"
@@ -1488,6 +1496,10 @@ path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 [[test]]
 name = "issue_9785_const_type_param_satisfies_repro"
 path = "tests/issue_9785_const_type_param_satisfies_repro.rs"
+
+[[test]]
+name = "issue_9730_readonly_array_element_inference_repro"
+path = "tests/issue_9730_readonly_array_element_inference_repro.rs"
 
 [[test]]
 name = "satisfies_object_property_position_tests"

@@ -13,6 +13,7 @@
 //! `docs/architecture/QUERY_BOUNDARY_INVENTORY.md`.
 //!
 pub(crate) mod assignability;
+pub(crate) mod assignability_alias_display;
 pub(crate) mod capabilities;
 pub(crate) mod checkers;
 pub(crate) mod class;
