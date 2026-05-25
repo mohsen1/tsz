@@ -10,7 +10,7 @@ use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::is_this_type(self.ctx.types, type_id)
+        crate::query_boundaries::type_predicates::is_this_type(self.ctx.types, type_id)
     }
 
     pub(super) fn function_type_returns_current_interface_family(
