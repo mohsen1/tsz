@@ -24,10 +24,10 @@ fn no_errors(source: &str) -> bool {
     codes(source).is_empty()
 }
 
-// ── Reported bug: `${any}` must not collapse to `string` ─────────────────────
+// Reported bug: `${any}` must not collapse to `string`.
 
-/// tsc: TS2322 — `string` is not assignable to `` `${any}` ``.
-/// tsz was wrongly accepting this (false-negative) by collapsing `${any}` → string.
+/// tsc: TS2322: `string` is not assignable to `` `${any}` ``.
+/// tsz was wrongly accepting this false-negative by collapsing `${any}` to string.
 #[test]
 fn any_placeholder_rejects_string_assignment() {
     assert!(
@@ -36,7 +36,7 @@ fn any_placeholder_rejects_string_assignment() {
     );
 }
 
-/// String literals ARE assignable to `` `${any}` `` — `any` acts as a wildcard.
+/// String literals ARE assignable to `` `${any}` `` because `any` acts as a wildcard.
 #[test]
 fn any_placeholder_accepts_string_literal() {
     assert!(
@@ -69,7 +69,7 @@ fn any_value_is_assignable_to_any_placeholder() {
     );
 }
 
-// ── `${unknown}` — same deferred behavior ────────────────────────────────────
+// `${unknown}` has the same deferred behavior.
 
 /// `string` must not be assignable to `` `${unknown}` `` either.
 #[test]
@@ -89,7 +89,7 @@ fn unknown_placeholder_accepts_string_literal() {
     );
 }
 
-// ── Prefix/suffix templates with `any` ───────────────────────────────────────
+// Prefix/suffix templates with `any`.
 
 /// `` a${any}b `` accepts a string literal that matches the surrounding text.
 #[test]
@@ -100,7 +100,7 @@ fn prefixed_any_accepts_matching_literal() {
     );
 }
 
-/// `` a${any}b `` must reject a bare `string` — the fixed text constrains assignability.
+/// `` a${any}b `` must reject a bare `string`; the fixed text constrains assignability.
 #[test]
 fn prefixed_any_rejects_string() {
     assert!(
@@ -127,9 +127,9 @@ fn prefixed_unknown_rejects_string() {
     );
 }
 
-// ── Control: `${string}` must still accept `string` ──────────────────────────
+// Control: `${string}` must still accept `string`.
 
-/// `` `${string}` `` collapses to `string` per tsc — must continue to accept `string`.
+/// `` `${string}` `` collapses to `string` per tsc and must continue to accept `string`.
 #[test]
 fn string_placeholder_accepts_string() {
     assert!(
@@ -147,7 +147,7 @@ fn string_placeholder_accepts_literal() {
     );
 }
 
-// ── Structural rule: identifier names do not affect behaviour (§25) ───────────
+// Structural rule: identifier names do not affect behavior; see AGENTS.md section 25.
 
 /// Same rule holds regardless of what name the type alias uses.
 /// If the fix were hardcoded to a specific spelling it would break here.
@@ -180,7 +180,7 @@ const a: Tmpl<number> = s;
     );
 }
 
-// ── Adjacent cases: multi-placeholder templates ───────────────────────────────
+// Adjacent cases: multi-placeholder templates.
 
 /// A two-span template `` `${any}-${any}` `` rejects bare `string`.
 #[test]
