@@ -32,6 +32,7 @@ function usage() {
     "  --no-default-merge-required-checks",
     "  --invalidate-open               Mark open PR heads pending and exit",
     "  --invalidate-pr <number>        Mark one PR head pending and exit",
+    "  --cleanup-queue-branches        Delete stale queue branches for closed PRs",
     "  --dry-run                       Report without pushing or merging",
     "  --verbose",
   ].join("\n");
@@ -48,6 +49,7 @@ function parsePositiveInt(flag, value) {
 export function parseArgs(argv) {
   const options = {
     base: process.env.BASE_BRANCH || DEFAULT_BASE,
+    cleanupQueueBranches: false,
     dryRun: false,
     invalidateOpen: false,
     invalidatePr: null,
@@ -90,6 +92,8 @@ export function parseArgs(argv) {
       options.invalidateOpen = true;
     } else if (arg === "--invalidate-pr") {
       options.invalidatePr = parsePositiveInt("--invalidate-pr", argv[++index]);
+    } else if (arg === "--cleanup-queue-branches") {
+      options.cleanupQueueBranches = true;
     } else if (arg === "--wait-attempts") {
       options.waitAttempts = parsePositiveInt("--wait-attempts", argv[++index]);
     } else if (arg === "--wait-interval-ms") {
@@ -330,6 +334,37 @@ function readBranchWorkflowRuns(repository, branch) {
   ]);
 }
 
+function readRemoteQueueBranches(options) {
+  const output = git(["ls-remote", "--heads", "origin", `${options.queueBranchPrefix}/pr-*`]);
+  return output.split("\n").flatMap((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return [];
+    const [oid, ref] = trimmed.split(/\s+/);
+    const prefix = "refs/heads/";
+    if (!oid || !ref?.startsWith(prefix)) return [];
+    return [{ oid, branch: ref.slice(prefix.length) }];
+  });
+}
+
+export function queueBranchPrNumber(branch, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
+  const escapedPrefix = queueBranchPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = String(branch || "").match(new RegExp(`^${escapedPrefix}/pr-(\\d+)$`));
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function readPullRequestState(repository, number) {
+  return runGhJson([
+    "api",
+    `repos/${repository}/pulls/${number}`,
+    "--jq",
+    "{number: .number, state: .state, merged: (.merged_at != null)}",
+  ]);
+}
+
+function deleteRemoteBranch(branch) {
+  git(["push", "origin", `:refs/heads/${branch}`], { stdio: "inherit" });
+}
+
 function readBranchOid(repository, branch) {
   return runGhJson([
     "api",
@@ -384,6 +419,73 @@ function invalidateOpen(repository, options) {
     if (result?.skipped) skippedActiveRuns += 1;
   }
   return { invalidated, skippedActiveRuns };
+}
+
+function cleanupQueueBranches(repository, options) {
+  let deleted = 0;
+  let wouldDelete = 0;
+  let skippedOpen = 0;
+  let skippedActiveRuns = 0;
+  let skippedUnrecognized = 0;
+  const deletions = [];
+  const skips = [];
+
+  for (const queueBranchInfo of readRemoteQueueBranches(options)) {
+    const number = queueBranchPrNumber(queueBranchInfo.branch, options.queueBranchPrefix);
+    if (!number) {
+      skippedUnrecognized += 1;
+      if (options.verbose) {
+        skips.push({ branch: queueBranchInfo.branch, reason: "unrecognized queue branch name" });
+      }
+      continue;
+    }
+
+    const pullRequest = readPullRequestState(repository, number);
+    if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
+      skippedOpen += 1;
+      if (options.verbose) {
+        skips.push({ branch: queueBranchInfo.branch, reason: `PR #${number} is open` });
+      }
+      continue;
+    }
+
+    const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
+    if (activeRun) {
+      skippedActiveRuns += 1;
+      if (options.verbose) {
+        skips.push({
+          branch: queueBranchInfo.branch,
+          reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
+        });
+      }
+      continue;
+    }
+
+    deletions.push({
+      branch: queueBranchInfo.branch,
+      number,
+      state: pullRequest.state,
+      merged: Boolean(pullRequest.merged),
+    });
+    if (options.dryRun) {
+      wouldDelete += 1;
+    } else {
+      deleteRemoteBranch(queueBranchInfo.branch);
+      deleted += 1;
+    }
+  }
+
+  return {
+    cleanupQueueBranches: true,
+    deleted,
+    deletions,
+    dryRun: options.dryRun,
+    skippedActiveRuns,
+    skippedOpen,
+    skippedUnrecognized,
+    skips,
+    wouldDelete,
+  };
 }
 
 function readQueueCandidates(repository, options) {
@@ -582,6 +684,30 @@ export function formatResult(result, options) {
     if (result.skippedActiveRuns) {
       lines.push(`Preserved ${result.skippedActiveRuns} active queue run status(es).`);
     }
+  } else if (result.cleanupQueueBranches) {
+    if (result.dryRun) {
+      lines.push(`Would delete ${result.wouldDelete} stale queue branch(es).`);
+    } else {
+      lines.push(`Deleted ${result.deleted} stale queue branch(es).`);
+    }
+    lines.push(`Skipped ${result.skippedOpen} open PR branch(es).`);
+    lines.push(`Preserved ${result.skippedActiveRuns} branch(es) with active queue runs.`);
+    if (result.skippedUnrecognized) {
+      lines.push(`Skipped ${result.skippedUnrecognized} unrecognized queue branch name(s).`);
+    }
+    if (options.verbose && result.deletions?.length) {
+      lines.push("", "### Queue Branches", "", "| Branch | PR | State |", "|--------|----|-------|");
+      for (const deletion of result.deletions.slice(0, 50)) {
+        const state = deletion.merged ? "merged" : String(deletion.state || "closed").toLowerCase();
+        lines.push(`| \`${deletion.branch}\` | #${deletion.number} | ${state} |`);
+      }
+    }
+    if (options.verbose && result.skips?.length) {
+      lines.push("", "### Skips", "", "| Branch | Reason |", "|--------|--------|");
+      for (const skip of result.skips.slice(0, 50)) {
+        lines.push(`| \`${skip.branch}\` | ${skip.reason.replace(/\|/g, "\\|")} |`);
+      }
+    }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
   } else if (result.dryRun) {
@@ -599,7 +725,7 @@ export function formatResult(result, options) {
   } else if (result.failed) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }
-  if (options.verbose && result.skips?.length) {
+  if (!result.cleanupQueueBranches && options.verbose && result.skips?.length) {
     lines.push("", "### Skips", "", "| PR | Reason |", "|----|--------|");
     for (const skip of result.skips.slice(0, 25)) {
       lines.push(`| #${skip.number} | ${skip.reason.replace(/\|/g, "\\|")} |`);
@@ -619,6 +745,8 @@ function main() {
       invalidated: invalidation?.invalidated ? 1 : 0,
       skippedActiveRuns: invalidation?.skipped ? 1 : 0,
     };
+  } else if (options.cleanupQueueBranches) {
+    result = cleanupQueueBranches(options.repository, options);
   } else if (options.invalidateOpen) {
     result = invalidateOpen(options.repository, options);
   } else {

@@ -7,6 +7,7 @@ import {
   hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
   parseArgs,
+  queueBranchPrNumber,
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
@@ -40,6 +41,7 @@ function pr(overrides = {}) {
 }
 
 assert.equal(parseArgs(["--repository", "owner/repo"]).repository, "owner/repo");
+assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.deepEqual(
   parseArgs(["--no-default-pr-required-checks", "--pr-required-check", "lint"]).prRequiredChecks,
   ["lint"],
@@ -49,6 +51,9 @@ assert.deepEqual(
   ["CI Summary"],
 );
 assert.equal(parseArgs(["--invalidate-pr", "123"]).invalidatePr, 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123"), 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-extra"), null);
+assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
 
 assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
 assert.equal(requiredCheckState([check({ status: "IN_PROGRESS", conclusion: "" })], ["CI Summary"]).kind, "pending");
@@ -163,6 +168,21 @@ assert.match(
   }, parseArgs(["--repository", "owner/repo", "--invalidate-open"])),
   /Preserved 2 active queue run status/,
 );
+
+const cleanupFormat = formatResult({
+  cleanupQueueBranches: true,
+  deletions: [
+    { branch: "automation/merge-queue/pr-1", number: 1, state: "closed", merged: true },
+  ],
+  dryRun: true,
+  skippedActiveRuns: 1,
+  skippedOpen: 2,
+  skippedUnrecognized: 1,
+  skips: [],
+  wouldDelete: 1,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupFormat, /Would delete 1 stale queue branch/);
+assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
 assert.match(
   formatResult({
