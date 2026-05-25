@@ -4,6 +4,7 @@ import pathlib
 import re
 import subprocess
 import tempfile
+import textwrap
 import unittest
 
 
@@ -64,6 +65,154 @@ class ConformanceArtifactHandoffTests(unittest.TestCase):
         local_glob = allowlist.index('compgen -G "$tmp_dir/failures-shard-*.txt"')
         gcs_copy = allowlist.index('gsutil -q -m cp "${prefix}/failures-shard-*.txt"')
         self.assertLess(local_glob, gcs_copy)
+
+    def test_aggregate_uses_snapshot_total_for_coverage_floor(self):
+        aggregate = self.function_body(
+            "run_conformance_aggregate",
+            "\n# Download shard failure lists",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / ".ci-metrics").mkdir()
+            (temp / "scripts" / "conformance").mkdir(parents=True)
+            (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
+                '{"summary":{"passed":10,"total_tests":10}}\n',
+                encoding="utf-8",
+            )
+            for shard in range(2):
+                shard_dir = (
+                    temp
+                    / ".conformance-shards"
+                    / f"conformance-shard-{shard}"
+                    / ".ci-metrics"
+                )
+                shard_dir.mkdir(parents=True)
+                shard_dir.joinpath("conformance.json").write_text(
+                    textwrap.dedent(
+                        """\
+                        {
+                          "passed": 5,
+                          "total": 5,
+                          "expected_passed": 0,
+                          "expected_total": 10
+                        }
+                        """
+                    ),
+                    encoding="utf-8",
+                )
+
+            script = temp / "aggregate.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+METRICS_DIR=.ci-metrics
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
+_TSZ_CI_CONFORMANCE_SHARD_COUNT=2
+
+ci_section() {{ :; }}
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+cap_positive_baseline() {{ echo "$1"; }}
+ensure_gcs_auth() {{ :; }}
+gsutil() {{ return 1; }}
+publish_latest_metric() {{ :; }}
+
+{aggregate}
+
+run_conformance_aggregate
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Conformance aggregate: 10/10 across 2/2 shards", result.stdout)
+        self.assertIn("Conformance expected aggregate: 0/20", result.stdout)
+
+    def test_aggregate_caps_coverage_floor_to_planned_shard_domain(self):
+        aggregate = self.function_body(
+            "run_conformance_aggregate",
+            "\n# Download shard failure lists",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = pathlib.Path(temp_dir)
+            (temp / ".ci-metrics").mkdir()
+            (temp / "scripts" / "conformance").mkdir(parents=True)
+            (temp / "scripts" / "conformance" / "conformance-snapshot.json").write_text(
+                '{"summary":{"passed":10,"total_tests":20}}\n',
+                encoding="utf-8",
+            )
+            for shard in range(2):
+                shard_dir = (
+                    temp
+                    / ".conformance-shards"
+                    / f"conformance-shard-{shard}"
+                    / ".ci-metrics"
+                )
+                shard_dir.mkdir(parents=True)
+                shard_dir.joinpath("conformance.json").write_text(
+                    textwrap.dedent(
+                        """\
+                        {
+                          "passed": 5,
+                          "total": 5,
+                          "expected_passed": 0,
+                          "expected_total": 5
+                        }
+                        """
+                    ),
+                    encoding="utf-8",
+                )
+
+            script = temp / "aggregate.sh"
+            script.write_text(
+                f"""#!/usr/bin/env bash
+set -Eeuo pipefail
+
+METRICS_DIR=.ci-metrics
+TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR=0
+_TSZ_CI_CONFORMANCE_SHARD_COUNT=2
+
+ci_section() {{ :; }}
+num_or_zero() {{
+  case "${{1:-}}" in
+    ''|*[!0-9]*) echo 0 ;;
+    *) echo "$1" ;;
+  esac
+}}
+cap_positive_baseline() {{ echo "$1"; }}
+ensure_gcs_auth() {{ :; }}
+gsutil() {{ return 1; }}
+publish_latest_metric() {{ :; }}
+
+{aggregate}
+
+run_conformance_aggregate
+""",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(script)],
+                cwd=temp,
+                check=False,
+                text=True,
+                capture_output=True,
+            )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Conformance aggregate: 10/10 across 2/2 shards", result.stdout)
+        self.assertIn("Conformance expected aggregate: 0/10", result.stdout)
 
     def test_allowlist_accepts_all_conformance_failure_statuses(self):
         allowlist_function = self.function_body(
