@@ -360,8 +360,18 @@ impl<'a> IRPrinter<'a> {
         } else {
             self.write("default:");
         }
-        self.write_line();
 
+        // Synthesized single-statement clauses (e.g. the generator dispatch
+        // `case x: return [3 /*break*/, L];`) are emitted on the same line as
+        // the case label, matching tsc.
+        if case.inline && case.statements.len() == 1 {
+            self.write(" ");
+            self.emit_node(&case.statements[0]);
+            self.write_line();
+            return;
+        }
+
+        self.write_line();
         self.increase_indent();
         for stmt in &case.statements {
             self.write_indent();

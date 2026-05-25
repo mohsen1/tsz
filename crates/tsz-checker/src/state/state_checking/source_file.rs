@@ -637,9 +637,6 @@ impl<'a> CheckerState<'a> {
         });
 
         self.rewrite_infer_generic_return_fingerprints(&sf.text);
-        if self.ctx.allow_source_file_test_pragmas {
-            self.rewrite_intersection_index_signature_fingerprints(&sf.text);
-        }
         if self.ctx.allow_source_file_test_pragmas || Self::is_index_signatures1_fixture(&sf.text) {
             self.rewrite_index_signatures1_fingerprints(&sf.text);
         }
@@ -648,7 +645,6 @@ impl<'a> CheckerState<'a> {
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
         self.rewrite_audit_followup_conformance_fingerprints(&sf.text);
-        self.rewrite_variance_annotations_fingerprints(&sf.text);
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -712,36 +708,6 @@ impl<'a> CheckerState<'a> {
                     "type '{ state: State.A; }[]'",
                     1,
                 );
-        }
-    }
-
-    fn rewrite_intersection_index_signature_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !source_text.contains("type constr<Source, Tgt>")
-            || !source_text.contains("q[\"asd\"].b")
-        {
-            return;
-        }
-
-        for diag in &mut self.ctx.diagnostics {
-            if diag.code != diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE
-                || diag.message_text != "Property 'b' does not exist on type 'A'."
-            {
-                continue;
-            }
-
-            let start = diag.start as usize;
-            if start >= source_text.len() {
-                continue;
-            }
-            let nearby_start = start.saturating_sub(16);
-            let nearby_end = source_text.len().min(start + 16);
-            if !source_text[nearby_start..nearby_end].contains("q[\"asd\"].b") {
-                continue;
-            }
-
-            diag.message_text = "Property 'b' does not exist on type '{ a: string; }'.".into();
         }
     }
 
@@ -1375,26 +1341,6 @@ impl<'a> CheckerState<'a> {
             let start = line_start + anchor_offset;
             push_unique_diagnostic(start, anchor_marker.len(), code, message);
         }
-    }
-
-    fn rewrite_variance_annotations_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if !source_text.contains("interface Baz<out T>")
-            || !source_text.contains("interface Baz<in T>")
-            || !source_text.contains("let Anon = class <out T>")
-            || !source_text.contains("foo(): InstanceType<(typeof Anon<T>)>")
-        {
-            return;
-        }
-
-        self.ctx.diagnostics.retain(|diag| {
-            !(diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                && diag.message_text.contains("Type '(Anonymous class)")
-                && diag
-                    .message_text
-                    .contains("is not assignable to type 'InstanceType<Anon<T>>'."))
-        });
     }
 
     fn has_ts_nocheck_pragma(&self, source: &str) -> bool {
