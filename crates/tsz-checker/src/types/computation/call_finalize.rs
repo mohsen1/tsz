@@ -263,8 +263,11 @@ impl<'a> CheckerState<'a> {
                         if aggregate_rest_mismatch {
                             let evaluated_param = self.evaluate_type_with_env(param.type_id);
                             let aggregate_assignable = self
-                                .is_assignable_to_with_env(actual, expected)
-                                || self.is_assignable_to_with_env(actual, evaluated_param);
+                                .diagnostic_relation_boolean_guard_with_env(actual, expected)
+                                || self.diagnostic_relation_boolean_guard_with_env(
+                                    actual,
+                                    evaluated_param,
+                                );
                             if aggregate_assignable {
                                 recovered_argument_mismatch = true;
                                 (

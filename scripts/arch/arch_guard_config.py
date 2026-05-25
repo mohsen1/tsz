@@ -722,6 +722,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "computation"
             / "call"
             / "nominal_lib_object_callbacks.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "call_finalize.rs",
         ],
         re.compile(
             r"\b(?:self|self\.ctx\.types|self\.interner)"
