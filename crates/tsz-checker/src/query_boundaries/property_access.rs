@@ -28,6 +28,22 @@ pub(crate) fn receiver_property_visibility(
     tsz_solver::type_queries::receiver_property_visibility(db, object_type, property_name)
 }
 
+pub(crate) fn protected_intersection_owner_type(
+    db: &dyn TypeDatabase,
+    object_type: TypeId,
+    property_name: &str,
+) -> Option<TypeId> {
+    let intersection_type = db
+        .get_display_alias(object_type)
+        .filter(|alias| intersection_members(db, *alias).is_some())
+        .unwrap_or(object_type);
+    let members = intersection_members(db, intersection_type)?;
+    (members.len() >= 2
+        && receiver_property_visibility(db, intersection_type, property_name)
+            == Some(tsz_solver::Visibility::Protected))
+    .then_some(intersection_type)
+}
+
 pub(crate) fn resolve_property_access_with_options(
     db: &dyn QueryDatabase,
     obj_type: TypeId,

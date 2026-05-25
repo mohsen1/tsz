@@ -430,6 +430,37 @@ fn test_keyof_object_with_string_index_includes_string_and_number() {
 }
 
 #[test]
+fn test_keyof_object_with_collapsed_string_symbol_index_includes_symbol() {
+    let interner = TypeInterner::new();
+    let string_or_symbol = interner.union2(TypeId::STRING, TypeId::SYMBOL);
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: string_or_symbol,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!(
+            "Expected union for keyof mixed string/symbol index, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let member_list = interner.type_list(members);
+    assert!(member_list.contains(&TypeId::STRING));
+    assert!(member_list.contains(&TypeId::NUMBER));
+    assert!(member_list.contains(&TypeId::SYMBOL));
+}
+
+#[test]
 fn test_keyof_object_with_number_index_includes_number() {
     let interner = TypeInterner::new();
     let obj_with_index = interner.object_with_index(ObjectShape {
@@ -610,6 +641,34 @@ fn test_keyof_callable_with_string_index_includes_string_and_number() {
             interner.lookup(result)
         );
     }
+}
+
+#[test]
+fn test_keyof_callable_with_collapsed_string_symbol_index_includes_symbol() {
+    let interner = TypeInterner::new();
+    let string_or_symbol = interner.union2(TypeId::STRING, TypeId::SYMBOL);
+    let callable = interner.callable(CallableShape {
+        string_index: Some(IndexSignature {
+            key_type: string_or_symbol,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+            param_name: None,
+        }),
+        ..CallableShape::default()
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(callable));
+
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!(
+            "Expected union for keyof callable mixed string/symbol index, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let member_list = interner.type_list(members);
+    assert!(member_list.contains(&TypeId::STRING));
+    assert!(member_list.contains(&TypeId::NUMBER));
+    assert!(member_list.contains(&TypeId::SYMBOL));
 }
 
 #[test]
