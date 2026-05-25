@@ -24,14 +24,16 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 15:10 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10154` merged.
+- 2026-05-25 15:55 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10157` merged.
   - `#9559` is merged; the former M1-A JSX branch is no longer an active
     landing target.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest apply run deleted the merged
-    `#10150` queue branch `automation/merge-queue/pr-10150-b8f0354`.
+    `#10157` queue branch `automation/merge-queue/pr-10157` and the superseded
+    open-PR branch `automation/merge-queue/pr-9281-49bd3b2`.
+  - `#9230` merged on 2026-05-25 and is no longer an active queue unblocker.
   - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
     `#9804`, `#9799`) is fully merged.
   - The old WIP-title queue (`#9822`, `#9803`, `#9639`) is resolved by merge
@@ -43,11 +45,11 @@ node scripts/ci/pr-ownership-report.mjs
   - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
     Its stale synthetic branch was cleaned after merge.
   - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
-    `mergeable=MERGEABLE`: `#9230`, `#9281`, `#9634`, `#9807`, `#9811`,
-    `#9912`, `#10078`, `#10081`, and `#10126`.
-  - Ready main-based PRs with known conflict handoff needs include `#9632` and
-    `#10084`; M1-A posted a current conflict handoff on `#9632` on
-    2026-05-25.
+    `mergeable=MERGEABLE`: `#9281`, `#9632`, `#9634`, `#9807`, `#9811`,
+    `#9912`, `#10078`, `#10081`, `#10084`, and `#10126`.
+  - `#9281` has an active synthetic queue run on
+    `automation/merge-queue/pr-9281-cb0458-49bd3b2`; do not take it over unless
+    the owner asks or it becomes stale and needs a signed handoff.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
