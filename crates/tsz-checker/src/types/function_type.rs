@@ -2,13 +2,13 @@
 mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
+mod return_diagnostics;
 
 use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
 use crate::context::TypingRequest;
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
-use crate::diagnostics::format_message;
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::query_boundaries::type_checking_utilities as type_query;
 use crate::state::CheckerState;
@@ -2284,50 +2284,12 @@ impl<'a> CheckerState<'a> {
                         // inference pass when the expected return still contains
                         // unresolved placeholders.
                     } else if use_generic_return_mismatch {
-                        let conditional_branch_mismatch = self
-                            .ctx
-                            .arena
-                            .get(body)
-                            .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
-                            .is_some_and(|cond| {
-                                let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
-                                let return_req =
-                                    TypingRequest::with_contextual_type(expected_return_type);
-                                let mut when_true =
-                                    self.get_type_of_node_with_request(cond.when_true, &return_req);
-                                let mut when_false = self
-                                    .get_type_of_node_with_request(cond.when_false, &return_req);
-                                snap.rollback(&mut self.ctx.diagnostic_state());
-                                if is_async_for_context {
-                                    when_true =
-                                        self.unwrap_promise_type(when_true).unwrap_or(when_true);
-                                    when_false =
-                                        self.unwrap_promise_type(when_false).unwrap_or(when_false);
-                                }
-                                !self.is_assignable_to(when_true, expected_return_type)
-                                    || !self.is_assignable_to(when_false, expected_return_type)
-                            });
-                        if conditional_branch_mismatch
-                            && !self.is_nested_same_wrapper_application_assignment(
-                                actual_return,
-                                expected_return_type,
-                            )
-                            && let Some(loc) = self.get_source_location(body)
-                        {
-                            let src_str = self.format_type(actual_return);
-                            let tgt_str = self.format_type(expected_return_type);
-                            let message = format_message(
-                                    crate::diagnostics::diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                    &[&src_str, &tgt_str],
-                                );
-                            self.ctx.diagnostics.push(crate::diagnostics::Diagnostic::error(
-                                    self.ctx.file_name.clone(),
-                                    loc.start,
-                                    loc.length(),
-                                    message,
-                                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                ));
-                        }
+                        self.emit_generic_conditional_return_mismatch(
+                            body,
+                            actual_return,
+                            expected_return_type,
+                            is_async_for_context,
+                        );
                     } else {
                         // For expression-bodied arrows/functions, use exact anchoring
                         // to prevent assignment_anchor_node from walking up to the
