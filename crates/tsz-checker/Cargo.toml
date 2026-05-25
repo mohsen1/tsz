@@ -1298,6 +1298,10 @@ name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
 
 [[test]]
+name = "tagged_template_this_binding_tests"
+path = "tests/tagged_template_this_binding_tests.rs"
+
+[[test]]
 name = "template_literal_recursive_replace_tests"
 path = "tests/template_literal_recursive_replace_tests.rs"
 

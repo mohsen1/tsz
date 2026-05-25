@@ -13,6 +13,15 @@ pub(crate) fn function_shape(
     tsz_solver::type_queries::get_function_shape(db, type_id)
 }
 
+/// Boundary for [`tsz_solver::type_queries::callable_requires_explicit_receiver`].
+/// See the solver query for the structural rule.
+pub(crate) fn callable_requires_explicit_receiver(
+    db: &dyn TypeDatabase,
+    callee_type: TypeId,
+) -> bool {
+    tsz_solver::type_queries::callable_requires_explicit_receiver(db, callee_type)
+}
+
 pub(crate) fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::type_includes_undefined(db, type_id)
 }
