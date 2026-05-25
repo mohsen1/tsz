@@ -747,6 +747,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "computation"
             / "call"
             / "tail_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "type_analysis"
+            / "computed_helpers_private.rs",
         ],
         re.compile(
             r"\b(?:self|self\.ctx\.types|self\.interner)"
