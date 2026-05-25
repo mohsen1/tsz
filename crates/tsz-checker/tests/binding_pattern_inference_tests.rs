@@ -188,6 +188,33 @@ let y: string;
     );
 }
 
+#[test]
+fn nullish_empty_object_fallback_preserves_destructuring_property_source() {
+    let source = r#"
+declare const yadda: { a?: number, b?: number } | undefined;
+const { a, b = a } = yadda ?? {};
+"#;
+
+    let diagnostics = compile_and_get_diagnostics(
+        source,
+        CheckerOptions {
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    );
+    let relevant: Vec<(u32, String)> = diagnostics
+        .into_iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+
+    assert!(
+        relevant.is_empty(),
+        "Nullish empty-object fallback should not collapse the destructuring source to `{{}}`. \
+         Actual diagnostics: {relevant:#?}"
+    );
+}
+
 /// When a generic function's type parameter has no inference candidates (no constraint,
 /// no default, and the only argument is a callback with a binding-pattern parameter),
 /// T falls back to `unknown`. The callback's binding-pattern type (`{a: any}`) is NOT

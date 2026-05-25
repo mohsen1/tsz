@@ -619,8 +619,10 @@ impl<'a> CheckerState<'a> {
                                     self.ctx.types,
                                     right_type,
                                 );
+                            let right_is_empty_object_literal =
+                                self.is_empty_object_literal_expression(right_idx);
                             if non_nullish == right_type
-                                || (!right_is_fresh_object
+                                || ((!right_is_fresh_object || right_is_empty_object_literal)
                                     && self.is_subtype_of(right_type, non_nullish))
                             {
                                 non_nullish
@@ -1499,6 +1501,16 @@ impl<'a> CheckerState<'a> {
         }
 
         type_stack.pop().unwrap_or(TypeId::UNKNOWN)
+    }
+
+    fn is_empty_object_literal_expression(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        self.ctx
+            .arena
+            .get(idx)
+            .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            .and_then(|node| self.ctx.arena.get_literal_expr(node))
+            .is_some_and(|lit| lit.elements.nodes.is_empty())
     }
 }
 
