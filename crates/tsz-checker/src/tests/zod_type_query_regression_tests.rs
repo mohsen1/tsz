@@ -325,6 +325,7 @@ namespace util {
 
 export const ParsedType = util.arrayToEnum([
     "string",
+    "nan",
     "undefined",
     "object",
 ]);
@@ -335,10 +336,14 @@ declare const received: ParsedType;
 declare function takeParsed(value: ParsedType): ParsedType;
 
 const direct: ParsedType = ParsedType.undefined;
+const nanValue: ParsedType = ParsedType.nan;
 const viaCall: ParsedType = takeParsed(ParsedType.string);
 
 if (received === "undefined") {
     const value: "undefined" = received;
+}
+if (received === "nan") {
+    const value: "nan" = received;
 }
 "#,
     );
