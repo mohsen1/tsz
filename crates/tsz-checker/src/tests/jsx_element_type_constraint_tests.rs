@@ -286,6 +286,72 @@ function wrap<T extends (props: {}) => React.ReactElement<any>>(Component: T) {
     );
 }
 
+#[test]
+fn jsx_element_type_constraint_accepts_component_type_or_intrinsic_key_alias() {
+    let source = r#"
+declare namespace React {
+    interface ReactElement<P = any> {}
+    type ComponentType<Props = any> = (props: Props) => ReactElement<any>;
+}
+declare global {
+    namespace JSX {
+        interface Element extends React.ReactElement<any> {}
+        interface IntrinsicElements { div: { id?: string }; span: {}; }
+    }
+}
+type IntrinsicElementsKeys = keyof JSX.IntrinsicElements;
+type ElementType<Props = any, Tag extends IntrinsicElementsKeys = IntrinsicElementsKeys> =
+    | { [K in Tag]: Props extends JSX.IntrinsicElements[K] ? K : never }[Tag]
+    | React.ComponentType<Props>;
+type RequiresElementType<T extends ElementType<any>> = T;
+type Probe = RequiresElementType<React.ComponentType<any> | IntrinsicElementsKeys>;
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "React-style ElementType constraint should accept ComponentType or intrinsic-key alias without TS2344. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_element_type_constraint_accepts_component_type_or_keyof_intrinsic_elements() {
+    let source = r#"
+declare namespace React {
+    interface ReactElement<P = any> {}
+    type ComponentType<Input = any> = (props: Input) => ReactElement<any>;
+}
+declare global {
+    namespace JSX {
+        interface Element extends React.ReactElement<any> {}
+        interface IntrinsicElements { article: { title?: string }; aside: {}; }
+    }
+}
+type IntrinsicElementsKeys = keyof JSX.IntrinsicElements;
+type ElementType<Input = any, Name extends IntrinsicElementsKeys = IntrinsicElementsKeys> =
+    | { [Tag in Name]: Input extends JSX.IntrinsicElements[Tag] ? Tag : never }[Name]
+    | React.ComponentType<Input>;
+type RequiresElementType<T extends ElementType<any>> = T;
+type Probe = RequiresElementType<React.ComponentType<any> | keyof JSX.IntrinsicElements>;
+"#;
+    let codes = diag_codes(source);
+    assert!(
+        !codes.contains(&2344),
+        "React-style ElementType constraint should accept ComponentType or keyof IntrinsicElements without TS2344. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn jsx_element_type_constraint_suppression_does_not_read_rendered_type_strings() {
+    let generics_src = include_str!("../error_reporter/generics.rs");
+    assert!(
+        !generics_src.contains("constraint_str.starts_with(\"ElementType<\")")
+            && !generics_src.contains("type_str.contains(\"ComponentType<any>\")")
+            && !generics_src.contains("type_str.contains(\"IntrinsicElementsKeys\")")
+            && !generics_src.contains("type_str.contains(\"keyof IntrinsicElements\")"),
+        "JSX ElementType TS2344 suppression must use query-boundary facts, not rendered type substrings"
+    );
+}
+
 /// Return compatibility alone is not enough: a source callable that requires
 /// more parameters than the `ElementType` callable arm is not a valid JSX
 /// component.
