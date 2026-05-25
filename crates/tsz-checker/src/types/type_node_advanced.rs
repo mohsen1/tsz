@@ -498,10 +498,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     && !is_index_access
                     && !object_has_type_params
                 {
+                    // Check property existence against the materialized object so
+                    // unevaluated mapped-alias intersection members contribute their
+                    // keys (see `evaluate_type_for_property_check`).
+                    let property_object = self.evaluate_type_for_property_check(resolved_object);
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
-                            resolved_object,
+                            property_object,
                             &key,
                         );
 
@@ -569,7 +573,25 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 {
                     return parent_enum_type;
                 }
+                // Returning `evaluated` for the bare `typeof X[K]` shape
+                // (but not for `(typeof X)[K]`) gives an alias body a
+                // concrete display in diagnostics. The shortcut is only
+                // sound when the typeof receiver materialized into a
+                // concrete type — if `get_type_from_type_query` returned a
+                // deferred `TypeQuery` because the value's type was not
+                // yet in `TypeEnvironment` at alias-body check time, the
+                // eager evaluation collapses `IndexAccess(typeof x, K)` to
+                // `undefined` and the alias would inherit that bogus
+                // resolution. Filtering on `evaluated != UNDEFINED` is the
+                // structural discriminator: a legitimate eager-eval result
+                // is the actual property type, never the degenerate
+                // `undefined` that signals a failed-to-materialize
+                // receiver. When the property is genuinely `undefined`,
+                // the deferred `indexed_type` re-evaluates to the same
+                // `undefined` at use sites where the environment is
+                // complete, so no precision is lost (see #9787).
                 if evaluated != TypeId::ERROR
+                    && evaluated != TypeId::UNDEFINED
                     && evaluated != indexed_type
                     && object_is_type_query_node
                 {
@@ -595,6 +617,35 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             })
         } else {
             false
+        }
+    }
+
+    /// Materialize an intersection receiver before a property-existence check.
+    ///
+    /// An intersection member that is an unevaluated mapped-type alias
+    /// application (e.g. `Record<K, V>`, a user alias `M<…>`, or a wrapper around
+    /// one) is opaque to the bare property-access resolver, which cannot expand a
+    /// checker-owned `DefId`. Evaluating through the `TypeEnvironment` merges the
+    /// members into one object shape — as `keyof` and assignability already do —
+    /// so every member's keys are visible. Non-intersections and types that fail
+    /// to evaluate are returned unchanged.
+    fn evaluate_type_for_property_check(&self, object_type: TypeId) -> TypeId {
+        if !crate::query_boundaries::common::is_intersection_type(self.ctx.types, object_type) {
+            return object_type;
+        }
+        let evaluated = crate::query_boundaries::state::type_environment::evaluate_type_with_cache(
+            self.ctx.types,
+            &*self.ctx,
+            object_type,
+            std::iter::empty(),
+            false,
+            self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+        )
+        .result;
+        if evaluated == TypeId::ERROR {
+            object_type
+        } else {
+            evaluated
         }
     }
 

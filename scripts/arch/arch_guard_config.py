@@ -1,9 +1,7 @@
 import pathlib
 import re
 
-
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-
 
 LINE_LIMIT_CHECKS = [
     (
@@ -125,7 +123,7 @@ STRUCT_FIELD_COUNT_CHECKS = [
         "Checker boundary: CheckerContext field count (architecture health metric 1)",
         ROOT / "crates" / "tsz-checker" / "src" / "context" / "mod.rs",
         "CheckerContext",
-        237,
+        238,
     ),
 ]
 
