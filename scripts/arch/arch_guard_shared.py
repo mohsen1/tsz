@@ -1,7 +1,225 @@
 import pathlib
 import re
+import argparse
+import importlib.util
+import json
+import shlex
+import subprocess
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import BinaryIO, Iterable, Optional
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11.
+    tomllib = None
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
+
+
+def _strip_toml_comment(line: str) -> str:
+    in_basic = False
+    in_literal = False
+    escaped = False
+
+    for index, char in enumerate(line):
+        if in_basic:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_basic = False
+            continue
+        if in_literal:
+            if char == "'":
+                in_literal = False
+            continue
+        if char == '"':
+            in_basic = True
+        elif char == "'":
+            in_literal = True
+        elif char == "#":
+            return line[:index]
+    return line
+
+
+def _parse_toml_string(value: str) -> str:
+    value = value.strip()
+    if value.startswith("'") and value.endswith("'"):
+        return value[1:-1]
+    if value.startswith('"') and value.endswith('"'):
+        return json.loads(value)
+    raise ValueError(f"unsupported TOML string value: {value!r}")
+
+
+def _parse_toml_string_array(lines: list[str]) -> list[str]:
+    text = "\n".join(_strip_toml_comment(line) for line in lines)
+    start = text.find("[")
+    end = text.rfind("]")
+    if start == -1 or end == -1 or end < start:
+        raise ValueError(f"unsupported TOML array value: {text!r}")
+
+    items: list[str] = []
+    index = start + 1
+    while index < end:
+        while index < end and text[index] in " \t\r\n,":
+            index += 1
+        if index >= end:
+            break
+
+        quote = text[index]
+        if quote not in {"'", '"'}:
+            raise ValueError(f"unsupported TOML array item near: {text[index:end]!r}")
+        index += 1
+        item_start = index
+        if quote == "'":
+            while index < end and text[index] != "'":
+                index += 1
+            if index >= end:
+                raise ValueError("unterminated TOML literal string in array")
+            items.append(text[item_start:index])
+            index += 1
+            continue
+
+        escaped = False
+        buffer: list[str] = []
+        while index < end:
+            char = text[index]
+            if escaped:
+                buffer.append("\\" + char)
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                break
+            else:
+                buffer.append(char)
+            index += 1
+        if index >= end:
+            raise ValueError("unterminated TOML basic string in array")
+        items.append(json.loads(f'"{"".join(buffer)}"'))
+        index += 1
+
+    return items
+
+
+def _parse_toml_value(value: str, array_lines: list[str]) -> object:
+    value = _strip_toml_comment(value).strip()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if value.startswith("["):
+        return _parse_toml_string_array(array_lines)
+    return _parse_toml_string(value)
+
+
+def _parse_arch_guard_policy_toml(text: str) -> dict:
+    """Parse the arch guard policy subset when stdlib `tomllib` is unavailable."""
+    data: dict[str, list[dict]] = {"pattern_checks": [], "manifest_checks": []}
+    current: Optional[dict] = None
+    lines = text.splitlines()
+    index = 0
+
+    while index < len(lines):
+        raw_line = lines[index]
+        line = _strip_toml_comment(raw_line).strip()
+        index += 1
+
+        if not line:
+            continue
+        if line.startswith("[[") and line.endswith("]]"):
+            table_name = line[2:-2].strip()
+            if table_name not in data:
+                raise ValueError(f"unsupported TOML table: {table_name!r}")
+            current = {}
+            data[table_name].append(current)
+            continue
+        if current is None or "=" not in line:
+            raise ValueError(f"unsupported TOML line: {raw_line!r}")
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        array_lines = [raw_line]
+        if value.startswith("[") and "]" not in _strip_toml_comment(value):
+            while index < len(lines):
+                array_lines.append(lines[index])
+                if "]" in _strip_toml_comment(lines[index]):
+                    index += 1
+                    break
+                index += 1
+        current[key] = _parse_toml_value(value, array_lines)
+
+    return data
+
+
+def _load_policy_toml(file: BinaryIO) -> dict:
+    if tomllib is not None:
+        return tomllib.load(file)
+    return _parse_arch_guard_policy_toml(file.read().decode("utf-8"))
+
+
+def _build_excludes(entry: dict) -> dict:
+    excludes: dict = {}
+    if entry.get("exclude_dirs") is not None:
+        excludes["exclude_dirs"] = set(entry["exclude_dirs"])
+    if entry.get("exclude_files") is not None:
+        excludes["exclude_files"] = set(entry["exclude_files"])
+    if entry.get("exclude_test_files"):
+        excludes["exclude_test_files"] = True
+    if entry.get("ignore_comment_lines"):
+        excludes["ignore_comment_lines"] = True
+    return excludes
+
+
+def _parse_pattern_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    return [
+        (entry["name"], ROOT / entry["base"], re.compile(entry["pattern"]), _build_excludes(entry))
+        for entry in data.get("pattern_checks", [])
+    ]
+
+
+def _parse_manifest_checks(data: dict) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    return [
+        (entry["name"], ROOT / entry["file"], re.compile(entry["pattern"], re.MULTILINE))
+        for entry in data.get("manifest_checks", [])
+    ]
+
+
+def _load_pattern_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern, dict]]:
+    """Load [[pattern_checks]] entries from the declarative policy TOML."""
+    with policy_path.open("rb") as f:
+        return _parse_pattern_checks(_load_policy_toml(f))
+
+
+def _load_manifest_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> list[tuple[str, pathlib.Path, re.Pattern]]:
+    """Load [[manifest_checks]] entries from the declarative policy TOML.
+
+    Patterns are compiled with ``re.MULTILINE`` so ``^`` and ``$`` match
+    at line boundaries within Cargo.toml files.
+    """
+    with policy_path.open("rb") as f:
+        return _parse_manifest_checks(_load_policy_toml(f))
+
+
+def _load_all_checks(
+    policy_path: pathlib.Path = POLICY_PATH,
+) -> tuple[list[tuple[str, pathlib.Path, re.Pattern, dict]], list[tuple[str, pathlib.Path, re.Pattern]]]:
+    """Parse the policy TOML once and return both check lists."""
+    with policy_path.open("rb") as f:
+        data = _load_policy_toml(f)
+    return _parse_pattern_checks(data), _parse_manifest_checks(data)
+
+
+CHECKS, MANIFEST_CHECKS = _load_all_checks()
 
 LINE_LIMIT_CHECKS = [
     (
@@ -23,7 +241,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/assignability/assignability_checker.rs",
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/checkers/jsx/tests.rs",
-            "crates/tsz-checker/src/checkers/jsx/props/resolution.rs",
             "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
@@ -46,11 +263,9 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/call/inner.rs",
             "crates/tsz-checker/src/types/computation/call_inference.rs",
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
-            "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
@@ -448,6 +663,12 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: RelationPolicy must store typed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"^\s*(?:pub\s+)?flags\s*:\s*u16\s*,"),
+        0,
+    ),
+    (
         "Checker relation boundary: raw diagnostic assignability predicates (#8227)",
         [
             ROOT
@@ -687,3 +908,71 @@ SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST = {
     "crates/tsz-solver/src/intern/normalize.rs",
     "crates/tsz-solver/src/intern/template.rs",
 }
+
+
+def iter_rs_files(base: pathlib.Path):
+    for path in base.rglob("*.rs"):
+        rel = path.relative_to(ROOT).as_posix()
+        parts = set(rel.split("/"))
+        if EXCLUDE_DIRS.intersection(parts):
+            continue
+        yield path, rel
+
+
+def find_matches(file_text: str, pattern: re.Pattern[str], rel: str, excludes: dict):
+    matches = []
+    excluded_files = set(excludes.get("exclude_files", ()))
+    if rel in excluded_files:
+        return matches
+
+    exclude_dirs = set(excludes.get("exclude_dirs", ()))
+    part_set = set(rel.split("/"))
+    if exclude_dirs and exclude_dirs.intersection(part_set):
+        return matches
+
+    if excludes.get("exclude_test_files") and is_test_file(rel):
+        return matches
+
+    for i, line in enumerate(file_text.splitlines(), start=1):
+        if excludes.get("ignore_comment_lines", False):
+            if line.lstrip().startswith("//"):
+                continue
+        if pattern.search(line):
+            matches.append(i)
+    return matches
+
+
+def is_test_file(rel: str) -> bool:
+    """Check if a file path looks like a test file."""
+    parts = rel.split("/")
+    filename = parts[-1] if parts else ""
+    return filename.endswith("_tests.rs") or filename.startswith("test_")
+
+
+def scan(base, pattern, excludes):
+    hits = []
+    for path, rel in iter_rs_files(base):
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for ln in find_matches(text, pattern, rel, excludes):
+            hits.append(f"{rel}:{ln}")
+    return hits
+
+
+def scan_line_limits(base: pathlib.Path, limit: int, exclude_files=None):
+    hits = []
+    for path, rel in iter_rs_files(base):
+        if exclude_files and rel in exclude_files:
+            continue
+        line_count = 0
+        try:
+            with path.open("r", encoding="utf-8", errors="ignore") as handle:
+                for line_count, _line in enumerate(handle, start=1):
+                    pass
+        except OSError:
+            continue
+        if line_count > limit:
+            hits.append(f"{rel}:{line_count} lines (limit {limit})")
+    return hits
