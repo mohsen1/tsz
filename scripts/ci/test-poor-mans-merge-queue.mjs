@@ -62,7 +62,10 @@ assert.deepEqual(
 );
 assert.equal(parseArgs(["--invalidate-pr", "123"]).invalidatePr, 123);
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123"), 123);
-assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-extra"), null);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-extra"), 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 123);
+assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
+assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
 
 assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
