@@ -2,6 +2,11 @@
 //! parameter resolution, arguments object detection, contextual rest
 //! parameter evaluation, and async/return completeness checks.
 
+use crate::computation::complex::{
+    expression_needs_contextual_return_type, is_contextually_sensitive,
+};
+use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
 use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
@@ -71,6 +76,17 @@ pub(crate) struct FunctionBodyReturnTypeCtx {
     pub(crate) return_context_for_circularity: Option<TypeId>,
     pub(crate) jsdoc_return_context: Option<TypeId>,
     pub(crate) early_gen_return_type: Option<TypeId>,
+}
+
+pub(crate) struct ExpressionBodyReturnCheckCtx {
+    pub(crate) idx: NodeIndex,
+    pub(crate) body: NodeIndex,
+    pub(crate) is_closure: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) is_async_for_context: bool,
+    pub(crate) contextual_void_return_exception: bool,
+    pub(crate) expected_expression_return_type: Option<TypeId>,
+    pub(crate) jsdoc_return_context: Option<TypeId>,
 }
 
 impl<'a> CheckerState<'a> {
@@ -368,6 +384,292 @@ impl<'a> CheckerState<'a> {
             )
         } else {
             body_return_type
+        }
+    }
+
+    pub(crate) fn check_expression_body_return_type(&mut self, ctx: ExpressionBodyReturnCheckCtx) {
+        let Some(raw_expected_return_type) = ctx.expected_expression_return_type else {
+            return;
+        };
+        let Some(body_node) = self.ctx.arena.get(ctx.body) else {
+            return;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return;
+        }
+
+        let expected_return_type = if crate::query_boundaries::common::is_index_access_type(
+            self.ctx.types,
+            raw_expected_return_type,
+        ) {
+            let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+            if evaluated != TypeId::ERROR {
+                evaluated
+            } else {
+                raw_expected_return_type
+            }
+        } else {
+            raw_expected_return_type
+        };
+        if expected_return_type == TypeId::ANY || self.type_contains_error(expected_return_type) {
+            return;
+        }
+
+        let mut actual_return_node = ctx.body;
+        let mut actual_return_uses_jsdoc_cast = false;
+        let actual_return = (if let Some(ty) =
+            self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+        {
+            actual_return_uses_jsdoc_cast = true;
+            Some(ty)
+        } else {
+            let mut found = None;
+            while let Some(parent_idx) = self
+                .ctx
+                .arena
+                .get_extended(actual_return_node)
+                .map(|ext| ext.parent)
+            {
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                    break;
+                }
+                actual_return_node = parent_idx;
+                if let Some(ty) = self.jsdoc_type_annotation_for_node_direct(actual_return_node) {
+                    actual_return_uses_jsdoc_cast = true;
+                    found = Some(ty);
+                    break;
+                }
+            }
+            found
+        })
+        .unwrap_or_else(|| {
+            let can_apply_contextual_body =
+                !self.type_has_unresolved_inference_holes(expected_return_type);
+            let literal_sensitive_return = crate::query_boundaries::common::literal_value(
+                self.ctx.types,
+                expected_return_type,
+            )
+            .is_some()
+                || crate::query_boundaries::common::enum_def_id(
+                    self.ctx.types,
+                    expected_return_type,
+                )
+                .is_some()
+                || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                    self.ctx.types,
+                    expected_return_type,
+                ) && expected_return_type != TypeId::SYMBOL)
+                || expected_return_type == TypeId::NEVER
+                || crate::query_boundaries::common::union_list_id(
+                    self.ctx.types,
+                    expected_return_type,
+                )
+                .is_some_and(|list_id| {
+                    self.ctx.types.type_list(list_id).iter().any(|&member| {
+                        crate::query_boundaries::common::is_literal_type(self.ctx.types, member)
+                            || crate::query_boundaries::common::enum_def_id(self.ctx.types, member)
+                                .is_some()
+                    })
+                });
+            let concrete_return_context = expected_return_type != TypeId::ANY
+                && expected_return_type != TypeId::UNKNOWN
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    expected_return_type,
+                );
+            let keep_contextual_body = ctx.has_type_annotation
+                || ctx.jsdoc_return_context.is_some()
+                || literal_sensitive_return
+                || (can_apply_contextual_body
+                    && (is_contextually_sensitive(self, ctx.body)
+                        || (concrete_return_context
+                            && expression_needs_contextual_return_type(self, ctx.body))));
+            let body_request = if keep_contextual_body {
+                TypingRequest::with_contextual_type(expected_return_type)
+            } else {
+                TypingRequest::NONE
+            };
+            let prev_preserve_literals = self.ctx.preserve_literal_types;
+            if keep_contextual_body {
+                self.ctx.preserve_literal_types = true;
+            }
+            if body_request.is_empty() {
+                self.invalidate_expression_for_contextual_retry(ctx.body);
+            }
+            let t = self.get_type_of_node_with_request(ctx.body, &body_request);
+            self.ctx.preserve_literal_types = prev_preserve_literals;
+            t
+        });
+
+        let actual_return = if ctx.is_async_for_context {
+            self.unwrap_async_return_type_for_body(actual_return)
+        } else {
+            actual_return
+        };
+        let body_is_simple_expression = self.ctx.arena.get(ctx.body).is_some_and(|body_node| {
+            let effective_kind = if body_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_parenthesized(body_node)
+                    .and_then(|paren| self.ctx.arena.get(paren.expression))
+                    .map(|inner| inner.kind)
+                    .unwrap_or(body_node.kind)
+            } else {
+                body_node.kind
+            };
+            effective_kind != syntax_kind_ext::BLOCK
+                && effective_kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && effective_kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        });
+        let suppress_contextual_return_check = !ctx.has_type_annotation
+            && ctx.jsdoc_return_context.is_none()
+            && (self.type_has_unresolved_inference_holes(expected_return_type)
+                || (crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    actual_return,
+                ) && !crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    expected_return_type,
+                ))
+                || body_is_simple_expression);
+        let use_generic_return_mismatch =
+            !ctx.has_type_annotation
+                && ctx.jsdoc_return_context.is_none()
+                && self.ctx.arena.get(ctx.body).is_some_and(|body_node| {
+                    body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                })
+                && self.type_has_unresolved_inference_holes(expected_return_type);
+        if ctx.contextual_void_return_exception || suppress_contextual_return_check {
+            return;
+        }
+        if use_generic_return_mismatch {
+            self.check_generic_expression_body_return_mismatch(
+                ctx.body,
+                expected_return_type,
+                actual_return,
+                ctx.is_async_for_context,
+            );
+            return;
+        }
+
+        self.check_direct_expression_body_return_mismatch(
+            ctx.idx,
+            ctx.body,
+            expected_return_type,
+            actual_return,
+            actual_return_node,
+            actual_return_uses_jsdoc_cast,
+            ctx.is_closure,
+            ctx.is_async_for_context,
+        );
+    }
+
+    fn check_generic_expression_body_return_mismatch(
+        &mut self,
+        body: NodeIndex,
+        expected_return_type: TypeId,
+        actual_return: TypeId,
+        is_async_for_context: bool,
+    ) {
+        let conditional_branch_mismatch = self
+            .ctx
+            .arena
+            .get(body)
+            .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
+            .is_some_and(|cond| {
+                let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                let return_req = TypingRequest::with_contextual_type(expected_return_type);
+                let mut when_true = self.get_type_of_node_with_request(cond.when_true, &return_req);
+                let mut when_false =
+                    self.get_type_of_node_with_request(cond.when_false, &return_req);
+                snap.rollback(&mut self.ctx.diagnostic_state());
+                if is_async_for_context {
+                    when_true = self.unwrap_promise_type(when_true).unwrap_or(when_true);
+                    when_false = self.unwrap_promise_type(when_false).unwrap_or(when_false);
+                }
+                !self.is_assignable_to(when_true, expected_return_type)
+                    || !self.is_assignable_to(when_false, expected_return_type)
+            });
+        if conditional_branch_mismatch
+            && !self
+                .is_nested_same_wrapper_application_assignment(actual_return, expected_return_type)
+            && let Some(loc) = self.get_source_location(body)
+        {
+            let src_str = self.format_type(actual_return);
+            let tgt_str = self.format_type(expected_return_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            self.ctx
+                .diagnostics
+                .push(crate::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                ));
+        }
+    }
+
+    fn check_direct_expression_body_return_mismatch(
+        &mut self,
+        idx: NodeIndex,
+        body: NodeIndex,
+        expected_return_type: TypeId,
+        actual_return: TypeId,
+        actual_return_node: NodeIndex,
+        actual_return_uses_jsdoc_cast: bool,
+        is_closure: bool,
+        is_async_for_context: bool,
+    ) {
+        let body_is_conditional = self
+            .ctx
+            .arena
+            .get(body)
+            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
+        let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
+        let inner_body = if actual_return_uses_jsdoc_cast {
+            actual_return_node
+        } else {
+            self.ctx.arena.skip_parenthesized_and_assertions(body)
+        };
+        let assignability_ok = if body_is_conditional || is_rhs_assignment {
+            self.check_assignable_or_report_at(actual_return, expected_return_type, body, body)
+        } else {
+            self.check_assignable_or_report_at_exact_anchor(
+                actual_return,
+                expected_return_type,
+                inner_body,
+                inner_body,
+            )
+        };
+        if !assignability_ok {
+            for diag in self.ctx.diagnostics.iter().rev() {
+                if diag.code
+                    == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && let Some(body_node) = self.ctx.arena.get(body)
+                    && diag.start >= body_node.pos
+                    && diag.start < body_node.end
+                {
+                    self.ctx.callback_return_type_errors.push(diag.clone());
+                    break;
+                }
+            }
+        }
+        if assignability_ok
+            && let Some(body_node) = self.ctx.arena.get(body)
+            && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+        {
+            self.check_conditional_return_branches_against_type(
+                body,
+                expected_return_type,
+                is_async_for_context,
+            );
         }
     }
 
