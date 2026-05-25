@@ -252,32 +252,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn string_index_key_accepts_property_name(
-        &mut self,
-        key_type: TypeId,
-        prop_name: &str,
-        is_symbol_named: bool,
-    ) -> bool {
-        if key_type == TypeId::SYMBOL {
-            return is_symbol_named
-                || prop_name.starts_with("[Symbol.")
-                || prop_name.starts_with("__unique_")
-                || prop_name.starts_with("__@");
-        }
-
-        if key_type == TypeId::STRING {
-            return true;
-        }
-
-        if is_symbol_named {
-            return false;
-        }
-
-        let prop_literal =
-            crate::query_boundaries::common::create_string_literal_type(self.ctx.types, prop_name);
-        self.is_assignable_to(prop_literal, key_type)
-    }
-
     fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
         query::is_type_parameter_like(self.ctx.types, member)
             || crate::query_boundaries::common::contains_generic_type_parameters(
