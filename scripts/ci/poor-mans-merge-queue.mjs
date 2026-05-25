@@ -360,7 +360,7 @@ function readRemoteQueueBranches(options) {
 
 export function queueBranchPrNumber(branch, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
   const escapedPrefix = queueBranchPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = String(branch || "").match(new RegExp(`^${escapedPrefix}/pr-(\\d+)$`));
+  const match = String(branch || "").match(new RegExp(`^${escapedPrefix}/pr-(\\d+)(?:-[^/]+)?$`));
   return match ? Number.parseInt(match[1], 10) : null;
 }
 
