@@ -34,6 +34,8 @@ function usage() {
     "  --invalidate-open               Mark open PR heads pending and exit",
     "  --invalidate-pr <number>        Mark one PR head pending and exit",
     "  --cleanup-queue-branches        Delete stale queue branches for closed PRs",
+    "  --cleanup-superseded-open-queue-branches",
+    "                                  Also delete inactive suffixed open-PR queue branches from older bases",
     "  --dry-run                       Report without pushing or merging",
     "  --verbose",
   ].join("\n");
@@ -52,6 +54,7 @@ export function parseArgs(argv) {
     agentName: process.env.AGENT_NAME || "M1-A",
     base: process.env.BASE_BRANCH || DEFAULT_BASE,
     cleanupQueueBranches: false,
+    cleanupSupersededOpenQueueBranches: false,
     dryRun: false,
     invalidateOpen: false,
     invalidatePr: null,
@@ -99,6 +102,9 @@ export function parseArgs(argv) {
       options.invalidatePr = parsePositiveInt("--invalidate-pr", argv[++index]);
     } else if (arg === "--cleanup-queue-branches") {
       options.cleanupQueueBranches = true;
+    } else if (arg === "--cleanup-superseded-open-queue-branches") {
+      options.cleanupQueueBranches = true;
+      options.cleanupSupersededOpenQueueBranches = true;
     } else if (arg === "--wait-attempts") {
       options.waitAttempts = parsePositiveInt("--wait-attempts", argv[++index]);
     } else if (arg === "--wait-interval-ms") {
@@ -359,9 +365,25 @@ function readRemoteQueueBranches(options) {
 }
 
 export function queueBranchPrNumber(branch, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
+  return queueBranchMetadata(branch, queueBranchPrefix)?.number ?? null;
+}
+
+export function queueBranchMetadata(branch, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
   const escapedPrefix = queueBranchPrefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const match = String(branch || "").match(new RegExp(`^${escapedPrefix}/pr-(\\d+)$`));
-  return match ? Number.parseInt(match[1], 10) : null;
+  const match = String(branch || "").match(new RegExp(`^${escapedPrefix}/pr-(\\d+)(?:-([^/]+))?$`));
+  return match ? {
+    number: Number.parseInt(match[1], 10),
+    suffix: match[2] || "",
+  } : null;
+}
+
+export function supersededOpenQueueBranchReason(queueBranch, currentBaseOid, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
+  const metadata = queueBranchMetadata(queueBranch, queueBranchPrefix);
+  if (!metadata) return null;
+  if (!metadata.suffix) return null;
+  const basePrefix = String(currentBaseOid || "").slice(0, 7);
+  if (basePrefix && metadata.suffix.startsWith(basePrefix)) return null;
+  return `superseded open PR queue branch for older base (current ${basePrefix || "unknown"})`;
 }
 
 function readPullRequestState(repository, number) {
@@ -449,26 +471,36 @@ function cleanupQueueBranches(repository, options) {
   let skippedOpen = 0;
   let skippedActiveRuns = 0;
   let skippedUnrecognized = 0;
+  let supersededOpen = 0;
   const deletions = [];
   const skips = [];
+  const currentBaseOid = options.cleanupSupersededOpenQueueBranches
+    ? readBranchOid(repository, options.base)
+    : "";
 
   for (const queueBranchInfo of readRemoteQueueBranches(options)) {
-    const number = queueBranchPrNumber(queueBranchInfo.branch, options.queueBranchPrefix);
-    if (!number) {
+    const metadata = queueBranchMetadata(queueBranchInfo.branch, options.queueBranchPrefix);
+    if (!metadata) {
       skippedUnrecognized += 1;
       if (options.verbose) {
         skips.push({ branch: queueBranchInfo.branch, reason: "unrecognized queue branch name" });
       }
       continue;
     }
+    const { number } = metadata;
 
     const pullRequest = readPullRequestState(repository, number);
     if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
-      skippedOpen += 1;
-      if (options.verbose) {
-        skips.push({ branch: queueBranchInfo.branch, reason: `PR #${number} is open` });
+      const supersededReason = options.cleanupSupersededOpenQueueBranches
+        ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
+        : null;
+      if (!supersededReason) {
+        skippedOpen += 1;
+        if (options.verbose) {
+          skips.push({ branch: queueBranchInfo.branch, reason: `PR #${number} is open` });
+        }
+        continue;
       }
-      continue;
     }
 
     const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
@@ -483,11 +515,15 @@ function cleanupQueueBranches(repository, options) {
       continue;
     }
 
+    if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
+      supersededOpen += 1;
+    }
     deletions.push({
       branch: queueBranchInfo.branch,
       number,
       state: pullRequest.state,
       merged: Boolean(pullRequest.merged),
+      supersededOpen: String(pullRequest.state || "").toUpperCase() === "OPEN",
     });
     if (options.dryRun) {
       wouldDelete += 1;
@@ -505,6 +541,7 @@ function cleanupQueueBranches(repository, options) {
     skippedActiveRuns,
     skippedOpen,
     skippedUnrecognized,
+    supersededOpen,
     skips,
     wouldDelete,
   };
@@ -712,13 +749,18 @@ export function formatResult(result, options) {
     }
     lines.push(`Skipped ${result.skippedOpen} open PR branch(es).`);
     lines.push(`Preserved ${result.skippedActiveRuns} branch(es) with active queue runs.`);
+    if (result.supersededOpen) {
+      lines.push(`Included ${result.supersededOpen} superseded open PR branch(es).`);
+    }
     if (result.skippedUnrecognized) {
       lines.push(`Skipped ${result.skippedUnrecognized} unrecognized queue branch name(s).`);
     }
     if (options.verbose && result.deletions?.length) {
       lines.push("", "### Queue Branches", "", "| Branch | PR | State |", "|--------|----|-------|");
       for (const deletion of result.deletions.slice(0, 50)) {
-        const state = deletion.merged ? "merged" : String(deletion.state || "closed").toLowerCase();
+        const state = deletion.supersededOpen
+          ? "open superseded"
+          : deletion.merged ? "merged" : String(deletion.state || "closed").toLowerCase();
         lines.push(`| \`${deletion.branch}\` | #${deletion.number} | ${state} |`);
       }
     }

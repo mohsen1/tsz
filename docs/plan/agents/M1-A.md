@@ -24,20 +24,28 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-21 10:38 UTC ready queue: `#9828`, `#9827`, `#9814`, `#9808`,
-  `#9804`, and `#9799`.
-- Label hygiene queue: `42` open PRs with generated/noncanonical `agent:*`
-  labels and `7` open PRs with no `agent:*` label. Start with the newest
-  missing-label PRs `#9829`, `#9825`, `#9824`, `#9822`, `#9821`, `#9820`,
-  and `#9817`.
-- WIP-title queue: `#9822`, `#9803`, and `#9639`. These have no `WIP` label,
-  so treat the title as WIP until the owner removes it with a signed status
-  comment.
-- Secondary issue context: `#9818`, `#8868`, `#7596`, `#7378`, `#9770`,
+- 2026-05-25 14:05 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10154` merged.
+  - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
+    `#9804`, `#9799`) is fully merged.
+  - The old WIP-title queue (`#9822`, `#9803`, `#9639`) is resolved by merge
+    or closure.
+  - Agent label audit is clean: no missing, multiple, or noncanonical
+    `agent:*` labels on open PRs.
+  - WIP-state comment audit is clean.
+- Current PR-garden surfaces to inspect before issue backlog:
+  - Ready main-based PRs with `mergeStateStatus=BLOCKED` but
+    `mergeable=MERGEABLE`: `#9230`, `#9281`, `#9634`, `#9807`, `#9811`,
+    `#9912`, `#10078`, `#10081`, `#10086`, `#10126`, and `#10150`.
+  - Ready main-based PRs with `mergeable=CONFLICTING`: `#9632` and `#10084`.
+  - Open queue branches should be cleaned only when their PR is merged or
+    closed; the latest cleanup dry run preserved only open PR branches.
+- Secondary issue context remains `#9818`, `#8868`, `#7596`, `#7378`, `#9770`,
   `#9752`, `#9703`, and `#9701`.
 - Expected output: comments, label fixes, closed duplicate/stale PRs, or
   ready-for-review cleanup. Avoid code changes unless a PR needs a tiny repair
-  to become mergeable.
+  to become mergeable. Do not take over another lane's implementation PR unless
+  it is stale and you leave a signed handoff/status comment first.
 
 ## Existing Work To Inspect First
 
