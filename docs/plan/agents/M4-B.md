@@ -42,9 +42,10 @@ scripts/agents/list-owned-work.sh M4-B
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
-    `26373943878` attempt 2 has moved past runner-backed setup; `emit` and
-    `project-compile-canary` passed, `conformance-1` is in progress, and the
-    rest of the ready-review heavy matrix is queued after the earlier
+    `26373943878` attempt 2 has moved past runner-backed setup; `emit`,
+    `project-compile-canary`, and `conformance-1` passed. `conformance-0`,
+    `conformance-4`, `fourslash-3`, and `fourslash-5` are in progress while
+    the rest of the ready-review heavy matrix is queued after the earlier
     `conformance-aggregate` incomplete-coverage failure was rerun.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
   merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
