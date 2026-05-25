@@ -180,7 +180,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     && alias != source
                 {
                     let mut alias_bindings = bindings.clone();
-                    let mut alias_visited = visited.clone();
+                    let mut alias_visited = FxHashSet::default();
                     if self.match_infer_pattern(
                         alias,
                         pattern,
