@@ -518,7 +518,7 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(string_index) = &shape.string_index {
                     any_member_has_string_index = true;
-                    if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type)
+                    if self.index_value_type_is_deferred(string_index.value_type)
                         || crate::query_boundaries::common::contains_type_parameters(
                             self.ctx.types,
                             resolved_target,
@@ -619,7 +619,7 @@ impl<'a> CheckerState<'a> {
                                 }
                                 source_props.iter().any(|source_prop| {
                                     source_prop.name == target_prop.name
-                                        && self.is_assignable_to(
+                                        && self.diagnostic_relation_boolean_guard(
                                             source_prop.type_id,
                                             target_prop.type_id,
                                         )
@@ -2057,24 +2057,30 @@ impl<'a> CheckerState<'a> {
                     ) {
                         continue;
                     }
-                    if Self::index_value_type_is_deferred(self.ctx.types, string_index.value_type) {
+                    if self.index_value_type_is_deferred(string_index.value_type) {
                         has_deferred_index_value_type = true;
                         continue;
                     }
                     applicable_index_value_types.push(string_index.value_type);
-                    if self.is_assignable_to(source_prop.type_id, string_index.value_type) {
+                    if self.diagnostic_relation_boolean_guard(
+                        source_prop.type_id,
+                        string_index.value_type,
+                    ) {
                         accepted_by_index = true;
                         break;
                     }
                 }
 
                 if is_numeric_name && let Some(number_index) = &shape.number_index {
-                    if Self::index_value_type_is_deferred(self.ctx.types, number_index.value_type) {
+                    if self.index_value_type_is_deferred(number_index.value_type) {
                         has_deferred_index_value_type = true;
                         continue;
                     }
                     applicable_index_value_types.push(number_index.value_type);
-                    if self.is_assignable_to(source_prop.type_id, number_index.value_type) {
+                    if self.diagnostic_relation_boolean_guard(
+                        source_prop.type_id,
+                        number_index.value_type,
+                    ) {
                         accepted_by_index = true;
                         break;
                     }
@@ -2100,7 +2106,7 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-            if self.is_assignable_to(source_prop.type_id, target_value_type) {
+            if self.diagnostic_relation_boolean_guard(source_prop.type_id, target_value_type) {
                 continue;
             }
 
@@ -2183,14 +2189,6 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.diagnostics.len() > diag_count_before
-    }
-
-    fn index_value_type_is_deferred(
-        types: &dyn tsz_solver::construction::TypeDatabase,
-        type_id: TypeId,
-    ) -> bool {
-        crate::query_boundaries::common::is_index_access_type(types, type_id)
-            || crate::query_boundaries::common::contains_type_parameters(types, type_id)
     }
 
     fn try_emit_nested_discriminated_union_assignability_error(
