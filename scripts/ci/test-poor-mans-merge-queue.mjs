@@ -8,10 +8,12 @@ import {
   hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
   parseArgs,
+  queueBranchMetadata,
   queueBranchPrNumber,
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
+  supersededOpenQueueBranchReason,
 } from "./poor-mans-merge-queue.mjs";
 
 function check(overrides = {}) {
@@ -52,6 +54,10 @@ if (originalAgentName === undefined) {
 }
 assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
 assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
+assert.equal(
+  parseArgs(["--repository", "owner/repo", "--cleanup-superseded-open-queue-branches"]).cleanupSupersededOpenQueueBranches,
+  true,
+);
 assert.deepEqual(
   parseArgs(["--no-default-pr-required-checks", "--pr-required-check", "lint"]).prRequiredChecks,
   ["lint"],
@@ -67,6 +73,23 @@ assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 1
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
 assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
+assert.deepEqual(
+  queueBranchMetadata("automation/merge-queue/pr-123-a56115a-m4c"),
+  { number: 123, suffix: "a56115a-m4c" },
+);
+assert.equal(queueBranchMetadata("automation/merge-queue/pr-123").suffix, "");
+assert.equal(
+  supersededOpenQueueBranchReason("automation/merge-queue/pr-123-a56115a-m4c", "a56115afffffffffffffffffffffffffffffffffff"),
+  null,
+);
+assert.match(
+  supersededOpenQueueBranchReason("automation/merge-queue/pr-123-deadbee-m4c", "a56115afffffffffffffffffffffffffffffffffff"),
+  /superseded open PR queue branch/,
+);
+assert.equal(
+  supersededOpenQueueBranchReason("automation/merge-queue/pr-123", "a56115afffffffffffffffffffffffffffffffffff"),
+  null,
+);
 
 assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
 assert.equal(requiredCheckState([check({ status: "IN_PROGRESS", conclusion: "" })], ["CI Summary"]).kind, "pending");
@@ -188,15 +211,19 @@ const cleanupFormat = formatResult({
   cleanupQueueBranches: true,
   deletions: [
     { branch: "automation/merge-queue/pr-1", number: 1, state: "closed", merged: true },
+    { branch: "automation/merge-queue/pr-2-deadbee", number: 2, state: "open", supersededOpen: true },
   ],
   dryRun: true,
   skippedActiveRuns: 1,
   skippedOpen: 2,
   skippedUnrecognized: 1,
+  supersededOpen: 1,
   skips: [],
-  wouldDelete: 1,
+  wouldDelete: 2,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
-assert.match(cleanupFormat, /Would delete 1 stale queue branch/);
+assert.match(cleanupFormat, /Would delete 2 stale queue branch/);
+assert.match(cleanupFormat, /Included 1 superseded open PR branch/);
+assert.match(cleanupFormat, /open superseded/);
 assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
 assert.match(
