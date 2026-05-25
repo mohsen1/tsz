@@ -4,20 +4,21 @@ import shlex
 import subprocess
 from typing import Optional
 
-from arch_guard_checks import (
+from arch_guard_config import (
     BENCHMARK_ONLY_PROJECT_ROWS,
     COMPILE_GUARD_ONLY_PROJECT_ROWS,
     GENERATED_PROJECT_ROWS_WITHOUT_PINNED_SOURCE,
     PROJECT_CONFIG_WRITERS,
-    ROOT,
 )
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
 def relative_path(path: pathlib.Path) -> str:
     try:
         return path.relative_to(ROOT).as_posix()
     except ValueError:
-        return path.as_posix()
+        return str(path)
 
 
 def extract_js_array_strings(text: str, const_name: str) -> Optional[list[str]]:
@@ -371,7 +372,6 @@ def scan_project_config_writers(
     fixture_path: pathlib.Path,
     compile_guard_path: pathlib.Path,
     bench_path: pathlib.Path,
-    config_writers: Optional[dict[str, str]] = None,
 ) -> list[str]:
     """Ensure shared project rows use shared config writer functions."""
     hits: list[str] = []
@@ -390,8 +390,7 @@ def scan_project_config_writers(
     compile_text = compile_guard_path.read_text(encoding="utf-8", errors="ignore")
     bench_text = bench_path.read_text(encoding="utf-8", errors="ignore")
 
-    writers = PROJECT_CONFIG_WRITERS if config_writers is None else config_writers
-    for row, writer in sorted(writers.items()):
+    for row, writer in sorted(PROJECT_CONFIG_WRITERS.items()):
         if not re.search(rf"\b{re.escape(writer)}\s*\(\)", fixture_text):
             hits.append(f"{fixture_rel}:0 missing shared config writer {writer} for {row}")
 

@@ -17,6 +17,60 @@ except ModuleNotFoundError:  # pragma: no cover - exercised on Python < 3.11.
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 POLICY_PATH = pathlib.Path(__file__).resolve().parent / "arch_guard_policy.toml"
 
+import arch_guard_projects as _arch_guard_projects
+from arch_guard_config import (
+    BRANCH_LOCAL_VISITED_CLONE_CHECKS,
+    CHECKER_CONTEXT_LIFETIME_MANIFEST_CHECKS,
+    DEBUG_PRINT_MACRO_CHECKS,
+    DEBUG_PRINT_REPORT_PATH,
+    EXCLUDE_DIRS,
+    FILE_LINE_LIMIT_CHECKS,
+    INDEPENDENT_PIPELINE_CHECKS,
+    LINE_LIMIT_CHECKS,
+    LSP_FEATURE_METHOD_COUNT_CHECKS,
+    PROJECT_CONFIG_WRITER_CHECKS,
+    PROJECT_CONFIG_WRITERS,
+    PROJECT_DASHBOARD_ROW_CHECKS,
+    PROJECT_FIXTURE_SOURCE_CHECKS,
+    PROJECT_INCLUSION_POLICY_CHECKS,
+    QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS,
+    QUERY_BOUNDARY_MODULE_ALLOWANCE_COUNT_CHECKS,
+    REGEX_LINE_COUNT_CHECKS,
+    ROOT_SOLVER_COMPUTATION_IMPORT_COUNT_CHECKS,
+    ROOT_SOLVER_EXPLICIT_REEXPORT_COUNT_CHECKS,
+    SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS,
+    SOLVER_IMPORT_COUNT_CHECKS,
+    SOLVER_TYPEDATA_QUARANTINE_ALLOWLIST,
+    SPECULATION_GUARD_NAME_CHECKS,
+    STRUCT_FIELD_COUNT_CHECKS,
+    TRAIT_METHOD_COUNT_CHECKS,
+    VALID_CHECKER_CONTEXT_CAPABILITIES,
+    VALID_CHECKER_CONTEXT_LIFETIMES,
+    WORKSPACE_CLIPPY_ALLOW_COUNT_CHECKS,
+)
+from arch_guard_projects import (
+    scan_project_dashboard_rows,
+    scan_project_fixture_sources,
+    scan_project_inclusion_policy,
+)
+
+
+def scan_project_config_writers(
+    fixture_path: pathlib.Path,
+    compile_guard_path: pathlib.Path,
+    bench_path: pathlib.Path,
+) -> list[str]:
+    previous = _arch_guard_projects.PROJECT_CONFIG_WRITERS
+    _arch_guard_projects.PROJECT_CONFIG_WRITERS = PROJECT_CONFIG_WRITERS
+    try:
+        return _arch_guard_projects.scan_project_config_writers(
+            fixture_path,
+            compile_guard_path,
+            bench_path,
+        )
+    finally:
+        _arch_guard_projects.PROJECT_CONFIG_WRITERS = previous
+
 
 def _strip_toml_comment(line: str) -> str:
     in_basic = False
@@ -219,8 +273,6 @@ def _load_all_checks(
 
 
 CHECKS, MANIFEST_CHECKS = _load_all_checks()
-
-from arch_guard_checks import *  # noqa: F403
 
 def iter_rs_files(base: pathlib.Path):
     for path in base.rglob("*.rs"):
@@ -1037,27 +1089,6 @@ def scan_debug_print_macros(root: pathlib.Path, scan_dirs: tuple[str, ...]) -> l
     report = _load_debug_print_report_module()
     hits = report.scan(root, scan_dirs)
     return [f"{hit.path}:{hit.line} {hit.macro}: {hit.text}" for hit in hits]
-
-
-from arch_guard_project import (
-    scan_project_config_writers as _scan_project_config_writers,
-    scan_project_dashboard_rows,
-    scan_project_fixture_sources,
-    scan_project_inclusion_policy,
-)
-
-
-def scan_project_config_writers(
-    fixture_path: pathlib.Path,
-    compile_guard_path: pathlib.Path,
-    bench_path: pathlib.Path,
-) -> list[str]:
-    return _scan_project_config_writers(
-        fixture_path,
-        compile_guard_path,
-        bench_path,
-        PROJECT_CONFIG_WRITERS,
-    )
 
 
 def scan_regex_line_count(
