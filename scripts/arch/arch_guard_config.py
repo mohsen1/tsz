@@ -762,6 +762,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "crates"
             / "tsz-checker"
             / "src"
+            / "checkers"
+            / "generic_checker"
+            / "constraint_validation.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
             / "types"
             / "computation"
             / "complex_contextual_new.rs",
