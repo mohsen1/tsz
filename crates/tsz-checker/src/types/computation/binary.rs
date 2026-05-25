@@ -3,242 +3,12 @@
 //! arithmetic, comparison, logical, assignment, nullish coalescing, and comma.
 
 use crate::context::TypingRequest;
-use crate::query_boundaries::type_computation::core::{
-    WriteTargetLogicalOperator, WriteTargetLogicalResult,
-};
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-/// Result of syntactic nullishness analysis, mirroring tsc's `PredicateSemantics`.
-/// This is a purely syntactic check -- it does NOT look at types.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
-enum SyntacticNullishness {
-    /// The expression is always nullish (e.g., `null`, `undefined`).
-    #[allow(dead_code)]
-    Always,
-    /// The expression may or may not be nullish (e.g., identifiers, calls, property accesses).
-    Sometimes,
-    /// The expression is never nullish (e.g., literals, arithmetic results, `??` results).
-    Never,
-}
-
 impl<'a> CheckerState<'a> {
-    pub(crate) fn resolve_literal_index_access_property_type(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<TypeId> {
-        let (object_type, index_type) =
-            crate::query_boundaries::common::index_access_parts(self.ctx.types, type_id)?;
-        let atom = crate::query_boundaries::type_computation::access::literal_property_name(
-            self.ctx.types,
-            index_type,
-        )?;
-        let property_name = self.ctx.types.resolve_atom(atom);
-
-        self.contextual_object_literal_property_type(object_type, property_name.as_ref())
-            .or_else(|| {
-                self.ctx
-                    .types
-                    .contextual_property_type(object_type, property_name.as_ref())
-            })
-    }
-
-    pub(crate) fn reduce_literal_index_access_property_types(&mut self, type_id: TypeId) -> TypeId {
-        if let Some(resolved) = self.resolve_literal_index_access_property_type(type_id) {
-            return resolved;
-        }
-
-        let Some(members) = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        else {
-            return type_id;
-        };
-
-        let mut changed = false;
-        let reduced = members
-            .into_iter()
-            .map(|member| {
-                if let Some(resolved) = self.resolve_literal_index_access_property_type(member) {
-                    changed = true;
-                    resolved
-                } else {
-                    member
-                }
-            })
-            .collect::<Vec<_>>();
-
-        if changed {
-            self.ctx.types.factory().union_preserve_members(reduced)
-        } else {
-            type_id
-        }
-    }
-
-    pub(crate) fn get_type_of_write_target_base_expression(&mut self, idx: NodeIndex) -> TypeId {
-        // PERF: For non-binary expressions, the write context doesn't change the
-        // result type compared to the normal path. Check the node_types cache first
-        // to avoid redundant type resolution through the full property-access pipeline.
-        // This is especially impactful for deep optional chains like `a?.b?.c?.d`
-        // where each level recursively calls this method on its base expression.
-        let logical_idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
-        let is_binary = self
-            .ctx
-            .arena
-            .get(logical_idx)
-            .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION);
-        if !is_binary && let Some(&cached) = self.ctx.node_types.get(&idx.0) {
-            return cached;
-        }
-        if let Some(node) = self.ctx.arena.get(logical_idx)
-            && node.kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
-            && matches!(
-                binary.operator_token,
-                k if k == SyntaxKind::BarBarToken as u16
-                    || k == SyntaxKind::QuestionQuestionToken as u16
-            )
-        {
-            let left_type = self.get_type_of_node_with_request(binary.left, &TypingRequest::NONE);
-            let right_type = self.get_type_of_node_with_request(binary.right, &TypingRequest::NONE);
-            let operator = if binary.operator_token == SyntaxKind::BarBarToken as u16 {
-                WriteTargetLogicalOperator::LogicalOr
-            } else {
-                WriteTargetLogicalOperator::NullishCoalescing
-            };
-            match crate::query_boundaries::type_computation::core::write_target_logical_result_type(
-                self.ctx.types,
-                operator,
-                left_type,
-                right_type,
-            ) {
-                Some(WriteTargetLogicalResult::Type(result)) => return result,
-                Some(WriteTargetLogicalResult::FallbackToLogicalExpression) => {
-                    return self.get_type_of_node_with_request(
-                        logical_idx,
-                        &TypingRequest::for_write_context(),
-                    );
-                }
-                None => {}
-            }
-        }
-
-        self.get_type_of_node_with_request(idx, &TypingRequest::for_write_context())
-    }
-
-    /// Mirrors tsc's `getSyntacticNullishnessSemantics`. This is a purely syntactic check
-    /// that determines whether an expression can ever be nullish, WITHOUT consulting the
-    /// type system. For example, a variable `foo: string` returns `Sometimes` (it could
-    /// theoretically be reassigned at runtime), while a literal `"hello"` returns `Never`.
-    #[allow(dead_code)]
-    fn get_syntactic_nullishness(&self, idx: NodeIndex) -> SyntacticNullishness {
-        let Some(node) = self.ctx.arena.get(idx) else {
-            return SyntacticNullishness::Sometimes;
-        };
-
-        let kind = node.kind;
-
-        // Skip parenthesized expressions (tsc's skipOuterExpressions)
-        if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
-            && let Some(paren) = self.ctx.arena.get_parenthesized(node)
-        {
-            return self.get_syntactic_nullishness(paren.expression);
-        }
-
-        // Non-null assertions (!): always Never
-        if kind == syntax_kind_ext::NON_NULL_EXPRESSION {
-            return SyntacticNullishness::Never;
-        }
-
-        // Type assertions (as/satisfies/<T>x): tsc skips these via skipOuterExpressions
-        if kind == syntax_kind_ext::AS_EXPRESSION
-            || kind == syntax_kind_ext::SATISFIES_EXPRESSION
-            || kind == syntax_kind_ext::TYPE_ASSERTION
-        {
-            return SyntacticNullishness::Sometimes;
-        }
-
-        // Expressions that may produce null/undefined at runtime
-        if kind == syntax_kind_ext::AWAIT_EXPRESSION
-            || kind == syntax_kind_ext::CALL_EXPRESSION
-            || kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION
-            || kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-            || kind == syntax_kind_ext::META_PROPERTY
-            || kind == syntax_kind_ext::NEW_EXPRESSION
-            || kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || kind == syntax_kind_ext::YIELD_EXPRESSION
-            || kind == SyntaxKind::ThisKeyword as u16
-        {
-            return SyntacticNullishness::Sometimes;
-        }
-
-        // Binary expressions
-        if kind == syntax_kind_ext::BINARY_EXPRESSION
-            && let Some(binary) = self.ctx.arena.get_binary_expr(node)
-        {
-            let op = binary.operator_token;
-            // ||, ||=, &&, &&= can produce null/undefined
-            if op == SyntaxKind::BarBarToken as u16
-                || op == SyntaxKind::BarBarEqualsToken as u16
-                || op == SyntaxKind::AmpersandAmpersandToken as u16
-                || op == SyntaxKind::AmpersandAmpersandEqualsToken as u16
-            {
-                return SyntacticNullishness::Sometimes;
-            }
-            // For ??, ??=, =, comma: result nullishness is determined by right operand
-            if op == SyntaxKind::CommaToken as u16
-                || op == SyntaxKind::EqualsToken as u16
-                || op == SyntaxKind::QuestionQuestionToken as u16
-                || op == SyntaxKind::QuestionQuestionEqualsToken as u16
-            {
-                return self.get_syntactic_nullishness(binary.right);
-            }
-            // All other binary operators (arithmetic, comparison, bitwise, etc.)
-            // never produce null/undefined
-            return SyntacticNullishness::Never;
-        }
-
-        // Conditional expression: union of true and false branches
-        if kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
-            && let Some(cond) = self.ctx.arena.get_conditional_expr(node)
-        {
-            let when_true = self.get_syntactic_nullishness(cond.when_true);
-            let when_false = self.get_syntactic_nullishness(cond.when_false);
-            if when_true == SyntacticNullishness::Never && when_false == SyntacticNullishness::Never
-            {
-                return SyntacticNullishness::Never;
-            }
-            if when_true == SyntacticNullishness::Always
-                && when_false == SyntacticNullishness::Always
-            {
-                return SyntacticNullishness::Always;
-            }
-            return SyntacticNullishness::Sometimes;
-        }
-
-        // null keyword
-        if kind == SyntaxKind::NullKeyword as u16 {
-            return SyntacticNullishness::Always;
-        }
-
-        // Identifier: check if it's `undefined`
-        if kind == SyntaxKind::Identifier as u16 {
-            if let Some(ident) = self.ctx.arena.get_identifier(node)
-                && ident.escaped_text == "undefined"
-            {
-                return SyntacticNullishness::Always;
-            }
-            return SyntacticNullishness::Sometimes;
-        }
-
-        // Everything else: literals (string, number, boolean, bigint, regex, template,
-        // object literal, array literal, function expression, arrow function, class expression,
-        // etc.) are never nullish.
-        SyntacticNullishness::Never
-    }
-
     /// Get the type of a binary expression.
     ///
     /// Handles all binary operators including arithmetic, comparison, logical,
@@ -468,6 +238,7 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(left_idx, &TypingRequest::NONE);
                     self.ctx.preserve_literal_types = prev_preserve;
                     let right_type = self.get_type_of_node_with_request(right_idx, request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     type_stack.push(left_type);
                     type_stack.push(right_type);
@@ -535,6 +306,7 @@ impl<'a> CheckerState<'a> {
                         TypingRequest::NONE
                     };
                     let right_type = self.get_type_of_node_with_request(right_idx, &right_request);
+                    let right_type = self.preserve_logical_operand_literal(right_idx, right_type);
 
                     let should_check_contextual_right =
                         outer_context.is_some() && right_accepts_context && {
@@ -764,20 +536,25 @@ impl<'a> CheckerState<'a> {
 
                 if let Some(diag_idx) = diagnostics.never_nullish_diag {
                     use crate::diagnostics::diagnostic_codes;
-                    // TS2869: the left operand is never nullish, so the right
-                    // operand of `??` is unreachable. tsc anchors the error
-                    // at the left operand, skipping parentheses to the inner
-                    // expression (e.g., `(expr) ?? ""` → anchored at `expr`).
+                    // tsc points the error at the left operand (the never-nullish expression),
+                    // skipping through any parentheses to reach the inner expression.
+                    // e.g., `(expr) ?? ""` → error anchored at `expr`, not `(expr)`.
                     self.error_at_node(
                         diag_idx,
                         "Right operand of ?? is unreachable because the left operand is never nullish.",
                         diagnostic_codes::RIGHT_OPERAND_OF_IS_UNREACHABLE_BECAUSE_THE_LEFT_OPERAND_IS_NEVER_NULLISH,
                     );
                     type_stack.push(left_type);
-                    continue;
-                }
-
-                if let Some(diag_idx) = diagnostics.always_nullish_diag {
+                } else if let Some(diag_idx) = diagnostics.always_nullish_diag {
+                    // TS2871: complementary to TS2869. When the left operand of
+                    // `??` is syntactically a nullish-coalescing chain or a
+                    // bare nullish literal and its evaluated type contains
+                    // only nullish constituents (split yields no non-nullish
+                    // part), tsc emits TS2871 — the left expression is
+                    // *always* nullish, so the `??` itself is redundant.
+                    //
+                    // Same anchor strategy as TS2869: point at the left
+                    // operand, skipping through parentheses.
                     use crate::diagnostics::diagnostic_codes;
                     self.error_at_node(
                         diag_idx,
@@ -789,11 +566,24 @@ impl<'a> CheckerState<'a> {
                     // still has a non-nullish slice (e.g.,
                     // `(null as string | null) ?? "x"` produces `string`
                     // via subtype reduction of `string | "x"`).
+                    let result = self.nullish_coalescing_result_type(
+                        evaluated_left,
+                        non_nullish,
+                        right_type,
+                    );
+                    type_stack.push(result);
+                } else {
+                    // tsc uses UnionReduction.Subtype for ?? result types,
+                    // which removes structural subtypes (e.g., never[] from
+                    // number[] | never[] → number[]). This matters when the
+                    // RHS is an empty array literal [] (always never[] in strict mode).
+                    let result = self.nullish_coalescing_result_type(
+                        evaluated_left,
+                        non_nullish,
+                        right_type,
+                    );
+                    type_stack.push(result);
                 }
-
-                let result =
-                    self.nullish_coalescing_result_type(evaluated_left, non_nullish, right_type);
-                type_stack.push(result);
                 continue;
             }
             // TS17006/TS17007: Certain expressions not allowed as left-hand side of `**`.

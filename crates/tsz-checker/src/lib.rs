@@ -436,6 +436,9 @@ mod closure_destructuring_top_level_diagnostics_tests;
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/conditional_break_narrowing_tests.rs"]
+mod conditional_break_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
