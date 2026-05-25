@@ -521,7 +521,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down by 1 after the interface heritage `this`-type helper
         # moved to `query_boundaries::type_predicates`.
-        3356,
+        #
+        # Ratcheted down by 8 after rebasing on main removed additional direct
+        # common references.
+        3348,
     ),
 ]
 
