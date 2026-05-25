@@ -426,6 +426,25 @@ impl<'a> DeclarationEmitter<'a> {
         binder.get_global_type("Promise") == Some(sym_id) && binder.lib_symbol_ids.contains(&sym_id)
     }
 
+    pub(in crate::declaration_emitter) fn evaluated_literal_return_type_text_for_returned_identifier(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+        return_type_id: tsz_solver::types::TypeId,
+    ) -> Option<String> {
+        let interner = self.type_interner?;
+        let returned_identifier = self.function_body_unique_return_identifier(func_body)?;
+        self.function_parameter_type_text(func, returned_identifier)
+            .or_else(|| self.reference_declared_type_annotation_text(returned_identifier))?;
+        let evaluated_return =
+            self.evaluate_type_id_structurally_for_declaration_emit(return_type_id)?;
+        if !tsz_solver::type_queries::is_literal_or_literal_union_type(interner, evaluated_return) {
+            return None;
+        }
+
+        Some(self.print_type_id_expanded_for_inferred_declaration(evaluated_return))
+    }
+
     pub(in crate::declaration_emitter) fn restore_mapped_return_type_param_constraints(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -1168,5 +1187,80 @@ impl<'a> DeclarationEmitter<'a> {
             }
             _ => true,
         }
+    }
+
+    /// Returns `true` when `func_body` is a block whose sole non-trivial
+    /// return expression is an object literal that contains at least one
+    /// method whose body only returns `this`.
+    ///
+    /// When this is true, the solver infers a recursive "self-referential"
+    /// object type for the function.  Printing that type through the solver's
+    /// `TypePrinter` (with `max_depth = 128`) produces an exponentially large
+    /// string.  The AST-based path already handles these methods correctly by
+    /// emitting `/*elided*/ any` for the `this`-returning slots, so we prefer
+    /// the source-derived type text and skip the expensive solver print.
+    ///
+    /// This is intentionally conservative: it only matches single-return
+    /// functions whose return is a direct object literal.  More complex shapes
+    /// (multiple returns, nested wrappers, etc.) fall through to the normal
+    /// solver path.
+    pub(in crate::declaration_emitter) fn function_body_returns_object_with_this_only_methods(
+        &self,
+        func_body: NodeIndex,
+    ) -> bool {
+        let body_node = match self.arena.get(func_body) {
+            Some(n) => n,
+            None => return false,
+        };
+        let block = match self.arena.get_block(body_node) {
+            Some(b) => b,
+            None => return false,
+        };
+
+        // Collect all non-trivial statements; we expect exactly one return.
+        let returns: Vec<_> = block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter_map(|stmt_idx| {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                    return None;
+                }
+                let ret = self.arena.get_return_statement(stmt_node)?;
+                ret.expression.is_some().then_some(ret.expression)
+            })
+            .collect();
+
+        if returns.len() != 1 {
+            return false;
+        }
+
+        let expr_idx = returns[0];
+        let expr_node = match self.arena.get(expr_idx) {
+            Some(n) => n,
+            None => return false,
+        };
+        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return false;
+        }
+        let obj = match self.arena.get_literal_expr(expr_node) {
+            Some(o) => o,
+            None => return false,
+        };
+
+        // Check whether at least one member is a method that only returns `this`.
+        obj.elements.nodes.iter().copied().any(|prop_idx| {
+            let prop_node = match self.arena.get(prop_idx) {
+                Some(n) => n,
+                None => return false,
+            };
+            let method = match self.arena.get_method_decl(prop_node) {
+                Some(m) => m,
+                None => return false,
+            };
+            self.method_body_returns_this(method.body)
+        })
     }
 }

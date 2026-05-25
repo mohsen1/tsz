@@ -623,6 +623,24 @@ const _k2: K = someSym;
 }
 
 #[test]
+fn keyof_mixed_string_symbol_index_signature_includes_symbol() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+interface R {
+    [k: string]: number;
+    [k: symbol]: number;
+}
+declare const x: symbol;
+const k: keyof R = x;
+"#,
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "symbol should be assignable to keyof mixed string/symbol index signature, got {codes:?}",
+    );
+}
+
+#[test]
 fn object_literal_wide_symbol_key_is_structural_renamed_identifier_one() {
     // Different key-variable name — the rule is structural, not identifier-keyed.
     let codes = diagnostic_codes_for_ts(

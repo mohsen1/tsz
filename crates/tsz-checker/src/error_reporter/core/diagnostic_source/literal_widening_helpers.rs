@@ -2,26 +2,6 @@
 
 use tsz_solver::TypeId;
 
-pub(super) fn simple_or_namespace_member_name(display: &str) -> Option<&str> {
-    if display.starts_with("typeof ")
-        || display.starts_with("import(")
-        || display.contains('<')
-        || display.contains('[')
-        || display.contains(' ')
-    {
-        return None;
-    }
-    let name = display.rsplit_once('.').map_or(display, |(_, short)| short);
-    let mut chars = name.chars();
-    let first = chars.next()?;
-    if !(first == '_' || first == '$' || first.is_ascii_alphabetic()) {
-        return None;
-    }
-    chars
-        .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        .then_some(name)
-}
-
 /// Whether `target` accepts a literal whose widened primitive kind is
 /// `source_primitive` for "literal-of-contextual-type" purposes.
 pub(super) fn target_accepts_literal_primitive_kind(
