@@ -30,6 +30,17 @@ impl<'a> CheckerState<'a> {
         source_base == target_base
     }
 
+    fn is_typed_array_application_property_mismatch_display(&self, type_id: TypeId) -> bool {
+        let Some(base) = self.application_base_for_property_mismatch_display(type_id) else {
+            return false;
+        };
+        crate::query_boundaries::common::type_has_well_known_typed_array_name(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            base,
+        )
+    }
+
     fn nested_reason_reuses_enclosing_application_source(
         &self,
         nested_source: TypeId,
@@ -155,20 +166,9 @@ impl<'a> CheckerState<'a> {
                 && let Some(tsz_solver::SubtypeFailureReason::LiteralTypeMismatch { .. }) =
                     nested_reason
             {
-                let is_typed_array_display = |display: &str| {
-                    display.starts_with("Int8Array<")
-                        || display.starts_with("Uint8Array<")
-                        || display.starts_with("Uint8ClampedArray<")
-                        || display.starts_with("Int16Array<")
-                        || display.starts_with("Uint16Array<")
-                        || display.starts_with("Int32Array<")
-                        || display.starts_with("Uint32Array<")
-                        || display.starts_with("Float32Array<")
-                        || display.starts_with("Float64Array<")
-                        || display.starts_with("BigInt64Array<")
-                        || display.starts_with("BigUint64Array<")
-                };
-                if !(is_typed_array_display(&source_str) && is_typed_array_display(&target_str)) {
+                if !(self.is_typed_array_application_property_mismatch_display(source)
+                    && self.is_typed_array_application_property_mismatch_display(target))
+                {
                     return self.render_failure_reason(
                         nested_reason.expect("checked above"),
                         source_property_type,
