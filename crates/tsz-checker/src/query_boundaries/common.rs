@@ -155,13 +155,6 @@ pub(crate) fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: 
     tsz_solver::type_queries::contains_application_in_structure(db, type_id)
 }
 
-pub(crate) fn contains_application_in_constraint_resolution_path(
-    db: &dyn TypeDatabase,
-    type_id: TypeId,
-) -> bool {
-    tsz_solver::type_queries::contains_application_in_constraint_resolution_path(db, type_id)
-}
-
 pub(crate) fn is_type_deeply_any(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_type_deeply_any(db, type_id)
 }
