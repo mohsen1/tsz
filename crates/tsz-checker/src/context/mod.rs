@@ -1315,12 +1315,11 @@ pub struct CheckerContext<'a> {
     /// gate instead of tsz's normal coarser policy.
     pub in_satisfies_operand: bool,
 
-    /// When true, preserve literal types instead of widening.
-    /// Set during evaluation of compound expression branches (conditional `?:`,
-    /// logical `||`/`&&`/`??`) so that `const x = cond ? "a" : "b"` infers
-    /// `"a" | "b"` instead of `string`.
+    /// Preserve literal types instead of widening. Set during compound
+    /// expression branches (conditional `?:`, logical `||`/`&&`/`??`).
     pub preserve_literal_types: bool,
-
+    /// Preserve primitive literal operands for logical `const` initializers.
+    pub preserve_logical_operand_literals: bool,
     /// When true, identifier resolution should return the symbol's declared
     /// type (when one is explicitly annotated) rather than a flow-narrowed
     /// type. Set during class property initializer evaluation so that
