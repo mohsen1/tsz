@@ -37,12 +37,12 @@ scripts/agents/list-owned-work.sh M4-B
     `Queue Tested` is pending, disable it and leave a signed blocker comment.
   - `#9807` ready/off-auto; follow-up head
     `023ac1dde31e330514196d178b11d3515f832814` splits visitor predicates below
-    2000 LOC. Exact-head ready-review CI is waiting on queued
-    `conformance-aggregate`; `fourslash-aggregate` is no longer pending.
+    2000 LOC. Exact-head ready-review CI is green apart from required
+    `Queue Tested`.
   - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
     the PR to ready review on
     `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
-    `26373943878` attempt 2 still has `cargo-shear`, `node-harness-prep`, and
+    `26373943878` attempt 2 still has `node-harness-prep` and
     `dist-binaries` queued after the earlier `conformance-aggregate`
     incomplete-coverage failure was rerun.
 - Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
