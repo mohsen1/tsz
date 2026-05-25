@@ -639,7 +639,7 @@ impl<'a> CheckerState<'a> {
             arg_types: &arg_types,
             base_contextual_param_types,
             finalized_contextual_param_types: finalized_contextual_param_types.as_deref(),
-            original_callee_shape: original_callee_shape,
+            original_callee_shape,
             emit_unknown_callback_body_diagnostics: is_generic_call && contextual_type.is_none(),
             check_excess_properties,
             callable_ctx,
@@ -786,7 +786,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let call_context = CallResultContext {
-            callee_expr: callee_expr,
+            callee_expr,
             call_idx: idx,
             args,
             arg_types: &arg_types,
@@ -804,7 +804,7 @@ impl<'a> CheckerState<'a> {
                             .any(|sig| !sig.type_params.is_empty())
                     }),
             is_super_call,
-            is_optional_chain: is_optional_chain,
+            is_optional_chain,
             allow_contextual_mismatch_deferral,
         };
         // Pop the shape_this_type that was kept on the stack since the
