@@ -1438,9 +1438,6 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
             return target_display;
         }
-        // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
-        // but these are parameter literals that should be preserved, not object property
-        // literals that should be widened. Skip rewriting for callable types.
         let evaluated = self.evaluate_type_for_assignability(target);
         let target_is_function_like = [target, evaluated].into_iter().any(|candidate| {
             is_function_like_for_literal_member_widening(self.ctx.types, candidate)
