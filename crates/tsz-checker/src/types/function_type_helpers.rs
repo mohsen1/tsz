@@ -58,6 +58,21 @@ pub(crate) struct GeneratorBodyReturnCheckCtx<'b> {
     pub(crate) name_for_error: Option<&'b str>,
 }
 
+pub(crate) struct FunctionBodyReturnTypeCtx {
+    pub(crate) idx: NodeIndex,
+    pub(crate) is_generator: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) type_annotation: NodeIndex,
+    pub(crate) is_async_for_context: bool,
+    pub(crate) has_contextual_return: bool,
+    pub(crate) contextual_void_return_exception: bool,
+    pub(crate) return_context_for_circularity: Option<TypeId>,
+    pub(crate) jsdoc_return_context: Option<TypeId>,
+    pub(crate) early_gen_return_type: Option<TypeId>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn function_contextual_type_context(
         &mut self,
@@ -256,6 +271,104 @@ impl<'a> CheckerState<'a> {
         }
 
         Some(final_yield)
+    }
+
+    pub(crate) fn function_body_return_type(&mut self, ctx: FunctionBodyReturnTypeCtx) -> TypeId {
+        let body_return_type = if ctx.is_generator && ctx.has_type_annotation {
+            self.annotated_generator_body_return_type(&ctx)
+        } else if ctx.is_async_for_context && ctx.has_type_annotation {
+            let original_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+            self.unwrap_promise_type(original_type)
+                .unwrap_or(ctx.return_type)
+        } else if ctx.is_async_for_context
+            && ctx.has_contextual_return
+            && ctx
+                .return_context_for_circularity
+                .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN)
+        {
+            ctx.return_context_for_circularity
+                .expect("is_some_and guard ensures Some")
+        } else if ctx.is_async_for_context
+            && ctx.has_contextual_return
+            && ctx.return_context_for_circularity == Some(TypeId::VOID)
+        {
+            TypeId::ANY
+        } else if ctx.is_async_for_context {
+            self.unwrap_async_return_type_for_body(ctx.return_type)
+        } else if ctx.contextual_void_return_exception {
+            TypeId::ANY
+        } else if ctx.is_generator
+            && !ctx.has_type_annotation
+            && ctx.has_contextual_return
+            && let Some(early_t) = ctx.early_gen_return_type
+            && early_t != TypeId::ANY
+            && early_t != TypeId::UNKNOWN
+        {
+            early_t
+        } else if ctx.has_type_annotation
+            || ctx.has_contextual_return
+            || ctx.jsdoc_return_context.is_some()
+        {
+            self.sync_function_body_return_type(&ctx)
+        } else {
+            TypeId::ANY
+        };
+
+        self.substitute_direct_this_body_return_type(&ctx, body_return_type)
+    }
+
+    fn annotated_generator_body_return_type(&mut self, ctx: &FunctionBodyReturnTypeCtx) -> TypeId {
+        let original_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+        if original_type == TypeId::VOID || ctx.return_type == TypeId::VOID {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                ctx.type_annotation,
+                "A generator cannot have a 'void' type annotation.",
+                diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
+            );
+            return TypeId::ANY;
+        }
+
+        self.get_generator_return_type_argument(original_type)
+            .unwrap_or(ctx.return_type)
+    }
+
+    fn sync_function_body_return_type(&mut self, ctx: &FunctionBodyReturnTypeCtx) -> TypeId {
+        let has_direct_callable_jsdoc = !ctx.is_async_for_context
+            && !ctx.is_generator
+            && ctx.has_contextual_return
+            && !ctx.has_type_annotation
+            && ctx.jsdoc_return_context.is_none()
+            && self
+                .jsdoc_callable_type_annotation_for_node_direct(ctx.idx)
+                .is_some();
+        let sync_ctx = has_direct_callable_jsdoc
+            .then_some(ctx.return_context_for_circularity)
+            .flatten()
+            .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN);
+        sync_ctx.unwrap_or_else(|| ctx.annotated_return_type.unwrap_or(ctx.return_type))
+    }
+
+    fn substitute_direct_this_body_return_type(
+        &mut self,
+        ctx: &FunctionBodyReturnTypeCtx,
+        body_return_type: TypeId,
+    ) -> TypeId {
+        if !(ctx.has_type_annotation || ctx.jsdoc_return_context.is_some())
+            || !crate::query_boundaries::common::is_this_type(self.ctx.types, body_return_type)
+        {
+            return body_return_type;
+        }
+
+        if let Some(concrete_this) = self.current_this_type() {
+            crate::query_boundaries::common::substitute_this_type(
+                self.ctx.types,
+                body_return_type,
+                concrete_this,
+            )
+        } else {
+            body_return_type
+        }
     }
 
     pub(crate) fn implicit_function_this_type(

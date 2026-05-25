@@ -3,7 +3,9 @@ mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
 
-use super::function_type_helpers::{FunctionFinalReturnTypeCtx, GeneratorBodyReturnCheckCtx};
+use super::function_type_helpers::{
+    FunctionBodyReturnTypeCtx, FunctionFinalReturnTypeCtx, GeneratorBodyReturnCheckCtx,
+};
 use crate::computation::complex::{
     expression_needs_contextual_return_type, is_contextually_sensitive,
 };
@@ -1703,141 +1705,24 @@ impl<'a> CheckerState<'a> {
             // this_type was already pushed early (before parameter initializer checks)
             // so we don't need to push it again here
 
-            // For generator functions with explicit return type (Generator<Y, R, N> or AsyncGenerator<Y, R, N>),
-            // return statements should be checked against TReturn (R), not the full Generator type.
-            // This matches TypeScript's behavior where `return x` in a generator checks `x` against TReturn.
-            //
-            // For async functions with return type Promise<T>, return statements should be checked
-            // against T, not Promise<T>. The function body returns T, which gets auto-wrapped.
             let contextual_void_return_exception = !has_type_annotation
                 && jsdoc_return_context.is_none()
                 && has_contextual_return
                 && return_context_for_circularity == Some(TypeId::VOID);
-            let body_return_type = if is_generator && has_type_annotation {
-                let original_type = annotated_return_type.unwrap_or(return_type);
-                // TS2505: A generator cannot have a 'void' type annotation.
-                if original_type == TypeId::VOID || return_type == TypeId::VOID {
-                    use crate::diagnostics::diagnostic_codes;
-                    self.error_at_node(
-                        type_annotation,
-                        "A generator cannot have a 'void' type annotation.",
-                        diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
-                    );
-                    TypeId::ANY // Use ANY to suppress return statement checks
-                } else {
-                    // Use the pre-expansion annotated return type because
-                    // evaluate_application_type() may have expanded Generator<Y,R,N>
-                    // into its structural object form, which get_generator_return_type_argument
-                    // can't recognise (it needs an Application type).
-                    self.get_generator_return_type_argument(original_type)
-                        .unwrap_or(return_type)
-                }
-            } else if is_async_for_context && has_type_annotation {
-                // Unwrap Promise<T> to T for async function return type checking.
-                // Use the pre-expansion annotated return type because
-                // evaluate_application_type() may have expanded Promise<T> into its
-                // structural object form, which unwrap_promise_type() can't recognise.
-                let original_type = annotated_return_type.unwrap_or(return_type);
-                self.unwrap_promise_type(original_type)
-                    .unwrap_or(return_type)
-            } else if is_async_for_context
-                && has_contextual_return
-                && return_context_for_circularity
-                    .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN)
-            {
-                // Contextually-typed async function (e.g., JSDoc @type or callback):
-                // use the contextual return type (already unwrapped from Promise)
-                // for body return-statement checking. This matches tsc's behavior
-                // where `return 0` in `async (): string => { return 0 }` is checked
-                // against `string`, not the inferred type.
-                return_context_for_circularity.expect("is_some_and guard ensures Some")
-            } else if is_async_for_context
-                && has_contextual_return
-                && return_context_for_circularity == Some(TypeId::VOID)
-            {
-                // Async void-return contextual callbacks are allowed to return values.
-                TypeId::ANY
-            } else if is_async_for_context {
-                // For non-contextually-typed async functions, unwrap Promise from
-                // the inferred return type for body checking.
-                self.unwrap_async_return_type_for_body(return_type)
-            } else if contextual_void_return_exception {
-                // Contextual `() => void` callbacks are allowed to return values.
-                // Skip statement-level return assignability and let the outer
-                // function-type assignability relation handle the ergonomics.
-                TypeId::ANY
-            } else if is_generator
-                && !has_type_annotation
-                && has_contextual_return
-                && let Some(early_t) = early_gen_return_type
-                && early_t != TypeId::ANY
-                && early_t != TypeId::UNKNOWN
-            {
-                // Contextually-typed sync generator (no annotation): use
-                // unwrapped contextual `TReturn` from outer
-                // `Generator<Y, TReturn, N>` for body return checks. Without
-                // this, `f1<0,0,1>(function* () { return 0 })` widens 0 → number
-                // and the call site reports a false TS2345. Mirrors the async
-                // and annotated-generator branches above.
-                early_t
-            } else if has_type_annotation || has_contextual_return || jsdoc_return_context.is_some()
-            {
-                // When a sync function carries its own JSDoc `@type {function(...): T}`
-                // (e.g. a method shorthand whose owning property declares the method's
-                // type), check block-body returns against the contextual return type.
-                // Mirrors the async branch above. Function expressions whose contextual
-                // type comes from outside (callback parameters) are excluded so we
-                // don't double-report at the inner return AND the call site.
-                let has_direct_callable_jsdoc = !is_async_for_context
-                    && !is_generator
-                    && has_contextual_return
-                    && !has_type_annotation
-                    && jsdoc_return_context.is_none()
-                    && self
-                        .jsdoc_callable_type_annotation_for_node_direct(idx)
-                        .is_some();
-                let sync_ctx = has_direct_callable_jsdoc
-                    .then_some(return_context_for_circularity)
-                    .flatten()
-                    .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN);
-                // Use the pre-evaluation annotated return type when available.
-                // evaluate_application_type() (line 1305) expands Application
-                // types (e.g., Promise<U>) into structural object forms, which
-                // destroys the Application wrapper needed for correct type
-                // display in TS2322 messages.
-                sync_ctx.unwrap_or_else(|| annotated_return_type.unwrap_or(return_type))
-            } else {
-                // When the return type was purely inferred from the body (no
-                // annotation, no contextual type, no JSDoc @returns), push ANY
-                // so that check_return_statement skips the assignability check.
-                // Checking a return expression against its own inferred type is
-                // circular and can produce false positives when contextual typing
-                // widens inner types differently than non-contextual inference.
-                TypeId::ANY
-            };
-
-            // When the body return type is the direct polymorphic `this` type
-            // (e.g. from unwrapping `async (): Promise<this> => this`), substitute it
-            // with the concrete `this` type from the enclosing class so that the
-            // return-statement assignability check compares against the same concrete
-            // type that the `this` keyword expression resolves to. Keep wrapper types
-            // such as `Box<this>` intact: they contextually type generic factory calls
-            // and must remain polymorphic for return-expression inference.
-            let body_return_type = if (has_type_annotation || jsdoc_return_context.is_some())
-                && crate::query_boundaries::common::is_this_type(self.ctx.types, body_return_type)
-            {
-                if let Some(concrete_this) = self.current_this_type() {
-                    crate::query_boundaries::common::substitute_this_type(
-                        self.ctx.types,
-                        body_return_type,
-                        concrete_this,
-                    )
-                } else {
-                    body_return_type
-                }
-            } else {
-                body_return_type
-            };
+            let body_return_type = self.function_body_return_type(FunctionBodyReturnTypeCtx {
+                idx,
+                is_generator,
+                has_type_annotation,
+                annotated_return_type,
+                return_type,
+                type_annotation,
+                is_async_for_context,
+                has_contextual_return,
+                contextual_void_return_exception,
+                return_context_for_circularity,
+                jsdoc_return_context,
+                early_gen_return_type,
+            });
 
             self.push_return_type(body_return_type);
 
