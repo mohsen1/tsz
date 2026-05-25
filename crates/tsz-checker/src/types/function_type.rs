@@ -1325,65 +1325,16 @@ impl<'a> CheckerState<'a> {
         let mut early_gen_return_type: Option<TypeId> = None;
         let mut early_gen_next_type: Option<TypeId> = None;
 
-        // Push this_type BEFORE parameter initializer checks so that default
-        // values like `a = this.getNumber()` see the correct `this` type and
-        // don't trigger false TS2683.
-        let implicit_this = if is_arrow_function {
-            outer_this_type
-        } else {
-            this_type.or_else(|| {
-                ctx_helper.as_ref().and_then(|h| h.get_this_type())
-                    .or(js_constructor_instance_type)
-                    .or(js_prototype_owner_instance_type)
-                    .or_else(|| {
-                        // Traverse up to see if we are the RHS of `obj.prop = func` or `obj.prop ??= func`
-                        let mut current = idx;
-                        for _ in 0..3 {
-                            let parent = self.ctx.arena.get_extended(current)?.parent;
-                            let parent_node = self.ctx.arena.get(parent)?;
-                            if parent_node.kind == tsz_parser::parser::syntax_kind_ext::BINARY_EXPRESSION {
-                                if let Some(binary) = self.ctx.arena.get_binary_expr(parent_node)
-                                    && binary.right == current && self.is_assignment_operator(binary.operator_token) {
-                                        let left = binary.left;
-                                        if let Some(left_node) = self.ctx.arena.get(left)
-                                            && (left_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                || left_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                && let Some(access) = self.ctx.arena.get_access_expr(left_node) {
-                                                    if let Some(proto_node) = self.ctx.arena.get(access.expression)
-                                                        && (proto_node.kind == tsz_parser::parser::syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                                                            || proto_node.kind == tsz_parser::parser::syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
-                                                        && let Some(proto_access) = self.ctx.arena.get_access_expr(proto_node)
-                                                        && let Some(proto_name_node) = self.ctx.arena.get(proto_access.name_or_argument)
-                                                        && let Some(proto_ident) = self.ctx.arena.get_identifier(proto_name_node)
-                                                        && proto_ident.escaped_text == "prototype" {
-                                                            let constructor_type = self.get_type_of_node(proto_access.expression);
-                                                            if let Some(instance_type) = self.synthesize_js_constructor_instance_type(
-                                                                proto_access.expression,
-                                                                constructor_type,
-                                                                &[],
-                                                            ) {
-                                                                return Some(instance_type);
-                                                            }
-                                                        }
-                                                    let receiver = self.get_type_of_node(access.expression);
-                                                    if receiver != tsz_solver::TypeId::ERROR {
-                                                        return Some(receiver);
-                                                    }
-                                                }
-                                    }
-                                break; // Only check immediate assignment parent
-                            } else if parent_node.kind == tsz_parser::parser::syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                                current = parent; // Skip parens
-                                continue;
-                            }
-                            break;
-                        }
-                        None
-                    })
-            })
-        };
-
-        let implicit_this = implicit_this.map(|tt| self.resolve_lazy_type(tt));
+        let contextual_this_type = ctx_helper.as_ref().and_then(|h| h.get_this_type());
+        let implicit_this = self.implicit_function_this_type(
+            idx,
+            is_arrow_function,
+            outer_this_type,
+            this_type,
+            contextual_this_type,
+            js_constructor_instance_type,
+            js_prototype_owner_instance_type,
+        );
 
         // Push `this` unless we already did so early from an explicit `this:` annotation.
         if !pushed_this_type && let Some(tt) = implicit_this {

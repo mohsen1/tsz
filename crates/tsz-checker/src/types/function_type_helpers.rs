@@ -258,6 +258,84 @@ impl<'a> CheckerState<'a> {
         Some(final_yield)
     }
 
+    pub(crate) fn implicit_function_this_type(
+        &mut self,
+        idx: NodeIndex,
+        is_arrow_function: bool,
+        outer_this_type: Option<TypeId>,
+        explicit_this_type: Option<TypeId>,
+        contextual_this_type: Option<TypeId>,
+        js_constructor_instance_type: Option<TypeId>,
+        js_prototype_owner_instance_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let implicit_this = if is_arrow_function {
+            outer_this_type
+        } else {
+            explicit_this_type
+                .or(contextual_this_type)
+                .or(js_constructor_instance_type)
+                .or(js_prototype_owner_instance_type)
+                .or_else(|| self.assignment_receiver_this_type(idx))
+        };
+
+        implicit_this.map(|this_type| self.resolve_lazy_type(this_type))
+    }
+
+    fn assignment_receiver_this_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let mut current = idx;
+        for _ in 0..3 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                    break;
+                };
+                if binary.right == current && self.is_assignment_operator(binary.operator_token) {
+                    return self.this_type_from_assignment_left(binary.left);
+                }
+                break;
+            }
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+            break;
+        }
+        None
+    }
+
+    fn this_type_from_assignment_left(&mut self, left: NodeIndex) -> Option<TypeId> {
+        let left_node = self.ctx.arena.get(left)?;
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && left_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(left_node)?;
+        if let Some(instance_type) = self.prototype_assignment_instance_type(access.expression) {
+            return Some(instance_type);
+        }
+        let receiver = self.get_type_of_node(access.expression);
+        (receiver != TypeId::ERROR).then_some(receiver)
+    }
+
+    fn prototype_assignment_instance_type(&mut self, expr: NodeIndex) -> Option<TypeId> {
+        let proto_node = self.ctx.arena.get(expr)?;
+        if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && proto_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let proto_access = self.ctx.arena.get_access_expr(proto_node)?;
+        let proto_name_node = self.ctx.arena.get(proto_access.name_or_argument)?;
+        let proto_ident = self.ctx.arena.get_identifier(proto_name_node)?;
+        if proto_ident.escaped_text != "prototype" {
+            return None;
+        }
+        let constructor_type = self.get_type_of_node(proto_access.expression);
+        self.synthesize_js_constructor_instance_type(proto_access.expression, constructor_type, &[])
+    }
+
     pub(crate) fn append_js_arguments_rest_param(
         &mut self,
         body: NodeIndex,
