@@ -89,6 +89,17 @@ pub(crate) struct ExpressionBodyReturnCheckCtx {
     pub(crate) jsdoc_return_context: Option<TypeId>,
 }
 
+struct DirectExpressionBodyReturnMismatchCtx {
+    idx: NodeIndex,
+    body: NodeIndex,
+    expected_return_type: TypeId,
+    actual_return: TypeId,
+    actual_return_node: NodeIndex,
+    actual_return_uses_jsdoc_cast: bool,
+    is_closure: bool,
+    is_async_for_context: bool,
+}
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn function_contextual_type_context(
         &mut self,
@@ -555,16 +566,16 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        self.check_direct_expression_body_return_mismatch(
-            ctx.idx,
-            ctx.body,
+        self.check_direct_expression_body_return_mismatch(DirectExpressionBodyReturnMismatchCtx {
+            idx: ctx.idx,
+            body: ctx.body,
             expected_return_type,
             actual_return,
             actual_return_node,
             actual_return_uses_jsdoc_cast,
-            ctx.is_closure,
-            ctx.is_async_for_context,
-        );
+            is_closure: ctx.is_closure,
+            is_async_for_context: ctx.is_async_for_context,
+        });
     }
 
     fn check_generic_expression_body_return_mismatch(
@@ -618,32 +629,30 @@ impl<'a> CheckerState<'a> {
 
     fn check_direct_expression_body_return_mismatch(
         &mut self,
-        idx: NodeIndex,
-        body: NodeIndex,
-        expected_return_type: TypeId,
-        actual_return: TypeId,
-        actual_return_node: NodeIndex,
-        actual_return_uses_jsdoc_cast: bool,
-        is_closure: bool,
-        is_async_for_context: bool,
+        ctx: DirectExpressionBodyReturnMismatchCtx,
     ) {
         let body_is_conditional = self
             .ctx
             .arena
-            .get(body)
+            .get(ctx.body)
             .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
-        let is_rhs_assignment = is_closure && self.is_rhs_of_assignment(idx);
-        let inner_body = if actual_return_uses_jsdoc_cast {
-            actual_return_node
+        let is_rhs_assignment = ctx.is_closure && self.is_rhs_of_assignment(ctx.idx);
+        let inner_body = if ctx.actual_return_uses_jsdoc_cast {
+            ctx.actual_return_node
         } else {
-            self.ctx.arena.skip_parenthesized_and_assertions(body)
+            self.ctx.arena.skip_parenthesized_and_assertions(ctx.body)
         };
         let assignability_ok = if body_is_conditional || is_rhs_assignment {
-            self.check_assignable_or_report_at(actual_return, expected_return_type, body, body)
+            self.check_assignable_or_report_at(
+                ctx.actual_return,
+                ctx.expected_return_type,
+                ctx.body,
+                ctx.body,
+            )
         } else {
             self.check_assignable_or_report_at_exact_anchor(
-                actual_return,
-                expected_return_type,
+                ctx.actual_return,
+                ctx.expected_return_type,
                 inner_body,
                 inner_body,
             )
@@ -652,7 +661,7 @@ impl<'a> CheckerState<'a> {
             for diag in self.ctx.diagnostics.iter().rev() {
                 if diag.code
                     == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                    && let Some(body_node) = self.ctx.arena.get(body)
+                    && let Some(body_node) = self.ctx.arena.get(ctx.body)
                     && diag.start >= body_node.pos
                     && diag.start < body_node.end
                 {
@@ -662,13 +671,13 @@ impl<'a> CheckerState<'a> {
             }
         }
         if assignability_ok
-            && let Some(body_node) = self.ctx.arena.get(body)
+            && let Some(body_node) = self.ctx.arena.get(ctx.body)
             && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
         {
             self.check_conditional_return_branches_against_type(
-                body,
-                expected_return_type,
-                is_async_for_context,
+                ctx.body,
+                ctx.expected_return_type,
+                ctx.is_async_for_context,
             );
         }
     }
