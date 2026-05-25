@@ -414,10 +414,16 @@ impl<'a> CheckerState<'a> {
         // Previously we called type_reference_symbol_type and get_type_params_for_symbol
         // separately, which created DIFFERENT TypeIds for the same type parameters.
         let (mut body_type, type_params) = self.type_reference_symbol_type_with_params(sym_id);
-        if self
-            .get_cross_file_symbol(sym_id)
-            .or_else(|| self.ctx.binder.get_symbol(sym_id))
-            .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
+
+        // `typeof ClassName<T>` keeps the constructor type; only bare type references
+        // like `ClassName<T>` (i.e. Lazy-based, not TypeQuery-based) should resolve to
+        // the instance type. If base is a TypeQuery, the caller wants the constructor.
+        let is_typeof_query = query::type_query_symbol(self.ctx.types, base).is_some();
+        if !is_typeof_query
+            && self
+                .get_cross_file_symbol(sym_id)
+                .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(tsz_binder::symbol_flags::CLASS))
             && crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, body_type)
                 .is_some_and(|shape| !shape.construct_signatures.is_empty())
             && let Some(def_id) = self.ctx.get_existing_def_id(sym_id)
@@ -1613,6 +1619,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
+        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
@@ -1620,9 +1627,18 @@ impl<'a> CheckerState<'a> {
             let default = default_str
                 .as_deref()
                 .and_then(crate::types_domain::queries::lib_resolution::keyword_name_to_type_id);
+            // This `&self` cross-file extraction path cannot run full JSDoc
+            // type resolution, so (like `default` above) it resolves only
+            // keyword constraints (`{string}`, `{number}`, ...). Non-keyword
+            // constraints fall back to `None` and are enforced on the
+            // full-resolution same-file path instead.
+            let constraint = constraint_strs
+                .get(&name)
+                .map(String::as_str)
+                .and_then(crate::types_domain::queries::lib_resolution::keyword_name_to_type_id);
             params.push(tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
-                constraint: None,
+                constraint,
                 default,
                 is_const,
             });
@@ -1776,6 +1792,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut params = Vec::with_capacity(names.len());
+        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
@@ -1783,9 +1800,12 @@ impl<'a> CheckerState<'a> {
             let default = default_str
                 .as_deref()
                 .and_then(|s| checker.resolve_jsdoc_reference(s));
+            let constraint = constraint_strs
+                .get(&name)
+                .and_then(|s| checker.resolve_jsdoc_reference(s));
             params.push(tsz_solver::TypeParamInfo {
                 name: checker.ctx.types.intern_string(&name),
-                constraint: None,
+                constraint,
                 default,
                 is_const,
             });

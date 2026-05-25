@@ -618,12 +618,107 @@ impl<'a> CheckerState<'a> {
         for symbol_ref in type_queries {
             let sym_id = tsz_binder::SymbolId(symbol_ref.0);
             let _ = self.get_type_of_symbol(sym_id);
-            if let Some(&value_type) = self.ctx.symbol_types.get(&sym_id)
+            let value_type = self
+                .ctx
+                .symbol_types
+                .get(&sym_id)
+                .copied()
+                .unwrap_or(TypeId::ERROR);
+            // When circular resolution causes ERROR (e.g. `let Anon = class<T> {}` and
+            // `typeof Anon` appears in the class body), inserting ERROR into the TypeEnvironment
+            // would poison all TypeQuery resolutions for this symbol. Instead, build a minimal
+            // provisional constructor Callable so the solver can satisfy `InstanceType<typeof Anon<T>>`
+            // without a false-positive TS2322.
+            let effective_type = if value_type == TypeId::ERROR {
+                self.try_provisional_class_expr_ctor_type(sym_id)
+                    .unwrap_or(TypeId::ERROR)
+            } else {
+                value_type
+            };
+            if effective_type != TypeId::ERROR
                 && let Ok(mut env) = self.ctx.type_env.try_borrow_mut()
             {
-                env.insert(tsz_solver::SymbolRef(sym_id.0), value_type);
+                env.insert(tsz_solver::SymbolRef(sym_id.0), effective_type);
             }
         }
+    }
+
+    /// Build a minimal provisional constructor callable for a class expression variable
+    /// that is currently being circularly resolved.
+    ///
+    /// When `let Anon = class<T> {}` is computed and `typeof Anon` appears inside the
+    /// class body (e.g. as `InstanceType<(typeof Anon<T>)>`), `get_type_of_symbol` hits
+    /// a circular reference and returns `TypeId::ERROR`. The provisional callable has one
+    /// construct signature per class type-parameter count, returning `any`, so the
+    /// conditional `typeof Anon<T> extends abstract new (...) => infer R ? R : any`
+    /// resolves to `any` instead of staying deferred.
+    fn try_provisional_class_expr_ctor_type(&self, sym_id: SymbolId) -> Option<TypeId> {
+        use tsz_parser::parser::base::NodeIndex;
+        use tsz_parser::parser::syntax_kind_ext;
+        use tsz_solver::{CallSignature, CallableShape, TypeParamInfo};
+
+        // Only handle VARIABLE symbols (class declarations already return Lazy on circular ref).
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        if !symbol.has_any_flags(symbol_flags::VARIABLE)
+            || symbol.has_any_flags(symbol_flags::CLASS)
+        {
+            return None;
+        }
+
+        // Get the variable's primary declaration node.
+        let decl_idx = symbol.primary_declaration()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let var_decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+
+        if var_decl.initializer == NodeIndex::NONE {
+            return None;
+        }
+
+        // Check if the initializer is a class expression.
+        let init_node = self.ctx.arena.get(var_decl.initializer)?;
+        if init_node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return None;
+        }
+
+        // Count the class type parameters so the provisional sig has the right arity.
+        let class_data = self.ctx.arena.get_class(init_node)?;
+        let n_type_params = class_data
+            .type_parameters
+            .as_ref()
+            .map(|tp| tp.nodes.len())
+            .unwrap_or(0);
+
+        // Build provisional type params with placeholder names.
+        let prov_type_params: Vec<TypeParamInfo> = (0..n_type_params)
+            .map(|i| {
+                let name = self.ctx.types.intern_string(&format!("$$prov{i}"));
+                TypeParamInfo::simple(name)
+            })
+            .collect();
+
+        // Build construct signature: `new<$$prov0, ...>() => any`.
+        // The return type is `any` so `InstanceType<typeof Anon<T>>` reduces to `any`
+        // during circular resolution, which is assignable to everything.
+        let construct_sig = CallSignature {
+            type_params: prov_type_params,
+            params: Vec::new(),
+            return_type: TypeId::ANY,
+            this_type: None,
+            type_predicate: None,
+            is_method: false,
+        };
+
+        let callable = self.ctx.types.factory().callable(CallableShape {
+            construct_signatures: vec![construct_sig],
+            call_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        });
+
+        Some(callable)
     }
 
     pub(crate) fn evaluate_type_with_env_uncached(&mut self, type_id: TypeId) -> TypeId {

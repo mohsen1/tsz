@@ -436,8 +436,14 @@ mod closure_destructuring_top_level_diagnostics_tests;
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/conditional_break_narrowing_tests.rs"]
+mod conditional_break_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
+#[cfg(test)]
+#[path = "tests/conditional_never_param_inference_tests.rs"]
+mod conditional_never_param_inference_tests;
 #[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
@@ -544,6 +550,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
@@ -618,6 +627,9 @@ mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_discriminant_narrowing_tests.rs"]
+mod object_spread_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;

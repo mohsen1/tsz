@@ -353,6 +353,10 @@ impl<'a> DeclarationEmitter<'a> {
                 // The solver otherwise resolves `globalThis` to `any` in the
                 // emit boundary, producing a less-informative annotation.
                 self.write(": typeof globalThis");
+            } else if has_initializer
+                && self.initializer_references_elided_namespace_require_import(initializer)
+            {
+                self.write(": any");
             } else if keyword != "const"
                 && has_initializer
                 && !js_has_jsdoc_type
@@ -418,6 +422,15 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if self.source_is_js_file
+                && has_initializer
+                && self.variable_declaration_has_effective_export(decl_idx)
+                && let Some((local_name, _, _)) =
+                    self.js_require_property_import_alias_for_value_expression(initializer)
+            {
+                self.record_js_require_property_import_alias_for_new_expression(initializer);
+                self.write(": ");
+                self.write(&local_name);
             } else if has_initializer
                 && let Some(type_text) = self.as_const_single_spread_array_type_text(initializer)
             {
@@ -450,6 +463,8 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.data_view_new_expression_type_text(initializer)
             {
                 self.write(": ");
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -458,6 +473,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && self.initializer_is_new_expression(initializer)
@@ -468,6 +485,8 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 let type_text = Self::expand_parameters_utility_tuple_type_text(&type_text)
                     .unwrap_or(type_text);
+                let type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
                 self.write(&type_text);
             } else if has_initializer
                 && let Some(type_text) = self.json_import_reference_type_text(initializer)
@@ -576,6 +595,9 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     type_text = template_index_type;
                 }
+                type_text =
+                    self.rewrite_initializer_import_equals_type_text(initializer, type_text);
+                type_text = self.imported_call_public_type_text(initializer, &type_text);
                 let has_reusable_surface_type = self
                     .type_text_is_directly_nameable_reference(&type_text)
                     && (Self::type_text_starts_with_import_type(&type_text)
@@ -986,6 +1008,17 @@ impl<'a> DeclarationEmitter<'a> {
                 } else {
                     selected_type_text
                 };
+                let selected_type_text = if self.source_is_js_file
+                    && has_initializer
+                    && self.is_js_named_exported_name(decl_name)
+                    && let Some((local_name, _, _)) =
+                        self.js_require_property_import_alias_for_value_expression(initializer)
+                {
+                    self.record_js_require_property_import_alias_for_new_expression(initializer);
+                    local_name
+                } else {
+                    selected_type_text
+                };
                 let selected_type_text =
                     Self::normalize_inferred_array_any_text(&selected_type_text);
                 let selected_type_text = if has_initializer {
@@ -1000,6 +1033,14 @@ impl<'a> DeclarationEmitter<'a> {
                 let selected_type_text =
                     Self::unwrap_return_type_zero_arg_import_type(&selected_type_text)
                         .unwrap_or(selected_type_text);
+                let selected_type_text = if has_initializer {
+                    self.rewrite_initializer_import_equals_type_text(
+                        initializer,
+                        selected_type_text,
+                    )
+                } else {
+                    selected_type_text
+                };
                 if has_initializer {
                     self.insert_import_for_reused_static_call_type(
                         initializer,
