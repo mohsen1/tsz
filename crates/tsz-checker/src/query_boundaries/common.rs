@@ -722,33 +722,6 @@ pub(crate) fn application_info(
     tsz_solver::type_queries::extended::get_application_info(db, type_id)
 }
 
-pub(crate) fn type_has_well_known_typed_array_name(
-    db: &dyn TypeDatabase,
-    def_store: &tsz_solver::DefinitionStore,
-    type_id: TypeId,
-) -> bool {
-    let Some(name) = lazy_def_id(db, type_id)
-        .or_else(|| def_store.find_def_for_type(type_id))
-        .and_then(|def_id| def_store.get_name(def_id))
-    else {
-        return false;
-    };
-    matches!(
-        db.resolve_atom_ref(name).as_ref(),
-        "Int8Array"
-            | "Uint8Array"
-            | "Uint8ClampedArray"
-            | "Int16Array"
-            | "Uint16Array"
-            | "Int32Array"
-            | "Uint32Array"
-            | "Float32Array"
-            | "Float64Array"
-            | "BigInt64Array"
-            | "BigUint64Array"
-    )
-}
-
 // ── Literal type classification ──
 
 pub(crate) use tsz_solver::type_queries::extended::LiteralTypeKind;
