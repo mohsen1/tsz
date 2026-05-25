@@ -1894,3 +1894,61 @@ const bad: [DifferentShape] = c;
         "Expected TS2322 for [PassThrough<NodeA|NodeB>] assigned to [DifferentShape], got: {diagnostics:?}"
     );
 }
+
+#[test]
+fn callable_source_satisfies_callable_union_across_assignment_entrypoints() {
+    let diagnostics = diagnostics_for(
+        r#"
+type CallableNode<TProps> = (props: TProps) => string | number;
+type ConstructNode<TProps> = new (props: TProps) => { render(): string };
+type Elementish<TProps> = CallableNode<TProps> | ConstructNode<TProps>;
+type Props = { label: string };
+
+const Component = (props: Props) => 1;
+const initialized: Elementish<Props> = Component;
+
+let assigned!: Elementish<Props>;
+assigned = Component;
+
+declare function accepts(value: Elementish<Props>): void;
+accepts(Component);
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|diag| diag.code != 2322 && diag.code != 2345),
+        "Expected callable source to satisfy callable union arm through TS2322 and TS2345 paths, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn callable_source_does_not_satisfy_callable_union_arm_with_static_requirements() {
+    let diagnostics = diagnostics_for(
+        r#"
+type CallableWithStatic<TProps> = {
+    (props: TProps): number;
+    required: string;
+};
+type ConstructNode<TProps> = new (props: TProps) => { render(): string };
+type Elementish<TProps> = CallableWithStatic<TProps> | ConstructNode<TProps>;
+type Props = { label: string };
+
+const Component = (props: Props) => 1;
+const initialized: Elementish<Props> = Component;
+
+declare function accepts(value: Elementish<Props>): void;
+accepts(Component);
+"#,
+    );
+
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2322),
+        "Expected TS2322 when callable union arm has static requirements, got: {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.iter().any(|diag| diag.code == 2345),
+        "Expected TS2345 when callable union arm has static requirements, got: {diagnostics:?}"
+    );
+}

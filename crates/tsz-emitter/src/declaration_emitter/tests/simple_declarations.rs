@@ -788,6 +788,73 @@ module.exports.map = function map(value) {
         output.contains("export function map(value: number): number;"),
         "Expected CJS synthetic function export to emit at its own statement: {output}"
     );
+    assert!(
+        !output.contains("@param"),
+        "Expected signature JSDoc on direct CJS function exports to be consumed, not re-emitted: {output}"
+    );
+}
+
+#[test]
+fn test_jsdoc_same_file_typeof_commonjs_function_export_expands_static_surface() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports.make = function make() {}
+module.exports.make.label = "ok";
+
+/**
+ * @param {{value: typeof module.exports.make}} input
+ */
+function use(input) {
+    input.value();
+}
+module.exports.use = use;
+"#,
+    );
+
+    assert!(
+        output.contains("value: {\n        (): void;\n        label: string;\n    };"),
+        "Expected same-file typeof module.exports function references to expand callable static surface: {output}"
+    );
+    assert!(
+        output.contains("export function use(input: {"),
+        "Expected local CJS function alias to keep the exported function surface: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_class_expando_declarations_follow_direct_named_exports() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+module.exports.foo = function foo() {}
+module.exports.foo.Widget = class {}
+module.exports.bar = function bar() {}
+/**
+ * @param {number} value
+ */
+function later(value) {
+    return value;
+}
+module.exports.later = later;
+"#,
+    );
+
+    let namespace_pos = output
+        .find("export namespace foo")
+        .unwrap_or_else(|| panic!("expected foo namespace in output: {output}"));
+    let bar_pos = output
+        .find("export function bar")
+        .unwrap_or_else(|| panic!("expected direct bar export in output: {output}"));
+    let class_pos = output
+        .find("declare class Widget")
+        .unwrap_or_else(|| panic!("expected Widget class declaration in output: {output}"));
+    let later_pos = output
+        .find("export function later")
+        .unwrap_or_else(|| panic!("expected deferred later export in output: {output}"));
+
+    assert!(
+        namespace_pos < bar_pos && bar_pos < class_pos && class_pos < later_pos,
+        "Expected class expando declarations after direct named exports and before deferred CJS aliases: {output}"
+    );
 }
 
 #[test]
@@ -1664,6 +1731,49 @@ export function transform(v) {
     assert!(
         alias_pos < function_pos,
         "Expected typedef alias before function declaration (renamed type): {output}"
+    );
+}
+
+#[test]
+fn test_js_non_exported_hoisted_function_preserves_typedef_comments_before_pending_aliases() {
+    let output = emit_js_dts(
+        r#"
+/** @typedef {number} N */
+/**
+ * @typedef {Object} D1
+ * @property {1} e Just link to {@link NS.R} this time
+ */
+/**
+ * @param {number} value {@link N}
+ */
+function compute(value) {
+  return value;
+}
+/** {@link https://example.test} */
+var marker = true;
+"#,
+    );
+
+    let typedef_comment_pos = output
+        .find("/** @typedef {number} N */")
+        .expect("Expected source typedef comment to stay before the function");
+    let function_pos = output
+        .find("declare function compute(value: number): number;")
+        .expect("Expected non-exported function declaration");
+    let var_pos = output
+        .find("declare var marker: boolean;")
+        .expect("Expected following variable declaration");
+    let alias_pos = output
+        .find("type N = number;")
+        .expect("Expected pending alias");
+
+    assert!(
+        typedef_comment_pos < function_pos && function_pos < var_pos && var_pos < alias_pos,
+        "Non-exported JSDoc-hoisted functions should keep typedef comments before the function and defer aliases after declarations: {output}"
+    );
+    assert!(
+        output.contains("type D1 = {") && output.contains("e: 1;"),
+        "Expected object typedef alias to still be emitted from the deferred pass: {output}"
     );
 }
 
@@ -3078,6 +3188,16 @@ export function inJs(l) {
         !output.contains("@type {IFn}"),
         "Did not expect implementation-only @type comment in declaration output: {output}"
     );
+    let function_pos = output
+        .find("export function inJs<T>(m: T): T;")
+        .expect("Expected emitted function signature");
+    let alias_pos = output
+        .find("export type IFn = <T>(m: T) => T;")
+        .expect("Expected emitted typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "JSDoc @type alias-driven exported functions should emit before the pending alias: {output}"
+    );
 }
 
 #[test]
@@ -3164,6 +3284,16 @@ export function mapValue(value) {
     assert!(
         !output.contains("@type {Mapper}"),
         "Did not expect renamed implementation-only @type comment in declaration output: {output}"
+    );
+    let function_pos = output
+        .find("export function mapValue<Value>(input: Value): Value;")
+        .expect("Expected emitted function signature");
+    let alias_pos = output
+        .find("export type Mapper = <Value>(input: Value) => Value;")
+        .expect("Expected emitted typedef alias");
+    assert!(
+        function_pos < alias_pos,
+        "Renamed JSDoc @type alias-driven exported functions should emit before the pending alias: {output}"
     );
 }
 
@@ -3421,6 +3551,45 @@ module.exports = {
 }
 
 #[test]
+fn test_js_module_exports_object_prefers_require_property_alias_over_inferred_type() {
+    let source = r#"
+const Something = require("fs").Something;
+const thing = new Something();
+module.exports = {
+    thing
+};
+"#;
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let mut type_cache = crate::type_cache_view::TypeCacheView::default();
+    for (index, node) in parser.arena.nodes.iter().enumerate() {
+        if node.kind == tsz_scanner::SyntaxKind::Identifier as u16
+            && parser
+                .arena
+                .get_identifier(node)
+                .is_some_and(|ident| ident.escaped_text == "thing")
+        {
+            type_cache.node_types.insert(index as u32, TypeId::STRING);
+        }
+    }
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.js".to_string());
+    let output = emitter.emit(root);
+
+    assert_eq!(
+        output.trim(),
+        "export const thing: Something;\nimport Something_1 = require(\"fs\");\nimport Something = Something_1.Something;"
+    );
+}
+
+#[test]
 fn test_js_nested_module_exports_object_emits_namespace_with_import_alias() {
     let source = r#"
 const Something = require("fs").Something;
@@ -3486,6 +3655,21 @@ module.exports = {
     assert!(
         !output.contains("import Something_1 = require(\"fs\");"),
         "Synthetic module alias must not collide with the real Something_1 binding: {output}"
+    );
+}
+
+#[test]
+fn test_js_commonjs_export_equals_require_default_alias_preserves_typeof_surface() {
+    let source = r#"
+const m = require("./exporter");
+module.exports = m.default;
+module.exports.memberName = "thing";
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+
+    assert_eq!(
+        output.trim(),
+        "declare const _exports: typeof m.default;\nexport = _exports;\nimport m = require(\"./exporter\");"
     );
 }
 

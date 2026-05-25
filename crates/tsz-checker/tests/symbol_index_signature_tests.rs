@@ -410,6 +410,139 @@ const dest: { [index: symbol]: string } = source;
     );
 }
 
+// Indexing a concrete object by a wide `symbol`-typed value with no matching
+// `symbol` index signature is an implicit-any element access (TS7053).
+//
+// Structural rule: when `obj[key]` has `key: symbol` (the wide primitive, not a
+// `unique symbol` that names a member), and `obj` declares neither a member under
+// that binding nor a `symbol` index signature, tsc reports TS7053 (objects) /
+// TS7015 (arrays/tuples). This change makes tsz report it too.
+#[test]
+fn wide_symbol_index_on_plain_object_reports_ts7053() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+let s: symbol = Symbol();
+const o = { a: 1 };
+const v1 = o[s];
+"#,
+    );
+
+    assert!(
+        codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "expected TS7053 for wide symbol indexing a plain object, got {codes:?}",
+    );
+}
+
+// Renamed key variable — proves the rule is structural, not keyed on the name `s`.
+#[test]
+fn wide_symbol_index_on_plain_object_reports_ts7053_renamed_key() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+let mySymKey: symbol = Symbol();
+const record = { first: 1, second: 2 };
+const value = record[mySymKey];
+"#,
+    );
+
+    assert!(
+        codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "expected TS7053 regardless of key variable name, got {codes:?}",
+    );
+}
+
+// Arrays/tuples have a numeric index signature, so a `symbol` key produces the
+// more specific TS7015 (index expression is not of type 'number').
+#[test]
+fn wide_symbol_index_on_array_reports_ts7015() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+let s: symbol = Symbol();
+const arr: number[] = [1];
+const v2 = arr[s];
+"#,
+    );
+
+    assert!(
+        codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE),
+        "expected TS7015 for wide symbol indexing an array, got {codes:?}",
+    );
+}
+
+#[test]
+fn wide_symbol_index_on_tuple_reports_ts7015() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+let s: symbol = Symbol();
+const tup: [number, string] = [1, "a"];
+const v = tup[s];
+"#,
+    );
+
+    assert!(
+        codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE),
+        "expected TS7015 for wide symbol indexing a tuple, got {codes:?}",
+    );
+}
+
+// Scope guard: a bare wide-`symbol` expression that is not a `symbol`-typed
+// identifier (here a call result) is intentionally NOT flagged. tsz widens
+// `unique symbol` reads (e.g. `Symbol.iterator`) to wide `symbol`, so a bare
+// wide-`symbol` value cannot be distinguished from a widened well-known symbol;
+// reporting it would risk false positives on valid well-known-symbol access.
+#[test]
+fn wide_symbol_call_expression_index_is_not_flagged() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare function makeSym(): symbol;
+const o = { a: 1 };
+const v = o[makeSym()];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "bare wide-symbol call-expression index must not be flagged (widening-safety), got {codes:?}",
+    );
+}
+
+// Negative control: a real `symbol` index signature makes the access valid.
+#[test]
+fn wide_symbol_index_with_symbol_index_signature_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+let s: symbol = Symbol();
+const o: { [k: symbol]: number } = {};
+const v = o[s];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "symbol index signature should make symbol-key reads valid, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_INDEX_EXPRESSION_IS_NOT_OF_TYPE_NUMBE),
+        "symbol index signature should not trigger TS7015, got {codes:?}",
+    );
+}
+
+// Negative control: a `unique symbol` that actually names a member stays clean.
+#[test]
+fn unique_symbol_key_that_exists_is_clean() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const key: unique symbol;
+const o = { [key]: 1 };
+const v = o[key];
+"#,
+    );
+
+    assert!(
+        !codes.contains(&diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN),
+        "a unique symbol key that exists should not report TS7053, got {codes:?}",
+    );
+}
+
 // A plain string index signature must still display as `string` (regression guard).
 #[test]
 fn ts2322_string_index_signature_target_still_displays_string_key_kind() {

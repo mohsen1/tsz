@@ -1064,6 +1064,20 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
+        // tsc collapses a union of enum members to the bare enum name only
+        // when the union covers EVERY member of the enum. A proper subset
+        // (e.g. `E.A | E.B` of a three-member enum) must render member by
+        // member as `E.A | E.B`. When the full parent enum type itself is
+        // present in the union, coverage is guaranteed, so this gate applies
+        // only to the individual-member case (`parent_enum_name` unset).
+        if parent_enum_name.is_none()
+            && let Some(member_def) = any_enum_member_def_id
+            && let Some(total) = self.enum_total_member_count(member_def)
+            && enum_member_count < total
+        {
+            return None;
+        }
+
         // If a parent-level enum absorbed all literals, just show the enum name.
         if parent_enum_name.is_some() && enum_member_count > 1 && rendered.len() == 1 {
             return Some(
@@ -1075,6 +1089,21 @@ impl<'a> TypeFormatter<'a> {
         }
 
         (saw_enum_member && enum_member_count > 1).then_some(rendered.join(" | "))
+    }
+
+    /// Number of distinct member values declared by the enum that owns
+    /// `member_def_id`, derived from the parent enum's structural type.
+    /// Returns `None` when the parent or its structural type can't be
+    /// resolved (the caller then keeps its existing collapse behavior).
+    fn enum_total_member_count(&self, member_def_id: crate::def::DefId) -> Option<usize> {
+        let def_store = self.def_store?;
+        let arena = self.symbol_arena?;
+        let sym_id = def_store.get(member_def_id)?.symbol_id?;
+        let symbol = arena.get(SymbolId(sym_id))?;
+        let parent_def_id = def_store.find_def_by_symbol(symbol.parent.0)?;
+        let structural = def_store.get(parent_def_id)?.body?;
+        let count = self.collect_leaf_literal_ids(structural).len();
+        (count > 0).then_some(count)
     }
 
     /// Recognize a full (parent-level) enum type — `TypeData::Enum(def_id, structural_type)`
