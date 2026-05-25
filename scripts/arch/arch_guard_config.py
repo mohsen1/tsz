@@ -292,7 +292,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         ("crates/tsz-checker/src/query_boundaries/",),
         # Ratcheted to the post-merge count for the Application-source
         # refresh PR after current main reduced the quarantine surface.
-        3349,
+        # Merge-refresh baseline: current main adds two live direct common
+        # references relative to the previous #9910 head.
+        3351,
     ),
 ]
 
