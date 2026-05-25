@@ -29,6 +29,7 @@ mod access_tests;
 pub(crate) mod array_literal;
 pub(crate) mod assignment_target;
 pub(crate) mod binary;
+mod binary_support;
 pub(crate) mod call;
 pub(crate) mod call_display;
 pub(crate) mod call_finalize;
