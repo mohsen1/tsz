@@ -304,6 +304,7 @@ fn test_ir_awaiter_call() {
         hoisted_var_groups: vec![],
         promise_constructor: None,
         multiline_callback: false,
+        directives: vec![],
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,
             cases: vec![IRGeneratorCase {
