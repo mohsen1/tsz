@@ -73,6 +73,13 @@ function agentNameFrom(body) {
   return match?.[1] ?? null;
 }
 
+function agentLabelsFrom(labels) {
+  return labels
+    .filter((label) => label.startsWith("agent:"))
+    .map((label) => label.slice("agent:".length))
+    .sort();
+}
+
 function issueRefsFrom(text) {
   return [...String(text).matchAll(/#(\d+)/g)].map((match) => Number(match[1]));
 }
@@ -107,6 +114,7 @@ function makeReport(pulls) {
     head: pr.headRefName,
     labels: pr.labels.sort(),
     agentName: agentNameFrom(pr.body),
+    agentLabels: agentLabelsFrom(pr.labels),
     issueRefs: [...new Set(issueRefsFrom(`${pr.title}\n${pr.body}`).filter((issue) => issue !== pr.number))].sort(
       (a, b) => a - b,
     ),
@@ -153,6 +161,15 @@ function makeReport(pulls) {
     .map(([issue, prs]) => ({ issue, prs: prs.sort((a, b) => a - b) }))
     .sort((a, b) => a.issue - b.issue);
 
+  const agentLabelMismatches = normalized
+    .filter((pr) => pr.agentLabels.length === 1 && pr.agentName !== null && pr.agentName !== pr.agentLabels[0])
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      label: `agent:${pr.agentLabels[0]}`,
+    }))
+    .sort((a, b) => a.number - b.number);
+
   return {
     generatedAt: new Date().toISOString(),
     counts: {
@@ -161,6 +178,7 @@ function makeReport(pulls) {
       ready: normalized.filter((pr) => !pr.draft).length,
       stacked: stacks.reduce((sum, stack) => sum + stack.children.length, 0),
       missingAgentName: normalized.filter((pr) => pr.agentName === null).length,
+      agentLabelMismatches: agentLabelMismatches.length,
     },
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
@@ -168,6 +186,7 @@ function makeReport(pulls) {
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
+    agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
 }
@@ -176,7 +195,7 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
   console.log("");
   console.log("## Base Branches");
@@ -215,6 +234,15 @@ function printMarkdown(report) {
   } else {
     for (const duplicate of issueDuplicates) {
       console.log(`- #${duplicate.issue}: ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`);
+    }
+  }
+  console.log("");
+  console.log("## AgentName / Label Mismatches");
+  if (report.agentLabelMismatches.length === 0) {
+    console.log("- none");
+  } else {
+    for (const mismatch of report.agentLabelMismatches) {
+      console.log(`- #${mismatch.number}: AgentName ${mismatch.agentName}; label ${mismatch.label}`);
     }
   }
 }
