@@ -1,4 +1,5 @@
 use crate::query_boundaries::checkers::generic as query;
+use crate::query_boundaries::common as query_common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
@@ -1571,11 +1572,6 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                // Evaluate type arguments before substitution so that unevaluated
-                // IndexAccess types (e.g., `SettingsTypes["audio" | "video"]`) are
-                // resolved to their concrete types. This prevents the instantiated
-                // constraint from containing unresolvable Lazy(DefId) references
-                // inside nested types (KeyOf, IndexAccess, Mapped).
                 let mut subst = crate::query_boundaries::common::TypeSubstitution::new();
                 for (j, p) in type_params.iter().enumerate() {
                     if let Some(&arg) = type_args.get(j) {
@@ -1592,6 +1588,18 @@ impl<'a> CheckerState<'a> {
                         &subst,
                     )
                 };
+                let mut display_subst = query_common::TypeSubstitution::new();
+                for (j, p) in type_params.iter().enumerate() {
+                    if let Some(&arg) = type_args.get(j) {
+                        let arg_node = type_args_list.nodes.get(j).copied();
+                        display_subst.insert(p.name, self.type_arg_reference_form(arg, arg_node));
+                    }
+                }
+                let constraint_for_message = if display_subst.is_empty() {
+                    constraint
+                } else {
+                    query_common::instantiate_type(self.ctx.types, constraint, &display_subst)
+                };
                 let primitive_fails_nominal_lib_object =
                     query::is_primitive_type(self.ctx.types.as_type_database(), type_arg)
                         && self.is_nominal_lib_object_type_name(&constraint_name);
@@ -1599,7 +1607,7 @@ impl<'a> CheckerState<'a> {
                     if let Some(&arg_idx) = type_args_list.nodes.get(i) {
                         self.error_type_constraint_not_satisfied(
                             type_arg,
-                            instantiated_constraint,
+                            constraint_for_message,
                             arg_idx,
                         );
                     }
@@ -1798,14 +1806,14 @@ impl<'a> CheckerState<'a> {
                         if !query::is_primitive_type(self.ctx.types.as_type_database(), type_arg) {
                             self.error_no_common_properties_constraint(
                                 type_arg,
-                                instantiated_constraint,
+                                constraint_for_message,
                                 arg_idx,
                             );
                         }
                     } else {
                         self.error_type_constraint_not_satisfied(
                             type_arg,
-                            instantiated_constraint,
+                            constraint_for_message,
                             arg_idx,
                         );
                     }

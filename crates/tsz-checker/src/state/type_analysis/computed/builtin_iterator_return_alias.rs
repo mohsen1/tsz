@@ -114,19 +114,67 @@ impl<'a> CheckerState<'a> {
         if ident.escaped_text != "intrinsic" {
             return false;
         }
-        if let Some(source_file) = arena.source_files.first() {
-            let pos = node.pos as usize;
-            if pos > 0 {
-                let before = &source_file.text[..pos];
-                let last_non_ws = before
-                    .bytes()
-                    .rev()
-                    .find(|&b| b != b' ' && b != b'\t' && b != b'\n' && b != b'\r');
-                if last_non_ws == Some(b'(') {
-                    return false;
-                }
-            }
-        }
-        true
+        !Self::type_node_is_parenthesized(arena, type_idx)
+    }
+
+    fn type_node_is_parenthesized(arena: &NodeArena, type_idx: NodeIndex) -> bool {
+        let Some(parent_idx) = arena.parent_of(type_idx) else {
+            return false;
+        };
+        let Some(parent_node) = arena.get(parent_idx) else {
+            return false;
+        };
+        parent_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && arena
+                .get_wrapped_type(parent_node)
+                .is_some_and(|wrapped| wrapped.type_node == type_idx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_parser::parser::ParserState;
+
+    fn first_statement(source: &str) -> (NodeArena, NodeIndex) {
+        let mut parser =
+            ParserState::new("lib.es2015.iterable.d.ts".to_string(), source.to_string());
+        let source_file_idx = parser.parse_source_file();
+        let arena = parser.get_arena().clone();
+        let source_file = arena
+            .get(source_file_idx)
+            .and_then(|node| arena.get_source_file(node))
+            .expect("source should parse as a source file");
+        let stmt_idx = source_file
+            .statements
+            .nodes
+            .first()
+            .copied()
+            .expect("source should contain a statement");
+        (arena, stmt_idx)
+    }
+
+    #[test]
+    fn bare_intrinsic_alias_body_is_builtin_iterator_return_intrinsic() {
+        let (arena, alias_idx) = first_statement("type BuiltinIteratorReturn = intrinsic;");
+
+        assert!(
+            CheckerState::type_alias_declaration_is_builtin_iterator_return_intrinsic(
+                &arena, alias_idx,
+            ),
+            "bare intrinsic alias body should be classified structurally"
+        );
+    }
+
+    #[test]
+    fn parenthesized_intrinsic_alias_body_is_not_builtin_iterator_return_intrinsic() {
+        let (arena, alias_idx) = first_statement("type BuiltinIteratorReturn = (intrinsic);");
+
+        assert!(
+            !CheckerState::type_alias_declaration_is_builtin_iterator_return_intrinsic(
+                &arena, alias_idx,
+            ),
+            "parenthesized intrinsic must be rejected from AST shape, not source text"
+        );
     }
 }
