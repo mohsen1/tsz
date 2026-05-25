@@ -592,6 +592,7 @@ REGEX_LINE_COUNT_CHECKS = [
             / "declaration.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_context.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "promise_checker.rs",
             ROOT
             / "crates"
             / "tsz-checker"
