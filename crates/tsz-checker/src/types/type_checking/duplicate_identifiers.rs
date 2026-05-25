@@ -2691,18 +2691,16 @@ impl<'a> CheckerState<'a> {
                                 // against the method's function type.
                                 if !self.type_contains_error(*property_type)
                                     && !self.type_contains_error(existing_type)
-                                {
-                                    if !self
+                                    && !self
                                         .duplicate_decl_types_match(existing_type, *property_type)
-                                    {
-                                        let existing_type_str = self.format_type(existing_type);
-                                        let property_type_str = self.format_type(*property_type);
-                                        self.error_at_node_msg(
-                                            *name_idx,
-                                            diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
-                                            &[name, &existing_type_str, &property_type_str],
-                                        );
-                                    }
+                                {
+                                    let existing_type_str = self.format_type(existing_type);
+                                    let property_type_str = self.format_type(*property_type);
+                                    self.error_at_node_msg(
+                                        *name_idx,
+                                        diagnostic_codes::SUBSEQUENT_PROPERTY_DECLARATIONS_MUST_HAVE_THE_SAME_TYPE_PROPERTY_MUST_BE_OF_TYP,
+                                        &[name, &existing_type_str, &property_type_str],
+                                    );
                                 }
                             }
                             continue;
