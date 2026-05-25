@@ -380,6 +380,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Walk `ty`, tracking whether the current position is contravariant, and
     /// record the names of `infer` variables found in a contravariant position.
+    /// Walk `ty`, tracking whether the current position is contravariant, and
+    /// record the names of `infer` variables found in a contravariant position.
     fn collect_variance_infer_names(
         &self,
         ty: TypeId,
@@ -459,6 +461,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
+    /// Fill `default_ty` for every infer parameter in `pattern` that does not
+    /// already have a candidate in `bindings`. Unlike `bind_infer_defaults`,
+    /// this only fills gaps: it never overwrites or rejects an already-bound
+    /// name. Used when a pattern position has no corresponding source position
+    /// (e.g. the source callable supplies fewer parameters than the inference
+    /// pattern requires), where tsc leaves the unmatched `infer` slots at their
+    /// default of `unknown`.
+    pub(crate) fn fill_unbound_infer_defaults(
+        &self,
+        pattern: TypeId,
+        default_ty: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+    ) {
+        // Reuse the comprehensive `for_each_infer` walk so coverage matches
+        // `bind_infer_defaults` exactly (nested object/callable/function
+        // members and deferred shells like `Application`/`Conditional`/
+        // `Mapped`/`IndexAccess`/`KeyOf`/template/string-intrinsic/enum). Gap
+        // semantics: fill `default_ty` only where a candidate is not already
+        // bound, so a matched position always wins, and never short-circuit.
+        let mut visited = FxHashSet::default();
+        self.for_each_infer(
+            pattern,
+            &mut |info| {
+                bindings.entry(info.name).or_insert(default_ty);
+                true
+            },
+            &mut visited,
+        );
+    }
+
     /// Bind an inferred type to an infer parameter.
     ///
     /// Handles constraint checking and merging with existing bindings.
@@ -498,15 +530,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let mut visited = FxHashSet::default();
-        self.bind_infer_defaults_inner(pattern, inferred, bindings, checker, &mut visited)
+        self.for_each_infer(
+            pattern,
+            &mut |info| self.bind_infer(info, inferred, bindings, checker),
+            &mut visited,
+        )
     }
 
-    fn bind_infer_defaults_inner(
+    /// Comprehensive, variance-agnostic walk over every `infer` position in a
+    /// pattern (object/callable/function members, deferred shells like
+    /// `Application`/`Conditional`/`Mapped`/`IndexAccess`/`KeyOf`/template/
+    /// string-intrinsic/enum, type-parameter constraints/defaults, etc.).
+    /// `f` is invoked at each `infer` leaf; returning `false` short-circuits the
+    /// walk. This is the single traversal shared by `bind_infer_defaults`
+    /// (binds each leaf with constraint checking) and `fill_unbound_infer_defaults`
+    /// (gap-fills `unknown` for leaves with no candidate yet), so their shape
+    /// coverage can never drift apart.
+    fn for_each_infer(
         &self,
         pattern: TypeId,
-        inferred: TypeId,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
+        f: &mut dyn FnMut(&TypeParamInfo) -> bool,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
         if !visited.insert(pattern) {
@@ -518,20 +561,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeData::Infer(info) => self.bind_infer(&info, inferred, bindings, checker),
-            TypeData::Array(elem) => {
-                self.bind_infer_defaults_inner(elem, inferred, bindings, checker, visited)
-            }
+            TypeData::Infer(info) => f(&info),
+            TypeData::Array(elem) => self.for_each_infer(elem, f, visited),
             TypeData::Tuple(elements) => {
                 let elements = self.interner().tuple_list(elements);
                 for element in elements.iter() {
-                    if !self.bind_infer_defaults_inner(
-                        element.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(element.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -540,8 +575,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 for &member in members.iter() {
-                    if !self.bind_infer_defaults_inner(member, inferred, bindings, checker, visited)
-                    {
+                    if !self.for_each_infer(member, f, visited) {
                         return false;
                     }
                 }
@@ -550,13 +584,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -565,47 +593,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
                 if let Some(index) = &shape.string_index
-                    && (!self.bind_infer_defaults_inner(
-                        index.key_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) || !self.bind_infer_defaults_inner(
-                        index.value_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ))
+                    && (!self.for_each_infer(index.key_type, f, visited)
+                        || !self.for_each_infer(index.value_type, f, visited))
                 {
                     return false;
                 }
                 if let Some(index) = &shape.number_index
-                    && (!self.bind_infer_defaults_inner(
-                        index.key_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) || !self.bind_infer_defaults_inner(
-                        index.value_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ))
+                    && (!self.for_each_infer(index.key_type, f, visited)
+                        || !self.for_each_infer(index.value_type, f, visited))
                 {
                     return false;
                 }
@@ -614,98 +614,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Function(shape_id) => {
                 let shape = self.interner().function_shape(shape_id);
                 for param in &shape.params {
-                    if !self.bind_infer_defaults_inner(
-                        param.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(param.type_id, f, visited) {
                         return false;
                     }
                 }
                 if let Some(this_type) = shape.this_type
-                    && !self
-                        .bind_infer_defaults_inner(this_type, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(this_type, f, visited)
                 {
                     return false;
                 }
-                self.bind_infer_defaults_inner(
-                    shape.return_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(shape.return_type, f, visited)
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
                 for sig in &shape.call_signatures {
                     for param in &sig.params {
-                        if !self.bind_infer_defaults_inner(
-                            param.type_id,
-                            inferred,
-                            bindings,
-                            checker,
-                            visited,
-                        ) {
+                        if !self.for_each_infer(param.type_id, f, visited) {
                             return false;
                         }
                     }
                     if let Some(this_type) = sig.this_type
-                        && !self.bind_infer_defaults_inner(
-                            this_type, inferred, bindings, checker, visited,
-                        )
+                        && !self.for_each_infer(this_type, f, visited)
                     {
                         return false;
                     }
-                    if !self.bind_infer_defaults_inner(
-                        sig.return_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(sig.return_type, f, visited) {
                         return false;
                     }
                 }
                 for sig in &shape.construct_signatures {
                     for param in &sig.params {
-                        if !self.bind_infer_defaults_inner(
-                            param.type_id,
-                            inferred,
-                            bindings,
-                            checker,
-                            visited,
-                        ) {
+                        if !self.for_each_infer(param.type_id, f, visited) {
                             return false;
                         }
                     }
                     if let Some(this_type) = sig.this_type
-                        && !self.bind_infer_defaults_inner(
-                            this_type, inferred, bindings, checker, visited,
-                        )
+                        && !self.for_each_infer(this_type, f, visited)
                     {
                         return false;
                     }
-                    if !self.bind_infer_defaults_inner(
-                        sig.return_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(sig.return_type, f, visited) {
                         return false;
                     }
                 }
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -713,14 +666,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::TypeParameter(info) => {
                 if let Some(constraint) = info.constraint
-                    && !self
-                        .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(constraint, f, visited)
                 {
                     return false;
                 }
                 if let Some(default) = info.default
-                    && !self
-                        .bind_infer_defaults_inner(default, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(default, f, visited)
                 {
                     return false;
                 }
@@ -728,11 +679,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Application(app_id) => {
                 let app = self.interner().type_application(app_id);
-                if !self.bind_infer_defaults_inner(app.base, inferred, bindings, checker, visited) {
+                if !self.for_each_infer(app.base, f, visited) {
                     return false;
                 }
                 for &arg in &app.args {
-                    if !self.bind_infer_defaults_inner(arg, inferred, bindings, checker, visited) {
+                    if !self.for_each_infer(arg, f, visited) {
                         return false;
                     }
                 }
@@ -740,94 +691,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.interner().get_conditional(cond_id);
-                self.bind_infer_defaults_inner(
-                    cond.check_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.extends_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.true_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.false_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(cond.check_type, f, visited)
+                    && self.for_each_infer(cond.extends_type, f, visited)
+                    && self.for_each_infer(cond.true_type, f, visited)
+                    && self.for_each_infer(cond.false_type, f, visited)
             }
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().get_mapped(mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint
-                    && !self
-                        .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(constraint, f, visited)
                 {
                     return false;
                 }
                 if let Some(default) = mapped.type_param.default
-                    && !self
-                        .bind_infer_defaults_inner(default, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(default, f, visited)
                 {
                     return false;
                 }
-                if !self.bind_infer_defaults_inner(
-                    mapped.constraint,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) {
+                if !self.for_each_infer(mapped.constraint, f, visited) {
                     return false;
                 }
                 if let Some(name_type) = mapped.name_type
-                    && !self
-                        .bind_infer_defaults_inner(name_type, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(name_type, f, visited)
                 {
                     return false;
                 }
-                self.bind_infer_defaults_inner(
-                    mapped.template,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(mapped.template, f, visited)
             }
             TypeData::IndexAccess(obj, idx) => {
-                self.bind_infer_defaults_inner(obj, inferred, bindings, checker, visited)
-                    && self.bind_infer_defaults_inner(idx, inferred, bindings, checker, visited)
+                self.for_each_infer(obj, f, visited) && self.for_each_infer(idx, f, visited)
             }
             TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.bind_infer_defaults_inner(inner, inferred, bindings, checker, visited)
+                self.for_each_infer(inner, f, visited)
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span
-                        && !self
-                            .bind_infer_defaults_inner(*inner, inferred, bindings, checker, visited)
+                        && !self.for_each_infer(*inner, f, visited)
                     {
                         return false;
                     }
                 }
                 true
             }
-            TypeData::StringIntrinsic { type_arg, .. } => {
-                self.bind_infer_defaults_inner(type_arg, inferred, bindings, checker, visited)
-            }
-            TypeData::Enum(_def_id, member_type) => {
-                self.bind_infer_defaults_inner(member_type, inferred, bindings, checker, visited)
-            }
+            TypeData::StringIntrinsic { type_arg, .. } => self.for_each_infer(type_arg, f, visited),
+            TypeData::Enum(_def_id, member_type) => self.for_each_infer(member_type, f, visited),
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)

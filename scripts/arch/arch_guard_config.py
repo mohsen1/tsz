@@ -290,11 +290,16 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         "Checker query boundary: direct common quarantine references outside query_boundaries (#8225)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
-        # Ratcheted to the post-merge count for the Application-source
-        # refresh PR after current main reduced the quarantine surface.
-        # Merge-refresh baseline: current main adds two live direct common
-        # references relative to the previous #9910 head.
-        3351,
+        # Bumped by 2 for the deferred-conditional diagnostic-display fix
+        # (`is_conditional_type` guards in the assignment-target display path,
+        # matching the existing direct-call pattern in type_display.rs).
+        #
+        # Ratcheted down by 5 after literal alias / literal widening
+        # diagnostic display probes moved through query_boundaries::diagnostics.
+        #
+        # Ratcheted down to the live merged Application-source refresh count
+        # after current main reduced the quarantine surface.
+        3350,
     ),
 ]
 
@@ -580,7 +585,7 @@ BRANCH_LOCAL_VISITED_CLONE_CHECKS = [
                 "let mut alias_visited = visited.clone();",
             ),
             (
-                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_helpers.rs",
+                "crates/tsz-solver/src/evaluation/evaluate_rules/infer_pattern_object_helpers.rs",
                 "let mut alias_visited = visited.clone();",
             ),
         ),
