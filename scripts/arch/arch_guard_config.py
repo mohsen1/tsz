@@ -501,6 +501,13 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "state"
             / "state_checking_members"
+            / "overload_compatibility.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
             / "statement_helpers.rs",
             ROOT
             / "crates"
