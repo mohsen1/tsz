@@ -634,11 +634,12 @@ impl<'a> CheckerState<'a> {
         if self.indexed_access_into_object_uniformly_satisfies_constraint(type_arg, constraint) {
             return;
         }
-        if constraint_str.starts_with("ElementType<")
-            && type_str.contains("ComponentType<any>")
-            && (type_str.contains("IntrinsicElementsKeys")
-                || type_str.contains("keyof IntrinsicElements"))
-        {
+        if crate::query_boundaries::checkers::generic::jsx_element_type_constraint_accepts_component_or_intrinsic_keys(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_arg,
+            constraint,
+        ) {
             return;
         }
         self.error_at_node_msg(
