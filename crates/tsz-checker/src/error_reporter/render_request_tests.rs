@@ -558,6 +558,34 @@ const env: EnvFunction = () => simple;
     );
 }
 
+#[test]
+fn ts2322_alias_rewrite_preserves_optional_parameter_undefined_surface() {
+    let source = r#"
+declare var f: (s: string, n?: number) => void;
+declare var g: (s: string, b?: boolean) => void;
+f = g;
+g = f;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '(s: string, b?: boolean | undefined) => void' is not assignable to type '(s: string, n?: number | undefined) => void'"
+        )),
+        "TS2322 should preserve optional source parameter `| undefined`, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '(s: string, n?: number | undefined) => void' is not assignable to type '(s: string, b?: boolean | undefined) => void'"
+        )),
+        "TS2322 should preserve optional source parameter `| undefined`, got: {messages:#?}"
+    );
+}
+
 /// Regression: TS2345 source display for an identifier whose declared
 /// type is an object with a single construct signature (e.g. `{ new
 /// <T>(x: T, y: T): string }`) must use tsc's arrow form (`new <T>(x:
