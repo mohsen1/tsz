@@ -8,24 +8,49 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{PropertyInfo, TypeId, Visibility};
 
+pub(super) struct ObjectLiteralAccessorContext<'b> {
+    pub(super) elem_idx: NodeIndex,
+    pub(super) obj_getter_names: &'b FxHashSet<String>,
+    pub(super) contextual_type: Option<TypeId>,
+    pub(super) marker_this_type: Option<TypeId>,
+    pub(super) skip_duplicate_check: bool,
+    pub(super) partial_initializer_stack_index: Option<usize>,
+}
+
+pub(super) struct ObjectLiteralAccessorState<'b> {
+    pub(super) properties: &'b mut FxHashMap<Atom, PropertyInfo>,
+    pub(super) setter_names: &'b mut FxHashSet<Atom>,
+    pub(super) getter_names: &'b mut FxHashSet<Atom>,
+    pub(super) explicit_property_names: &'b mut FxHashSet<Atom>,
+    pub(super) prop_order: &'b mut u32,
+    pub(super) number_index_types: &'b mut Vec<TypeId>,
+    pub(super) string_index_types: &'b mut Vec<TypeId>,
+    pub(super) symbol_index_types: &'b mut Vec<TypeId>,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn process_object_literal_accessor_element(
         &mut self,
-        elem_idx: NodeIndex,
-        obj_getter_names: &FxHashSet<String>,
-        contextual_type: Option<TypeId>,
-        marker_this_type: Option<TypeId>,
-        properties: &mut FxHashMap<Atom, PropertyInfo>,
-        setter_names: &mut FxHashSet<Atom>,
-        getter_names: &mut FxHashSet<Atom>,
-        explicit_property_names: &mut FxHashSet<Atom>,
-        skip_duplicate_check: bool,
-        prop_order: &mut u32,
-        partial_initializer_stack_index: Option<usize>,
-        number_index_types: &mut Vec<TypeId>,
-        string_index_types: &mut Vec<TypeId>,
-        symbol_index_types: &mut Vec<TypeId>,
+        context: ObjectLiteralAccessorContext<'_>,
+        state: ObjectLiteralAccessorState<'_>,
     ) -> bool {
+        let ObjectLiteralAccessorContext {
+            elem_idx,
+            obj_getter_names,
+            contextual_type,
+            marker_this_type,
+            skip_duplicate_check,
+            partial_initializer_stack_index,
+        } = context;
+        let properties = state.properties;
+        let setter_names = state.setter_names;
+        let getter_names = state.getter_names;
+        let explicit_property_names = state.explicit_property_names;
+        let prop_order = state.prop_order;
+        let number_index_types = state.number_index_types;
+        let string_index_types = state.string_index_types;
+        let symbol_index_types = state.symbol_index_types;
+
         let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
             return false;
         };
@@ -394,7 +419,7 @@ impl<'a> CheckerState<'a> {
                         && !self.ctx.has_parse_errors
                         && (!self.is_js_file() || self.ctx.js_strict_mode_diagnostics_enabled())
                     {
-                        let name = self.ctx.types.resolve_atom(atom).to_string();
+                        let name = self.ctx.types.resolve_atom(atom);
                         use crate::diagnostics::{diagnostic_codes, diagnostic_messages};
                         let message = crate::diagnostics::format_message(
                                             diagnostic_messages::AN_OBJECT_LITERAL_CANNOT_HAVE_MULTIPLE_PROPERTIES_WITH_THE_SAME_NAME,

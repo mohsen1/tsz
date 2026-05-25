@@ -4,6 +4,7 @@
 //! over object literal elements and builds the resulting object type.
 
 use super::super::object_literal_context::ContextualPropertyPresence;
+use super::accessor_element::{ObjectLiteralAccessorContext, ObjectLiteralAccessorState};
 use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::context::{PartialObjectLiteralInitializer, TypingRequest};
 use crate::state::CheckerState;
@@ -14,6 +15,7 @@ use tsz_solver::computation::ContextualTypeContext;
 use tsz_solver::{TypeId, Visibility};
 
 use super::computation_support::SPREAD_DISPLAY_ORDER_OFFSET;
+use super::spread_element::{ObjectLiteralSpreadContext, ObjectLiteralSpreadState};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn get_type_of_object_literal_with_request(
@@ -1736,46 +1738,53 @@ impl<'a> CheckerState<'a> {
             }
             // Accessor: { get foo() {} } or { set foo(v) {} }
             else if self.process_object_literal_accessor_element(
-                elem_idx,
-                &obj_getter_names,
-                contextual_type,
-                marker_this_type,
-                &mut properties,
-                &mut setter_names,
-                &mut getter_names,
-                &mut explicit_property_names,
-                skip_duplicate_check,
-                &mut prop_order,
-                partial_initializer_stack_index,
-                &mut number_index_types,
-                &mut string_index_types,
-                &mut symbol_index_types,
+                ObjectLiteralAccessorContext {
+                    elem_idx,
+                    obj_getter_names: &obj_getter_names,
+                    contextual_type,
+                    marker_this_type,
+                    skip_duplicate_check,
+                    partial_initializer_stack_index,
+                },
+                ObjectLiteralAccessorState {
+                    properties: &mut properties,
+                    setter_names: &mut setter_names,
+                    getter_names: &mut getter_names,
+                    explicit_property_names: &mut explicit_property_names,
+                    prop_order: &mut prop_order,
+                    number_index_types: &mut number_index_types,
+                    string_index_types: &mut string_index_types,
+                    symbol_index_types: &mut symbol_index_types,
+                },
             ) {
             }
             // Spread assignment: { ...obj }
-            else if elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
-                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT
+            else if (elem_node.kind == syntax_kind_ext::SPREAD_ELEMENT
+                || elem_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+                && let Some(spread_type) = self.process_object_literal_spread_element(
+                    ObjectLiteralSpreadContext {
+                        elem_idx,
+                        obj_element_count: obj.elements.nodes.len(),
+                        base_request: &base_request,
+                        contextual_type,
+                        marker_this_type,
+                        partial_initializer_stack_index,
+                    },
+                    ObjectLiteralSpreadState {
+                        properties: &mut properties,
+                        named_property_nodes: &mut named_property_nodes,
+                        union_spread_branches: &mut union_spread_branches,
+                        spread_string_index_signatures: &mut spread_string_index_signatures,
+                        spread_number_index_signatures: &mut spread_number_index_signatures,
+                        generic_spread_types: &mut generic_spread_types,
+                        has_spread: &mut has_spread,
+                        has_any_spread: &mut has_any_spread,
+                        has_union_spread: &mut has_union_spread,
+                        spread_display_order_base: &mut spread_display_order_base,
+                    },
+                )
             {
-                if let Some(spread_type) = self.process_object_literal_spread_element(
-                    elem_idx,
-                    obj.elements.nodes.len(),
-                    &base_request,
-                    contextual_type,
-                    marker_this_type,
-                    partial_initializer_stack_index,
-                    &mut properties,
-                    &mut named_property_nodes,
-                    &mut union_spread_branches,
-                    &mut spread_string_index_signatures,
-                    &mut spread_number_index_signatures,
-                    &mut generic_spread_types,
-                    &mut has_spread,
-                    &mut has_any_spread,
-                    &mut has_union_spread,
-                    &mut spread_display_order_base,
-                ) {
-                    return spread_type;
-                }
+                return spread_type;
             }
 
             // Other element types (e.g., unknown AST node kinds) are silently skipped

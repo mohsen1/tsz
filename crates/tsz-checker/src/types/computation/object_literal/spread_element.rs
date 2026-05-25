@@ -13,29 +13,54 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{IndexSignature, PropertyInfo, TypeId};
 
+pub(super) struct ObjectLiteralSpreadContext<'b> {
+    pub(super) elem_idx: NodeIndex,
+    pub(super) obj_element_count: usize,
+    pub(super) base_request: &'b TypingRequest,
+    pub(super) contextual_type: Option<TypeId>,
+    pub(super) marker_this_type: Option<TypeId>,
+    pub(super) partial_initializer_stack_index: Option<usize>,
+}
+
+pub(super) struct ObjectLiteralSpreadState<'b> {
+    pub(super) properties: &'b mut FxHashMap<Atom, PropertyInfo>,
+    pub(super) named_property_nodes: &'b mut FxHashMap<Atom, (NodeIndex, String)>,
+    pub(super) union_spread_branches: &'b mut Vec<FxHashMap<Atom, PropertyInfo>>,
+    pub(super) spread_string_index_signatures: &'b mut Vec<IndexSignature>,
+    pub(super) spread_number_index_signatures: &'b mut Vec<IndexSignature>,
+    pub(super) generic_spread_types: &'b mut Vec<TypeId>,
+    pub(super) has_spread: &'b mut bool,
+    pub(super) has_any_spread: &'b mut bool,
+    pub(super) has_union_spread: &'b mut bool,
+    pub(super) spread_display_order_base: &'b mut u32,
+}
+
 impl<'a> CheckerState<'a> {
     pub(super) fn process_object_literal_spread_element(
         &mut self,
-        elem_idx: NodeIndex,
-        obj_element_count: usize,
-        base_request: &TypingRequest,
-        contextual_type: Option<TypeId>,
-        marker_this_type: Option<TypeId>,
-        partial_initializer_stack_index: Option<usize>,
-        properties: &mut FxHashMap<Atom, PropertyInfo>,
-        named_property_nodes: &mut FxHashMap<Atom, (NodeIndex, String)>,
-        union_spread_branches: &mut Vec<FxHashMap<Atom, PropertyInfo>>,
-        spread_string_index_signatures: &mut Vec<IndexSignature>,
-        spread_number_index_signatures: &mut Vec<IndexSignature>,
-        generic_spread_types: &mut Vec<TypeId>,
-        has_spread: &mut bool,
-        has_any_spread: &mut bool,
-        has_union_spread: &mut bool,
-        spread_display_order_base: &mut u32,
+        context: ObjectLiteralSpreadContext<'_>,
+        state: ObjectLiteralSpreadState<'_>,
     ) -> Option<TypeId> {
-        let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-            return None;
-        };
+        let ObjectLiteralSpreadContext {
+            elem_idx,
+            obj_element_count,
+            base_request,
+            contextual_type,
+            marker_this_type,
+            partial_initializer_stack_index,
+        } = context;
+        let properties = state.properties;
+        let named_property_nodes = state.named_property_nodes;
+        let union_spread_branches = state.union_spread_branches;
+        let spread_string_index_signatures = state.spread_string_index_signatures;
+        let spread_number_index_signatures = state.spread_number_index_signatures;
+        let generic_spread_types = state.generic_spread_types;
+        let has_spread = state.has_spread;
+        let has_any_spread = state.has_any_spread;
+        let has_union_spread = state.has_union_spread;
+        let spread_display_order_base = state.spread_display_order_base;
+
+        let elem_node = self.ctx.arena.get(elem_idx)?;
         *has_spread = true;
         let spread_expr = self
             .ctx
