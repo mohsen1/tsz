@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   activeBranchQueueRun,
   activeSyntheticQueueRun,
+  failureCommentBody,
   formatResult,
   hasPendingPlaceholderQueueStatus,
   pendingQueueRun,
@@ -40,7 +41,16 @@ function pr(overrides = {}) {
   };
 }
 
+const originalAgentName = process.env.AGENT_NAME;
+delete process.env.AGENT_NAME;
 assert.equal(parseArgs(["--repository", "owner/repo"]).repository, "owner/repo");
+assert.equal(parseArgs(["--repository", "owner/repo"]).agentName, "M1-A");
+if (originalAgentName === undefined) {
+  delete process.env.AGENT_NAME;
+} else {
+  process.env.AGENT_NAME = originalAgentName;
+}
+assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
 assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.deepEqual(
   parseArgs(["--no-default-pr-required-checks", "--pr-required-check", "lint"]).prRequiredChecks,
@@ -150,6 +160,8 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
+assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
 assert.match(
   formatResult({

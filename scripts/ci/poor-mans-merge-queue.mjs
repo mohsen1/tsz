@@ -26,6 +26,7 @@ function usage() {
     "  --max-prs <n>                   Max open PRs to inspect",
     "  --status-context <name>         Required status context to post",
     "  --queue-branch-prefix <prefix>  Temporary branch namespace",
+    "  --agent-name <name>             AgentName for queue failure comments",
     "  --pr-required-check <name>      PR-head check required before queueing",
     "  --merge-required-check <name>   Synthetic merge check required before merge",
     "  --no-default-pr-required-checks",
@@ -48,6 +49,7 @@ function parsePositiveInt(flag, value) {
 
 export function parseArgs(argv) {
   const options = {
+    agentName: process.env.AGENT_NAME || "M1-A",
     base: process.env.BASE_BRANCH || DEFAULT_BASE,
     cleanupQueueBranches: false,
     dryRun: false,
@@ -80,6 +82,9 @@ export function parseArgs(argv) {
     } else if (arg === "--queue-branch-prefix") {
       options.queueBranchPrefix = argv[++index];
       if (!options.queueBranchPrefix) throw new Error("--queue-branch-prefix requires a branch prefix");
+    } else if (arg === "--agent-name") {
+      options.agentName = argv[++index];
+      if (!options.agentName) throw new Error("--agent-name requires an AgentName");
     } else if (arg === "--pr-required-check") {
       options.prRequiredChecks.push(argv[++index]);
     } else if (arg === "--merge-required-check") {
@@ -111,6 +116,13 @@ export function parseArgs(argv) {
   }
 
   return options;
+}
+
+function cleanAgentName(agentName) {
+  const trimmed = String(agentName || "").trim();
+  if (!trimmed) throw new Error("AgentName is required");
+  if (/[\r\n]/.test(trimmed)) throw new Error("AgentName must be a single line");
+  return trimmed;
 }
 
 function run(command, args, options = {}) {
@@ -394,6 +406,16 @@ function postComment(repository, number, body) {
   ]);
 }
 
+export function failureCommentBody(agentName, reason) {
+  return [
+    `AgentName: ${cleanAgentName(agentName)}`,
+    "",
+    "Poor man's merge queue could not land this PR.",
+    "",
+    `Reason: ${reason}`,
+  ].join("\n");
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -656,13 +678,11 @@ function processOne(repository, options) {
         options.statusContext,
         error instanceof Error ? error.message : String(error),
       );
-      postComment(repository, pr.number, [
-        "AgentName: GPT-5.5",
-        "",
-        "Poor man's merge queue could not land this PR.",
-        "",
-        `Reason: ${error instanceof Error ? error.message : String(error)}`,
-      ].join("\n"));
+      postComment(
+        repository,
+        pr.number,
+        failureCommentBody(options.agentName, error instanceof Error ? error.message : String(error)),
+      );
       return { selected: pr, failed: true, reason: error instanceof Error ? error.message : String(error), skips };
     }
   }
