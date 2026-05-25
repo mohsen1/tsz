@@ -1,5 +1,6 @@
 //! JSX checker query boundaries.
 
+use crate::state::CheckerState;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
 
@@ -41,6 +42,105 @@ pub(crate) fn instantiate_single_arg_type_alias_body(
         base_body,
         &substitution,
     ))
+}
+
+pub(crate) fn instantiate_type_alias_body(
+    db: &dyn QueryDatabase,
+    body: TypeId,
+    type_params: &[TypeParamInfo],
+    type_args: &[TypeId],
+) -> TypeId {
+    let substitution =
+        crate::query_boundaries::common::TypeSubstitution::from_args(db, type_params, type_args);
+    crate::query_boundaries::common::instantiate_type(db, body, &substitution)
+}
+
+pub(crate) const fn property_access_success_type(
+    result: crate::query_boundaries::common::PropertyAccessResult,
+) -> Option<TypeId> {
+    match result {
+        crate::query_boundaries::common::PropertyAccessResult::Success { type_id, .. } => {
+            Some(type_id)
+        }
+        _ => None,
+    }
+}
+
+pub(crate) const fn property_access_is_success(
+    result: crate::query_boundaries::common::PropertyAccessResult,
+) -> bool {
+    matches!(
+        result,
+        crate::query_boundaries::common::PropertyAccessResult::Success { .. }
+    )
+}
+
+pub(crate) fn contains_type_parameters(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::contains_type_parameters(db, type_id)
+}
+
+pub(crate) fn contains_error_type_in_args(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::contains_error_type_in_args(db, type_id)
+}
+
+pub(crate) fn types_are_assignable(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    checker.is_assignable_to(source, target)
+}
+
+pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::object_shape_for_type(db, type_id).is_some()
+}
+
+pub(crate) fn type_parameter_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    crate::query_boundaries::common::type_parameter_constraint(db, type_id)
+}
+
+pub(crate) fn union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
+    crate::query_boundaries::common::union_members(db, type_id)
+}
+
+pub(crate) fn union_and_intersection_members(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<TypeId> {
+    let mut members = Vec::new();
+    if let Some(union_members) = crate::query_boundaries::common::union_members(db, type_id) {
+        members.extend(union_members);
+    }
+    if let Some(intersection_members) =
+        crate::query_boundaries::common::intersection_members(db, type_id)
+    {
+        members.extend(intersection_members);
+    }
+    members
+}
+
+pub(crate) fn element_type_allows_intrinsic_tag(
+    db: &dyn TypeDatabase,
+    element_type: TypeId,
+    tag: &str,
+) -> bool {
+    let members = crate::query_boundaries::common::union_members(db, element_type)
+        .unwrap_or_else(|| vec![element_type]);
+    members.into_iter().any(|member| {
+        if crate::query_boundaries::common::is_string_type(db, member) {
+            return true;
+        }
+        if let Some(crate::query_boundaries::common::LiteralValue::String(atom)) =
+            crate::query_boundaries::common::literal_value(db, member)
+        {
+            return db.resolve_atom_ref(atom).as_ref() == tag;
+        }
+        false
+    })
+}
+
+pub(crate) fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    crate::query_boundaries::common::is_type_parameter_like(db, type_id)
 }
 
 pub(crate) fn index_access_type_arg_alias_hint(

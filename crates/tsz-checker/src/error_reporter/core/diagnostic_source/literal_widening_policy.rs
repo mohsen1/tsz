@@ -38,6 +38,7 @@
 //! This module is split out of `diagnostic_source.rs` to keep that file
 //! under the architecture LOC ceiling.
 
+use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
 use tsz_parser::parser::NodeIndex;
@@ -75,8 +76,7 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         let ast_literal = self.literal_type_from_initializer(arg_idx);
         let basis = ast_literal.unwrap_or(source);
-        let source_primitive =
-            crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, basis);
+        let source_primitive = diagnostic_query::widen_literal_to_primitive(self.ctx.types, basis);
         // Basis isn't a literal type — this filter doesn't apply, so leave
         // the existing literal-preserving behaviour untouched.
         if source_primitive == basis {
@@ -121,9 +121,7 @@ impl<'a> CheckerState<'a> {
         if scan.has_unclassifiable_member {
             return;
         }
-        if let Some(inner) =
-            crate::query_boundaries::common::no_infer_inner_type(self.ctx.types, target)
-        {
+        if let Some(inner) = diagnostic_query::no_infer_inner_type(self.ctx.types, target) {
             self.scan_target_primitives(inner, scan);
             return;
         }
@@ -142,20 +140,19 @@ impl<'a> CheckerState<'a> {
             return;
         }
         // Literal types — register their primitive base.
-        if crate::query_boundaries::common::literal_value(self.ctx.types, target).is_some() {
-            let prim =
-                crate::query_boundaries::common::widen_literal_to_primitive(self.ctx.types, target);
+        if diagnostic_query::literal_value(self.ctx.types, target).is_some() {
+            let prim = diagnostic_query::widen_literal_to_primitive(self.ctx.types, target);
             scan.literal_primitive_bases.insert(prim);
             return;
         }
         // Template literal types (e.g. `:${string}:`) are string-shaped and
         // act as string literals for the matching purposes.
-        if crate::query_boundaries::common::is_template_literal_type(self.ctx.types, target) {
+        if diagnostic_query::is_template_literal_type(self.ctx.types, target) {
             scan.literal_primitive_bases.insert(TypeId::STRING);
             return;
         }
         // unique symbol literals are symbol-shaped.
-        if crate::query_boundaries::common::is_symbol_or_unique_symbol(self.ctx.types, target)
+        if diagnostic_query::is_symbol_or_unique_symbol(self.ctx.types, target)
             && target != TypeId::SYMBOL
         {
             scan.literal_primitive_bases.insert(TypeId::SYMBOL);
@@ -165,15 +162,13 @@ impl<'a> CheckerState<'a> {
         // surface doesn't expose it cheaply. Treat them as unclassifiable so
         // the caller falls back to the conservative literal-preserving
         // default — that matches existing enum diagnostic behaviour.
-        if crate::query_boundaries::common::enum_def_id(self.ctx.types, target).is_some() {
+        if diagnostic_query::enum_def_id(self.ctx.types, target).is_some() {
             scan.has_unclassifiable_member = true;
             return;
         }
         // Recurse into unions / intersections.
-        if let Some(list) = crate::query_boundaries::common::union_list_id(self.ctx.types, target)
-            .or_else(|| {
-                crate::query_boundaries::common::intersection_list_id(self.ctx.types, target)
-            })
+        if let Some(list) = diagnostic_query::union_list_id(self.ctx.types, target)
+            .or_else(|| diagnostic_query::intersection_list_id(self.ctx.types, target))
         {
             for member in self.ctx.types.type_list(list).iter().copied() {
                 self.scan_target_primitives(member, scan);

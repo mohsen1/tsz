@@ -10,7 +10,9 @@
 use super::*;
 use crate::intern::TypeInterner;
 use crate::objects::ObjectLiteralBuilder;
-use crate::type_queries::is_valid_spread_type;
+use crate::type_queries::{
+    ObjectSpreadDtsProjection, classify_object_spread_dts_projection, is_valid_spread_type,
+};
 use crate::types::{PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo, Visibility};
 
 // =============================================================================
@@ -532,4 +534,41 @@ fn spread_intersection_with_undefined_is_invalid_on_its_own() {
     let tp_id = db.type_param(tp);
     let intersection = db.intersection(vec![tp_id, TypeId::UNDEFINED]);
     assert!(!is_valid_spread_type(&db, intersection));
+}
+
+#[test]
+fn object_spread_dts_projection_matches_falsy_spread_rules() {
+    let db = TypeInterner::new();
+    let unconstrained = TypeParamInfo {
+        name: db.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let unconstrained_id = db.type_param(unconstrained);
+    let undefined_constrained = TypeParamInfo {
+        name: db.intern_string("U"),
+        constraint: Some(TypeId::UNDEFINED),
+        default: None,
+        is_const: false,
+    };
+    let undefined_constrained_id = db.type_param(undefined_constrained);
+
+    let invalid_intersection = db.intersection(vec![unconstrained_id, TypeId::UNDEFINED]);
+    assert_eq!(
+        classify_object_spread_dts_projection(&db, invalid_intersection),
+        ObjectSpreadDtsProjection::InvalidSpread
+    );
+
+    let maybe_unconstrained = db.union(vec![unconstrained_id, invalid_intersection]);
+    assert_eq!(
+        classify_object_spread_dts_projection(&db, maybe_unconstrained),
+        ObjectSpreadDtsProjection::PreserveSource
+    );
+
+    let object_or_undefined = db.union(vec![TypeId::OBJECT, undefined_constrained_id]);
+    assert_eq!(
+        classify_object_spread_dts_projection(&db, object_or_undefined),
+        ObjectSpreadDtsProjection::EmptyObject
+    );
 }
