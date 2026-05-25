@@ -514,6 +514,9 @@ mod generic_spread_iterability_tests;
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
 #[cfg(test)]
+#[path = "tests/generic_unknown_type_arg_tests.rs"]
+mod generic_unknown_type_arg_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
