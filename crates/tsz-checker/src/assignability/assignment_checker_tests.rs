@@ -86,6 +86,18 @@ arr_Int8Array = arr_Uint8Array;
 }
 
 #[test]
+fn typed_array_property_mismatch_display_does_not_read_rendered_prefixes() {
+    let renderer_src =
+        include_str!("../error_reporter/render_failure/nested_application_property_mismatch.rs");
+    assert!(
+        !renderer_src.contains("starts_with(\"Int8Array<\")")
+            && !renderer_src.contains("starts_with(\"Uint8Array<\")")
+            && !renderer_src.contains("starts_with(\"BigUint64Array<\")"),
+        "typed-array property mismatch rendering must use definition identities, not formatted type prefixes"
+    );
+}
+
+#[test]
 fn homomorphic_remap_missing_property_uses_specialized_source_display() {
     let diagnostics = diagnostics_for(
         r#"
