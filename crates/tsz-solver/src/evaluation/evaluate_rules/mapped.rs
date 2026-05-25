@@ -144,6 +144,18 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
+    /// Strip the top-level `undefined` that an originally-optional property
+    /// contributes when `-?` removes its optionality, mirroring tsc's
+    /// `removeMissingOrUndefinedType` in `getTypeOfMappedSymbol`. Only applies
+    /// when the source property was optional and `-?` cleared it.
+    fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
+        if strip {
+            crate::narrowing::utils::remove_undefined(self.interner(), ty)
+        } else {
+            ty
+        }
+    }
+
     /// Evaluate a mapped type: { [K in Keys]: Template }
     ///
     /// Algorithm:
@@ -598,6 +610,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 evaluated
             };
 
+            let property_type = self.strip_removed_optional_undefined(
+                property_type,
+                remove_optional_with_declared && source_optional,
+            );
+
             for remapped_name in remapped_names {
                 let is_string_named = source_info
                     .is_some_and(|(_, _, _, source_is_string_named, _, _)| *source_is_string_named)
@@ -708,6 +725,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 evaluated
             };
+
+            let property_type = self.strip_removed_optional_undefined(
+                property_type,
+                remove_optional_with_declared && source_optional,
+            );
 
             for remapped_sym_id in remapped_syms {
                 // Reuse source_atom when remapped symbol is the identity (no `as` remapping).
