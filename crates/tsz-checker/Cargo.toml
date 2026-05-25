@@ -414,6 +414,10 @@ name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
 [[test]]
+name = "typeof_chained_indexed_access_alias_tests"
+path = "tests/typeof_chained_indexed_access_alias_tests.rs"
+
+[[test]]
 name = "typeof_import_commonjs_object_literal_export_tests"
 path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
 
@@ -846,6 +850,10 @@ name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
 [[test]]
+name = "ts2344_keyof_constraint_display_tests"
+path = "tests/ts2344_keyof_constraint_display_tests.rs"
+
+[[test]]
 name = "ts2344_extra_with_2314_suppression_tests"
 path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 
@@ -944,6 +952,10 @@ path = "tests/ts2364_import_meta_assignment_tests.rs"
 [[test]]
 name = "cross_module_nested_interface_tests"
 path = "tests/cross_module_nested_interface_tests.rs"
+
+[[test]]
+name = "cross_module_unimported_name_resolution_tests"
+path = "tests/cross_module_unimported_name_resolution_tests.rs"
 
 [[test]]
 name = "cross_file_intrinsic_identifier_tests"
@@ -1148,6 +1160,10 @@ path = "tests/global_this_const_property_tests.rs"
 [[test]]
 name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
+
+[[test]]
+name = "intersection_mapped_alias_indexed_access_tests"
+path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
 
 [[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"

@@ -555,6 +555,7 @@ impl AsyncES5Transformer<'_> {
                     hoisted_var_groups,
                     promise_constructor: None,
                     multiline_callback: false,
+                    directives: Vec::new(),
                 }],
                 is_expression_body: false,
                 body_source_range: None,
