@@ -430,7 +430,7 @@ pub(crate) fn should_report_own_member_type_mismatch(
     // source vs `IteratorResult<T, void>` target — `any` is a universal sink
     // for the standard relation but the strict path keeps the args nominally
     // distinct). tsc does not emit TS2416 here.
-    if checker.is_assignable_to(source, target) {
+    if checker.diagnostic_relation_boolean_guard(source, target) {
         return false;
     }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
@@ -511,7 +511,9 @@ fn is_coinductive_return_type_cycle(
         }
         // Check each param for assignability
         for (sp, tp) in s_params.iter().zip(t_params.iter()) {
-            if sp.type_id != tp.type_id && !checker.is_assignable_to(tp.type_id, sp.type_id) {
+            if sp.type_id != tp.type_id
+                && !checker.diagnostic_relation_boolean_guard(tp.type_id, sp.type_id)
+            {
                 return false;
             }
         }
