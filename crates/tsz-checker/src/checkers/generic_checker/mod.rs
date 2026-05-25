@@ -240,10 +240,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         if extends_type == constraint
-                            || (self.is_assignable_to(extends_type, constraint)
-                                && self.is_assignable_to(constraint, extends_type))
-                            || self.is_assignable_to(extends_resolved, constraint)
-                            || self.is_assignable_to(extends_evaluated, constraint)
+                            || (self.diagnostic_relation_boolean_guard(extends_type, constraint)
+                                && self.diagnostic_relation_boolean_guard(constraint, extends_type))
+                            || self.diagnostic_relation_boolean_guard(extends_resolved, constraint)
+                            || self.diagnostic_relation_boolean_guard(extends_evaluated, constraint)
                         {
                             return true;
                         }
@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
         // → intersection is `{a: string} & {b: number}` which satisfies `{a: string, b: number}`.
         if accumulated_extends.len() >= 2 {
             let intersection = self.ctx.types.intersection(accumulated_extends);
-            if self.is_assignable_to(intersection, constraint) {
+            if self.diagnostic_relation_boolean_guard(intersection, constraint) {
                 return true;
             }
         }
@@ -1011,14 +1011,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     evaluated_constraint
                 };
-            if self.is_assignable_to(type_arg, constraint_for_check) {
+            if self.diagnostic_relation_boolean_guard(type_arg, constraint_for_check) {
                 continue;
             }
             let base = self.constraint_check_base_type(type_arg);
             if base != type_arg && base != TypeId::UNKNOWN {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.is_assignable_to(base, constraint_for_check)
+                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
@@ -1030,7 +1030,7 @@ impl<'a> CheckerState<'a> {
             {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.is_assignable_to(base, constraint_for_check)
+                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
