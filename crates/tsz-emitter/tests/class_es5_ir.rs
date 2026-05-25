@@ -1104,3 +1104,61 @@ fn test_derived_constructor_for_in_body_uses_this_alias() {
         "for-in body must use `_this`, not `this`.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn derived_constructor_presuper_statement_uses_this_capture() {
+    let source = r#"class Derived extends Base {
+            constructor() {
+                this.before = 1;
+                super(this);
+                this.after = 2;
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    assert!(
+        output.contains(
+            "var _this = this;\n        _this.before = 1;\n        _this = _super.call(this, _this) || this;"
+        ),
+        "Pre-super statements should use the `_this` capture, and `super(this)` should receive it.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_this.after = 2;\n        return _this;"),
+        "Post-super statements should continue to use the `_this` capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn derived_constructor_nested_super_schedules_properties_before_body() {
+    let source = r#"class Derived extends Base {
+            prop = 1;
+            constructor(public paramProp = 2) {
+                if (Math.random()) {
+                    super(1);
+                } else {
+                    super(0);
+                }
+            }
+        }"#;
+
+    let output = transform_class(source).expect("transform should succeed");
+
+    let capture = output.find("var _this = this;").expect("capture");
+    let param_prop = output
+        .find("_this.paramProp = paramProp;")
+        .expect("param prop");
+    let prop = output.find("_this.prop = 1;").expect("prop");
+    let branch = output.find("if (Math.random())").expect("if branch");
+    let ret = output.find("return _this;").expect("return");
+
+    assert!(
+        capture < param_prop && param_prop < prop && prop < branch && branch < ret,
+        "Nested-super derived constructors should initialize `_this`, parameter properties, and fields before the super-containing body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_this = _super.call(this, 1) || this;")
+            && output.contains("_this = _super.call(this, 0) || this;"),
+        "Nested super calls should assign into the `_this` capture.\nOutput:\n{output}"
+    );
+}

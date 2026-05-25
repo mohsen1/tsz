@@ -1568,6 +1568,103 @@ fn test_conditional_infer_template_literal_with_suffix_distributive() {
     assert_eq!(result, expected);
 }
 
+/// Evaluate a `T extends` template-literal conditional with a single bare
+/// `infer` placeholder and a `"no"` false branch, returning the inferred result.
+///
+/// Models issue #9719: inferring a single-placeholder template pattern from a
+/// single-placeholder template source (the number/bigint placeholder forms)
+/// must capture the source template type, not widen the placeholder to
+/// `string`. The infer variable name and constraint are parameterized so the
+/// test proves the structural rule rather than a single spelling.
+fn eval_single_placeholder_infer(
+    interner: &TypeInterner,
+    infer_var: &str,
+    constraint: Option<TypeId>,
+    source: TypeId,
+) -> TypeId {
+    let t_name = interner.intern_string("T");
+    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: t_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+
+    let infer_name = interner.intern_string(infer_var);
+    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
+        name: infer_name,
+        constraint,
+        default: None,
+        is_const: false,
+    }));
+
+    // `${infer V}` — single bare placeholder, no surrounding literal text.
+    let extends_template = interner.template_literal(vec![TemplateSpan::Type(infer_v)]);
+    let no_match = interner.literal_string("no");
+    let cond = ConditionalType {
+        check_type: t_param,
+        extends_type: extends_template,
+        true_type: infer_v,
+        false_type: no_match,
+        is_distributive: true,
+    };
+
+    let cond_type = interner.conditional(cond);
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let instantiated = instantiate_type(interner, cond_type, &subst);
+    evaluate_type(interner, instantiated)
+}
+
+#[test]
+fn test_single_placeholder_infer_captures_number_template() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    // `${number}` extends `${infer V}` ? V : "no"  →  V = `${number}` (not string).
+    let result = eval_single_placeholder_infer(&interner, "V", None, number_template);
+    assert_eq!(result, number_template);
+    assert_ne!(result, TypeId::STRING);
+}
+
+#[test]
+fn test_single_placeholder_infer_captures_bigint_template_renamed_var() {
+    let interner = TypeInterner::new();
+    let bigint_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::BIGINT)]);
+
+    // Renamed infer variable proves the rule is structural, not name-keyed.
+    let result = eval_single_placeholder_infer(&interner, "Captured", None, bigint_template);
+    assert_eq!(result, bigint_template);
+}
+
+#[test]
+fn test_single_placeholder_infer_extends_number_falls_back_to_constraint() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+
+    // `${number}` extends `${infer V extends number}` ? V : "no"  →  V = number.
+    // The captured `${number}` is not assignable to `number`, so tsc's
+    // getInferredType fallback yields the constraint; the conditional matches
+    // because `${number}` is assignable to the constraint's string form.
+    let result =
+        eval_single_placeholder_infer(&interner, "V", Some(TypeId::NUMBER), number_template);
+    assert_eq!(result, TypeId::NUMBER);
+}
+
+#[test]
+fn test_single_placeholder_infer_extends_boolean_takes_false_branch() {
+    let interner = TypeInterner::new();
+    let number_template = interner.template_literal(vec![TemplateSpan::Type(TypeId::NUMBER)]);
+    let no_match = interner.literal_string("no");
+
+    // `${number}` extends `${infer V extends boolean}` ? V : "no"  →  "no".
+    // `${number}` is not assignable to `${boolean}` (= "true" | "false"), so the
+    // constraint fallback does not apply and the false branch is taken.
+    let result =
+        eval_single_placeholder_infer(&interner, "V", Some(TypeId::BOOLEAN), number_template);
+    assert_eq!(result, no_match);
+}
+
 #[test]
 fn test_conditional_infer_template_literal_non_distributive_union_input() {
     let interner = TypeInterner::new();
@@ -8525,325 +8622,6 @@ fn test_conditional_infer_tuple_rest_with_head_infer_distributive() {
     ]);
 
     assert_eq!(result, expected);
-}
-
-/// Issue #9675: `[infer H, ...any[]]` against a variadic-source tuple with a
-/// trailing rest slot (`[string, ...number[]]`) must bind `H = string`. The
-/// pattern's `...any[]` rest absorbs the source's trailing `...number[]`.
-#[test]
-fn test_conditional_infer_head_from_variadic_source_with_array_rest() {
-    let interner = TypeInterner::new();
-
-    let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_h_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    let any_array = interner.array(TypeId::ANY);
-    let extends_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: infer_h,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: any_array,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let variadic_source = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: interner.array(TypeId::NUMBER),
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let cond = ConditionalType {
-        check_type: variadic_source,
-        extends_type: extends_tuple,
-        true_type: infer_h,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let cond_type = interner.conditional(cond);
-    let result = evaluate_type(&interner, cond_type);
-    assert_eq!(result, TypeId::STRING);
-}
-
-/// Issue #9675: `[infer A, ...infer B]` against `[string, ...number[]]` must
-/// bind `A = string` and `B = number[]`. The single-rest residual `[...number[]]`
-/// simplifies to `number[]` so `infer B` binds to the array form tsc treats
-/// as identical.
-#[test]
-fn test_conditional_infer_rest_simplifies_single_rest_residual_to_array() {
-    let interner = TypeInterner::new();
-
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    let extends_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: infer_a,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: infer_b,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let number_array = interner.array(TypeId::NUMBER);
-    let variadic_source = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: number_array,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let true_branch_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: infer_a,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: infer_b,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    let cond = ConditionalType {
-        check_type: variadic_source,
-        extends_type: extends_tuple,
-        true_type: true_branch_tuple,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let cond_type = interner.conditional(cond);
-    let result = evaluate_type(&interner, cond_type);
-
-    let expected = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: number_array,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-    assert_eq!(result, expected);
-}
-
-/// Issue #9675 adjacent case: `[...any[], infer L]` against
-/// `[...number[], string]` must bind `L = string`. Mirrors the trailing-infer /
-/// leading-rest direction of the head-infer case.
-#[test]
-fn test_conditional_infer_last_from_leading_rest_variadic_source() {
-    let interner = TypeInterner::new();
-
-    let infer_l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_l_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    let any_array = interner.array(TypeId::ANY);
-    let extends_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: any_array,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-        TupleElement {
-            type_id: infer_l,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    let variadic_source = interner.tuple(vec![
-        TupleElement {
-            type_id: interner.array(TypeId::NUMBER),
-            name: None,
-            optional: false,
-            rest: true,
-        },
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-    ]);
-
-    let cond = ConditionalType {
-        check_type: variadic_source,
-        extends_type: extends_tuple,
-        true_type: infer_l,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let cond_type = interner.conditional(cond);
-    let result = evaluate_type(&interner, cond_type);
-    assert_eq!(result, TypeId::STRING);
-}
-
-/// Issue #9675 adjacent case: multi-fixed prefix `[infer H, ...any[]]` against
-/// `[string, boolean, ...number[]]` must still bind `H = string`; each residual
-/// non-rest element and the trailing rest's element type are matched against
-/// `any` independently.
-#[test]
-fn test_conditional_infer_head_from_multi_prefix_variadic_source() {
-    let interner = TypeInterner::new();
-
-    let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_h_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    let any_array = interner.array(TypeId::ANY);
-    let extends_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: infer_h,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: any_array,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let variadic_source = interner.tuple(vec![
-        TupleElement {
-            type_id: TypeId::STRING,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: TypeId::BOOLEAN,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: interner.array(TypeId::NUMBER),
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let cond = ConditionalType {
-        check_type: variadic_source,
-        extends_type: extends_tuple,
-        true_type: infer_h,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let cond_type = interner.conditional(cond);
-    let result = evaluate_type(&interner, cond_type);
-    assert_eq!(result, TypeId::STRING);
-}
-
-/// Issue #9675 negative-case control: an empty source against
-/// `[infer H, ...any[]]` must still take the false branch.
-#[test]
-fn test_conditional_infer_head_empty_source_takes_false_branch() {
-    let interner = TypeInterner::new();
-
-    let infer_h_name = interner.intern_string("H");
-    let infer_h = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_h_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-
-    let any_array = interner.array(TypeId::ANY);
-    let extends_tuple = interner.tuple(vec![
-        TupleElement {
-            type_id: infer_h,
-            name: None,
-            optional: false,
-            rest: false,
-        },
-        TupleElement {
-            type_id: any_array,
-            name: None,
-            optional: false,
-            rest: true,
-        },
-    ]);
-
-    let empty_source = interner.tuple(Vec::new());
-    let cond = ConditionalType {
-        check_type: empty_source,
-        extends_type: extends_tuple,
-        true_type: infer_h,
-        false_type: TypeId::NEVER,
-        is_distributive: false,
-    };
-    let cond_type = interner.conditional(cond);
-    let result = evaluate_type(&interner, cond_type);
-    assert_eq!(result, TypeId::NEVER);
 }
 
 #[test]
@@ -34564,11 +34342,14 @@ fn test_string_intrinsic_over_never_is_never() {
 }
 
 #[test]
-fn test_string_intrinsic_over_any_is_any() {
+fn test_string_intrinsic_over_any_stays_deferred() {
     use crate::StringIntrinsicKind;
+    use crate::types::TypeData;
 
-    // `any` is not transformable / generic / a placeholder, so tsc returns the
-    // argument unchanged: Uppercase<any> = any (not `error`).
+    // tsc keeps `Uppercase<any>` a *deferred* string-mapping type rather than
+    // collapsing it to `any`: the case constraint still applies at assignment
+    // time (`const x: Uppercase<any> = "x"` is an error). Collapsing to `any`
+    // here would silence that constraint (a soundness false negative). See #9668.
     let interner = TypeInterner::new();
     for kind in [
         StringIntrinsicKind::Uppercase,
@@ -34578,10 +34359,18 @@ fn test_string_intrinsic_over_any_is_any() {
     ] {
         let intrinsic = interner.string_intrinsic(kind, TypeId::ANY);
         let result = evaluate_type(&interner, intrinsic);
-        assert_eq!(
+        assert_ne!(
             result,
             TypeId::ANY,
-            "string mapping {kind:?} over any should evaluate to any"
+            "string mapping {kind:?} over any must not collapse to any"
+        );
+        assert!(
+            matches!(
+                interner.lookup(result),
+                Some(TypeData::StringIntrinsic { .. })
+            ),
+            "string mapping {kind:?} over any should stay a StringIntrinsic, got {:?}",
+            interner.lookup(result)
         );
     }
 }

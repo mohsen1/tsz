@@ -121,6 +121,82 @@ function g<Row extends readonly unknown[]>(items: Row): AliasForLength<Row["leng
     );
 }
 
+fn ts2322_target_display(source: &str) -> String {
+    let diagnostics = diagnostics_with_spans(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
+        .unwrap_or_else(|| panic!("expected TS2322 for source: {source}\ngot: {diagnostics:?}"));
+    diag.message_text
+        .rsplit_once("' is not assignable to type '")
+        .and_then(|(_, rest)| rest.strip_suffix("'."))
+        .unwrap_or_else(|| panic!("unexpected TS2322 message: {}", diag.message_text))
+        .to_string()
+}
+
+#[test]
+fn deferred_conditional_target_renders_branches_verbatim() {
+    // A deferred conditional type (check side is an unresolved generic) renders
+    // verbatim in tsc diagnostics — exact `C extends E ? X : Y` with literal
+    // branches intact. tsz must not widen the false branch to its primitive nor
+    // collapse the conditional into a union of branches.
+    assert_eq!(
+        ts2322_target_display("function f<A, B>(x: number): A extends B ? 1 : 2 { return x; }"),
+        "A extends B ? 1 : 2",
+        "numeric literal false branch must not widen to `number`",
+    );
+    assert_eq!(
+        ts2322_target_display(
+            "function f<A, B>(x: number): A extends B ? true : false { return x; }"
+        ),
+        "A extends B ? true : false",
+        "boolean literal false branch must not widen to `boolean`",
+    );
+    assert_eq!(
+        ts2322_target_display(
+            "function f<A, B>(x: number): A extends B ? \"yes\" : \"no\" { return x; }"
+        ),
+        "A extends B ? \"yes\" : \"no\"",
+        "string literal branches must not collapse/reorder into a union",
+    );
+}
+
+#[test]
+fn deferred_conditional_target_display_is_rename_invariant() {
+    // The rule is structural, not keyed on the spelling of the type parameters.
+    assert_eq!(
+        ts2322_target_display("function f<P, Q>(x: number): P extends Q ? 1 : 2 { return x; }"),
+        "P extends Q ? 1 : 2",
+    );
+    assert_eq!(
+        ts2322_target_display(
+            "function f<P, Q>(x: number): P extends Q ? \"a\" | \"b\" : \"c\" { return x; }"
+        ),
+        "P extends Q ? \"a\" | \"b\" : \"c\"",
+    );
+}
+
+#[test]
+fn deferred_conditional_target_preserves_object_branch_literals() {
+    // Object-literal branches keep their literal property types verbatim.
+    assert_eq!(
+        ts2322_target_display(
+            "function f<A, B>(x: number): A extends B ? { a: 1 } : { b: 2 } { return x; }"
+        ),
+        "A extends B ? { a: 1; } : { b: 2; }",
+    );
+}
+
+#[test]
+fn resolved_conditional_target_still_reduces_to_branch() {
+    // Control: a *resolved* conditional reduces to the taken branch in both
+    // compilers — this path must not be affected by the deferred-display fix.
+    assert_eq!(
+        ts2322_target_display("type Cond = string extends number ? 1 : 2;\nconst r: Cond = \"x\";"),
+        "2",
+    );
+}
+
 /// Minimal Promise definition so async tests can resolve Promise<T>.
 const PROMISE_DEF: &str = "interface Promise<T> { then<U>(cb: (val: T) => U): Promise<U>; }";
 

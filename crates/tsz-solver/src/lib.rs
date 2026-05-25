@@ -253,8 +253,8 @@ pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
-pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::format::{TypeFormatter, format_excess_property_name};
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
@@ -303,6 +303,9 @@ mod bidirectional_tests;
 // index_signature_tests: loaded from relations/subtype/core.rs
 // infer_tests: loaded from inference/infer.rs
 // instantiate_tests: loaded from caches/instantiation_cache.rs
+#[cfg(test)]
+#[path = "../tests/infer_pattern_variadic_residual_tests.rs"]
+mod infer_pattern_variadic_residual_tests;
 #[cfg(test)]
 #[path = "../tests/integration_tests.rs"]
 mod integration_tests;
