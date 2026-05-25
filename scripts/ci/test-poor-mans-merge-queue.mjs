@@ -226,6 +226,22 @@ assert.match(cleanupFormat, /Included 1 superseded open PR branch/);
 assert.match(cleanupFormat, /open superseded/);
 assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
+const cleanupActiveRunFormat = formatResult({
+  cleanupQueueBranches: true,
+  deletions: [],
+  dryRun: true,
+  skippedActiveRuns: 1,
+  skippedOpen: 0,
+  skippedUnrecognized: 0,
+  supersededOpen: 0,
+  skips: [
+    { branch: "automation/merge-queue/pr-9515", reason: "active queue run 26423420117" },
+  ],
+  wouldDelete: 0,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue runs/);
+assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| active queue run 26423420117 \|/);
+
 assert.match(
   formatResult({
     selected: pr(),
