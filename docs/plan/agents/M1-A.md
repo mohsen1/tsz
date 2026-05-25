@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 23:32 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10166` merged.
+- 2026-05-25 23:42 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10168` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -43,6 +43,11 @@ node scripts/ci/pr-ownership-report.mjs
     `ceadbd07a3 ci: report active open queue branch runs (#10166)`. Queue
     cleanup dry runs now report active workflow runs on open queue branches as
     preserved instead of hiding them under ordinary open-PR skips.
+  - `#10168` merged on 2026-05-25 as
+    `6caa98667f ci: annotate ownership duplicate clusters (#10168)`.
+    `scripts/ci/pr-ownership-report.mjs` now annotates duplicate title and
+    issue clusters with draft/ready state, WIP marker, and AgentName so cleanup
+    agents can triage ownership without opening every PR.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue

@@ -87,6 +87,17 @@ function titleScope(title) {
     .trim();
 }
 
+function prSummary(report, number, prefix = "#") {
+  const pr = report.prs.find((candidate) => candidate.number === number);
+  if (!pr) {
+    return `${prefix}${number}`;
+  }
+  const state = pr.draft ? "draft" : "ready";
+  const wip = pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title) ? ", WIP" : "";
+  const owner = pr.agentName ?? "no AgentName";
+  return `${prefix}${number} (${state}${wip}, ${owner})`;
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
@@ -188,7 +199,7 @@ function printMarkdown(report) {
     console.log("- none");
   } else {
     for (const duplicate of report.duplicateTitleScopes) {
-      console.log(`- ${duplicate.scope}: ${duplicate.prs.map((pr) => `#${pr}`).join(", ")}`);
+      console.log(`- ${duplicate.scope}: ${duplicate.prs.map((pr) => prSummary(report, pr)).join(", ")}`);
     }
   }
   console.log("");
@@ -203,7 +214,7 @@ function printMarkdown(report) {
     console.log("- none");
   } else {
     for (const duplicate of issueDuplicates) {
-      console.log(`- #${duplicate.issue}: ${duplicate.prs.map((pr) => `PR #${pr}`).join(", ")}`);
+      console.log(`- #${duplicate.issue}: ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`);
     }
   }
 }
