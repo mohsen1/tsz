@@ -98,8 +98,8 @@ fn instantiated_homomorphic_mapped_over_non_object_source_reduces_to_source() {
 /// A directly authored `{ [K in keyof string]: V }` - whose iteration
 /// variable's declared constraint is `keyof string`, NOT `keyof <typeparam>`
 /// - must NOT take the primitive short-circuit. tsc keeps the normal
-/// key-expansion behavior here, producing an indexed object over string's
-/// apparent members.
+///   key-expansion behavior here, producing an indexed object over string's
+///   apparent members.
 #[test]
 fn direct_mapped_over_string_does_not_short_circuit() {
     let interner = TypeInterner::new();
