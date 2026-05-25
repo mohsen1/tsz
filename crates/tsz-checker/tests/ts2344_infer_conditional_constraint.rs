@@ -284,6 +284,30 @@ export type RemoveIdxSgn<T> = Pick<T, KeysWithoutStringIndex<T>>;
 }
 
 #[test]
+fn test_mapped_key_infer_subset_satisfies_keyof_constraint_renamed() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Select<Obj, Key extends keyof Obj> = { [Member in Key]: Obj[Member] };
+type KeysWithoutWideString<Source> =
+    { [Property in keyof Source]: string extends Property ? never : Property } extends { [_Name in keyof Source]: infer Candidate }
+    ? Candidate
+    : never;
+
+export type RemoveWideStringIndex<Source> = Select<Source, KeysWithoutWideString<Source>>;
+"#,
+    );
+
+    let ts2344_errors: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2344)
+        .collect();
+    assert!(
+        ts2344_errors.is_empty(),
+        "Renamed mapped key infer result should be accepted as a keyof subset. Got: {ts2344_errors:?}"
+    );
+}
+
+#[test]
 fn test_react_component_props_with_ref_accepts_conditional_element_type() {
     let diagnostics = compile_and_get_diagnostics(
         r#"

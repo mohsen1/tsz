@@ -1243,9 +1243,11 @@ impl<'a> CheckerState<'a> {
                             && self.type_arg_has_explicit_constraint_in_ast(arg_idx)
                         {
                             let constraint_resolved = self.resolve_lazy_type(constraint);
-                            if self
-                                .format_type_diagnostic(constraint_resolved)
-                                .starts_with("keyof ")
+                            if query::keyof_operand(
+                                self.ctx.types.as_type_database(),
+                                constraint_resolved,
+                            )
+                            .is_some()
                             {
                                 self.error_type_constraint_not_satisfied(
                                     type_arg,
