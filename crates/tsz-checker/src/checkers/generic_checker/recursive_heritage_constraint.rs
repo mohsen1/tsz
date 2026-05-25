@@ -278,7 +278,7 @@ impl<'a> CheckerState<'a> {
                     ) {
                         return false;
                     }
-                    if self.is_assignable_to(member_type, constraint_type) {
+                    if self.diagnostic_relation_boolean_guard(member_type, constraint_type) {
                         return false;
                     }
                     // Some recursive DOM property types are interned through
