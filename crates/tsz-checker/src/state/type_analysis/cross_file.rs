@@ -76,12 +76,15 @@ impl<'a> CheckerState<'a> {
 
     /// Get a symbol from the current binder, lib binders, or other file binders.
     /// This ensures we can resolve symbols from lib.d.ts and other files.
+    ///
+    /// Import aliases are pinned locally (see `cross_file_import_alias_pin`)
+    /// before the cross-file overlay is consulted; raw `SymbolId`s are
+    /// file-local and the overlay would otherwise substitute an unrelated
+    /// same-id decl from the source module.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // If the import/export resolver has already tied this raw SymbolId to a
-        // specific source file, use that binder before the current file. Raw
-        // SymbolIds are only file-local; checking the current binder first can
-        // accidentally pick an unrelated same-id symbol while resolving
-        // cross-file aliases.
+        if let Some(alias) = self.local_import_alias(sym_id) {
+            return Some(alias);
+        }
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -123,23 +126,19 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
-    ///
-    /// Unlike `get_symbol_globally` (which checks the local binder first and may find
-    /// a WRONG symbol due to `SymbolId` collisions), this method checks
-    /// `cross_file_symbol_targets` FIRST. If the `SymbolId` is known to belong to another
-    /// file, the target file's binder is used directly, avoiding the collision.
-    ///
-    /// Falls back to `get_symbol_globally` for non-cross-file symbols.
+    /// Resolves through `cross_file_symbol_targets` first to avoid same-raw-id
+    /// collisions with the local binder; import aliases are pinned local (see
+    /// `cross_file_import_alias_pin`).
     pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // Check if this is a known cross-file symbol
-        let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-        if let Some(file_idx) = file_idx
+        if let Some(alias) = self.local_import_alias(sym_id) {
+            return Some(alias);
+        }
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
         {
             return Some(sym);
         }
-        // Fall back to global search
         self.get_symbol_globally(sym_id)
     }
 
@@ -1173,6 +1172,18 @@ impl<'a> CheckerState<'a> {
                     !std::ptr::eq(target_arena, self.ctx.arena)
                 });
 
+        // Lib arenas are absent from `global_arena_index`, so the DefinitionStore
+        // cache below never fires for them; use the shared name-keyed lib class cache.
+        let shared_lib_class_name =
+            self.lib_class_shared_cache_name(sym_id, needs_cross_file_delegation);
+        if let Some(shared_name) = shared_lib_class_name.as_deref()
+            && let Some(cached) =
+                self.cached_shared_actual_lib_class_delegation(sym_id, shared_name)
+        {
+            tsz_common::perf_counters::record_delegate_cross_arena_cache_hit_lib();
+            return Some(cached);
+        }
+
         if needs_cross_file_delegation {
             let file_idx = self.ctx.resolve_symbol_file_index(sym_id).expect(
                 "needs_cross_file_delegation derived from resolve_symbol_file_index returning true",
@@ -1193,7 +1204,6 @@ impl<'a> CheckerState<'a> {
             return Some((cached_type, cached_params));
         }
 
-        // Guard against deep cross-arena recursion
         if !Self::enter_cross_arena_delegation() {
             return None;
         }
@@ -1248,23 +1258,7 @@ impl<'a> CheckerState<'a> {
         checker.ctx.current_file_idx = query_file_idx
             .or(delegate_file_idx)
             .unwrap_or(self.ctx.current_file_idx);
-        for &id in &self.ctx.class_instance_resolution_set {
-            checker.ctx.class_instance_resolution_set.insert(id);
-        }
-        for &id in &self.ctx.symbol_resolution_set {
-            if id != sym_id {
-                checker.ctx.symbol_resolution_set.insert(id);
-            }
-        }
-        // DefId ↔ SymbolId mappings are resolved via DefinitionStore fallback
-        // on cache miss — no parent-to-child copy needed.
-        for &id in &self.ctx.class_constructor_resolution_set {
-            checker.ctx.class_constructor_resolution_set.insert(id);
-        }
-
-        // Wire up the shared DefinitionStore in both of the child's TypeEnvironments
-        // so inner DefId→TypeId mappings survive child-checker teardown.
-        checker.ctx.ensure_both_envs_have_definition_store();
+        checker.propagate_class_delegation_setup(self, sym_id);
 
         let result = checker.class_instance_type_with_params_from_symbol(sym_id);
         if self.ctx.share_owner_symbol_type_results
@@ -1281,6 +1275,12 @@ impl<'a> CheckerState<'a> {
                 *type_id,
                 params.clone(),
             );
+        }
+
+        if let (Some(shared_name), Some((type_id, _))) =
+            (shared_lib_class_name.as_deref(), result.as_ref())
+        {
+            self.cache_shared_actual_lib_class_delegation(shared_name, *type_id);
         }
 
         self.ctx.leave_recursion();

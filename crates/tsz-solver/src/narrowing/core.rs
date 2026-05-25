@@ -1,3 +1,4 @@
+use crate::caches::db::TypeCompilerOptions;
 use crate::construction::{QueryDatabase, TypeDatabase};
 use crate::def::DefId;
 use crate::narrowing::request::{NarrowTypeCacheKey, NarrowingOptions, NarrowingRequest};
@@ -608,8 +609,10 @@ impl<'a> NarrowingContext<'a> {
 
     fn narrowing_options(&self) -> NarrowingOptions {
         NarrowingOptions::new()
-            .with_no_unchecked_indexed_access(QueryDatabase::no_unchecked_indexed_access(self.db))
-            .with_exact_optional_property_types(QueryDatabase::exact_optional_property_types(
+            .with_no_unchecked_indexed_access(TypeCompilerOptions::no_unchecked_indexed_access(
+                self.db,
+            ))
+            .with_exact_optional_property_types(TypeCompilerOptions::exact_optional_property_types(
                 self.db,
             ))
     }
@@ -1038,6 +1041,11 @@ impl<'a> NarrowingContext<'a> {
                             member,
                         )
                     {
+                        // Keep a wide `symbol` member over a `unique symbol`
+                        // value; resolved target also catches aliases.
+                        if self.keeps_wide_symbol_over_unique(member, resolved_target) {
+                            return Some(member);
+                        }
                         return Some(target_type);
                     }
                     // CRITICAL FIX: instanceof Array matching
@@ -1124,6 +1132,10 @@ impl<'a> NarrowingContext<'a> {
         // Check if source is assignable to target using resolved types for comparison
         if self.is_assignable_to(resolved_source, resolved_target) {
             trace!("Source type is assignable to target, returning source");
+            source_type
+        } else if self.keeps_wide_symbol_over_unique(resolved_source, resolved_target) {
+            // Never collapse a wide `symbol` to a `unique symbol` (see helper).
+            trace!("Keeping wide symbol over unique-symbol value");
             source_type
         } else if crate::relations::subtype::is_subtype_of_with_db(
             self.db,
@@ -1794,6 +1806,16 @@ impl<'a> NarrowingContext<'a> {
             is_constructor: false,
             is_method: false,
         })
+    }
+
+    /// Whether equality narrowing must keep a wide `symbol` rather than
+    /// collapsing it to a `unique symbol` value. Mirrors tsc's
+    /// `replacePrimitivesWithLiterals`, which replaces only wide
+    /// `string`/`number`/`bigint` with literal subtypes and never narrows a
+    /// wide `symbol` to a `unique symbol` (so `x: symbol` stays `symbol` after
+    /// `x === uniqueSym`).
+    fn keeps_wide_symbol_over_unique(&self, source: TypeId, target: TypeId) -> bool {
+        source == TypeId::SYMBOL && crate::type_queries::is_unique_symbol_type(self.db, target)
     }
 
     /// Check if a type is a JS primitive that can never pass `instanceof`.

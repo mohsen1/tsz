@@ -181,11 +181,33 @@ pub trait TypeDisplayProvenance {
     fn mark_union_too_complex(&self) {}
 }
 
+/// Read-only compiler option hooks used by solver type operations.
+///
+/// Keeping option queries separate from [`TypeDatabase`] lets helpers depend on
+/// configuration without also receiving construction, cache, or provenance
+/// capabilities.
+pub trait TypeCompilerOptions {
+    /// Whether indexed access reads should include `undefined`.
+    fn no_unchecked_indexed_access(&self) -> bool {
+        false
+    }
+
+    /// Whether `exactOptionalPropertyTypes` is enabled.
+    ///
+    /// Inference matching uses this to distinguish synthetic `| undefined`
+    /// from optional markers vs. explicit `| undefined` in user-written types.
+    fn exact_optional_property_types(&self) -> bool {
+        false
+    }
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
-pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal + TypeDisplayProvenance {
+pub trait TypeDatabase:
+    TypePredicateCache + TypeTupleLimitSignal + TypeDisplayProvenance + TypeCompilerOptions
+{
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
@@ -236,8 +258,6 @@ pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal + TypeDisplayP
     fn intersect_types_raw2(&self, left: TypeId, right: TypeId) -> TypeId;
     fn array(&self, element: TypeId) -> TypeId;
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId;
-    /// Like [`tuple`] but also merges adjacent concrete rest arrays (for instantiation paths).
-    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId;
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId;
     fn object_with_flags(&self, properties: Vec<PropertyInfo>, flags: ObjectFlags) -> TypeId;
     fn object_with_flags_and_symbol(
@@ -370,17 +390,6 @@ pub trait TypeDatabase: TypePredicateCache + TypeTupleLimitSignal + TypeDisplayP
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         false
     }
-
-    /// Whether `exactOptionalPropertyTypes` is enabled.
-    ///
-    /// Exposed on `TypeDatabase` (in addition to `QueryDatabase`) so that
-    /// inference matching can distinguish synthetic `| undefined` from
-    /// optional markers vs. explicit `| undefined` in user-written types.
-    /// The default returns `false`; canonical implementations live on
-    /// `TypeInterner` and `QueryCache`.
-    fn exact_optional_property_types(&self) -> bool {
-        false
-    }
 }
 
 impl TypePredicateCache for TypeInterner {
@@ -466,6 +475,16 @@ impl TypeDisplayProvenance for TypeInterner {
 
     fn mark_union_too_complex(&self) {
         self.set_union_too_complex();
+    }
+}
+
+impl TypeCompilerOptions for TypeInterner {
+    fn no_unchecked_indexed_access(&self) -> bool {
+        TypeInterner::no_unchecked_indexed_access(self)
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        TypeInterner::exact_optional_property_types(self)
     }
 }
 
@@ -604,10 +623,6 @@ impl TypeDatabase for TypeInterner {
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         Self::tuple(self, elements)
-    }
-
-    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
-        Self::tuple_normalized(self, elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
@@ -787,10 +802,6 @@ impl TypeDatabase for TypeInterner {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         Self::is_evaluation_fuel_exhausted(self)
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        TypeInterner::exact_optional_property_types(self)
     }
 }
 
@@ -1040,15 +1051,7 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
         )
     }
 
-    fn no_unchecked_indexed_access(&self) -> bool {
-        false
-    }
-
     fn set_no_unchecked_indexed_access(&self, _enabled: bool) {}
-
-    fn exact_optional_property_types(&self) -> bool {
-        false
-    }
 
     fn set_exact_optional_property_types(&self, _enabled: bool) {}
 
@@ -1480,16 +1483,8 @@ impl QueryDatabase for TypeInterner {
         }
     }
 
-    fn no_unchecked_indexed_access(&self) -> bool {
-        TypeInterner::no_unchecked_indexed_access(self)
-    }
-
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         TypeInterner::set_no_unchecked_indexed_access(self, enabled);
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        TypeInterner::exact_optional_property_types(self)
     }
 
     fn set_exact_optional_property_types(&self, enabled: bool) {

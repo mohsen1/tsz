@@ -119,12 +119,14 @@ impl BlockScopeState {
         // block-scoped declarations that shadow it to avoid conflicts.
         let is_builtin_shadow = original_name == "arguments";
 
-        let needs_rename = is_builtin_shadow
-            || self.reserved_names.contains(original_name)
-            || self
+        let shadows_outer_generated_function_name = !at_function_level
+            && self
                 .function_scope_shadowed_names
                 .last()
-                .is_some_and(|names| names.contains(original_name))
+                .is_some_and(|names| names.contains(original_name));
+        let needs_rename = is_builtin_shadow
+            || self.reserved_names.contains(original_name)
+            || shadows_outer_generated_function_name
             || if at_function_level {
                 // At function body level: only check the current function scope itself
                 // (for redeclarations within the same scope)
@@ -363,6 +365,23 @@ impl BlockScopeState {
             }
         }
         None
+    }
+
+    /// Return the active rename mapping (original → emitted) for all block-scoped
+    /// variables in the current scope stack that were renamed during ES5 lowering.
+    /// Entries where `original == emitted` are excluded (no rename occurred).
+    /// Innermost scope wins when the same original name appears in multiple scopes.
+    pub fn visible_outer_rename_map(&self) -> FxHashMap<String, String> {
+        let mut map = FxHashMap::default();
+        // Iterate outermost→innermost so innermost overwrites outer for same name.
+        for scope in &self.scope_stack {
+            for (original, emitted) in scope {
+                if original != emitted {
+                    map.insert(original.clone(), emitted.clone());
+                }
+            }
+        }
+        map
     }
 
     /// Return source names currently visible to nested ES5 class emitters.

@@ -60,7 +60,8 @@ pub use self::core::{
     get_contextual_signature_for_arity_cached_with_compat_checker,
     get_contextual_signature_for_arity_with_compat_checker,
     get_contextual_signature_with_compat_checker, infer_call_signature, infer_generic_function,
-    resolve_call_with_checker, resolve_call_with_checker_and_arg_sources, resolve_new_with_checker,
+    overload_failure_return_type, resolve_call_with_checker,
+    resolve_call_with_checker_and_arg_sources, resolve_new_with_checker,
 };
 
 pub use generic_call::{GenericCallRequest, GenericCallResult};
@@ -83,6 +84,10 @@ use crate::types::*;
 #[cfg(test)]
 #[path = "../../tests/operations_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/operations_tuple_rest_normalization_tests.rs"]
+mod operations_tuple_rest_normalization_tests;
 
 #[cfg(test)]
 #[path = "../../tests/binary_ops_comprehensive_tests.rs"]

@@ -5,7 +5,8 @@
 //! database implementation used by the checker at runtime.
 
 use crate::caches::db::{
-    QueryDatabase, TypeDatabase, TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
+    QueryDatabase, TypeCompilerOptions, TypeDatabase, TypeDisplayProvenance, TypePredicateCache,
+    TypeTupleLimitSignal,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
@@ -952,6 +953,16 @@ impl TypeDisplayProvenance for QueryCache<'_> {
     }
 }
 
+impl TypeCompilerOptions for QueryCache<'_> {
+    fn no_unchecked_indexed_access(&self) -> bool {
+        self.no_unchecked_indexed_access.get()
+    }
+
+    fn exact_optional_property_types(&self) -> bool {
+        self.exact_optional_property_types.get()
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1087,10 +1098,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         self.interner.tuple(elements)
-    }
-
-    fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
-        self.interner.tuple_normalized(elements)
     }
 
     fn object(&self, properties: Vec<PropertyInfo>) -> TypeId {
@@ -1262,10 +1269,6 @@ impl TypeDatabase for QueryCache<'_> {
 
     fn is_evaluation_fuel_exhausted(&self) -> bool {
         self.interner.is_evaluation_fuel_exhausted()
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        self.exact_optional_property_types.get()
     }
 }
 
@@ -1559,7 +1562,7 @@ impl QueryDatabase for QueryCache<'_> {
                 SUBTYPE_POLICY_TRACE_OP,
                 source,
                 target,
-                policy.flags,
+                policy.legacy_packed_flags(),
             );
             query_id
         });
@@ -1647,7 +1650,7 @@ impl QueryDatabase for QueryCache<'_> {
                 ASSIGNABILITY_POLICY_TRACE_OP,
                 source,
                 target,
-                policy.flags,
+                policy.legacy_packed_flags(),
             );
             query_id
         });
@@ -1799,7 +1802,7 @@ impl QueryDatabase for QueryCache<'_> {
         // with the current QueryDatabase.
         let prop_atom = self.interner.intern_string(prop_name);
         let exact_optional_property_types =
-            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
+            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
         let key = (
             object_type,
             prop_atom,
@@ -1824,7 +1827,7 @@ impl QueryDatabase for QueryCache<'_> {
         no_unchecked_indexed_access: bool,
     ) -> Option<crate::operations::property::PropertyAccessResult> {
         let exact_optional_property_types =
-            crate::caches::db::QueryDatabase::exact_optional_property_types(self);
+            crate::caches::db::TypeCompilerOptions::exact_optional_property_types(self);
         let mut evaluator = crate::operations::property::PropertyAccessEvaluator::new(self);
         evaluator.set_no_unchecked_indexed_access(no_unchecked_indexed_access);
         evaluator.set_exact_optional_property_types(exact_optional_property_types);
@@ -1867,16 +1870,8 @@ impl QueryDatabase for QueryCache<'_> {
         result
     }
 
-    fn no_unchecked_indexed_access(&self) -> bool {
-        self.no_unchecked_indexed_access.get()
-    }
-
     fn set_no_unchecked_indexed_access(&self, enabled: bool) {
         self.no_unchecked_indexed_access.set(enabled);
-    }
-
-    fn exact_optional_property_types(&self) -> bool {
-        self.exact_optional_property_types.get()
     }
 
     fn set_exact_optional_property_types(&self, enabled: bool) {
