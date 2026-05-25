@@ -537,6 +537,12 @@ REGEX_LINE_COUNT_CHECKS = [
             / "tsz-checker"
             / "src"
             / "classes"
+            / "class_checker_compat_overloads.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
             / "class_implements_checker"
             / "core.rs",
             ROOT
