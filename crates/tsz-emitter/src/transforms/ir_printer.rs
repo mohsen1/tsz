@@ -752,7 +752,13 @@ impl<'a> IRPrinter<'a> {
                                 comment.trim_start().starts_with("//");
                         }
                     } else {
-                        self.emit_sent_aware(right);
+                        // `_a.sent()` does not need parentheses as the right operand of an
+                        // arithmetic or comparison binary expression. tsc emits e.g.
+                        // `_a + _b.sent()` without wrapping `_b.sent()` in parentheses.
+                        // Parentheses are only needed when the call result is immediately
+                        // used as an object for member access, which is handled at the
+                        // PropertyAccess / ElementAccess emit sites via emit_sent_aware.
+                        self.emit_node(right);
                     }
                 }
             }
@@ -1768,6 +1774,7 @@ impl<'a> IRPrinter<'a> {
                 hoisted_var_groups,
                 promise_constructor,
                 multiline_callback,
+                directives,
             } => {
                 let previous_generator_state_name = self.generator_state_name;
                 let hoisted_vars: Vec<&str> = hoisted_var_groups
@@ -1784,19 +1791,28 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     self.write(", void 0, void 0, function () {");
                 }
-                if hoisted_var_groups.is_empty()
-                    && !multiline_callback
-                    && !*needs_lexical_this_capture
-                {
+                let needs_multiline = !hoisted_var_groups.is_empty()
+                    || *multiline_callback
+                    || *needs_lexical_this_capture
+                    || !directives.is_empty();
+                if !needs_multiline {
                     // TSC keeps the generator call on the awaiter callback's
                     // opening line when no hoisted variables are needed.
                     self.write(" ");
                     self.emit_node(generator_body);
                     self.write(" });");
                 } else {
-                    // Multi-line format with hoisted vars
+                    // Multi-line format with directives, hoisted vars, then generator
                     self.write_line();
                     self.increase_indent();
+                    // Directive prologues come first, before any var declarations
+                    for directive in directives {
+                        self.write_indent();
+                        self.write("\"");
+                        self.write(directive);
+                        self.write("\";");
+                        self.write_line();
+                    }
                     for group in hoisted_var_groups {
                         if *needs_lexical_this_capture {
                             for name in group {
