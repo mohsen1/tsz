@@ -1912,8 +1912,11 @@ mod tests {
     #[test]
     fn jsx_props_target_selection_avoids_anonymous_display_prefix_decision() {
         let source = include_str!("validation.rs");
+        let formatted_member_call = ["format_type", "(member)"].join("");
+        let starts_with_object = [".starts_with", "('{')"].join("");
+        let inline_forbidden = format!("{formatted_member_call}{starts_with_object}");
         for forbidden in [
-            ["format_type(member)", ".starts_with('{')"].join(""),
+            inline_forbidden,
             [
                 "let display = self.format_type(member);",
                 "let is_anonymous = display.starts_with('{');",
