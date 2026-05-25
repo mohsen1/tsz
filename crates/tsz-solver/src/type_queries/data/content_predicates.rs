@@ -649,6 +649,44 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
     }
 }
 
+/// Check whether a type contains an `Application` along base-constraint
+/// resolution paths.
+///
+/// This is intentionally narrower than a full structural traversal and broader
+/// than `contains_application_in_structure`: circular-constraint checking needs
+/// to know whether alias expansion may affect mapped key sources or indexed
+/// access object/index operands, while contextual inference must not treat those
+/// nested surfaces as a reason to preserve an unevaluated application shape.
+pub fn contains_application_in_constraint_resolution_path(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Application(_)) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_application_in_constraint_resolution_path(db, m))
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            contains_application_in_constraint_resolution_path(db, inner)
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.get_mapped(mapped_id);
+            contains_application_in_constraint_resolution_path(db, mapped.constraint)
+        }
+        Some(TypeData::IndexAccess(object_type, index_type)) => {
+            contains_application_in_constraint_resolution_path(db, object_type)
+                || contains_application_in_constraint_resolution_path(db, index_type)
+        }
+        _ => false,
+    }
+}
+
 /// Return true when `type_id` contains an application of a generic alias whose
 /// body both references itself and requires concrete evaluation. This identifies
 /// recursive conditional/mapped aliases such as
