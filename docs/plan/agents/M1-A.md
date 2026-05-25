@@ -24,8 +24,14 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 14:05 UTC lane refresh:
+- 2026-05-25 15:10 UTC lane refresh:
   - Direct `agent:M1-A` PR queue is empty after `#10154` merged.
+  - `#9559` is merged; the former M1-A JSX branch is no longer an active
+    landing target.
+  - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
+    delete superseded suffixed queue branches for open PRs when the suffix no
+    longer matches current `main`; the latest apply run deleted the merged
+    `#10150` queue branch `automation/merge-queue/pr-10150-b8f0354`.
   - The 2026-05-21 ready queue (`#9828`, `#9827`, `#9814`, `#9808`,
     `#9804`, `#9799`) is fully merged.
   - The old WIP-title queue (`#9822`, `#9803`, `#9639`) is resolved by merge
@@ -34,12 +40,17 @@ node scripts/ci/pr-ownership-report.mjs
     `agent:*` labels on open PRs.
   - WIP-state comment audit is clean.
 - Current PR-garden surfaces to inspect before issue backlog:
-  - Ready main-based PRs with `mergeStateStatus=BLOCKED` but
+  - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
+    Its stale synthetic branch was cleaned after merge.
+  - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
     `mergeable=MERGEABLE`: `#9230`, `#9281`, `#9634`, `#9807`, `#9811`,
-    `#9912`, `#10078`, `#10081`, `#10086`, `#10126`, and `#10150`.
-  - Ready main-based PRs with `mergeable=CONFLICTING`: `#9632` and `#10084`.
-  - Open queue branches should be cleaned only when their PR is merged or
-    closed; the latest cleanup dry run preserved only open PR branches.
+    `#9912`, `#10078`, `#10081`, and `#10126`.
+  - Ready main-based PRs with known conflict handoff needs include `#9632` and
+    `#10084`; M1-A posted a current conflict handoff on `#9632` on
+    2026-05-25.
+  - Queue branch cleanup dry runs should use
+    `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
+    branches do not accumulate.
 - Secondary issue context remains `#9818`, `#8868`, `#7596`, `#7378`, `#9770`,
   `#9752`, `#9703`, and `#9701`.
 - Expected output: comments, label fixes, closed duplicate/stale PRs, or
