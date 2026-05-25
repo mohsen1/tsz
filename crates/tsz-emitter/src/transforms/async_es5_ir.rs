@@ -79,16 +79,17 @@ mod for_of;
 mod loop_control;
 #[path = "async_es5_ir_state.rs"]
 mod state;
+#[path = "async_es5_ir_statement_helpers.rs"]
+mod statement_helpers;
+#[path = "async_es5_ir_suspension.rs"]
+mod suspension;
 #[path = "async_es5_ir_switch.rs"]
 mod switch;
 #[path = "async_es5_ir_try_region.rs"]
 mod try_region;
 
 pub use state::AsyncTransformState;
-use state::{
-    ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject,
-    SuspendedAssignmentTarget,
-};
+use state::{ForInAssignmentTarget, ForInSuspendedElementIndex, ForInSuspendedObject};
 use try_region::{TryRegionPlaceholders, TryRegionResolution, patch_try_region_placeholders};
 
 #[path = "async_es5_ir_opcodes.rs"]
@@ -503,8 +504,10 @@ impl<'a> AsyncES5Transformer<'a> {
 
         let mut hoisted_decls = Vec::new();
         let mut skipped_statements = Vec::new();
-        if !has_await
-            && let Some(body_node) = self.arena.get(body_idx)
+        // Function declarations inside async function bodies are always hoisted to
+        // the __awaiter callback scope (before __generator), regardless of whether
+        // the body contains await expressions.  This matches tsc behavior.
+        if let Some(body_node) = self.arena.get(body_idx)
             && body_node.kind == syntax_kind_ext::BLOCK
             && let Some(block) = self.arena.get_block(body_node)
         {
@@ -535,6 +538,12 @@ impl<'a> AsyncES5Transformer<'a> {
         let mut generator_body =
             self.build_generator_body(body_idx, has_await, &skipped_statements);
 
+        // Extract directive prologues (e.g. "use strict") from the start of the
+        // generator body.  tsc places these inside the __awaiter callback before
+        // any var declarations and before __generator, so we pull them out here
+        // and pass them to AwaiterCall for correct placement.
+        let directives = Self::extract_and_remove_directive_prologue(&mut generator_body);
+
         // Hoist var declarations from generator cases to the awaiter wrapper scope.
         // In tsc output, var declarations inside async function bodies are placed
         // before `return __generator(...)`, not inside the switch/case statements.
@@ -551,6 +560,7 @@ impl<'a> AsyncES5Transformer<'a> {
             hoisted_var_groups,
             promise_constructor,
             multiline_callback: captures_arguments,
+            directives,
         };
 
         // Build the function declaration/expression wrapper
@@ -2642,13 +2652,20 @@ impl<'a> AsyncES5Transformer<'a> {
                             },
                         ))));
                     } else if self.contains_await_recursive(ret.expression) {
-                        let value = if let Some(lowered_call) = self
-                            .lower_call_callee_before_suspension(
+                        let value = if let Some(lowered_comma) = self
+                            .lower_return_comma_before_suspension(
                                 ret.expression,
                                 cases,
                                 current_statements,
                                 current_label,
                             ) {
+                            lowered_comma
+                        } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+                            ret.expression,
+                            cases,
+                            current_statements,
+                            current_label,
+                        ) {
                             lowered_call
                         } else if let Some(lowered_array) = self
                             .lower_array_literal_before_suspension(
@@ -2869,6 +2886,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::BLOCK => {
+                self.process_block_or_statement_in_async(
+                    idx,
+                    cases,
+                    current_statements,
+                    current_label,
+                );
+            }
+
             k if k == syntax_kind_ext::SWITCH_STATEMENT => {
                 self.process_switch_statement_in_async(
                     idx,
@@ -2911,6 +2937,84 @@ impl<'a> AsyncES5Transformer<'a> {
 
         // Check for nested await inside the expression
         if self.contains_await_recursive(idx) {
+            // Try specialized lowering in priority order before falling back to the
+            // generic emit_nested_suspension path.  Each helper handles a specific
+            // structural pattern and returns false/None if the pattern doesn't match.
+
+            // `target = base[await index]` — element access with await in index
+            if let Some(lowered) = self.lower_element_access_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered)));
+                return;
+            }
+
+            // `target = cond ? await T : F` or `target = cond ? T : await F`
+            if self.lower_assignment_with_conditional_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
+
+            // `(await lhs) op= await rhs` — compound assignment with await in BOTH sides
+            if self.lower_compound_assignment_double_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
+
+            // `lhs op= await rhs` — compound assignment with await in RHS
+            if self.lower_compound_assignment_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
+
+            // `L OP await R` (non-assignment, non-short-circuit)
+            if let Some(lowered) = self.lower_exponentiation_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered)));
+                return;
+            }
+
+            if let Some(lowered) = self.lower_binary_non_short_circuit_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered)));
+                return;
+            }
+
+            // `L && await R`, `L || await R`, `L ?? await R`
+            if let Some(lowered) = self.lower_logical_short_circuit_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered)));
+                return;
+            }
+
+            // Existing handler: property/element assignment target saving
             if self.lower_assignment_target_before_suspension(
                 idx,
                 cases,
@@ -2919,6 +3023,27 @@ impl<'a> AsyncES5Transformer<'a> {
             ) {
                 return;
             }
+
+            // `obj[await idx] = rhs` or `obj[await idx] op= rhs` — await in LHS index
+            if self.lower_lhs_element_access_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
+
+            // `(obj[await idx]).prop = rhs` — property access with await in element index
+            if self.lower_lhs_chained_element_access_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                return;
+            }
+
             if let Some(lowered_array) = self.lower_array_literal_before_suspension(
                 idx,
                 cases,
@@ -2964,6 +3089,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_new)));
                 return;
             }
+
             if self.async_generator_mode
                 && (node.kind == syntax_kind_ext::YIELD_EXPRESSION
                     || self.node_text_contains_yield(idx))
@@ -3463,150 +3589,6 @@ impl<'a> AsyncES5Transformer<'a> {
         }
     }
 
-    fn lower_assignment_target_before_suspension(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) -> bool {
-        let Some(node) = self.arena.get(idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::BINARY_EXPRESSION {
-            return false;
-        }
-        let Some(bin) = self.arena.get_binary_expr(node) else {
-            return false;
-        };
-        if self.get_operator_text(bin.operator_token) != "=" {
-            return false;
-        }
-        if !self.contains_await_recursive(bin.right) || self.contains_await_recursive(bin.left) {
-            return false;
-        }
-        let Some(left_node) = self.arena.get(bin.left) else {
-            return false;
-        };
-
-        let Some((target, object)) = self.suspended_assignment_target(left_node) else {
-            return false;
-        };
-        let temp = self.generate_hoisted_temp();
-        current_statements.push(IRNode::VarDecl {
-            name: temp.clone().into(),
-            initializer: None,
-        });
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-            IRNode::id(temp.clone()),
-            object,
-        ))));
-
-        self.emit_nested_suspension(idx, cases, current_statements, current_label);
-
-        let lowered_target = match target {
-            SuspendedAssignmentTarget::Property(property) => {
-                IRNode::prop(IRNode::id(temp), property)
-            }
-            SuspendedAssignmentTarget::Element(index) => IRNode::elem(IRNode::id(temp), *index),
-        };
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-            lowered_target,
-            self.expression_to_ir(bin.right),
-        ))));
-        true
-    }
-
-    fn suspended_assignment_target(
-        &self,
-        left_node: &tsz_parser::parser::node::Node,
-    ) -> Option<(SuspendedAssignmentTarget, IRNode)> {
-        if left_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.arena.get_access_expr(left_node)?;
-            let object = self.expression_to_ir(access.expression);
-            let property = crate::transforms::emit_utils::identifier_text_or_empty(
-                self.arena,
-                access.name_or_argument,
-            );
-            return Some((SuspendedAssignmentTarget::Property(property), object));
-        }
-
-        if left_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
-            let access = self.arena.get_access_expr(left_node)?;
-            let object = self.expression_to_ir(access.expression);
-            let index = self.expression_to_ir(access.name_or_argument);
-            return Some((SuspendedAssignmentTarget::Element(Box::new(index)), object));
-        }
-
-        None
-    }
-
-    fn lower_class_extends_before_suspension(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) -> bool {
-        let Some((class_name, extends_expr, suspension_idx)) = self.class_extends_suspension(idx)
-        else {
-            return false;
-        };
-        let Some(factory_parts) = self.es5_class_factory(idx, &class_name) else {
-            return false;
-        };
-
-        let factory_temp = self.generate_hoisted_temp();
-
-        // Emit weakmap declarations alongside the other class-related vars.
-        // These would otherwise be silently dropped by destructuring just the
-        // factory body out of the ES5ClassIIFE IR node.
-        for weakmap_name in &factory_parts.weakmap_decls {
-            current_statements.push(IRNode::VarDecl {
-                name: weakmap_name.clone().into(),
-                initializer: None,
-            });
-        }
-
-        current_statements.push(IRNode::VarDecl {
-            name: class_name.clone().into(),
-            initializer: None,
-        });
-        current_statements.push(IRNode::VarDecl {
-            name: factory_temp.clone().into(),
-            initializer: None,
-        });
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-            IRNode::id(factory_temp.clone()),
-            factory_parts.factory,
-        ))));
-
-        self.process_await_expression(suspension_idx, cases, current_statements, current_label);
-
-        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
-            IRNode::id(class_name),
-            IRNode::ES5ClassApply {
-                factory: Box::new(IRNode::id(factory_temp)),
-                base_class: Box::new(self.extends_value_after_suspension(extends_expr)),
-            },
-        ))));
-
-        // Emit weakmap initializers and deferred static blocks after the class
-        // is assigned, mirroring the ordering used by IRPrinter for
-        // ES5ClassIIFE (see `ir_printer.rs` ES5ClassIIFE arm: weakmap_inits
-        // appended after the IIFE, then deferred_static_blocks).
-        for weakmap_init in factory_parts.weakmap_inits {
-            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::Raw(
-                weakmap_init.into(),
-            ))));
-        }
-        for deferred in factory_parts.deferred_static_blocks {
-            current_statements.push(deferred);
-        }
-
-        true
-    }
-
     fn lower_class_declaration_to_assignment(
         &mut self,
         idx: NodeIndex,
@@ -3769,14 +3751,63 @@ impl<'a> AsyncES5Transformer<'a> {
             return;
         };
 
+        let cond_has_await = self.contains_await_recursive(if_stmt.expression);
         let then_has_await = self.contains_await_recursive(if_stmt.then_statement);
         let else_has_await = if_stmt.else_statement.is_some()
             && self.contains_await_recursive(if_stmt.else_statement);
 
-        if !then_has_await && !else_has_await {
-            // No await in either branch -- emit as-is
+        if !cond_has_await && !then_has_await && !else_has_await {
+            // No await anywhere in this if statement -- emit as-is
             let ir = self.statement_to_ir(idx);
             current_statements.push(ir);
+            return;
+        }
+
+        // When the condition itself is or contains an await expression, yield the
+        // condition first and use _a.sent() as the condition for the branch.
+        // When no branch contains await but the condition does, we still need to
+        // split cases around the yield.
+        let cond_ir = if self.is_suspension_expression(if_stmt.expression) {
+            // Condition IS directly an await expression: yield it, then check sent()
+            self.process_await_expression(
+                if_stmt.expression,
+                cases,
+                current_statements,
+                current_label,
+            );
+            IRNode::GeneratorSent
+        } else if cond_has_await {
+            // Condition contains nested await: emit the suspension first
+            self.emit_nested_suspension(
+                if_stmt.expression,
+                cases,
+                current_statements,
+                current_label,
+            );
+            self.expression_to_ir(if_stmt.expression)
+        } else {
+            self.expression_to_ir(if_stmt.expression)
+        };
+
+        if !then_has_await && !else_has_await {
+            // Only the condition had await; the branches are await-free so emit a
+            // simple if statement using the (now-resolved) condition IR value.
+            let has_else = if_stmt.else_statement.is_some()
+                && self
+                    .arena
+                    .get(if_stmt.else_statement)
+                    .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
+            let then_ir = self.statement_to_ir(if_stmt.then_statement);
+            let else_ir = if has_else {
+                Some(Box::new(self.statement_to_ir(if_stmt.else_statement)))
+            } else {
+                None
+            };
+            current_statements.push(IRNode::IfStatement {
+                condition: Box::new(cond_ir),
+                then_branch: Box::new(then_ir),
+                else_branch: else_ir,
+            });
             return;
         }
 
@@ -3786,39 +3817,70 @@ impl<'a> AsyncES5Transformer<'a> {
                 .get(if_stmt.else_statement)
                 .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
 
-        // When the then branch suspends, its resume case must claim the next
-        // label before the else branch is scheduled. Use a placeholder for the
-        // initial branch target, then patch it once the then branch has been
-        // lowered.
+        // Label allocation strategy:
+        //
+        // We need three logical labels:
+        //   else_label  – where the else branch begins (or end_label when no else)
+        //   end_label   – the merge point after both branches
+        //
+        // The problem: branches that contain `await` consume extra labels when they
+        // are processed. Pre-allocating a label too early causes collisions with
+        // the labels the branch allocates internally.
+        //
+        // Solution: use placeholders (MAX - counter) for labels that must be
+        // allocated AFTER a suspending branch is processed, then patch them.
+        //
+        // Rules:
+        //  - When then_has_await: else_label must be delayed (then branch allocates
+        //    its yield-resume label first).
+        //  - When either branch has await: end_label must be delayed (the awaiting
+        //    branch allocates its yield-resume label, which must precede end_label).
+        //
+        // Non-awaiting branches that fall through to end_label need an explicit
+        // `_a.label = end_label` assignment so the state machine advances correctly
+        // on re-entry.
+
         let delayed_else_label = has_else && then_has_await;
+        let delayed_end_label = then_has_await || else_has_await;
+
         let else_placeholder = delayed_else_label.then(|| self.next_loop_exit_placeholder());
-        let (mut else_label, mut end_label) = if delayed_else_label {
-            (None, None)
+        let end_placeholder = delayed_end_label.then(|| self.next_loop_exit_placeholder());
+
+        let mut else_label: Option<u32> = if delayed_else_label {
+            None
         } else {
-            let else_label = self.state.next_label();
-            let end_label = if has_else {
-                self.state.next_label()
+            Some(self.state.next_label())
+        };
+        let mut end_label: Option<u32> = if delayed_end_label {
+            None
+        } else {
+            // No branch suspends: both else_label and end_label are safe to allocate now.
+            if has_else {
+                Some(self.state.next_label())
             } else {
+                // No else: end_label == else_label (the next case after the then block)
                 else_label
-            };
-            (Some(else_label), Some(end_label))
+            }
         };
 
-        // Emit: if (!(condition)) return [3 /*break*/, else_label];
-        let target_label = else_placeholder.unwrap_or_else(|| {
-            if has_else {
-                else_label.expect("else label must be allocated without delayed scheduling")
-            } else {
-                end_label.expect("end label must be allocated without delayed scheduling")
-            }
-        });
-        let cond_ir = self.expression_to_ir(if_stmt.expression);
+        // Emit: if (!(condition)) return [3 /*break*/, else_or_end_placeholder];
+        // - When there's an else branch: skip to else_label (or its placeholder).
+        // - When no else branch: skip to end_label (or its placeholder).
+        let branch_skip_target = if has_else {
+            else_placeholder.unwrap_or_else(|| {
+                else_label.expect("else label must be allocated when not delayed")
+            })
+        } else {
+            end_placeholder.unwrap_or_else(|| {
+                end_label.expect("end label must be allocated when not delayed and no else")
+            })
+        };
         current_statements.push(IRNode::IfBreak {
             condition: Box::new(IRNode::PrefixUnaryExpr {
                 operator: "!".to_string().into(),
                 operand: Box::new(cond_ir),
             }),
-            target_label,
+            target_label: branch_skip_target,
         });
 
         // Process then branch
@@ -3830,9 +3892,9 @@ impl<'a> AsyncES5Transformer<'a> {
         );
 
         if has_else {
+            // Allocate else_label (and possibly end_label) now that then has been processed.
             if let Some(placeholder) = else_placeholder {
                 let patched_else_label = self.state.next_label();
-                let patched_end_label = self.state.next_label();
                 Self::patch_if_break_target(cases, placeholder, patched_else_label);
                 Self::patch_if_break_target_in_statements(
                     current_statements,
@@ -3840,17 +3902,34 @@ impl<'a> AsyncES5Transformer<'a> {
                     patched_else_label,
                 );
                 else_label = Some(patched_else_label);
+            }
+            // If end_label is also delayed and then_has_await, allocate it now (after
+            // then-branch labels are consumed) but before the else branch runs.
+            // When else_has_await, end_label must wait until after the else branch.
+            if let Some(end_ph) = end_placeholder
+                && !else_has_await
+            {
+                let patched_end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, end_ph, patched_end_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    end_ph,
+                    patched_end_label,
+                );
                 end_label = Some(patched_end_label);
             }
-            let else_label = else_label.expect("else label must be available before else branch");
-            let end_label = end_label.expect("end label must be available before then break");
+
+            let else_l = else_label.expect("else label must be available before else branch");
+            let end_l_or_ph = end_label.unwrap_or_else(|| {
+                end_placeholder.expect("end placeholder must exist when end_label not yet resolved")
+            });
 
             // Emit: return [3 /*break*/, end_label]; at end of then branch
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::BREAK,
                     value: Some(Box::new(IRNode::NumericLiteral(
-                        end_label.to_string().into(),
+                        end_l_or_ph.to_string().into(),
                     ))),
                     comment: Some("break".to_string().into()),
                 },
@@ -3861,7 +3940,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
-            *current_label = else_label;
+            *current_label = else_l;
 
             // Process else branch
             self.process_block_or_statement_in_async(
@@ -3870,16 +3949,63 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_statements,
                 current_label,
             );
-        }
 
-        // Flush current case and start end label
-        if !current_statements.is_empty() {
-            cases.push(IRGeneratorCase {
-                label: *current_label,
-                statements: std::mem::take(current_statements),
-            });
+            // Allocate end_label after the else branch if it was delayed.
+            if let Some(end_ph) = end_placeholder
+                && else_has_await
+            {
+                let patched_end_label = self.state.next_label();
+                Self::patch_if_break_target(cases, end_ph, patched_end_label);
+                Self::patch_if_break_target_in_statements(
+                    current_statements,
+                    end_ph,
+                    patched_end_label,
+                );
+                end_label = Some(patched_end_label);
+            }
+            let end_l = end_label.expect("end label must be resolved after else branch");
+
+            // Emit `_a.label = end_label` so the state machine falls through
+            // correctly to the merge point on re-entry.  This is needed whenever
+            // the last case of the else branch does not already return/break:
+            //  - Else branch with no await: statements end without a return.
+            //  - Else branch with await: after the yield-resume, `_a.sent()` is
+            //    in current_statements and the generator needs the label hint.
+            if !current_statements.is_empty()
+                && !matches!(
+                    current_statements.last(),
+                    Some(
+                        IRNode::ReturnStatement(_)
+                            | IRNode::ThrowStatement(_)
+                            | IRNode::BreakStatement(_)
+                    )
+                )
+            {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                    IRNode::GeneratorLabel,
+                    IRNode::number(end_l.to_string()),
+                ))));
+            }
+
+            // Flush current case and start end label
+            if !current_statements.is_empty() {
+                cases.push(IRGeneratorCase {
+                    label: *current_label,
+                    statements: std::mem::take(current_statements),
+                });
+            }
+            *current_label = end_l;
+        } else {
+            // No else branch.
+            // Flush current case and start end label
+            if !current_statements.is_empty() {
+                cases.push(IRGeneratorCase {
+                    label: *current_label,
+                    statements: std::mem::take(current_statements),
+                });
+            }
+            *current_label = end_label.expect("end label must be available after if lowering");
         }
-        *current_label = end_label.expect("end label must be available after if lowering");
     }
 
     fn process_captured_for_statement_in_async(
@@ -4799,271 +4925,57 @@ impl<'a> AsyncES5Transformer<'a> {
         *current_label = end_label;
     }
 
-    fn process_labeled_statement_in_async(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-        let Some(labeled) = self.arena.get_labeled_statement(node) else {
-            return;
-        };
-
-        if !self.contains_await_recursive(labeled.statement) {
-            current_statements.push(self.statement_to_ir(idx));
-            return;
-        }
-
-        let label =
-            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, labeled.label);
-
-        let Some(statement_node) = self.arena.get(labeled.statement) else {
-            return;
-        };
-        if statement_node.kind == syntax_kind_ext::WHILE_STATEMENT {
-            self.process_while_statement_in_async_with_label(
-                labeled.statement,
-                cases,
-                current_statements,
-                current_label,
-                Some(&label),
-            );
-            return;
-        }
-        if statement_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
-            && self.process_for_await_statement_in_async(
-                labeled.statement,
-                cases,
-                current_statements,
-                current_label,
-                Some(&label),
-            )
-        {
-            return;
-        }
-        if statement_node.kind == syntax_kind_ext::BLOCK
-            && let Some(block) = self.arena.get_block(statement_node)
-        {
-            for &stmt_idx in &block.statements.nodes {
-                if self.is_break_to_label(stmt_idx, &label) {
-                    let end_label = self.state.next_label();
-                    current_statements.push(IRNode::ReturnStatement(Some(Box::new(
-                        IRNode::GeneratorOp {
-                            opcode: opcodes::BREAK,
-                            value: Some(Box::new(IRNode::NumericLiteral(
-                                end_label.to_string().into(),
-                            ))),
-                            comment: Some("break".to_string().into()),
-                        },
-                    ))));
-                    cases.push(IRGeneratorCase {
-                        label: *current_label,
-                        statements: std::mem::take(current_statements),
-                    });
-                    *current_label = end_label;
-                    return;
-                }
-
-                self.process_async_statement(stmt_idx, cases, current_statements, current_label);
-            }
-        } else {
-            self.process_async_statement(
-                labeled.statement,
-                cases,
-                current_statements,
-                current_label,
-            );
-        }
-    }
-
-    fn is_break_to_label(&self, stmt_idx: NodeIndex, label: &str) -> bool {
-        let Some(node) = self.arena.get(stmt_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::BREAK_STATEMENT {
-            return false;
-        }
-        let Some(jump) = self.arena.get_jump_data(node) else {
-            return false;
-        };
-        crate::transforms::emit_utils::identifier_text_or_empty(self.arena, jump.label) == label
-    }
-
-    /// Get the catch variable name from a variable declaration index
-    fn get_catch_variable_name(&self, var_decl_idx: NodeIndex) -> String {
-        if let Some(var_node) = self.arena.get(var_decl_idx)
-            && let Some(var_decl) = self.arena.get_variable_declaration(var_node)
-        {
-            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, var_decl.name)
-        } else {
-            crate::transforms::emit_utils::identifier_text_or_empty(self.arena, var_decl_idx)
-        }
-    }
-
-    /// Process either a block or single statement in async context.
-    /// Used by if/else and try/catch to handle both `{ ... }` and single-statement branches.
-    fn process_block_or_statement_in_async(
-        &mut self,
-        idx: NodeIndex,
-        cases: &mut Vec<IRGeneratorCase>,
-        current_statements: &mut Vec<IRNode>,
-        current_label: &mut u32,
-    ) {
-        let Some(node) = self.arena.get(idx) else {
-            return;
-        };
-
-        if node.kind == syntax_kind_ext::BLOCK {
-            if let Some(block) = self.arena.get_block(node) {
-                self.process_async_statement_list(
-                    &block.statements.nodes,
-                    cases,
-                    current_statements,
-                    current_label,
-                    &[],
-                );
-            }
-        } else {
-            self.process_async_statement(idx, cases, current_statements, current_label);
-        }
-    }
-
-    // =========================================================================
-    // Helper methods
-    // =========================================================================
-
-    fn extract_preceding_line_comment(&self, pos: u32) -> Option<String> {
-        let text = self.source_text?;
-        let bytes = text.as_bytes();
-        let mut pos = pos as usize;
-        if pos > bytes.len() {
-            pos = bytes.len();
-        }
-        if pos == 0 {
-            return None;
-        }
-
-        let line_start = text[..pos].rfind('\n').map_or(0, |i| i + 1);
-        if line_start == 0 {
-            return None;
-        }
-        let prev_line_end = line_start.saturating_sub(1);
-        let prev_line_start = text[..prev_line_end].rfind('\n').map_or(0, |i| i + 1);
-        let prev_line = &text[prev_line_start..prev_line_end];
-        let trimmed = prev_line.trim_start();
-        if trimmed.starts_with("//") && !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-        None
-    }
-
-    fn generator_yield_operand_to_ir(&self, idx: NodeIndex) -> IRNode {
-        let operand = self.expression_to_ir(idx);
-        let Some(comment) = self.yield_operand_line_comment(idx) else {
-            return operand;
-        };
-        let operand_text = crate::transforms::ir_printer::IRPrinter::emit_to_string(&operand);
-        IRNode::Raw(format!("\n                {comment}\n                {operand_text}").into())
-    }
-
-    fn yield_operand_line_comment(&self, idx: NodeIndex) -> Option<String> {
-        let node = self.arena.get(idx)?;
-        match node.kind {
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                let paren = self.arena.get_parenthesized(node)?;
-                let leaf_start = self.expression_leaf_start(paren.expression)?;
-                let text = self.source_text?;
-                let start = node.pos as usize;
-                let end = (leaf_start as usize).min(text.len());
-                if start < end {
-                    let slice = &text[start..end];
-                    if let Some(comment) = slice.lines().rev().find_map(|line| {
-                        let trimmed = line.trim_start();
-                        trimmed.starts_with("//").then(|| trimmed.to_string())
-                    }) {
-                        return Some(comment);
-                    }
-                }
-                self.yield_operand_line_comment(paren.expression)
-            }
-            k if k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                let assertion = self.arena.get_type_assertion(node)?;
-                self.yield_operand_line_comment(assertion.expression)
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                let unary = self.arena.get_unary_expr_ex(node)?;
-                self.yield_operand_line_comment(unary.expression)
-            }
-            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
-                let binary = self.arena.get_binary_expr(node)?;
-                self.yield_operand_line_comment(binary.left)
-                    .or_else(|| self.yield_operand_line_comment(binary.right))
-            }
-            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                let conditional = self.arena.get_conditional_expr(node)?;
-                self.yield_operand_line_comment(conditional.condition)
-                    .or_else(|| self.yield_operand_line_comment(conditional.when_true))
-                    .or_else(|| self.yield_operand_line_comment(conditional.when_false))
-            }
-            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
-            {
-                let access = self.arena.get_access_expr(node)?;
-                self.yield_operand_line_comment(access.expression)
-                    .or_else(|| self.yield_operand_line_comment(access.name_or_argument))
-            }
-            k if k == syntax_kind_ext::CALL_EXPRESSION => {
-                let call = self.arena.get_call_expr(node)?;
-                self.yield_operand_line_comment(call.expression)
-                    .or_else(|| {
-                        call.arguments.as_ref().and_then(|args| {
-                            args.nodes
-                                .iter()
-                                .find_map(|&arg| self.yield_operand_line_comment(arg))
-                        })
-                    })
-            }
-            k if k == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION => {
-                let tagged = self.arena.get_tagged_template(node)?;
-                self.yield_operand_line_comment(tagged.tag)
-            }
-            _ => None,
-        }
-    }
-
-    fn expression_leaf_start(&self, idx: NodeIndex) -> Option<u32> {
-        let node = self.arena.get(idx)?;
-        match node.kind {
-            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
-                let paren = self.arena.get_parenthesized(node)?;
-                self.expression_leaf_start(paren.expression)
-            }
-            k if k == syntax_kind_ext::TYPE_ASSERTION
-                || k == syntax_kind_ext::AS_EXPRESSION
-                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
-            {
-                let assertion = self.arena.get_type_assertion(node)?;
-                self.expression_leaf_start(assertion.expression)
-            }
-            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => {
-                let unary = self.arena.get_unary_expr_ex(node)?;
-                self.expression_leaf_start(unary.expression)
-            }
-            _ => Some(node.pos),
-        }
-    }
     /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them
     /// from the case statements. Returns variable groups to hoist.
     ///
     /// tsc hoists `var` declarations to before the `return __generator(...)` call,
     /// so they appear at the top of the `__awaiter` wrapper function body.
+    /// Extract leading directive prologues (e.g. `"use strict"`) from the first
+    /// case of a generator body and return them as raw string values (without quotes).
+    ///
+    /// When a directive appears at the top of an async function body, `tsc` places
+    /// it inside the `__awaiter` callback — before any `var` declarations and
+    /// before `__generator` — not inside the switch/case statements.  This helper
+    /// removes those nodes from case 0 and returns their string content so that
+    /// the `AwaiterCall` printer can emit them in the correct position.
+    ///
+    /// Handles `StringLiteral`, `RawStringLiteral`, and `Raw` nodes (the last form
+    /// is emitted when the source text is available and the value is a quoted token).
+    pub fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {
+        let IRNode::GeneratorBody { cases, .. } = generator_body else {
+            return Vec::new();
+        };
+        let Some(first_case) = cases.first_mut() else {
+            return Vec::new();
+        };
+        let mut directives = Vec::new();
+        while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
+            let directive = match expr.as_ref() {
+                IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => {
+                    // text is already the inner value (no quotes)
+                    text.to_string()
+                }
+                IRNode::Raw(raw) => {
+                    // Raw nodes produced from source tokens include the surrounding quotes.
+                    // Accept quoted string tokens that look like directive prologues.
+                    let trimmed = raw.trim();
+                    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+                        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+                    {
+                        // Strip quotes to get the inner value
+                        trimmed[1..trimmed.len() - 1].to_string()
+                    } else {
+                        break;
+                    }
+                }
+                _ => break,
+            };
+            directives.push(directive);
+            first_case.statements.remove(0);
+        }
+        directives
+    }
+
     pub fn extract_and_remove_var_decl_groups(generator_body: &mut IRNode) -> Vec<Vec<String>> {
         let IRNode::GeneratorBody { cases, .. } = generator_body else {
             return Vec::new();

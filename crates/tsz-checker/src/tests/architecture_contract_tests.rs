@@ -2457,6 +2457,59 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
     );
 }
 
+#[test]
+fn test_numeric_literal_union_display_policy_avoids_rendered_union_separator_decisions() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/error_reporter/assignability_numeric_display.rs");
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+    let forbidden = [
+        "source_order.contains(\" | \")",
+        "member.contains(\" | \")",
+        "member_displays.iter().all(|member| !member.contains(\" | \"))",
+    ];
+
+    let violations = forbidden
+        .iter()
+        .filter(|pattern| src.contains(**pattern))
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert!(
+        violations.is_empty(),
+        "numeric literal union display policy must use TypeId facts, not rendered \
+         union separators. Violations in {}:\n  {}",
+        path.display(),
+        violations.join("\n  ")
+    );
+}
+
+#[test]
+fn test_assignability_literal_widening_uses_function_shape_queries() {
+    let src = fs::read_to_string("src/error_reporter/assignability.rs")
+        .expect("failed to read assignability reporter source");
+    let helper_src = fs::read_to_string("src/error_reporter/assignability_type_helpers.rs")
+        .expect("failed to read assignability type helper source");
+
+    for forbidden in [
+        "source_display.contains(\"=>\")",
+        "target_display.contains(\"=>\")",
+    ] {
+        assert!(
+            !src.contains(forbidden),
+            "assignability literal-member widening must use TypeId function/callable \
+             facts, not rendered arrow text: found {forbidden}"
+        );
+    }
+
+    assert!(
+        src.contains("is_function_like_for_literal_member_widening")
+            && helper_src.contains("function_shape_for_type")
+            && helper_src.contains("callable_shape_for_type"),
+        "assignability literal-member widening should query function/callable shapes"
+    );
+}
+
 /// CLAUDE.md §4: Scanner must not import downstream crates (Parser/Binder/Checker/Solver).
 /// The scanner is the leaf of the pipeline; it only does lexing and string interning.
 #[test]

@@ -7,6 +7,7 @@
 use super::DeclarationEmitter;
 use super::helpers::{escape_string_for_double_quote, escape_string_for_single_quote};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -1424,7 +1425,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc keeps mapped-type constraint expressions on a single line; suppress multiline tuple formatting.
+        let saved_indent = self.indent_level;
+        self.indent_level = 0;
         self.emit_type(constraint_idx);
+        self.indent_level = saved_indent;
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_name_type(
@@ -1433,6 +1438,7 @@ impl<'a> DeclarationEmitter<'a> {
     ) {
         if let Some(node) = self.arena.get(name_type_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
+            && !self.type_node_contains_mapped_type(name_type_idx, 0)
         {
             let text = Self::mapped_type_name_source_text(&text);
             if !text.is_empty() {
@@ -1441,7 +1447,11 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
+        // tsc keeps mapped-type name-type expressions on a single line; suppress multiline tuple formatting.
+        let saved_indent = self.indent_level;
+        self.indent_level = 0;
         self.emit_type(name_type_idx);
+        self.indent_level = saved_indent;
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(
@@ -1452,6 +1462,7 @@ impl<'a> DeclarationEmitter<'a> {
 
         if let Some(node) = self.arena.get(name_type_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
+            && !self.type_node_contains_mapped_type(name_type_idx, 0)
         {
             let text = Self::mapped_type_name_source_text(&text);
             if !text.is_empty() {
@@ -1469,6 +1480,22 @@ impl<'a> DeclarationEmitter<'a> {
             self.writer.truncate(start);
             self.write(&normalized);
         }
+    }
+
+    fn type_node_contains_mapped_type(&self, type_idx: NodeIndex, depth: usize) -> bool {
+        if type_idx.is_none() || depth > 128 {
+            return false;
+        }
+        let Some(node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::MAPPED_TYPE {
+            return true;
+        }
+        self.arena
+            .get_children(type_idx)
+            .into_iter()
+            .any(|child_idx| self.type_node_contains_mapped_type(child_idx, depth + 1))
     }
 
     fn mapped_type_constraint_source_text(text: &str) -> &str {
