@@ -191,7 +191,6 @@ def scan_project_dashboard_rows(path: pathlib.Path) -> list[str]:
 
     return hits
 
-
 def extract_project_fixture_source_case_names(text: str) -> Optional[list[str]]:
     """Extract row names handled by `tsz_project_fixture_sources`."""
     match = re.search(
@@ -429,5 +428,3 @@ def scan_project_config_writers(
             hits.append(f"{bench_rel}:0 {row} does not use shared config writer {writer}")
 
     return hits
-
-

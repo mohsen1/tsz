@@ -504,5 +504,3 @@ def scan_solver_typedata_quarantine(base: pathlib.Path):
                 hits.add(f"{rel}:{line_idx + 1}")
 
     return sorted(hits)
-
-

@@ -834,5 +834,3 @@ def scan_branch_local_visited_clones(
                 )
 
     return hits
-
-
