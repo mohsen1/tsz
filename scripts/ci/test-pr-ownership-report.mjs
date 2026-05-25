@@ -91,9 +91,12 @@ withTempDir((dir) => {
   assert.match(result.stdout, /Open PR Ownership Report/);
   assert.match(result.stdout, /agent\/mapped-a: root #10; children #12/);
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
-  assert.match(result.stdout, /fix\(checker\): preserve mapped access: #10, #11/);
-  assert.match(result.stdout, /#42: PR #10, PR #11/);
-  assert.doesNotMatch(result.stdout, /#42: PR #10, PR #11, PR #42/);
+  assert.match(
+    result.stdout,
+    /fix\(checker\): preserve mapped access: #10 \(draft, WIP, alpha\), #11 \(draft, WIP, beta\), #42 \(draft, delta\)/,
+  );
+  assert.match(result.stdout, /#42: PR #10 \(draft, WIP, alpha\), PR #11 \(draft, WIP, beta\)/);
+  assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
