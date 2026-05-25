@@ -607,8 +607,9 @@ fn mapped_type_over_type_param_with_array_constraint() {
 //
 // tsc's `getTypeOfMappedSymbol` applies `removeMissingOrUndefinedType` when the
 // `-?` modifier removes optionality from a property that was optional in the
-// source. tsz must strip the explicit top-level `undefined` so that
-// `Required<{ a?: T | undefined }>.a` is `T`, not `T | undefined`.
+// source. In non-exact optional mode that removes top-level `undefined`; in
+// exact optional mode explicit `undefined` is not the missing marker and must
+// be preserved.
 // =============================================================================
 
 /// Build a homomorphic identity mapped type `{ [K in keyof Src]<mod> Src[K] }`
@@ -658,7 +659,7 @@ fn eval_identity_mapped_prop(
 
 #[test]
 fn remove_optional_strips_explicit_undefined_from_value() {
-    // Reported repro: Req<{ a?: number | undefined }> -> { a: number }.
+    // Non-exact optional mode: Req<{ a?: number | undefined }> -> { a: number }.
     let interner = TypeInterner::new();
     let a = interner.intern_string("a");
     let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
@@ -668,6 +669,26 @@ fn remove_optional_strips_explicit_undefined_from_value() {
         eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
     assert!(!optional, "-? must clear the optional flag");
     assert_eq!(ty, TypeId::NUMBER, "-? must strip the explicit `undefined`");
+}
+
+#[test]
+fn remove_optional_exact_optional_preserves_explicit_undefined() {
+    // With exact optional property types, `a?: number | undefined` has an
+    // explicit `undefined` member. `-?` removes the missing marker only, so the
+    // explicit `undefined` remains.
+    let interner = TypeInterner::new();
+    interner.set_exact_optional_property_types(true);
+    let a = interner.intern_string("a");
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(a, num_or_undef)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional, "-? must still clear the optional flag");
+    assert_eq!(
+        ty, num_or_undef,
+        "exact optional mode must preserve explicit `undefined`"
+    );
 }
 
 #[test]

@@ -146,10 +146,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Strip the top-level `undefined` that an originally-optional property
     /// contributes when `-?` removes its optionality, mirroring tsc's
-    /// `removeMissingOrUndefinedType` in `getTypeOfMappedSymbol`. Only applies
-    /// when the source property was optional and `-?` cleared it.
+    /// `removeMissingOrUndefinedType` in `getTypeOfMappedSymbol`.
+    ///
+    /// With `exactOptionalPropertyTypes`, an explicit `| undefined` is not the
+    /// missing marker and must be preserved. tsz does not model that marker
+    /// separately yet, so only the non-exact path can safely remove
+    /// `undefined`.
     fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
-        if strip {
+        if strip && !self.interner().exact_optional_property_types() {
             crate::narrowing::utils::remove_undefined(self.interner(), ty)
         } else {
             ty
