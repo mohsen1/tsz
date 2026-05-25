@@ -291,9 +291,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/query_boundaries/",),
         # Ratcheted after routing optional-chain continuation undefined
-        # shaping through query_boundaries::optional_chain, then rebased
-        # onto current main's quarantine surface.
-        3351,
+        # shaping through query_boundaries::optional_chain, then aligned
+        # with current main's quarantine surface.
+        3353,
     ),
 ]
 
