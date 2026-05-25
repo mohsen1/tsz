@@ -76,12 +76,15 @@ impl<'a> CheckerState<'a> {
 
     /// Get a symbol from the current binder, lib binders, or other file binders.
     /// This ensures we can resolve symbols from lib.d.ts and other files.
+    ///
+    /// Import aliases are pinned locally (see `cross_file_import_alias_pin`)
+    /// before the cross-file overlay is consulted; raw `SymbolId`s are
+    /// file-local and the overlay would otherwise substitute an unrelated
+    /// same-id decl from the source module.
     pub(crate) fn get_symbol_globally(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // If the import/export resolver has already tied this raw SymbolId to a
-        // specific source file, use that binder before the current file. Raw
-        // SymbolIds are only file-local; checking the current binder first can
-        // accidentally pick an unrelated same-id symbol while resolving
-        // cross-file aliases.
+        if let Some(alias) = self.local_import_alias(sym_id) {
+            return Some(alias);
+        }
         if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && file_idx != self.ctx.current_file_idx
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
@@ -123,23 +126,19 @@ impl<'a> CheckerState<'a> {
     }
 
     /// Get a symbol, preferring the cross-file binder for known cross-file `SymbolIds`.
-    ///
-    /// Unlike `get_symbol_globally` (which checks the local binder first and may find
-    /// a WRONG symbol due to `SymbolId` collisions), this method checks
-    /// `cross_file_symbol_targets` FIRST. If the `SymbolId` is known to belong to another
-    /// file, the target file's binder is used directly, avoiding the collision.
-    ///
-    /// Falls back to `get_symbol_globally` for non-cross-file symbols.
+    /// Resolves through `cross_file_symbol_targets` first to avoid same-raw-id
+    /// collisions with the local binder; import aliases are pinned local (see
+    /// `cross_file_import_alias_pin`).
     pub(crate) fn get_cross_file_symbol(&self, sym_id: SymbolId) -> Option<&tsz_binder::Symbol> {
-        // Check if this is a known cross-file symbol
-        let file_idx = self.ctx.resolve_symbol_file_index(sym_id);
-        if let Some(file_idx) = file_idx
+        if let Some(alias) = self.local_import_alias(sym_id) {
+            return Some(alias);
+        }
+        if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
             && let Some(binder) = self.ctx.get_binder_for_file(file_idx)
             && let Some(sym) = binder.get_symbol(sym_id)
         {
             return Some(sym);
         }
-        // Fall back to global search
         self.get_symbol_globally(sym_id)
     }
 
