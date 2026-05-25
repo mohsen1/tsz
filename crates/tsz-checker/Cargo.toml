@@ -298,6 +298,10 @@ name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
 [[test]]
+name = "jsx_union_callback_context_tests"
+path = "tests/jsx_union_callback_context_tests.rs"
+
+[[test]]
 name = "jsx_import_source_namespace_tests"
 path = "tests/jsx_import_source_namespace_tests.rs"
 
