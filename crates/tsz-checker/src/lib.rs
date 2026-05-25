@@ -223,6 +223,9 @@ mod rest_parameter_tests;
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
 #[cfg(test)]
+#[path = "../tests/spread_rest_diagnostics_tests.rs"]
+mod spread_rest_diagnostics_tests;
+#[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
@@ -513,6 +516,9 @@ mod generic_spread_iterability_tests;
 #[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
+#[cfg(test)]
+#[path = "tests/generic_unknown_type_arg_tests.rs"]
+mod generic_unknown_type_arg_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;

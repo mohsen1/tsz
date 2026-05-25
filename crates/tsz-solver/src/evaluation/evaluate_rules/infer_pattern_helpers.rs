@@ -1,19 +1,20 @@
-//! Type-specific infer pattern matching helpers.
+//! Type-specific infer pattern matching helpers (signature/function/callable).
 //!
-//! Contains specialized pattern matchers for different type structures:
+//! Contains specialized pattern matchers for:
 //! - Function type patterns
 //! - Constructor type patterns
 //! - Callable type patterns
-//! - Object type patterns
-//! - Object with index patterns
-//! - Union type patterns
-//! - Template literal patterns
+//! - Signature parameter / rest matching and template-capture binding helpers
+//!
+//! Object, object-with-index, union, and template-literal pattern matchers live
+//! in `infer_pattern_object_helpers.rs` (split to stay under the file-size
+//! ceiling); both are `impl TypeEvaluator` blocks in the same module tree.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ParamInfo, TemplateSpan,
-    TupleElement, TypeData, TypeId, TypeListId, TypeParamInfo,
+    CallableShapeId, FunctionShape, FunctionShapeId, IntrinsicKind, LiteralValue, ParamInfo,
+    TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use crate::visitor::array_element_type;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -97,7 +98,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(self.interner().literal_bigint_with_sign(negative, digits))
     }
 
-    fn template_capture_for_constraint(
+    pub(crate) fn template_capture_for_constraint(
         &self,
         captured: &str,
         captured_type: TypeId,
@@ -137,7 +138,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    fn bind_template_infer_capture(
+    pub(crate) fn bind_template_infer_capture(
         &self,
         info: &TypeParamInfo,
         captured: &str,
@@ -174,7 +175,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(subst)
     }
 
-    pub(super) fn erase_return_type_for_infer(
+    fn erase_return_type_for_infer(
         &self,
         return_type: TypeId,
         type_params: &[TypeParamInfo],
@@ -185,7 +186,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         instantiate_type(self.interner(), return_type, &subst)
     }
 
-    pub(super) fn instantiate_signature_for_infer(
+    fn instantiate_signature_for_infer(
         &self,
         params: &[ParamInfo],
         return_type: TypeId,
@@ -208,7 +209,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         (params, return_type)
     }
 
-    pub(super) fn match_rest_infer_tuple(
+    fn match_rest_infer_tuple(
         &self,
         source_params: &[ParamInfo],
         infer_ty: TypeId,
@@ -252,7 +253,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         )
     }
 
-    pub(super) fn match_signature_params_for_infer(
+    fn match_signature_params_for_infer(
         &self,
         source_params: &[ParamInfo],
         pattern_params: &[ParamInfo],
@@ -287,9 +288,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             pattern_params.len()
         };
 
-        if source_params.len() < fixed_param_count {
-            return false;
-        }
+        // A source callable with fewer parameters is still assignable to the
+        // inference pattern (extra trailing positions are ignored at the call
+        // site); tsc takes the true branch and defaults the unmatched `infer`
+        // slots to `unknown`. Match the overlapping prefix, default the rest.
+        let matched_count = source_params.len().min(fixed_param_count);
 
         let mut local_visited = FxHashSet::default();
         // Function/callable parameters are contravariant: co-located same-name
@@ -298,11 +301,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // both the fixed-param loop and any non-infer trailing-rest fan-out
         // through the shared co-located merge helper so the rest case keeps
         // its own contravariant semantics.
-        let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_param_count);
+        let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(matched_count);
         for (source_param, pattern_param) in source_params
             .iter()
-            .take(fixed_param_count)
-            .zip(pattern_params.iter().take(fixed_param_count))
+            .take(matched_count)
+            .zip(pattern_params.iter().take(matched_count))
         {
             let source_param_type = if source_param.optional {
                 crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
@@ -312,8 +315,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             fixed_pairs.push((source_param_type, pattern_param.type_id));
         }
 
+        // Fixed pattern positions the source never supplies: default their
+        // infer vars to `unknown`, filled only where still unbound so a
+        // candidate from a matched position always wins.
+        for pattern_param in &pattern_params[matched_count..fixed_param_count] {
+            self.fill_unbound_infer_defaults(pattern_param.type_id, TypeId::UNKNOWN, bindings);
+        }
+
         if let Some(rest_param) = trailing_rest_param {
-            let remaining_params = &source_params[fixed_param_count..];
+            let remaining_params = source_params.get(fixed_param_count..).unwrap_or(&[]);
             if self.type_contains_infer(rest_param.type_id) {
                 if !self.match_co_located_intersect_pairs(
                     &fixed_pairs,
@@ -1180,558 +1190,433 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Helper for matching union type patterns containing infer.
-    pub(crate) fn match_infer_union_pattern(
+    /// Helper for matching callable type patterns.
+    pub(crate) fn match_infer_callable_pattern(
         &self,
         source: TypeId,
-        pattern_members: TypeListId,
+        pattern_shape_id: CallableShapeId,
         pattern: TypeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        let pattern_members = self.interner().type_list(pattern_members);
+        let pattern_shape = self.interner().callable_shape(pattern_shape_id);
 
-        // Find infer members and non-infer members in the pattern
-        let mut infer_members: Vec<(Atom, Option<TypeId>)> = Vec::new();
-        let mut non_infer_pattern_members: Vec<TypeId> = Vec::new();
-
-        for &pattern_member in pattern_members.iter() {
-            if let Some(TypeData::Infer(info)) = self.interner().lookup(pattern_member) {
-                infer_members.push((info.name, info.constraint));
-            } else {
-                non_infer_pattern_members.push(pattern_member);
-            }
+        if pattern_shape
+            .properties
+            .iter()
+            .any(|prop| self.type_contains_infer(prop.type_id))
+            && self.match_infer_callable_pattern_properties(
+                source,
+                pattern_shape_id,
+                bindings,
+                checker,
+            )
+        {
+            return true;
         }
 
-        // If no infer members, just do subtype check
-        if infer_members.is_empty() {
+        // Determine which signature to use: call or construct.
+        // Pattern `new (...) => infer P` has construct_signatures, not call_signatures.
+        let is_construct_pattern = pattern_shape.call_signatures.is_empty()
+            && pattern_shape.construct_signatures.len() == 1
+            && pattern_shape.properties.is_empty();
+        let is_call_pattern = pattern_shape.construct_signatures.is_empty()
+            && pattern_shape.call_signatures.len() == 1
+            && pattern_shape.properties.is_empty();
+
+        if !is_call_pattern && !is_construct_pattern {
             return checker.is_subtype_of(source, pattern);
         }
-
-        // Currently only handle single infer in union pattern
-        if infer_members.len() != 1 {
-            return checker.is_subtype_of(source, pattern);
-        }
-
-        let (infer_name, infer_constraint) = infer_members[0];
-
-        // Handle both union and non-union sources
-        match self.interner().lookup(source) {
-            Some(TypeData::Union(source_members)) => {
-                let source_members = self.interner().type_list(source_members);
-
-                // Find source members that DON'T match non-infer pattern members
-                let mut remaining_source_members: Vec<TypeId> = Vec::new();
-
-                for &source_member in source_members.iter() {
-                    let mut matched = false;
-                    for &non_infer in &non_infer_pattern_members {
-                        if checker.is_subtype_of(source_member, non_infer)
-                            && checker.is_subtype_of(non_infer, source_member)
-                        {
-                            matched = true;
-                            break;
-                        }
+        let pattern_sig = if is_construct_pattern {
+            &pattern_shape.construct_signatures[0]
+        } else {
+            &pattern_shape.call_signatures[0]
+        };
+        let has_param_infer = pattern_sig
+            .params
+            .iter()
+            .any(|param| self.type_contains_infer(param.type_id));
+        let has_return_infer = self.type_contains_infer(pattern_sig.return_type);
+        let has_single_rest_infer = pattern_sig.params.len() == 1
+            && pattern_sig.params[0].rest
+            && self.type_contains_infer(pattern_sig.params[0].type_id);
+        if pattern_sig.this_type.is_none() && has_param_infer && has_return_infer {
+            let mut match_params_and_return = |_source_type: TypeId,
+                                               source_params: &[ParamInfo],
+                                               source_return: TypeId,
+                                               bindings: &mut FxHashMap<Atom, TypeId>|
+             -> bool {
+                if has_single_rest_infer {
+                    if !self.match_rest_infer_tuple(
+                        source_params,
+                        pattern_sig.params[0].type_id,
+                        bindings,
+                        checker,
+                    ) {
+                        return false;
                     }
-                    if !matched {
-                        remaining_source_members.push(source_member);
-                    }
-                }
-
-                // Bind infer to the remaining source members
-                let inferred_type = if remaining_source_members.is_empty() {
-                    TypeId::NEVER
-                } else if remaining_source_members.len() == 1 {
-                    remaining_source_members[0]
-                } else {
-                    self.interner().union(remaining_source_members)
-                };
-
-                self.bind_infer(
-                    &TypeParamInfo {
-                        is_const: false,
-                        name: infer_name,
-                        constraint: infer_constraint,
-                        default: None,
-                    },
-                    inferred_type,
+                } else if !self.match_signature_params_for_infer(
+                    source_params,
+                    &pattern_sig.params,
                     bindings,
                     checker,
-                )
-            }
-            _ => {
-                // Source is not a union - check if source matches any non-infer pattern member
-                for &non_infer in &non_infer_pattern_members {
-                    if checker.is_subtype_of(source, non_infer)
-                        && checker.is_subtype_of(non_infer, source)
-                    {
-                        // Source is exactly a non-infer member, so infer gets never
-                        return self.bind_infer(
-                            &TypeParamInfo {
-                                is_const: false,
-                                name: infer_name,
-                                constraint: infer_constraint,
-                                default: None,
-                            },
-                            TypeId::NEVER,
+                ) {
+                    return false;
+                }
+                if !self.match_infer_pattern(
+                    source_return,
+                    pattern_sig.return_type,
+                    bindings,
+                    visited,
+                    checker,
+                ) {
+                    return false;
+                }
+                // For infer pattern matching, once parameters and return type match successfully,
+                // the pattern is considered successful. Skipping the final subtype check avoids
+                // contravariance issues.
+                true
+            };
+
+            return match self.interner().lookup(source) {
+                Some(TypeData::Callable(source_shape_id)) => {
+                    let source_shape = self.interner().callable_shape(source_shape_id);
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
+                        return false;
+                    };
+                    let (params, return_type) = self.instantiate_signature_for_infer(
+                        &source_sig.params,
+                        source_sig.return_type,
+                        &source_sig.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
+                }
+                Some(TypeData::Function(source_fn_id)) => {
+                    let source_fn = self.interner().function_shape(source_fn_id);
+                    // For construct patterns, only match constructor Functions
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
+                    }
+                    let (params, return_type) = self.instantiate_signature_for_infer(
+                        &source_fn.params,
+                        source_fn.return_type,
+                        &source_fn.type_params,
+                    );
+                    match_params_and_return(source, &params, return_type, bindings)
+                }
+                Some(TypeData::Union(members)) => {
+                    let members = self.interner().type_list(members);
+                    let mut combined = FxHashMap::default();
+                    for &member in members.iter() {
+                        let mut member_bindings = FxHashMap::default();
+                        match self.interner().lookup(member) {
+                            Some(TypeData::Callable(source_shape_id)) => {
+                                let source_shape = self.interner().callable_shape(source_shape_id);
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
+                                    return false;
+                                };
+                                let (params, return_type) = self.instantiate_signature_for_infer(
+                                    &source_sig.params,
+                                    source_sig.return_type,
+                                    &source_sig.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
+                                    &mut member_bindings,
+                                ) {
+                                    return false;
+                                }
+                            }
+                            Some(TypeData::Function(source_fn_id)) => {
+                                let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
+                                let (params, return_type) = self.instantiate_signature_for_infer(
+                                    &source_fn.params,
+                                    source_fn.return_type,
+                                    &source_fn.type_params,
+                                );
+                                if !match_params_and_return(
+                                    member,
+                                    &params,
+                                    return_type,
+                                    &mut member_bindings,
+                                ) {
+                                    return false;
+                                }
+                            }
+                            _ => return false,
+                        }
+                        for (name, ty) in member_bindings {
+                            combined
+                                .entry(name)
+                                .and_modify(|existing| {
+                                    *existing = self.interner().union2(*existing, ty);
+                                })
+                                .or_insert(ty);
+                        }
+                    }
+                    bindings.extend(combined);
+                    true
+                }
+                _ => false,
+            };
+        }
+        if pattern_sig.this_type.is_none() && has_param_infer && !has_return_infer {
+            let mut match_params =
+                |source_params: &[ParamInfo], bindings: &mut FxHashMap<Atom, TypeId>| -> bool {
+                    if has_single_rest_infer {
+                        return self.match_rest_infer_tuple(
+                            source_params,
+                            pattern_sig.params[0].type_id,
                             bindings,
                             checker,
                         );
                     }
-                }
-                // Source doesn't match non-infer members, so infer = source
-                self.bind_infer(
-                    &TypeParamInfo {
-                        is_const: false,
-                        name: infer_name,
-                        constraint: infer_constraint,
-                        default: None,
-                    },
-                    source,
-                    bindings,
-                    checker,
-                )
-            }
-        }
-    }
-
-    /// Match a template literal string against a pattern.
-    pub(crate) fn match_template_literal_string(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        self.match_template_literal_string_from(source, pattern, 0, 0, bindings, checker)
-    }
-
-    fn match_template_segment_prefix(
-        &self,
-        source: &str,
-        pos: usize,
-        type_id: TypeId,
-    ) -> Option<usize> {
-        match self.interner().lookup(type_id)? {
-            TypeData::Literal(LiteralValue::String(atom)) => {
-                let text = self.interner().resolve_atom(atom);
-                source
-                    .get(pos..)?
-                    .starts_with(&text)
-                    .then_some(pos + text.len())
-            }
-            TypeData::Union(list_id) => self
-                .interner()
-                .type_list(list_id)
-                .iter()
-                .find_map(|member| self.match_template_segment_prefix(source, pos, *member)),
-            TypeData::TemplateLiteral(template_id) => {
-                let spans = self.interner().template_list(template_id);
-                let mut text = String::new();
-                for span in spans.iter() {
-                    let TemplateSpan::Text(atom) = span else {
-                        return None;
-                    };
-                    text.push_str(&self.interner().resolve_atom(*atom));
-                }
-                source
-                    .get(pos..)?
-                    .starts_with(&text)
-                    .then_some(pos + text.len())
-            }
-            _ => None,
-        }
-    }
-
-    fn is_template_infer_span(&self, span: Option<&TemplateSpan>) -> bool {
-        span.is_some_and(|span| {
-            matches!(span, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_))))
-        })
-    }
-
-    fn next_char_end(source: &str, pos: usize) -> Option<usize> {
-        if pos >= source.len() {
-            return None;
-        }
-        Some(
-            source[pos..]
-                .char_indices()
-                .nth(1)
-                .map_or(source.len(), |(idx, _)| pos + idx),
-        )
-    }
-
-    fn candidate_template_capture_ends(
-        &self,
-        source: &str,
-        pos: usize,
-        pattern: &[TemplateSpan],
-        index: usize,
-    ) -> Vec<usize> {
-        if index + 1 >= pattern.len() {
-            return vec![source.len()];
-        }
-
-        if self.is_template_infer_span(pattern.get(index))
-            && matches!(
-                pattern.get(index + 1),
-                Some(TemplateSpan::Type(
-                    TypeId::STRING | TypeId::ANY | TypeId::UNKNOWN
-                ))
-            )
-        {
-            if self.is_template_infer_span(pattern.get(index + 2)) {
-                return Self::next_char_end(source, pos).into_iter().collect();
-            }
-
-            return Self::next_char_end(source, pos)
-                .or(Some(pos))
-                .into_iter()
-                .collect();
-        }
-
-        if pattern
-            .get(index + 1)
-            .is_some_and(|s| matches!(s, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_)))))
-        {
-            return Self::next_char_end(source, pos).into_iter().collect();
-        }
-
-        if let Some(next_text) = pattern[index + 1..].iter().find_map(|span| match span {
-            TemplateSpan::Text(text) => Some(*text),
-            TemplateSpan::Type(_) => None,
-        }) {
-            let next_value = self.interner().resolve_atom_ref(next_text);
-            let remaining = &source[pos..];
-            return remaining
-                .match_indices(next_value.as_ref())
-                .map(|(offset, _)| pos + offset)
-                .collect();
-        }
-
-        source[pos..]
-            .char_indices()
-            .map(|(offset, _)| pos + offset)
-            .chain(std::iter::once(source.len()))
-            .collect()
-    }
-
-    /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
-    ///
-    /// Returns `Some(true/false)` when the span is a recognized intrinsic kind
-    /// (number, bigint, boolean, null, undefined) and dispatches length-aware
-    /// matching for it.  Returns `None` for wildcard intrinsics (string/any/
-    /// unknown) so the caller falls through to generic handling.
-    fn match_intrinsic_span_from(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        pos: usize,
-        index: usize,
-        type_id: TypeId,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> Option<bool> {
-        use crate::relations::subtype::rules::literals::{
-            find_integer_length, find_number_length, is_valid_number,
-        };
-
-        let remaining = &source[pos..];
-
-        match self.interner().lookup(type_id)? {
-            TypeData::Intrinsic(kind) => match kind {
-                IntrinsicKind::Number => {
-                    let num_len = find_number_length(remaining);
-                    if num_len == 0 {
-                        return Some(false);
-                    }
-                    // Try shortest valid number first — matches tsc's non-greedy
-                    // behaviour for ambiguous infer+number patterns.
-                    for len in 1..=num_len {
-                        if is_valid_number(&remaining[..len])
-                            && self.match_template_literal_string_from(
-                                source,
-                                pattern,
-                                pos + len,
-                                index + 1,
-                                bindings,
-                                checker,
-                            )
-                        {
-                            return Some(true);
-                        }
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Bigint => {
-                    let int_len = find_integer_length(remaining);
-                    if int_len == 0 {
-                        return Some(false);
-                    }
-                    // Try shortest valid integer first — consistent with tsc.
-                    for len in 1..=int_len {
-                        if self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + len,
-                            index + 1,
-                            bindings,
-                            checker,
-                        ) {
-                            return Some(true);
-                        }
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Boolean => {
-                    if remaining.starts_with("true")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 4,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return Some(true);
-                    }
-                    if remaining.starts_with("false")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 5,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return Some(true);
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Null => {
-                    if remaining.starts_with("null")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 4,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }
-                IntrinsicKind::Undefined => {
-                    if remaining.starts_with("undefined")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 9,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }
-                // Wildcards and other intrinsics fall through to generic handling.
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn match_template_literal_string_from(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        pos: usize,
-        index: usize,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        if index == pattern.len() {
-            return pos == source.len();
-        }
-
-        match pattern[index] {
-            TemplateSpan::Text(text) => {
-                let text_value = self.interner().resolve_atom_ref(text);
-                let text_value = text_value.as_ref();
-                if !source[pos..].starts_with(text_value) {
-                    return false;
-                }
-                self.match_template_literal_string_from(
-                    source,
-                    pattern,
-                    pos + text_value.len(),
-                    index + 1,
-                    bindings,
-                    checker,
-                )
-            }
-            TemplateSpan::Type(type_id) => {
-                if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                    for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                        let mut next_bindings = bindings.clone();
-                        let captured = &source[pos..end];
-                        if !self.bind_template_infer_capture(
-                            &info,
-                            captured,
-                            &mut next_bindings,
-                            checker,
-                        ) {
-                            continue;
-                        }
-                        if self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            end,
-                            index + 1,
-                            &mut next_bindings,
-                            checker,
-                        ) {
-                            *bindings = next_bindings;
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-
-                if let Some(next_pos) = self.match_template_segment_prefix(source, pos, type_id) {
-                    return self.match_template_literal_string_from(
-                        source,
-                        pattern,
-                        next_pos,
-                        index + 1,
+                    // Match params and infer types. Skip subtype check since pattern matching
+                    // success implies compatibility. The subtype check can fail for optional
+                    // params due to contravariance issues with undefined.
+                    self.match_signature_params_for_infer(
+                        source_params,
+                        &pattern_sig.params,
                         bindings,
                         checker,
-                    );
-                }
+                    )
+                };
 
-                if let Some(result) = self.match_intrinsic_span_from(
-                    source, pattern, pos, index, type_id, bindings, checker,
-                ) {
-                    return result;
+            return match self.interner().lookup(source) {
+                Some(TypeData::Callable(source_shape_id)) => {
+                    let source_shape = self.interner().callable_shape(source_shape_id);
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
+                        return false;
+                    };
+                    match_params(&source_sig.params, bindings)
                 }
-
-                for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                    let captured = &source[pos..end];
-                    let captured_type = self.interner().literal_string(captured);
-                    if self
-                        .template_capture_for_constraint(captured, captured_type, type_id, checker)
-                        .is_some()
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            end,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return true;
+                Some(TypeData::Function(source_fn_id)) => {
+                    let source_fn = self.interner().function_shape(source_fn_id);
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
                     }
+                    match_params(&source_fn.params, bindings)
                 }
-                false
-            }
+                Some(TypeData::Union(members)) => {
+                    let members = self.interner().type_list(members);
+                    let mut combined = FxHashMap::default();
+                    for &member in members.iter() {
+                        let mut member_bindings = FxHashMap::default();
+                        match self.interner().lookup(member) {
+                            Some(TypeData::Callable(source_shape_id)) => {
+                                let source_shape = self.interner().callable_shape(source_shape_id);
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
+                                    return false;
+                                };
+                                if !match_params(&source_sig.params, &mut member_bindings) {
+                                    return false;
+                                }
+                            }
+                            Some(TypeData::Function(source_fn_id)) => {
+                                let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
+                                if !match_params(&source_fn.params, &mut member_bindings) {
+                                    return false;
+                                }
+                            }
+                            _ => return false,
+                        }
+                        for (name, ty) in member_bindings {
+                            combined
+                                .entry(name)
+                                .and_modify(|existing| {
+                                    *existing = self.interner().union2(*existing, ty);
+                                })
+                                .or_insert(ty);
+                        }
+                    }
+                    bindings.extend(combined);
+                    true
+                }
+                _ => false,
+            };
         }
+
+        if pattern_sig.this_type.is_none() && !has_param_infer && has_return_infer {
+            let mut match_return = |_source_type: TypeId,
+                                    source_return: TypeId,
+                                    bindings: &mut FxHashMap<Atom, TypeId>|
+             -> bool {
+                if !self.match_infer_pattern(
+                    source_return,
+                    pattern_sig.return_type,
+                    bindings,
+                    visited,
+                    checker,
+                ) {
+                    return false;
+                }
+                // For return-only infer patterns, the return type match is sufficient.
+                // Skipping the final subtype check avoids contravariance issues.
+                true
+            };
+
+            return match self.interner().lookup(source) {
+                Some(TypeData::Callable(source_shape_id)) => {
+                    let source_shape = self.interner().callable_shape(source_shape_id);
+                    let Some(source_sig) = source_shape.last_sig_for(is_construct_pattern) else {
+                        return false;
+                    };
+                    let erased_return = self.erase_return_type_for_infer(
+                        source_sig.return_type,
+                        &source_sig.type_params,
+                    );
+                    match_return(source, erased_return, bindings)
+                }
+                Some(TypeData::Function(source_fn_id)) => {
+                    let source_fn = self.interner().function_shape(source_fn_id);
+                    if is_construct_pattern && !source_fn.is_constructor {
+                        return false;
+                    }
+                    let erased_return = self
+                        .erase_return_type_for_infer(source_fn.return_type, &source_fn.type_params);
+                    match_return(source, erased_return, bindings)
+                }
+                Some(TypeData::Union(members)) => {
+                    let members = self.interner().type_list(members);
+                    let mut combined = FxHashMap::default();
+                    for &member in members.iter() {
+                        let mut member_bindings = FxHashMap::default();
+                        match self.interner().lookup(member) {
+                            Some(TypeData::Callable(source_shape_id)) => {
+                                let source_shape = self.interner().callable_shape(source_shape_id);
+                                let Some(source_sig) =
+                                    source_shape.last_sig_for(is_construct_pattern)
+                                else {
+                                    return false;
+                                };
+                                let erased_return = self.erase_return_type_for_infer(
+                                    source_sig.return_type,
+                                    &source_sig.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
+                                    return false;
+                                }
+                            }
+                            Some(TypeData::Function(source_fn_id)) => {
+                                let source_fn = self.interner().function_shape(source_fn_id);
+                                if is_construct_pattern && !source_fn.is_constructor {
+                                    return false;
+                                }
+                                let erased_return = self.erase_return_type_for_infer(
+                                    source_fn.return_type,
+                                    &source_fn.type_params,
+                                );
+                                if !match_return(member, erased_return, &mut member_bindings) {
+                                    return false;
+                                }
+                            }
+                            _ => return false,
+                        }
+                        for (name, ty) in member_bindings {
+                            combined
+                                .entry(name)
+                                .and_modify(|existing| {
+                                    *existing = self.interner().union2(*existing, ty);
+                                })
+                                .or_insert(ty);
+                        }
+                    }
+                    bindings.extend(combined);
+                    true
+                }
+                _ => false,
+            };
+        }
+
+        checker.is_subtype_of(source, pattern)
     }
 
-    /// Capture value for a bare single-placeholder `` `${infer V}` `` pattern
-    /// matched against a template-literal `source`.
-    ///
-    /// tsc captures the whole source type (`getStringLikeTypeForType` of the
-    /// placeholder) rather than widening to `string`: inferring `` `${infer V}` ``
-    /// from `` `${number}` `` yields `` `${number}` ``, not `string`.
-    ///
-    /// When the infer variable carries an `extends` constraint, this mirrors
-    /// tsc's `getInferredType` fallback: if the captured template type isn't
-    /// assignable to the constraint, fall back to the constraint itself, but
-    /// only when the source is assignable to the constraint's string form
-    /// (`` `${C}` ``) — i.e. when the conditional's post-inference `extends`
-    /// re-check would still succeed. Otherwise the match fails and the
-    /// conditional takes its false branch.
-    fn single_placeholder_template_capture(
+    fn match_infer_callable_pattern_properties(
         &self,
         source: TypeId,
-        info: &TypeParamInfo,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> Option<TypeId> {
-        let Some(constraint) = info.constraint else {
-            return Some(source);
-        };
-        if checker.is_subtype_of(source, constraint) {
-            return Some(source);
-        }
-        let constraint_string_form = self
-            .interner()
-            .template_literal(vec![TemplateSpan::Type(constraint)]);
-        checker
-            .is_subtype_of(source, constraint_string_form)
-            .then_some(constraint)
-    }
-
-    /// Match template literal spans against a pattern.
-    pub(crate) fn match_template_literal_spans(
-        &self,
-        source: TypeId,
-        source_spans: &[TemplateSpan],
-        pattern_spans: &[TemplateSpan],
+        pattern_shape_id: CallableShapeId,
         bindings: &mut FxHashMap<Atom, TypeId>,
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
-        if pattern_spans.len() == 1
-            && let TemplateSpan::Type(type_id) = pattern_spans[0]
+        let pattern_shape = self.interner().callable_shape(pattern_shape_id);
+        let Some(source_shape_id) = self.source_callable_shape_id(source) else {
+            return false;
+        };
+        let source_shape = self.interner().callable_shape(source_shape_id);
+        if pattern_shape.call_signatures.len() > source_shape.call_signatures.len()
+            || pattern_shape.construct_signatures.len() > source_shape.construct_signatures.len()
         {
-            if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                let Some(inferred) =
-                    self.single_placeholder_template_capture(source, &info, checker)
-                else {
-                    return false;
-                };
-                return self.bind_infer(&info, inferred, bindings, checker);
-            }
-            return checker.is_subtype_of(source, type_id);
-        }
-
-        if source_spans.len() != pattern_spans.len() {
             return false;
         }
 
-        for (source_span, pattern_span) in source_spans.iter().zip(pattern_spans.iter()) {
-            match pattern_span {
-                TemplateSpan::Text(text) => match source_span {
-                    TemplateSpan::Text(source_text) if source_text == text => {}
-                    _ => return false,
-                },
-                TemplateSpan::Type(type_id) => {
-                    let inferred = match source_span {
-                        TemplateSpan::Text(text) => {
-                            let text_value = self.interner().resolve_atom_ref(*text);
-                            self.interner().literal_string(text_value.as_ref())
-                        }
-                        TemplateSpan::Type(source_type) => *source_type,
-                    };
-                    if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
-                        if !self.bind_infer(&info, inferred, bindings, checker) {
+        for pattern_prop in &pattern_shape.properties {
+            let source_prop = source_shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == pattern_prop.name);
+            let Some(source_prop) = source_prop else {
+                if pattern_prop.optional {
+                    if self.type_contains_infer(pattern_prop.type_id) {
+                        let mut visited = FxHashSet::default();
+                        if !self.match_infer_pattern(
+                            TypeId::UNDEFINED,
+                            pattern_prop.type_id,
+                            bindings,
+                            &mut visited,
+                            checker,
+                        ) {
                             return false;
                         }
-                    } else if !checker.is_subtype_of(inferred, *type_id) {
-                        return false;
                     }
+                    continue;
                 }
+                return false;
+            };
+
+            if self.type_contains_infer(pattern_prop.type_id) {
+                let mut visited = FxHashSet::default();
+                if !self.match_infer_pattern(
+                    source_prop.type_id,
+                    pattern_prop.type_id,
+                    bindings,
+                    &mut visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else if !checker.is_subtype_of(
+                self.optional_property_type(source_prop),
+                self.optional_property_type(pattern_prop),
+            ) {
+                return false;
             }
         }
-
         true
+    }
+
+    fn source_callable_shape_id(&self, source: TypeId) -> Option<CallableShapeId> {
+        match self.interner().lookup(source) {
+            Some(TypeData::Callable(shape_id)) => Some(shape_id),
+            Some(TypeData::ReadonlyType(inner)) => self.source_callable_shape_id(inner),
+            Some(TypeData::Intersection(members)) => self
+                .interner()
+                .type_list(members)
+                .iter()
+                .find_map(|&member| self.source_callable_shape_id(member)),
+            _ => None,
+        }
     }
 }
