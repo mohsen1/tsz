@@ -382,6 +382,21 @@ pub(crate) fn should_report_member_type_mismatch(
     true
 }
 
+/// Check interface trailing overload compatibility through the class relation boundary.
+///
+/// The strict path uses `no_erase_generics` to preserve overload compatibility
+/// behavior. The optional retry mirrors `tsc`'s fresh generic instantiation for
+/// equivalent method-local generic overload shapes.
+pub(crate) fn interface_overload_trailing_signature_assignable(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+    allow_fresh_generic_retry: bool,
+) -> bool {
+    checker.is_assignable_to_no_erase_generics(source, target)
+        || (allow_fresh_generic_retry && checker.diagnostic_relation_boolean_guard(source, target))
+}
+
 /// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
 ///
 /// Unlike `should_report_member_type_mismatch`, this variant uses a targeted
