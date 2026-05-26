@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-05-20
+Date: 2026-05-26
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -44,15 +44,20 @@ as campaigns instead of isolated conformance picks.
 
 ## Current Public Metrics
 
-Sources: `README.md`, local snapshots on 2026-05-15, current conformance
-artifacts on 2026-05-17, and GitHub coordination audit on 2026-05-20.
+Sources: checked-in conformance and emit artifacts, live GitHub orientation on
+2026-05-26, `scripts/bench/project-row-summary.mjs`, and public README
+metrics. Public README numbers may lag checked-in artifacts; release planning
+uses exact artifact numerators and denominators.
 
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| JavaScript emit | `94.8%` (`12,820 / 13,530` in `README.md`; `13,094 / 13,530` in latest local snapshot) |
-| Declaration emit | `91.7%` (`1,531 / 1,669` in `README.md`; `1,606 / 1,669` in latest local snapshot) |
+| Accepted-regression strictness | `30` listed tests |
+| JavaScript emit | `13,094 / 13,530` in checked-in emit snapshot (`94.8%` / `12,820 / 13,530` still shown in README) |
+| Declaration emit | `1,606 / 1,669` in checked-in emit snapshot (`91.7%` / `1,531 / 1,669` still shown in README) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
+| Open bug issues | `56` open `bug` issues in live GitHub orientation |
+| Output-surgery audit | red: `4` unallowlisted calls, `1` stale allowlist entry |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -71,13 +76,11 @@ cleanup as complete.
 This section is intentionally short and current. Replace it when a fresher audit
 changes the picture.
 
-1. Active PR state is still a runway risk, but the first drain pass changed the
-   shape. The 2026-05-20 GitHub audit found `254` open PRs: `246` drafts, `8`
-   ready PRs, `235` PRs with `WIP`, and `9` stacked children. A 2026-05-21
-   follow-up found `59` open PRs: `50` drafts, `9` ready PRs, `0` PRs with
-   `WIP`, and `3` stacked children. The remaining risk is blocked ready PRs,
-   stale draft ownership, and noncanonical agent labels rather than raw WIP
-   volume.
+1. Active PR state is no longer the launch bottleneck. A 2026-05-26 live
+   orientation found only `2` open PRs, `0` drafts, clean canonical
+   `agent:*` label state, and no stacked children. Future launches should still
+   inspect live PRs first, but the plan should not preserve static PR queue
+   inventories.
 2. Multi-computer coordination is now explicit. Fourteen implementation-session
    labels exist:
    `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and
@@ -100,25 +103,29 @@ changes the picture.
    RSS, and feeds website compatibility rows through
    `crates/tsz-website/src/_data/benchmark_data.js`. Timing is meaningful only
    after the row is green or the blocker is explicitly runtime/residency.
-5. The latest exact project corpus state must come from a completed benchmark
-   artifact or filtered project run before it is treated as public truth. Recent
-   `bench.yml` runs were pending or cancelled during the audit, so this roadmap
-   names the rows and required fields but does not claim every row's current
-   green/red status.
-6. Fixture coverage can drift because project definitions are split between
-   `scripts/bench/bench-vs-tsgo.sh` and `scripts/ci/project-compile-guard.sh`.
-   Unifying or generating those definitions is now quality work, not benchmark
-   polish.
+5. The latest exact project corpus status must come from a completed benchmark
+   artifact, compile-guard artifact, or focused project run before it is treated
+   as public truth. `scripts/bench/project-rows.mjs` is now the single row
+   metadata source, and `node scripts/bench/project-row-summary.mjs --markdown`
+   should show every compatibility row consistent across benchmark, guard,
+   fixture, and corpus surfaces.
+6. The next-launch goal is end-state oriented: conformance strictness, emit
+   parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
+   Architecture cleanup is part of that goal only when it ratchets a measured
+   boundary counter down or unblocks one of those gates.
 7. Emit remains the largest numeric parity gap and a real architecture risk,
    but the latest local snapshot is materially ahead of the README numbers:
    JavaScript emit is `13,094 / 13,530` and declaration emit is
    `1,606 / 1,669`. DTS still needs to move away from late semantic discovery
    during printing toward a precomputed declaration/public-API summary.
-8. Conformance is no longer the dominant progress signal but it remains a hard
+8. Output-surgery audit debt is visible rather than normalized: the current
+   audit reports `4` unallowlisted calls and `1` stale allowlist entry. Treat
+   that as Studio-F cleanup intake and as a guardrail for Studio-C/D emit work.
+9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
    from red/yellow to green.
-9. The design response is **not** an architecture-first pause. Purpose-specific
+10. The design response is **not** an architecture-first pause. Purpose-specific
    normalization, inference sessions, key-space algebra, diagnostic-capable
    relation results, solver-owned flow predicates, identity/provenance queries,
    and cache-key contracts should be introduced as just-in-time project
@@ -166,9 +173,10 @@ GitHub is the coordination surface.
     roadmap fit, architecture boundaries, parity risk, duplicate work, tests,
     and readiness; when no PRs are reviewable, it waits for new PRs instead of
     marking the goal complete.
-16. Initial launch priority is to land, close, or clearly hand off existing
-    PRs before claiming issue backlog. Use issues to understand context, not as
-    the first ownership surface.
+16. Every launch starts by inspecting live PRs. If a lane still owns open PRs,
+    land, close, or clearly hand them off before claiming issue backlog. If the
+    PR runway is empty, issues become intake context and should be clustered
+    into early draft PRs by structural invariant.
 
 Draft PR body shape:
 
@@ -236,20 +244,37 @@ Symptom-patch freeze:
 3. Query-boundary modules may expose domain classifiers. They should not become
    broad re-export barrels for checker-local semantic traversal.
 
+## Bug Triage Contract
+
+"All bugs fixed" means every open `bug`, `false-positive`, `false-negative`,
+`accepted-regression`, and release-gate issue is in one of these states:
+
+1. fixed by a merged PR,
+2. closed as duplicate or superseded with successor evidence,
+3. proven upstream TypeScript behavior and tracked as a `TypeScript bug`,
+4. explicitly non-release with a signed rationale, or
+5. owned by an active draft PR whose body names the structural invariant,
+   owning lane, verification, and next step.
+
+Issue-level `WIP` has the same coordination meaning as PR-level `WIP`: it must
+carry a signed owner comment with current blocker or active work and next
+owner/action. Do not use issue `WIP` as a parking label.
+
 ## Phase 0: Stabilize The Runway
 
 Near-term priority order:
 
-1. Merge or close current active PRs into coherent campaign ownership; remove
-   stale `WIP` labels before any ready merge. Apply `agent:*` labels so every
-   active item has at most one next-step owner.
+1. Inspect live active PRs and either land, close, or clearly hand them off.
+   Remove stale `WIP` labels before any ready merge. Apply `agent:*` labels so
+   every active item has at most one next-step owner.
 2. Make the project-corpus dashboard authoritative before judging speed. Every
    red/yellow row should name the semantic operation that owns the first
    blocker, the phase reached, and whether the failure is diagnostic,
    crash/OOM/timeout, fixture, emit, or runner.
-3. Unify or generate shared project fixture metadata used by
-   `scripts/bench/bench-vs-tsgo.sh` and `scripts/ci/project-compile-guard.sh`
-   so CI guard coverage cannot drift from benchmark coverage.
+3. Keep `scripts/bench/project-rows.mjs` as the single project-row metadata
+   source. `node scripts/bench/project-row-summary.mjs --markdown` and
+   `node scripts/bench/validate-project-metadata.mjs` should pass before
+   project-corpus truth is cited.
 4. Fold substrate refactors into bug closure. A semantic bug may add a
    normalization query, inference-session boundary, key-space helper,
    `RelationDecision` path, flow predicate, identity query, or cache-key
@@ -310,13 +335,19 @@ For every project row, capture:
 
 Speed is a secondary column until the row is green or explicitly blocked by
 runtime/residency. Do not present a faster red project as a win without also
-naming the remaining correctness blocker.
+naming the remaining correctness blocker. Once a row is green and timed, it is
+not done for the next launch until the `*.tsgo-winners.json` `two_x_target`
+summary shows the row at or above `2x` faster than `tsgo`, or a fresh issue
+owns the gap.
 
 ## Phase 2: Performance Tuning Gate
 
 Performance tuning starts after the required project rows are green, except for
 PRs that directly fix a red row whose first blocker is runtime, OOM, timeout, or
-residency.
+residency. The next launch's performance target is not a mean-speed headline:
+eligible green rows must have zero `two_x_target.target_gaps` in the canonical
+`*.tsgo-winners.json` artifact before the `2x faster than tsgo` gate is
+claimed.
 
 Performance work must record:
 
@@ -330,7 +361,7 @@ Performance work must record:
    change.
 
 Broad performance rewrites are not readiness work unless they move a green row
-faster or move a red runtime/residency row toward green.
+toward the `2x` target or move a red runtime/residency row toward green.
 
 ## Architecture Health Metrics
 
@@ -570,8 +601,9 @@ Acceptance:
    or unblock a named transform-plan migration.
 2. DTS fixes consume documented semantic summaries instead of broad reach-through
    into solver internals or fresh type evaluation during printing.
-3. Emit/DTS work does not consume most active PR bandwidth while checker/solver
-   benchmark rows remain red.
+3. Emit/DTS work may consume dedicated launch bandwidth while JS/DTS are below
+   `100%`, but each PR must reduce a named family, remove output-layer debt, or
+   unblock the declaration/transform summary boundary.
 4. LSP/WASM paths converge on one compiler service front door and consume
    semantic views rather than matching raw `TypeData`.
 5. Source-text recovery moves toward parser-provided facts; emitter code should
@@ -640,7 +672,8 @@ This roadmap is succeeding when:
    deltas, owner family, phase reached, known blockers, and measured RSS when
    relevant.
 6. Broad performance tuning starts only after required rows are green, except
-   for PRs whose first blocker is runtime, OOM, timeout, or residency.
+   for PRs whose first blocker is runtime, OOM, timeout, or residency; green
+   timed rows are not complete until `two_x_target.target_gaps` is zero.
 7. Performance PRs record diagnostic status before/after along with wall time,
    RSS, cache/counter deltas, and the semantic identity or cache-key invariant
    being protected.
@@ -654,8 +687,8 @@ This roadmap is succeeding when:
    are added without an explicit temporary-shortcut ledger entry.
 12. Emit/DTS work reduces named failure families while moving toward
    `EmitPlan`/`DeclarationSummary` boundaries, not merely helper splitting.
-13. Emit/DTS work no longer consumes the majority of active PR bandwidth while
-   checker/solver benchmark blockers remain red.
+13. Output-surgery, source-text recovery, and emitter/DTS reach-through
+   guardrails do not regress and ratchet down when touched.
 14. GitHub draft PRs, comments, `agent:*` labels, and
    `docs/plan/agents/<AgentName>.md` files are sufficient to understand active
    ownership; no claim-doc system reappears.

@@ -7,7 +7,10 @@ GitHub label: `agent:<AgentName>`
 
 ## Mission
 
-One narrow lane aligned with `docs/plan/ROADMAP.md`.
+One narrow lane aligned with `docs/plan/ROADMAP.md` and the next-launch gates:
+conformance strictness, emit 100%, all bugs fixed or structurally owned, green
+project rows, `2x` timing wins over `tsgo`, and measurable architecture debt
+reduction.
 
 ## Start Every Cycle
 
@@ -20,30 +23,35 @@ scripts/agents/list-owned-work.sh <AgentName>
 
 ## Current Assignment
 
-- Primary PR to land/close/handoff:
-- Assigned draft PRs to complete before new issue work:
-- Issue context:
-- Branch/worktree:
+- Primary gate:
+- Bug or metric family:
+- Architecture cleanup metric and command/counter:
+- First live command to run:
 - Next concrete step:
 
 ## Existing Work To Inspect First
 
-- Open PRs:
-- Open issues:
-- Recent merged PRs:
+- Live owned PRs from `scripts/agents/list-owned-work.sh <AgentName>`.
+- Open issues with the lane's subsystem labels.
+- Recent merged PRs touching the same invariant.
+- Current dashboard/artifact data for the lane's release gate.
 
 ## Non-Overlap Rules
 
-- Do not duplicate the listed PRs.
-- Do not start a new branch while assigned draft PRs are missing a ready,
-  merged, closed-with-evidence, or signed-handoff state.
-- If another active PR already owns the exact invariant, comment there instead
-  of opening a new PR.
+- Complete, close with evidence, or hand off live lane PRs before new issue
+  work.
+- Do not duplicate another active PR's invariant. Comment there instead.
 - If you take over, leave a signed comment and update `agent:*` labels.
+- State the structural rule; never patch one test name, source spelling,
+  rendered type string, or fixture path.
+- Architecture cleanup must ratchet down a named metric or unblock a release
+  gate.
 
 ## Verification
 
-- Prefer narrow unit or integration tests.
+- Prefer narrow unit, integration, artifact, or dashboard checks that answer the
+  risk.
 - Use `cargo nextest run` instead of `cargo test`.
-- Do not run full conformance, full emit, or full fourslash locally.
+- Do not run full conformance, full emit, full fourslash, or broad benchmarks
+  locally.
 - Wrap heavy commands with `scripts/safe-run.sh`.

@@ -7,8 +7,10 @@ GitHub label: `agent:Studio-A`
 
 ## Mission
 
-Make project-corpus truth authoritative. Dashboard rows must report correctness
-separately from speed and name the first blocker family for red or yellow rows.
+Make release metric truth authoritative. This lane owns project-corpus
+artifact truth and keeps conformance strictness, emit counts, bug-family
+ownership, and performance target artifacts coherent before other lanes make
+claims from them.
 
 ## Start Every Cycle
 
@@ -17,32 +19,35 @@ git fetch origin main
 scripts/agents/show-goal.sh Studio-A
 scripts/agents/disk-preflight.sh Studio-A
 scripts/agents/list-owned-work.sh Studio-A
+python3 scripts/conformance/query-conformance.py --dashboard
+python3 scripts/emit/query-emit.py --families
+node scripts/bench/project-row-summary.mjs --markdown
 ```
 
 ## Current Assignment
 
-- Initial priority: land, close, or clearly hand off existing PRs in this lane
-  before claiming issue backlog.
-- Issue context: `#8867`, `#8774`, `#8518`.
-- Related PRs to inspect: `#9277`, `#9253`, `#9251`, `#9249`, `#9237`,
-  `#9235`, `#9223`, `#9215`, `#9063`, `#9034`, `#8980`, `#8912`, `#8901`.
-- Track: roadmap Track 1.
-- Next concrete step: with #10035 merged and Studio-D's #9229 closed unmerged,
-  Studio-A is reclaiming the unowned #8774 type-fest reduction-fixture backlog
-  on branch `codex/studio-a-typefest-reductions-20260524`. Do not duplicate
-  that slice while the Studio-A PR is open; after it lands, look next for
-  unowned dashboard-truth gaps where a project row can misreport correctness,
-  phase, first blocker family, runner identity, or fixture metadata.
+- Primary gate: project corpus and public release metrics.
+- Bug or metric families: project-row green/yellow/red status, first blocker
+  family, diagnostic deltas, emit/DTS snapshot counts, accepted-regression
+  count, issue-cluster ownership, benchmark artifact freshness, and project-row
+  metadata consistency.
+- Architecture cleanup metric: row definitions should stay centralized in
+  `scripts/bench/project-rows.mjs`; dashboard and guard surfaces should not
+  drift.
+- First live command: run the cheap dashboard commands above and record which
+  artifact is current enough to cite.
+- Next concrete step: if a metric is stale or contradictory, fix the reporting
+  surface or route the discrepancy to the owning lane before anyone optimizes
+  against it.
 
 ## Existing Work To Inspect First
 
-- Recent bench artifacts and Cloud Build PRs have closed `#8867`; use them as
-  current assumptions instead of reopening the Cloud Build timing-shard work.
-- `#9223` surfaces project compatibility measurements.
-- `#9215`, `#9063`, `#9034`, and `#8980` touch project compile guard shape.
-- `#9229` was the previous Studio-D draft for `#8774`, but it is now closed
-  unmerged. The current type-fest reduction-fixture ownership is the Studio-A
-  branch named above.
+- `scripts/bench/project-rows.mjs`, `scripts/bench/project-rows.md`, and
+  `scripts/bench/validate-project-metadata.mjs`.
+- Latest benchmark, compile-guard, conformance, and emit artifacts.
+- Open issues labelled `bench`, `performance`, `conformance`, `emit`, and
+  `accepted-regression`.
+- Recent website/README metric updates.
 
 ## Non-Overlap Rules
 
@@ -50,10 +55,12 @@ scripts/agents/list-owned-work.sh Studio-A
   blocker.
 - Do not rerun broad benchmarks locally. Use narrow filters only when they
   answer one debugging question.
+- Metric docs should cite artifact fields or CI URLs, not stale copied counts.
 - Root-cause reductions belong in owning-crate tests once understood.
 
 ## Verification
 
-- Prefer script tests under `scripts/bench` or `scripts/ci`.
-- Use fixture JSON where possible.
+- Prefer script tests under `scripts/bench`, `scripts/ci`, `scripts/emit`, or
+  `scripts/conformance`.
+- Use `node scripts/bench/validate-project-metadata.mjs` for row metadata.
 - Wrap long project checks with `scripts/safe-run.sh`.

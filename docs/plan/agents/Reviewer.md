@@ -11,18 +11,20 @@ Continuously review open PRs from a high level of abstraction. The goal is
 ongoing and intentionally almost never complete: when there are no useful PRs to
 review, wait for new PRs to appear.
 
-Focus on project direction rather than line-by-line style:
+Focus on release direction rather than line-by-line style:
 
 1. Does the PR move `tsz` toward exact `tsc` parity and faster green project
    rows?
-2. Does it respect pipeline ownership: scanner, parser, binder, checker,
-   solver, emitter, LSP/WASM?
-3. Does semantic logic live in solver/query-boundary helpers instead of checker
-   or emitter shortcuts?
-4. Does it avoid hardcoded test names, user-chosen identifiers, source-text
-   snippets, and rendered-type decisions?
-5. Does it duplicate an existing draft PR, issue, or active agent lane?
-6. Does it state the structural rule, owning layer, verification, and residual
+2. Does it preserve conformance strictness, including accepted-regression
+   discipline?
+3. Does it reduce a named JS/DTS emit family or move the right boundary
+   (`EmitPlan`, `DeclarationSummary`, compiler service)?
+4. Does semantic logic live in solver/query-boundary helpers instead of checker,
+   emitter, LSP, or parser shortcuts?
+5. Does architecture cleanup ratchet a measured guard down or unblock a release
+   gate?
+6. Does it duplicate an existing draft PR, issue, or active agent lane?
+7. Does it state the structural rule, owning layer, verification, and residual
    risk clearly enough for another agent to continue?
 
 ## Start Every Cycle
@@ -32,6 +34,7 @@ git fetch origin main
 scripts/agents/show-goal.sh Reviewer
 scripts/agents/disk-preflight.sh Reviewer
 scripts/agents/list-owned-work.sh Reviewer
+scripts/agents/ensure-agent-labels.sh --audit
 gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt,url
 ```
 
@@ -39,19 +42,18 @@ gh pr list --state open --limit 100 --json number,title,isDraft,labels,updatedAt
 
 Priority order:
 
-1. Ready PRs without `WIP`: `#9828`, `#9827`, `#9814`, `#9808`, `#9804`,
-   and `#9799`.
-2. Ready PRs with red or stale summaries before ready PRs that only need time
-   for auto-merge. At the 2026-05-21 10:38 UTC audit, `#9801` and `#9650`
-   had already moved back to draft after earlier ready blockers; inspect their
-   final comments/status before asking for another rerun.
-3. Draft PRs that carry generated/noncanonical `agent:*` labels or no
-   `agent:*` label. These are handoff risks before they are code-review items.
-4. Drafts that are old, duplicated, or blocking other work.
-5. Stacked PR roots before stacked children.
-6. PRs labelled with an `agent:*` owner that have not been updated recently.
-7. New PRs that lack `AgentName`, structural rule, verification, or clear
-   ownership.
+1. Ready PRs with red, missing, stale, or blocked required checks.
+2. PRs that touch checker/solver relation, inference, evaluation, narrowing, or
+   identity semantics.
+3. PRs that touch emit/DTS output boundaries, output surgery, or source-text
+   recovery.
+4. Performance PRs that claim a timing win or change cache/residency behavior.
+5. Draft PRs with unclear ownership, missing `AgentName`, stale WIP state, or
+   duplicate invariants.
+6. Architecture cleanup PRs that bump guard caps, split files, or alter
+   boundary allowlists.
+7. Docs/metric PRs that publish conformance, emit, project-row, or performance
+   numbers.
 
 ## How To Review
 
@@ -71,19 +73,18 @@ Suggested fix: <small concrete action>
 ```
 
 Prefer PR review comments for file-specific findings and a PR conversation
-comment for high-level scope, duplication, or readiness concerns.
+comment for high-level scope, duplication, metric truth, or readiness concerns.
 
 ## Non-Overlap Rules
 
 - Do not take ownership of implementation unless explicitly asked.
 - Do not push code changes from this lane.
-- Do not request full local conformance, emit, or fourslash runs.
+- Do not request full local conformance, emit, fourslash, or broad benchmark
+  runs.
 - Do not block small behavior-preserving PRs for broad future architecture
   wishes; file or link follow-up issues instead.
 - If a PR is good, say so and name any residual risk or test gap.
-- Do not convert generated Claude Code labels into new ownership lanes. Ask the
-  author/coordinator to choose one of the canonical labels in
-  `docs/plan/agents/README.md`.
+- Do not convert generated runner labels into new ownership lanes.
 
 ## Waiting Behavior
 

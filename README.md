@@ -24,7 +24,10 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 ## Performance
 
-`tsz` is **2.21x faster** across 49 successful micro benchmark cases. Large-project performance work is still underway.
+`tsz` is **2.21x faster** across the current successful micro benchmark
+snapshot. Large-project performance work is still underway; the release target
+is for eligible green project rows to be at least **2x faster than `tsgo`** in
+the canonical benchmark artifact.
 
 ```
 tsz:  [█████████░░░░░░░░░░░] 3s
@@ -69,6 +72,10 @@ Progress: [████████████████████] 100.0% 
 Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match tsc in
 error code, file, line, column, and message.
 
+The checked-in detail snapshot is exact, but release conformance also tracks
+the accepted-regression strictness list separately until that deficit reaches
+zero.
+
 ### Emitter
 
 We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
@@ -80,6 +87,10 @@ JavaScript:  [███████████████████░] 94.8
 Declaration: [██████████████████░░] 91.7% (1,531 / 1,669 tests)
 ```
 <!-- EMIT_END -->
+
+The checked-in emit snapshot is newer than the public block above:
+JavaScript `13,094 / 13,530`, declaration `1,606 / 1,669`. Refresh this block
+from the current CI artifact before publishing a release claim.
 
 ### Language Service
 

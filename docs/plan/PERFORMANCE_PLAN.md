@@ -18,6 +18,12 @@ auditable caches. It must not come from checker-local shortcuts that bypass
 solver semantics, source-text heuristics, stale cache answers, or skipped
 diagnostics.
 
+The next-launch target is stricter than a mean-speed headline: for every
+eligible green timed row, `tsz` must be at least `2x` faster than `tsgo` in the
+canonical timing artifact. The `*.tsgo-winners.json` companion report owns this
+gate; `rows_below_target` / `target_gaps` must be zero before claiming the
+target across the launch set.
+
 Correctness comes first:
 
 1. Red or yellow project rows do not get speed claims unless the first blocker
@@ -60,7 +66,8 @@ claims blank unless runtime, OOM, timeout, or residency is the blocker.
 The benchmark `*.tsgo-winners.json` companion report is also the 2x-target
 gap report. Its `two_x_target` summary and `target_gaps` rows are the canonical
 artifact fields for green rows where `tsz` is not at least `2x` faster than
-`tsgo`.
+`tsgo`. A performance PR that closes or shrinks a target gap must cite the
+before/after companion report, not just a raw hyperfine line.
 
 ## Preferred Commands
 
