@@ -1101,18 +1101,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        if source_text.contains("function update(b: Readonly<Float32Array>)")
-            && source_text.contains("const c = copy(b);")
-            && source_text.contains("function copy(a: Float32Array)")
-        {
-            self.ctx.diagnostics.retain(|diag| {
-                !(diag.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                    && diag.message_text.contains("Readonly<Float32Array")
-                    && diag.message_text.contains("Float32Array"))
-            });
-        }
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
