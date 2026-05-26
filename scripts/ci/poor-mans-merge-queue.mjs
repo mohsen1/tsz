@@ -244,6 +244,10 @@ export function queueRunIsActive(run) {
   return normalize(run?.status) !== "COMPLETED";
 }
 
+function shortDateTime(value) {
+  return value ? `${String(value).slice(0, 16).replace("T", " ")}Z` : "unknown";
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -262,6 +266,8 @@ function activePendingQueueRun(repository, pr, options) {
     return {
       ...pendingRun,
       url: run.url || pendingRun.targetUrl,
+      status: run.status || "",
+      startedAt: run.startedAt || run.createdAt || "",
     };
   }
   if (!hasPendingPlaceholderQueueStatus(pr, options.statusContext)) return null;
@@ -270,6 +276,8 @@ function activePendingQueueRun(repository, pr, options) {
   return {
     runId: String(run.databaseId || ""),
     url: run.url,
+    status: run.status || "",
+    startedAt: run.startedAt || run.createdAt || "",
   };
 }
 
@@ -338,7 +346,7 @@ function readWorkflowRun(repository, runId) {
   return runGhJson([
     "run", "view", runId,
     "--repo", repository,
-    "--json", "databaseId,status,conclusion,url",
+    "--json", "databaseId,status,conclusion,url,createdAt,startedAt,updatedAt",
   ]);
 }
 
@@ -348,7 +356,7 @@ function readBranchWorkflowRuns(repository, branch) {
     "--repo", repository,
     "--branch", branch,
     "--limit", "20",
-    "--json", "databaseId,status,conclusion,headSha,url",
+    "--json", "databaseId,status,conclusion,headSha,url,createdAt,startedAt,updatedAt",
   ]);
 }
 
@@ -520,6 +528,8 @@ function cleanupQueueBranches(repository, options) {
             number,
             runId: activeRun.databaseId || null,
             url: activeRun.url || "",
+            status: activeRun.status || "",
+            startedAt: activeRun.startedAt || activeRun.createdAt || "",
           });
           if (options.verbose) {
             skips.push({
@@ -550,6 +560,8 @@ function cleanupQueueBranches(repository, options) {
         number,
         runId: activeRun.databaseId || null,
         url: activeRun.url || "",
+        status: activeRun.status || "",
+        startedAt: activeRun.startedAt || activeRun.createdAt || "",
       });
       if (options.verbose) {
         skips.push({
@@ -812,11 +824,11 @@ export function formatResult(result, options) {
       }
     }
     if (options.verbose && result.activeRuns?.length) {
-      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Run |", "|--------|----|-----|");
+      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Run | Status | Started |", "|--------|----|-----|--------|---------|");
       for (const run of result.activeRuns.slice(0, 50)) {
         const runId = run.runId || "(unknown)";
         const runLink = run.url ? `[${runId}](${run.url})` : runId;
-        lines.push(`| \`${run.branch}\` | #${run.number} | ${runLink} |`);
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
