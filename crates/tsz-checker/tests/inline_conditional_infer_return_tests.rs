@@ -64,3 +64,19 @@ const bad: number = result;
 
     assert_ts2322_mentions(&diagnostics, "string", "number");
 }
+
+#[test]
+fn inline_generic_ref_infer_true_branch_substitutes_inferred_source() {
+    let diagnostics = check_strict(
+        r#"
+interface Box<Value> { val: Value; }
+
+declare function unwrap<Input>(value: Input): Input extends Box<infer Inner> ? Inner : Input;
+
+const result = unwrap({ val: 1 });
+const bad: string = result;
+"#,
+    );
+
+    assert_ts2322_mentions(&diagnostics, "number", "string");
+}
