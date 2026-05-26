@@ -30,8 +30,10 @@ impl<'a> CheckerState<'a> {
             return self.format_type_diagnostic(evaluated);
         }
 
-        if let Some(alias_text) = self.type_alias_target_text_for_symbol(base_sym_id) {
-            if alias_text.starts_with("typeof ") {
+        if let Some((alias_text, alias_kind)) =
+            self.type_alias_target_text_and_kind_for_symbol(base_sym_id)
+        {
+            if alias_kind == syntax_kind_ext::TYPE_QUERY {
                 return alias_text;
             }
             if Self::is_array_or_tuple_alias_text(&alias_text) {
@@ -42,8 +44,8 @@ impl<'a> CheckerState<'a> {
             return alias_text;
         }
 
-        if let Some(text) = self.node_text(expr_idx)
-            && text.starts_with("typeof ")
+        if self.type_node_is_type_query_through_parens(expr_idx)
+            && let Some(text) = self.node_text(expr_idx)
         {
             return text.trim().to_string();
         }
@@ -55,6 +57,14 @@ impl<'a> CheckerState<'a> {
         &self,
         sym_id: tsz_binder::SymbolId,
     ) -> Option<String> {
+        self.type_alias_target_text_and_kind_for_symbol(sym_id)
+            .map(|(text, _)| text)
+    }
+
+    fn type_alias_target_text_and_kind_for_symbol(
+        &self,
+        sym_id: tsz_binder::SymbolId,
+    ) -> Option<(String, u16)> {
         let symbol = self.ctx.binder.get_symbol(sym_id)?;
         for &decl_idx in &symbol.declarations {
             let decl_arena =
@@ -78,7 +88,10 @@ impl<'a> CheckerState<'a> {
             let start = start as usize;
             let end = end as usize;
             if start < end && end <= source.len() {
-                return Some(Self::clean_alias_target_text(&source[start..end]));
+                return Some((
+                    Self::clean_alias_target_text(&source[start..end]),
+                    type_node.kind,
+                ));
             }
         }
         None
@@ -100,6 +113,25 @@ impl<'a> CheckerState<'a> {
 
     fn clean_alias_target_text(text: &str) -> String {
         text.trim().trim_end_matches(';').trim_end().to_string()
+    }
+
+    fn type_node_is_type_query_through_parens(&self, mut type_node: NodeIndex) -> bool {
+        for _ in 0..8 {
+            let Some(node) = self.ctx.arena.get(type_node) else {
+                return false;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
+                return true;
+            }
+            if node.kind != syntax_kind_ext::PARENTHESIZED_TYPE {
+                return false;
+            }
+            let Some(wrapped) = self.ctx.arena.get_wrapped_type(node) else {
+                return false;
+            };
+            type_node = wrapped.type_node;
+        }
+        false
     }
 
     fn format_interface_heritage_type_argument(&mut self, arg_idx: NodeIndex) -> String {

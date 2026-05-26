@@ -270,23 +270,14 @@ impl<'a> CheckerState<'a> {
                     let member_type = self.evaluate_type_for_assignability(member_type);
                     let constraint_type = self.resolve_lazy_type(constraint_prop.type_id);
                     let constraint_type = self.evaluate_type_for_assignability(constraint_type);
-                    if crate::query_boundaries::assignability::are_types_structurally_identical(
-                        self.ctx.types,
-                        &self.ctx,
+                    if !crate::query_boundaries::assignability::recursive_heritage_property_types_conflict(
+                        self,
                         member_type,
                         constraint_type,
                     ) {
                         return false;
                     }
-                    if self.is_assignable_to(member_type, constraint_type) {
-                        return false;
-                    }
-                    // Some recursive DOM property types are interned through
-                    // different paths and can miss both relation and canonical
-                    // identity checks while still rendering identically. They
-                    // are not genuine merge conflicts.
-                    self.format_type_diagnostic(member_type)
-                        != self.format_type_diagnostic(constraint_type)
+                    true
                 })
         })
     }

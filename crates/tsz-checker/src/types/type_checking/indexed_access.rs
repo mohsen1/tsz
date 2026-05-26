@@ -333,7 +333,7 @@ impl<'a> CheckerState<'a> {
             // Also check assignability: constraint might be
             // DistributedKeyOf<ObjT> which evaluates to keyof ObjT
             let keyof_object = self.ctx.types.evaluate_keyof(object_type_for_check);
-            if self.is_assignable_to(constraint_eval, keyof_object) {
+            if self.diagnostic_relation_boolean_guard(constraint_eval, keyof_object) {
                 return true;
             }
         }
@@ -654,7 +654,7 @@ impl<'a> CheckerState<'a> {
         {
             let check_index = index_constraint.unwrap_or(index_type);
             let check_index_eval = self.evaluate_type_with_env(check_index);
-            if self.is_assignable_to(check_index_eval, keyof_type) {
+            if self.diagnostic_relation_boolean_guard(check_index_eval, keyof_type) {
                 return;
             }
         }
@@ -871,7 +871,7 @@ impl<'a> CheckerState<'a> {
         // First check: raw index type against keyof.
         // This handles cases where keyof includes type parameters from mapped types
         // (e.g. keyof ({ [P in T]: P } & ...) = T | ...) and the index IS that parameter.
-        if self.is_assignable_to(index_type_for_check, keyof_object) {
+        if self.diagnostic_relation_boolean_guard(index_type_for_check, keyof_object) {
             return;
         }
         if self.conditional_result_branches_satisfy_constraint(index_type, keyof_object)
@@ -886,7 +886,7 @@ impl<'a> CheckerState<'a> {
         // constraint `keyof M` is found from the AST but not in the TypeId.
         if let Some(constraint) = index_constraint {
             let constraint_eval = self.evaluate_type_with_env(constraint);
-            if self.is_assignable_to(constraint_eval, keyof_object) {
+            if self.diagnostic_relation_boolean_guard(constraint_eval, keyof_object) {
                 return;
             }
         }
@@ -931,7 +931,7 @@ impl<'a> CheckerState<'a> {
             );
             let Some(next_constraint) = next else { break };
             let next_evaluated = self.evaluate_type_with_env(next_constraint);
-            if self.is_assignable_to(next_evaluated, keyof_object) {
+            if self.diagnostic_relation_boolean_guard(next_evaluated, keyof_object) {
                 return;
             }
             // If the constraint resolved to a deferred key space for THIS object,
@@ -975,7 +975,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return;
                 }
-                if self.is_assignable_to(evaluated, keyof_object) {
+                if self.diagnostic_relation_boolean_guard(evaluated, keyof_object) {
                     return;
                 }
                 let next = crate::query_boundaries::common::type_parameter_constraint(
@@ -986,7 +986,7 @@ impl<'a> CheckerState<'a> {
                 chain_start = next_constraint;
             }
         }
-        if !self.is_assignable_to(index_type_for_check, keyof_object) {
+        if !self.diagnostic_relation_boolean_guard(index_type_for_check, keyof_object) {
             if let Some((wants_string, wants_number)) =
                 self.get_index_key_kind(index_type_for_check)
                 && !generic_constrained_index(
@@ -1055,11 +1055,12 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|constraint| {
                         let constraint = self.evaluate_type_with_env(constraint);
-                        self.is_assignable_to(constraint, constrained_base_keyof)
+                        self.diagnostic_relation_boolean_guard(constraint, constrained_base_keyof)
                     });
-                let nested_index_matches_constrained_base = self
-                    .is_assignable_to(nested_index_for_check, constrained_base_keyof)
-                    || nested_index_constraint_matches
+                let nested_index_matches_constrained_base = self.diagnostic_relation_boolean_guard(
+                    nested_index_for_check,
+                    constrained_base_keyof,
+                ) || nested_index_constraint_matches
                     || self.is_keyof_for_current_object(
                         nested_index_type,
                         constrained_base_type,
@@ -1188,7 +1189,10 @@ impl<'a> CheckerState<'a> {
                         // Fall back to keyof check for non-literal indices.
                         let constrained_keyof =
                             self.ctx.types.evaluate_keyof(constrained_object_type);
-                        if self.is_assignable_to(index_type_for_check, constrained_keyof) {
+                        if self.diagnostic_relation_boolean_guard(
+                            index_type_for_check,
+                            constrained_keyof,
+                        ) {
                             return;
                         }
                     }
@@ -1512,7 +1516,9 @@ impl<'a> CheckerState<'a> {
                     {
                         // Check if the index is a valid key of the values union
                         let keyof_values = self.ctx.types.evaluate_keyof(values_union);
-                        if self.is_assignable_to(index_type_for_check, keyof_values) {
+                        if self
+                            .diagnostic_relation_boolean_guard(index_type_for_check, keyof_values)
+                        {
                             return;
                         }
                         // Also try property access for string literal indices

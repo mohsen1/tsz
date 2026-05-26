@@ -2,11 +2,18 @@
 //! parameter resolution, arguments object detection, contextual rest
 //! parameter evaluation, and async/return completeness checks.
 
+use crate::computation::complex::{
+    expression_needs_contextual_return_type, is_contextually_sensitive,
+};
+use crate::context::TypingRequest;
+use crate::context::speculation::DiagnosticSpeculationSnapshot;
 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+use crate::query_boundaries::common::ContextualTypeContext;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_solver::{TypeId, TypeParamInfo};
+use tsz_scanner::SyntaxKind;
+use tsz_solver::{FunctionShape, ParamInfo, TypeId, TypeParamInfo};
 
 /// Context for TS2366/TS2355/TS7030 function return completeness checks.
 pub(crate) struct FunctionReturnCheckCtx {
@@ -32,7 +39,901 @@ pub(crate) struct FunctionReturnCheckCtx {
     pub(crate) idx: NodeIndex,
 }
 
+pub(crate) struct FunctionFinalReturnTypeCtx {
+    pub(crate) has_type_annotation: bool,
+    pub(crate) function_is_async: bool,
+    pub(crate) function_is_generator: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) final_generator_yield_type: Option<TypeId>,
+    pub(crate) early_gen_return_type: Option<TypeId>,
+    pub(crate) early_gen_next_type: Option<TypeId>,
+}
+
+pub(crate) struct GeneratorBodyReturnCheckCtx<'b> {
+    pub(crate) is_generator: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) type_annotation: NodeIndex,
+    pub(crate) idx: NodeIndex,
+    pub(crate) function_is_async: bool,
+    pub(crate) early_yield_type: Option<TypeId>,
+    pub(crate) name_node: Option<NodeIndex>,
+    pub(crate) name_for_error: Option<&'b str>,
+}
+
+pub(crate) struct FunctionBodyReturnTypeCtx {
+    pub(crate) idx: NodeIndex,
+    pub(crate) is_generator: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) annotated_return_type: Option<TypeId>,
+    pub(crate) return_type: TypeId,
+    pub(crate) type_annotation: NodeIndex,
+    pub(crate) is_async_for_context: bool,
+    pub(crate) has_contextual_return: bool,
+    pub(crate) contextual_void_return_exception: bool,
+    pub(crate) return_context_for_circularity: Option<TypeId>,
+    pub(crate) jsdoc_return_context: Option<TypeId>,
+    pub(crate) early_gen_return_type: Option<TypeId>,
+}
+
+pub(crate) struct ExpressionBodyReturnCheckCtx {
+    pub(crate) idx: NodeIndex,
+    pub(crate) body: NodeIndex,
+    pub(crate) is_closure: bool,
+    pub(crate) has_type_annotation: bool,
+    pub(crate) is_async_for_context: bool,
+    pub(crate) contextual_void_return_exception: bool,
+    pub(crate) expected_expression_return_type: Option<TypeId>,
+    pub(crate) jsdoc_return_context: Option<TypeId>,
+}
+
+struct DirectExpressionBodyReturnMismatchCtx {
+    idx: NodeIndex,
+    body: NodeIndex,
+    expected_return_type: TypeId,
+    actual_return: TypeId,
+    actual_return_node: NodeIndex,
+    actual_return_uses_jsdoc_cast: bool,
+    is_closure: bool,
+    is_async_for_context: bool,
+}
+
 impl<'a> CheckerState<'a> {
+    pub(crate) fn function_contextual_type_context(
+        &mut self,
+        idx: NodeIndex,
+        contextual_type: Option<TypeId>,
+        is_function_declaration: bool,
+        is_closure: bool,
+    ) -> (
+        Option<TypeId>,
+        Option<Vec<TypeParamInfo>>,
+        Option<FunctionShape>,
+        bool,
+    ) {
+        if let Some(ctx_type) = contextual_type {
+            use crate::query_boundaries::type_checking_utilities::{
+                EvaluationNeeded, classify_for_evaluation, lazy_def_id, type_application,
+            };
+
+            let preserve_raw_mixed_context =
+                crate::query_boundaries::common::union_members(self.ctx.types, ctx_type)
+                    .is_some_and(|members| {
+                        let has_callable = members.iter().any(|&member| {
+                            crate::query_boundaries::common::is_callable_type(
+                                self.ctx.types,
+                                member,
+                            )
+                        });
+                        let has_non_callable = members.iter().any(|&member| {
+                            !crate::query_boundaries::common::is_callable_type(
+                                self.ctx.types,
+                                member,
+                            )
+                        });
+                        has_callable && has_non_callable
+                    });
+            let preserve_raw_signature_context =
+                preserve_raw_mixed_context || self.raw_contextual_signature_available(ctx_type);
+
+            let evaluated_type = if preserve_raw_signature_context {
+                ctx_type
+            } else if type_application(self.ctx.types, ctx_type).is_some() {
+                self.evaluate_application_type(ctx_type)
+            } else if let Some(def_id) = lazy_def_id(self.ctx.types, ctx_type) {
+                self.resolve_and_insert_def_type(def_id)
+                    .unwrap_or_else(|| self.judge_evaluate(ctx_type))
+            } else if matches!(
+                classify_for_evaluation(self.ctx.types, ctx_type),
+                EvaluationNeeded::IndexAccess { .. } | EvaluationNeeded::KeyOf(..)
+            ) {
+                self.judge_evaluate(ctx_type)
+            } else {
+                self.evaluate_contextual_type(ctx_type)
+            };
+            // Preserve original when evaluation degrades to UNKNOWN (unresolved conditionals).
+            let evaluated_type = if evaluated_type == TypeId::UNKNOWN {
+                ctx_type
+            } else {
+                evaluated_type
+            };
+
+            let evaluated_type = self.evaluate_contextual_rest_param_applications(evaluated_type);
+            let contextual_signature_shape =
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    evaluated_type,
+                );
+            let evaluated_type = if preserve_raw_signature_context {
+                evaluated_type
+            } else {
+                self.normalize_contextual_signature_with_env(evaluated_type)
+            };
+            let helper_probe = ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                evaluated_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+            let evaluated_type = if helper_probe.get_this_type().is_none()
+                && helper_probe.get_return_type().is_none()
+                && helper_probe.get_parameter_type(0).is_none()
+                && helper_probe.get_rest_parameter_type(0).is_none()
+                && !crate::query_boundaries::common::is_union_type(self.ctx.types, evaluated_type)
+                && !crate::query_boundaries::common::is_intersection_type(
+                    self.ctx.types,
+                    evaluated_type,
+                ) {
+                crate::query_boundaries::checkers::call::get_contextual_signature(
+                    self.ctx.types,
+                    evaluated_type,
+                )
+                .map(|shape| self.ctx.types.factory().function(shape))
+                .unwrap_or(evaluated_type)
+            } else {
+                evaluated_type
+            };
+
+            return (
+                Some(evaluated_type),
+                self.contextual_type_params_from_expected(evaluated_type),
+                contextual_signature_shape,
+                false,
+            );
+        }
+
+        if self.is_js_file() && (is_function_declaration || is_closure) {
+            // In JS/checkJs, JSDoc `@type {FunctionType}` can live either on a
+            // function declaration or on an enclosing variable statement for a
+            // function expression (`const f = function() {}`), so support both.
+            if let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_function(idx) {
+                return (
+                    Some(evaluated_type),
+                    self.contextual_type_params_from_expected(evaluated_type),
+                    None,
+                    true,
+                );
+            }
+
+            if is_closure
+                && let Some(evaluated_type) = self.jsdoc_callable_type_annotation_for_node(idx)
+            {
+                return (
+                    Some(evaluated_type),
+                    self.contextual_type_params_from_expected(evaluated_type),
+                    None,
+                    true,
+                );
+            }
+        }
+
+        (None, None, None, false)
+    }
+
+    pub(crate) fn check_generator_body_return(
+        &mut self,
+        ctx: GeneratorBodyReturnCheckCtx<'_>,
+    ) -> Option<TypeId> {
+        if !ctx.is_generator {
+            return None;
+        }
+
+        if ctx.has_type_annotation {
+            let declared_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+            let yield_t = self.ctx.current_yield_type();
+            let error_node = if ctx.type_annotation != NodeIndex::NONE {
+                ctx.type_annotation
+            } else {
+                ctx.idx
+            };
+            self.check_generator_return_type_assignability(
+                ctx.function_is_async,
+                yield_t,
+                declared_type,
+                error_node,
+            );
+            return None;
+        }
+
+        let yield_types = std::mem::take(&mut self.ctx.generator_yield_operand_types);
+        let inferred_yield = if yield_types.is_empty() {
+            TypeId::NEVER
+        } else {
+            self.ctx.types.factory().union(yield_types)
+        };
+        let widened = if ctx.early_yield_type.is_some() {
+            inferred_yield
+        } else {
+            self.widen_literal_type(inferred_yield)
+        };
+        let final_yield = if !self.ctx.strict_null_checks()
+            && crate::query_boundaries::common::is_only_null_or_undefined(self.ctx.types, widened)
+        {
+            TypeId::ANY
+        } else {
+            widened
+        };
+
+        if final_yield == TypeId::ANY
+            && self.ctx.no_implicit_any()
+            && !self.is_js_file()
+            && !self.ctx.generator_had_ts7057
+            && ctx.early_yield_type.is_none()
+        {
+            use crate::diagnostics::diagnostic_codes;
+            if let Some(name) = ctx.name_for_error {
+                self.error_at_node_msg(
+                    ctx.name_node.unwrap_or(ctx.idx),
+                    diagnostic_codes::WHICH_LACKS_RETURN_TYPE_ANNOTATION_IMPLICITLY_HAS_AN_YIELD_TYPE,
+                    &[name, "any"],
+                );
+            } else {
+                self.error_at_node_msg(
+                    ctx.idx,
+                    diagnostic_codes::GENERATOR_IMPLICITLY_HAS_YIELD_TYPE_CONSIDER_SUPPLYING_A_RETURN_TYPE_ANNOTATION,
+                    &["any"],
+                );
+            }
+        }
+
+        Some(final_yield)
+    }
+
+    pub(crate) fn function_body_return_type(&mut self, ctx: FunctionBodyReturnTypeCtx) -> TypeId {
+        let body_return_type = if ctx.is_generator && ctx.has_type_annotation {
+            self.annotated_generator_body_return_type(&ctx)
+        } else if ctx.is_async_for_context && ctx.has_type_annotation {
+            let original_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+            self.unwrap_promise_type(original_type)
+                .unwrap_or(ctx.return_type)
+        } else if ctx.is_async_for_context
+            && ctx.has_contextual_return
+            && ctx
+                .return_context_for_circularity
+                .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN)
+        {
+            ctx.return_context_for_circularity
+                .expect("is_some_and guard ensures Some")
+        } else if ctx.is_async_for_context
+            && ctx.has_contextual_return
+            && ctx.return_context_for_circularity == Some(TypeId::VOID)
+        {
+            TypeId::ANY
+        } else if ctx.is_async_for_context {
+            self.unwrap_async_return_type_for_body(ctx.return_type)
+        } else if ctx.contextual_void_return_exception {
+            TypeId::ANY
+        } else if ctx.is_generator
+            && !ctx.has_type_annotation
+            && ctx.has_contextual_return
+            && let Some(early_t) = ctx.early_gen_return_type
+            && early_t != TypeId::ANY
+            && early_t != TypeId::UNKNOWN
+        {
+            early_t
+        } else if ctx.has_type_annotation
+            || ctx.has_contextual_return
+            || ctx.jsdoc_return_context.is_some()
+        {
+            self.sync_function_body_return_type(&ctx)
+        } else {
+            TypeId::ANY
+        };
+
+        self.substitute_direct_this_body_return_type(&ctx, body_return_type)
+    }
+
+    fn annotated_generator_body_return_type(&mut self, ctx: &FunctionBodyReturnTypeCtx) -> TypeId {
+        let original_type = ctx.annotated_return_type.unwrap_or(ctx.return_type);
+        if original_type == TypeId::VOID || ctx.return_type == TypeId::VOID {
+            use crate::diagnostics::diagnostic_codes;
+            self.error_at_node(
+                ctx.type_annotation,
+                "A generator cannot have a 'void' type annotation.",
+                diagnostic_codes::A_GENERATOR_CANNOT_HAVE_A_VOID_TYPE_ANNOTATION,
+            );
+            return TypeId::ANY;
+        }
+
+        self.get_generator_return_type_argument(original_type)
+            .unwrap_or(ctx.return_type)
+    }
+
+    fn sync_function_body_return_type(&mut self, ctx: &FunctionBodyReturnTypeCtx) -> TypeId {
+        let has_direct_callable_jsdoc = !ctx.is_async_for_context
+            && !ctx.is_generator
+            && ctx.has_contextual_return
+            && !ctx.has_type_annotation
+            && ctx.jsdoc_return_context.is_none()
+            && self
+                .jsdoc_callable_type_annotation_for_node_direct(ctx.idx)
+                .is_some();
+        let sync_ctx = has_direct_callable_jsdoc
+            .then_some(ctx.return_context_for_circularity)
+            .flatten()
+            .filter(|&t| t != TypeId::ANY && t != TypeId::UNKNOWN);
+        sync_ctx.unwrap_or_else(|| ctx.annotated_return_type.unwrap_or(ctx.return_type))
+    }
+
+    fn substitute_direct_this_body_return_type(
+        &mut self,
+        ctx: &FunctionBodyReturnTypeCtx,
+        body_return_type: TypeId,
+    ) -> TypeId {
+        if !(ctx.has_type_annotation || ctx.jsdoc_return_context.is_some())
+            || !crate::query_boundaries::common::is_this_type(self.ctx.types, body_return_type)
+        {
+            return body_return_type;
+        }
+
+        if let Some(concrete_this) = self.current_this_type() {
+            crate::query_boundaries::common::substitute_this_type(
+                self.ctx.types,
+                body_return_type,
+                concrete_this,
+            )
+        } else {
+            body_return_type
+        }
+    }
+
+    pub(crate) fn check_expression_body_return_type(&mut self, ctx: ExpressionBodyReturnCheckCtx) {
+        let Some(raw_expected_return_type) = ctx.expected_expression_return_type else {
+            return;
+        };
+        let Some(body_node) = self.ctx.arena.get(ctx.body) else {
+            return;
+        };
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return;
+        }
+
+        let expected_return_type = if crate::query_boundaries::common::is_index_access_type(
+            self.ctx.types,
+            raw_expected_return_type,
+        ) {
+            let evaluated = self.evaluate_type_with_env(raw_expected_return_type);
+            if evaluated != TypeId::ERROR {
+                evaluated
+            } else {
+                raw_expected_return_type
+            }
+        } else {
+            raw_expected_return_type
+        };
+        if expected_return_type == TypeId::ANY || self.type_contains_error(expected_return_type) {
+            return;
+        }
+
+        let mut actual_return_node = ctx.body;
+        let mut actual_return_uses_jsdoc_cast = false;
+        let actual_return = (if let Some(ty) =
+            self.jsdoc_type_annotation_for_node_direct(actual_return_node)
+        {
+            actual_return_uses_jsdoc_cast = true;
+            Some(ty)
+        } else {
+            let mut found = None;
+            while let Some(parent_idx) = self
+                .ctx
+                .arena
+                .get_extended(actual_return_node)
+                .map(|ext| ext.parent)
+            {
+                let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
+                    break;
+                };
+                if parent_node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                    break;
+                }
+                actual_return_node = parent_idx;
+                if let Some(ty) = self.jsdoc_type_annotation_for_node_direct(actual_return_node) {
+                    actual_return_uses_jsdoc_cast = true;
+                    found = Some(ty);
+                    break;
+                }
+            }
+            found
+        })
+        .unwrap_or_else(|| {
+            let can_apply_contextual_body =
+                !self.type_has_unresolved_inference_holes(expected_return_type);
+            let literal_sensitive_return = crate::query_boundaries::common::literal_value(
+                self.ctx.types,
+                expected_return_type,
+            )
+            .is_some()
+                || crate::query_boundaries::common::enum_def_id(
+                    self.ctx.types,
+                    expected_return_type,
+                )
+                .is_some()
+                || (crate::query_boundaries::common::is_symbol_or_unique_symbol(
+                    self.ctx.types,
+                    expected_return_type,
+                ) && expected_return_type != TypeId::SYMBOL)
+                || expected_return_type == TypeId::NEVER
+                || crate::query_boundaries::common::union_list_id(
+                    self.ctx.types,
+                    expected_return_type,
+                )
+                .is_some_and(|list_id| {
+                    self.ctx.types.type_list(list_id).iter().any(|&member| {
+                        crate::query_boundaries::common::is_literal_type(self.ctx.types, member)
+                            || crate::query_boundaries::common::enum_def_id(self.ctx.types, member)
+                                .is_some()
+                    })
+                });
+            let concrete_return_context = expected_return_type != TypeId::ANY
+                && expected_return_type != TypeId::UNKNOWN
+                && !crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    expected_return_type,
+                );
+            let keep_contextual_body = ctx.has_type_annotation
+                || ctx.jsdoc_return_context.is_some()
+                || literal_sensitive_return
+                || (can_apply_contextual_body
+                    && (is_contextually_sensitive(self, ctx.body)
+                        || (concrete_return_context
+                            && expression_needs_contextual_return_type(self, ctx.body))));
+            let body_request = if keep_contextual_body {
+                TypingRequest::with_contextual_type(expected_return_type)
+            } else {
+                TypingRequest::NONE
+            };
+            let prev_preserve_literals = self.ctx.preserve_literal_types;
+            if keep_contextual_body {
+                self.ctx.preserve_literal_types = true;
+            }
+            if body_request.is_empty() {
+                self.invalidate_expression_for_contextual_retry(ctx.body);
+            }
+            let t = self.get_type_of_node_with_request(ctx.body, &body_request);
+            self.ctx.preserve_literal_types = prev_preserve_literals;
+            t
+        });
+
+        let actual_return = if ctx.is_async_for_context {
+            self.unwrap_async_return_type_for_body(actual_return)
+        } else {
+            actual_return
+        };
+        let body_is_simple_expression = self.ctx.arena.get(ctx.body).is_some_and(|body_node| {
+            let effective_kind = if body_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                self.ctx
+                    .arena
+                    .get_parenthesized(body_node)
+                    .and_then(|paren| self.ctx.arena.get(paren.expression))
+                    .map(|inner| inner.kind)
+                    .unwrap_or(body_node.kind)
+            } else {
+                body_node.kind
+            };
+            effective_kind != syntax_kind_ext::BLOCK
+                && effective_kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                && effective_kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        });
+        let suppress_contextual_return_check = !ctx.has_type_annotation
+            && ctx.jsdoc_return_context.is_none()
+            && (self.type_has_unresolved_inference_holes(expected_return_type)
+                || (crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    actual_return,
+                ) && !crate::query_boundaries::common::is_callable_type(
+                    self.ctx.types,
+                    expected_return_type,
+                ))
+                || body_is_simple_expression);
+        let use_generic_return_mismatch =
+            !ctx.has_type_annotation
+                && ctx.jsdoc_return_context.is_none()
+                && self.ctx.arena.get(ctx.body).is_some_and(|body_node| {
+                    body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+                })
+                && self.type_has_unresolved_inference_holes(expected_return_type);
+        if ctx.contextual_void_return_exception || suppress_contextual_return_check {
+            return;
+        }
+        if use_generic_return_mismatch {
+            self.check_generic_expression_body_return_mismatch(
+                ctx.body,
+                expected_return_type,
+                actual_return,
+                ctx.is_async_for_context,
+            );
+            return;
+        }
+
+        self.check_direct_expression_body_return_mismatch(DirectExpressionBodyReturnMismatchCtx {
+            idx: ctx.idx,
+            body: ctx.body,
+            expected_return_type,
+            actual_return,
+            actual_return_node,
+            actual_return_uses_jsdoc_cast,
+            is_closure: ctx.is_closure,
+            is_async_for_context: ctx.is_async_for_context,
+        });
+    }
+
+    fn check_generic_expression_body_return_mismatch(
+        &mut self,
+        body: NodeIndex,
+        expected_return_type: TypeId,
+        actual_return: TypeId,
+        is_async_for_context: bool,
+    ) {
+        let conditional_branch_mismatch = self
+            .ctx
+            .arena
+            .get(body)
+            .and_then(|body_node| self.ctx.arena.get_conditional_expr(body_node))
+            .is_some_and(|cond| {
+                let snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                let return_req = TypingRequest::with_contextual_type(expected_return_type);
+                let mut when_true = self.get_type_of_node_with_request(cond.when_true, &return_req);
+                let mut when_false =
+                    self.get_type_of_node_with_request(cond.when_false, &return_req);
+                snap.rollback(&mut self.ctx.diagnostic_state());
+                if is_async_for_context {
+                    when_true = self.unwrap_promise_type(when_true).unwrap_or(when_true);
+                    when_false = self.unwrap_promise_type(when_false).unwrap_or(when_false);
+                }
+                !self.diagnostic_relation_boolean_guard(when_true, expected_return_type)
+                    || !self.diagnostic_relation_boolean_guard(when_false, expected_return_type)
+            });
+        if conditional_branch_mismatch
+            && !self
+                .is_nested_same_wrapper_application_assignment(actual_return, expected_return_type)
+            && let Some(loc) = self.get_source_location(body)
+        {
+            let src_str = self.format_type(actual_return);
+            let tgt_str = self.format_type(expected_return_type);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&src_str, &tgt_str],
+            );
+            self.ctx
+                .diagnostics
+                .push(crate::diagnostics::Diagnostic::error(
+                    self.ctx.file_name.clone(),
+                    loc.start,
+                    loc.length(),
+                    message,
+                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                ));
+        }
+    }
+
+    fn check_direct_expression_body_return_mismatch(
+        &mut self,
+        ctx: DirectExpressionBodyReturnMismatchCtx,
+    ) {
+        let body_is_conditional = self
+            .ctx
+            .arena
+            .get(ctx.body)
+            .is_some_and(|n| n.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION);
+        let is_rhs_assignment = ctx.is_closure && self.is_rhs_of_assignment(ctx.idx);
+        let inner_body = if ctx.actual_return_uses_jsdoc_cast {
+            ctx.actual_return_node
+        } else {
+            self.ctx.arena.skip_parenthesized_and_assertions(ctx.body)
+        };
+        let assignability_ok = if body_is_conditional || is_rhs_assignment {
+            self.check_assignable_or_report_at(
+                ctx.actual_return,
+                ctx.expected_return_type,
+                ctx.body,
+                ctx.body,
+            )
+        } else {
+            self.check_assignable_or_report_at_exact_anchor(
+                ctx.actual_return,
+                ctx.expected_return_type,
+                inner_body,
+                inner_body,
+            )
+        };
+        if !assignability_ok {
+            for diag in self.ctx.diagnostics.iter().rev() {
+                if diag.code
+                    == tsz_common::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                    && let Some(body_node) = self.ctx.arena.get(ctx.body)
+                    && diag.start >= body_node.pos
+                    && diag.start < body_node.end
+                {
+                    self.ctx.callback_return_type_errors.push(diag.clone());
+                    break;
+                }
+            }
+        }
+        if assignability_ok
+            && let Some(body_node) = self.ctx.arena.get(ctx.body)
+            && body_node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION
+        {
+            self.check_conditional_return_branches_against_type(
+                ctx.body,
+                ctx.expected_return_type,
+                ctx.is_async_for_context,
+            );
+        }
+    }
+
+    pub(crate) fn implicit_function_this_type(
+        &mut self,
+        idx: NodeIndex,
+        is_arrow_function: bool,
+        outer_this_type: Option<TypeId>,
+        explicit_this_type: Option<TypeId>,
+        contextual_this_type: Option<TypeId>,
+        js_constructor_instance_type: Option<TypeId>,
+        js_prototype_owner_instance_type: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let implicit_this = if is_arrow_function {
+            outer_this_type
+        } else {
+            explicit_this_type
+                .or(contextual_this_type)
+                .or(js_constructor_instance_type)
+                .or(js_prototype_owner_instance_type)
+                .or_else(|| self.assignment_receiver_this_type(idx))
+        };
+
+        implicit_this.map(|this_type| self.resolve_lazy_type(this_type))
+    }
+
+    fn assignment_receiver_this_type(&mut self, idx: NodeIndex) -> Option<TypeId> {
+        let mut current = idx;
+        for _ in 0..3 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+            if parent_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                let Some(binary) = self.ctx.arena.get_binary_expr(parent_node) else {
+                    break;
+                };
+                if binary.right == current && self.is_assignment_operator(binary.operator_token) {
+                    return self.this_type_from_assignment_left(binary.left);
+                }
+                break;
+            }
+            if parent_node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                current = parent;
+                continue;
+            }
+            break;
+        }
+        None
+    }
+
+    fn this_type_from_assignment_left(&mut self, left: NodeIndex) -> Option<TypeId> {
+        let left_node = self.ctx.arena.get(left)?;
+        if left_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && left_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(left_node)?;
+        if let Some(instance_type) = self.prototype_assignment_instance_type(access.expression) {
+            return Some(instance_type);
+        }
+        let receiver = self.get_type_of_node(access.expression);
+        (receiver != TypeId::ERROR).then_some(receiver)
+    }
+
+    fn prototype_assignment_instance_type(&mut self, expr: NodeIndex) -> Option<TypeId> {
+        let proto_node = self.ctx.arena.get(expr)?;
+        if proto_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && proto_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let proto_access = self.ctx.arena.get_access_expr(proto_node)?;
+        let proto_name_node = self.ctx.arena.get(proto_access.name_or_argument)?;
+        let proto_ident = self.ctx.arena.get_identifier(proto_name_node)?;
+        if proto_ident.escaped_text != "prototype" {
+            return None;
+        }
+        let constructor_type = self.get_type_of_node(proto_access.expression);
+        self.synthesize_js_constructor_instance_type(proto_access.expression, constructor_type, &[])
+    }
+
+    pub(crate) fn append_js_arguments_rest_param(
+        &mut self,
+        body: NodeIndex,
+        params: &mut Vec<ParamInfo>,
+    ) {
+        // In JS files, functions that reference `arguments` accept any number
+        // of extra arguments. Pre-walk the body as a fallback for call sites
+        // that compute function types before body checking updates the flag.
+        let uses_arguments =
+            self.ctx.js_body_uses_arguments || self.body_has_arguments_reference(body);
+        if self.is_js_file() && uses_arguments && !params.last().is_some_and(|p| p.rest) {
+            params.push(ParamInfo {
+                name: None,
+                type_id: self.ctx.types.factory().array(TypeId::ANY),
+                optional: true,
+                rest: true,
+            });
+        }
+    }
+
+    pub(crate) fn final_function_return_type(&mut self, ctx: FunctionFinalReturnTypeCtx) -> TypeId {
+        let mut final_return_type = if !ctx.has_type_annotation && ctx.function_is_generator {
+            self.unannotated_generator_return_type(&ctx)
+        } else {
+            ctx.annotated_return_type.unwrap_or(ctx.return_type)
+        };
+
+        if !ctx.has_type_annotation && ctx.function_is_async && !ctx.function_is_generator {
+            final_return_type = self.wrap_unannotated_async_return_type(final_return_type);
+        }
+
+        final_return_type
+    }
+
+    fn unannotated_generator_return_type(&mut self, ctx: &FunctionFinalReturnTypeCtx) -> TypeId {
+        let gen_name = if ctx.function_is_async {
+            "AsyncGenerator"
+        } else {
+            "Generator"
+        };
+        let _resolved = self.resolve_lib_type_by_name(gen_name);
+        let lazy_base = self.ctx.binder.file_locals.get(gen_name).map(|sym_id| {
+            let def_id = self.ctx.get_or_create_def_id(sym_id);
+            self.ctx.types.factory().lazy(def_id)
+        });
+        let Some(base) = lazy_base else {
+            return TypeId::ANY;
+        };
+
+        let yield_t = ctx.final_generator_yield_type.unwrap_or(TypeId::ANY);
+        let body_return_t = self.unannotated_generator_body_return_type(ctx);
+        let return_t = body_return_t
+            .or(ctx.early_gen_return_type)
+            .unwrap_or(TypeId::VOID);
+        let next_t = ctx.early_gen_next_type.unwrap_or(TypeId::UNKNOWN);
+
+        self.ctx
+            .types
+            .factory()
+            .application(base, vec![yield_t, return_t, next_t])
+    }
+
+    fn unannotated_generator_body_return_type(
+        &mut self,
+        ctx: &FunctionFinalReturnTypeCtx,
+    ) -> Option<TypeId> {
+        let return_type = ctx.return_type;
+        if return_type == TypeId::UNKNOWN
+            || return_type == TypeId::VOID
+            || return_type == TypeId::UNDEFINED
+            || (return_type == TypeId::ANY && ctx.early_gen_return_type.is_some())
+        {
+            return None;
+        }
+
+        let contextual_pins_return = ctx
+            .early_gen_return_type
+            .is_some_and(|t| t != TypeId::VOID && t != TypeId::ANY && t != TypeId::UNKNOWN);
+        let preserve = contextual_pins_return
+            || crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, return_type);
+        let widened = if preserve {
+            return_type
+        } else {
+            self.widen_literal_type(return_type)
+        };
+        Some(widened)
+    }
+
+    fn wrap_unannotated_async_return_type(&mut self, mut return_type: TypeId) -> TypeId {
+        let had_promise_wrapper = if let Some(inner) = self.unwrap_promise_type(return_type) {
+            return_type = inner;
+            true
+        } else {
+            false
+        };
+        if !had_promise_wrapper
+            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, return_type)
+        {
+            return_type = self.widen_literal_type(return_type);
+        }
+        let promise_base = self
+            .ctx
+            .lib_promise_type_ref()
+            .unwrap_or(TypeId::PROMISE_BASE);
+        self.ctx
+            .types
+            .factory()
+            .application(promise_base, vec![return_type])
+    }
+
+    pub(crate) fn prewarm_inferred_predicate_operand_types(&mut self, body_idx: NodeIndex) {
+        let Some(body_node) = self.ctx.arena.get(body_idx) else {
+            return;
+        };
+        let mut stack = Vec::new();
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            let Some(block) = self.ctx.arena.get_block(body_node) else {
+                return;
+            };
+            let Some(&stmt_idx) = block.statements.nodes.last() else {
+                return;
+            };
+            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
+                return;
+            };
+            if stmt_node.kind != syntax_kind_ext::RETURN_STATEMENT {
+                return;
+            }
+            let Some(ret) = self.ctx.arena.get_return_statement(stmt_node) else {
+                return;
+            };
+            if ret.expression.is_some() {
+                stack.push(ret.expression);
+            }
+        } else {
+            stack.push(body_idx);
+        }
+
+        while let Some(expr_idx) = stack.pop() {
+            let expr_idx = self.ctx.arena.skip_parenthesized_and_assertions(expr_idx);
+            let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
+                continue;
+            };
+            match expr_node.kind {
+                syntax_kind_ext::BINARY_EXPRESSION => {
+                    let Some(binary) = self.ctx.arena.get_binary_expr(expr_node) else {
+                        continue;
+                    };
+                    if binary.operator_token == SyntaxKind::InstanceOfKeyword as u16 {
+                        self.get_type_of_node(binary.right);
+                    } else if matches!(
+                        binary.operator_token,
+                        k if k == SyntaxKind::AmpersandAmpersandToken as u16
+                            || k == SyntaxKind::BarBarToken as u16
+                    ) {
+                        stack.push(binary.left);
+                        stack.push(binary.right);
+                    }
+                }
+                syntax_kind_ext::PREFIX_UNARY_EXPRESSION => {
+                    if let Some(unary) = self.ctx.arena.get_unary_expr(expr_node) {
+                        stack.push(unary.operand);
+                    }
+                }
+                syntax_kind_ext::AS_EXPRESSION | syntax_kind_ext::SATISFIES_EXPRESSION => {
+                    if let Some(assertion) = self.ctx.arena.get_type_assertion(expr_node) {
+                        stack.push(assertion.expression);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// Extract a type predicate from JSDoc `@returns {x is Type}` / `@return {this is Entry}`.
     ///
     /// Parse JSDoc `@return` for type predicates and build `TypePredicate` with parameter index.
@@ -984,5 +1885,80 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::type_param_info(self.ctx.types, ty)
                 .is_some_and(|info| info.is_const)
         })
+    }
+
+    pub(crate) fn class_property_arrow_lexical_this_type(
+        &mut self,
+        arrow_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let (property_idx, class_idx) = self.class_property_arrow_owner(arrow_idx)?;
+        let property_node = self.ctx.arena.get(property_idx)?;
+        let prop = self.ctx.arena.get_property_decl(property_node)?;
+        let class_node = self.ctx.arena.get(class_idx)?;
+        let class_data = self.ctx.arena.get_class(class_node)?;
+        let is_static = self.has_static_modifier(&prop.modifiers);
+
+        // When the arrow function is itself currently being typed, the arrow
+        // node is on `node_resolution_stack`. Triggering a fresh class instance
+        // (or constructor) type build here would recursively re-enter
+        // `get_class_instance_type_inner`, which in turn calls
+        // `get_type_of_node(prop.initializer)` for this same arrow; that
+        // re-entry hits the circular-reference guard and poisons the cached
+        // class shape. Use the already-cached class type or the enclosing-class
+        // snapshot instead.
+        if self.ctx.node_resolution_stack.contains(&arrow_idx) {
+            let cache = if is_static {
+                &self.ctx.class_constructor_type_cache
+            } else {
+                &self.ctx.class_instance_type_cache
+            };
+            return cache.get(&class_idx).copied().or_else(|| {
+                if is_static {
+                    return None;
+                }
+                self.ctx
+                    .enclosing_class
+                    .as_ref()
+                    .filter(|info| info.class_idx == class_idx)
+                    .and_then(|info| info.cached_instance_this_type)
+            });
+        }
+
+        Some(if is_static {
+            self.get_class_constructor_type(class_idx, class_data)
+        } else {
+            self.get_class_instance_type(class_idx, class_data)
+        })
+    }
+
+    fn class_property_arrow_owner(&self, arrow_idx: NodeIndex) -> Option<(NodeIndex, NodeIndex)> {
+        let mut current = arrow_idx;
+        for _ in 0..16 {
+            let parent = self.ctx.arena.get_extended(current)?.parent;
+            let parent_node = self.ctx.arena.get(parent)?;
+
+            if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                let class_idx = self.ctx.arena.get_extended(parent)?.parent;
+                let class_node = self.ctx.arena.get(class_idx)?;
+                if class_node.kind != syntax_kind_ext::CLASS_DECLARATION
+                    && class_node.kind != syntax_kind_ext::CLASS_EXPRESSION
+                {
+                    return None;
+                }
+                return Some((parent, class_idx));
+            }
+
+            if parent_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || parent_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || parent_node.kind == syntax_kind_ext::METHOD_DECLARATION
+                || parent_node.kind == syntax_kind_ext::CONSTRUCTOR
+            {
+                return None;
+            }
+
+            current = parent;
+        }
+
+        None
     }
 }

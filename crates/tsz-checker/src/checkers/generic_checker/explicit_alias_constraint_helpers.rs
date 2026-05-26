@@ -29,7 +29,7 @@ impl<'a> CheckerState<'a> {
         let explicit_base_resolved = self.resolve_lazy_members_in_union(explicit_base);
         let explicit_base_for_check = self.evaluate_type_for_assignability(explicit_base_resolved);
         let inst_constraint_for_check = self.evaluate_type_for_assignability(inst_constraint);
-        self.is_assignable_to(explicit_base_for_check, inst_constraint_for_check)
+        self.diagnostic_relation_boolean_guard(explicit_base_for_check, inst_constraint_for_check)
             || self.base_union_members_satisfy_constraint(
                 explicit_base_for_check,
                 inst_constraint_for_check,

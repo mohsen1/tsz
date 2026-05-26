@@ -279,7 +279,10 @@ fn optional_method_triggers_object_union_sibling_expansion() {
 }
 
 #[test]
-fn object_union_arms_without_methods_are_not_expanded() {
+fn object_union_arms_without_methods_are_expanded() {
+    // tsc normalizes object literals in a union upon widening regardless of
+    // whether any arm contains a method: the property-only arm gains
+    // `b?: undefined`.
     let mut types = vec![
         "{\n    a: number;\n}".to_string(),
         "{\n    a: number;\n    b: string;\n}".to_string(),
@@ -290,8 +293,53 @@ fn object_union_arms_without_methods_are_not_expanded() {
     assert_eq!(
         types,
         vec![
-            "{\n    a: number;\n}".to_string(),
+            "{\n    a: number;\n    b?: undefined;\n}".to_string(),
             "{\n    a: number;\n    b: string;\n}".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn object_union_three_property_only_arms_cross_normalize() {
+    // Three property-only arms with differing keys each gain `?: undefined`
+    // for every sibling key they omit (the widened source-array union shape).
+    let mut types = vec![
+        "{\n    x: number;\n}".to_string(),
+        "{\n    x: number;\n    y: number;\n}".to_string(),
+        "{\n    x: number;\n    err: boolean;\n}".to_string(),
+    ];
+
+    DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+    assert_eq!(
+        types,
+        vec![
+            "{\n    x: number;\n    y?: undefined;\n    err?: undefined;\n}".to_string(),
+            "{\n    x: number;\n    y: number;\n    err?: undefined;\n}".to_string(),
+            "{\n    x: number;\n    err: boolean;\n    y?: undefined;\n}".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
+    // `[{ a: 1, b: 2 }, { a: "abc" }, {}]`-shaped union: the empty arm gains
+    // every key as optional-undefined, and the partial arms gain the keys
+    // they omit. Verifies the empty-arm path no longer skips the other arms.
+    let mut types = vec![
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+        "{\n    a: string;\n}".to_string(),
+        "{}".to_string(),
+    ];
+
+    DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+    assert_eq!(
+        types,
+        vec![
+            "{\n    a: number;\n    b: number;\n}".to_string(),
+            "{\n    a: string;\n    b?: undefined;\n}".to_string(),
+            "{\n    a?: undefined;\n    b?: undefined;\n}".to_string(),
         ]
     );
 }

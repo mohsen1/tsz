@@ -3,6 +3,7 @@
 //! Handles formatting, inlay hints, selection ranges, call hierarchy,
 //! outlining spans, brace matching, refactoring stubs, and related commands.
 
+use super::text_edits::narrow_indentation_only_edit;
 use super::{Server, TsServerRequest, TsServerResponse};
 use tsz::emitter::{ModuleKind, Printer, PrinterOptions};
 
@@ -1146,16 +1147,12 @@ impl Server {
                     let body: Vec<serde_json::Value> = edits
                         .iter()
                         .map(|edit| {
-                            let (normalized_range, normalized_text) =
-                                Self::narrow_to_indentation_only_edit_if_possible(
-                                    &source_text,
-                                    &line_map,
-                                    edit,
-                                );
+                            let normalized =
+                                narrow_indentation_only_edit(&source_text, &line_map, edit);
                             serde_json::json!({
-                                "start": Self::lsp_to_tsserver_position(normalized_range.start),
-                                "end": Self::lsp_to_tsserver_position(normalized_range.end),
-                                "newText": normalized_text,
+                                "start": Self::lsp_to_tsserver_position(normalized.range.start),
+                                "end": Self::lsp_to_tsserver_position(normalized.range.end),
+                                "newText": normalized.new_text,
                             })
                         })
                         .collect();
@@ -1165,73 +1162,6 @@ impl Server {
             }
         })();
         self.success_response(seq, request, Some(result.unwrap_or(serde_json::json!([]))))
-    }
-
-    fn narrow_to_indentation_only_edit_if_possible(
-        source_text: &str,
-        line_map: &LineMap,
-        edit: &tsz::lsp::formatting::TextEdit,
-    ) -> (Range, String) {
-        let Some(start_off) = line_map.position_to_offset(edit.range.start, source_text) else {
-            return (edit.range, edit.new_text.clone());
-        };
-        let Some(end_off) = line_map.position_to_offset(edit.range.end, source_text) else {
-            return (edit.range, edit.new_text.clone());
-        };
-        if start_off >= end_off {
-            return (edit.range, edit.new_text.clone());
-        }
-
-        let Some(old_text) = source_text.get(start_off as usize..end_off as usize) else {
-            return (edit.range, edit.new_text.clone());
-        };
-        if old_text.contains('\n') || old_text.contains('\r') {
-            return (edit.range, edit.new_text.clone());
-        }
-        if edit.new_text.contains('\n') || edit.new_text.contains('\r') {
-            return (edit.range, edit.new_text.clone());
-        }
-
-        let mut prefix = 0usize;
-        for ((old_idx, old_ch), (_, new_ch)) in
-            old_text.char_indices().zip(edit.new_text.char_indices())
-        {
-            if old_ch != new_ch {
-                break;
-            }
-            prefix = old_idx + old_ch.len_utf8();
-        }
-
-        let old_after_prefix = &old_text[prefix..];
-        let new_after_prefix = &edit.new_text[prefix..];
-
-        let mut old_suffix_bytes = 0usize;
-        let mut new_suffix_bytes = 0usize;
-        let mut old_rev = old_after_prefix.char_indices().rev();
-        let mut new_rev = new_after_prefix.char_indices().rev();
-        while let (Some((old_idx, old_ch)), Some((new_idx, new_ch))) =
-            (old_rev.next(), new_rev.next())
-        {
-            if old_ch != new_ch {
-                break;
-            }
-            old_suffix_bytes = old_after_prefix.len() - old_idx;
-            new_suffix_bytes = new_after_prefix.len() - new_idx;
-        }
-
-        let old_mid_end = old_text.len().saturating_sub(old_suffix_bytes);
-        let new_mid_end = edit.new_text.len().saturating_sub(new_suffix_bytes);
-        let narrowed_start = start_off + prefix as u32;
-        let narrowed_end = start_off + old_mid_end as u32;
-        let start_pos = line_map.offset_to_position(narrowed_start, source_text);
-        let end_pos = line_map.offset_to_position(narrowed_end, source_text);
-        let new_text = edit.new_text[prefix..new_mid_end].to_string();
-
-        if narrowed_start == start_off && narrowed_end == end_off && new_text == edit.new_text {
-            return (edit.range, edit.new_text.clone());
-        }
-
-        (Range::new(start_pos, end_pos), new_text)
     }
 
     pub(crate) fn handle_format_on_key(

@@ -18,10 +18,10 @@ impl<'a> CheckerState<'a> {
             let members: Vec<TypeId> = self.ctx.types.type_list(list_id).to_vec();
             return members
                 .into_iter()
-                .all(|member| self.is_assignable_to(member, index_value_type));
+                .all(|member| self.diagnostic_relation_boolean_guard(member, index_value_type));
         }
 
-        self.is_assignable_to(prop_type, index_value_type)
+        self.diagnostic_relation_boolean_guard(prop_type, index_value_type)
     }
 
     pub(crate) fn format_ts2411_type(&mut self, type_id: TypeId) -> String {
