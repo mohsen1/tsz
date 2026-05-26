@@ -709,11 +709,38 @@ impl DefinitionStore {
         self.definitions.get(&id).as_deref().cloned()
     }
 
-    /// Snapshot all definition names for consumers that need stable display names.
-    pub fn all_definition_names(&self) -> Vec<(DefId, Atom)> {
-        self.definitions
+    /// Snapshot all definition name paths for consumers that need stable display names.
+    pub fn all_definition_names(&self) -> Vec<(DefId, Vec<Atom>)> {
+        let definitions: FxHashMap<_, _> = self
+            .definitions
             .iter()
-            .map(|entry| (*entry.key(), entry.value().name))
+            .map(|entry| (*entry.key(), entry.value().clone()))
+            .collect();
+        let mut parents = FxHashMap::default();
+        for (parent_id, parent) in &definitions {
+            for &(export_name, child_id) in &parent.exports {
+                parents.entry(child_id).or_insert((*parent_id, export_name));
+            }
+        }
+        definitions
+            .iter()
+            .map(|(&def_id, info)| {
+                let mut path = vec![info.name];
+                let mut current = def_id;
+                let mut seen = FxHashSet::default();
+                while seen.insert(current) {
+                    let Some(&(parent_id, export_name)) = parents.get(&current) else {
+                        break;
+                    };
+                    path[0] = export_name;
+                    path.insert(
+                        0,
+                        definitions.get(&parent_id).map_or(export_name, |p| p.name),
+                    );
+                    current = parent_id;
+                }
+                (def_id, path)
+            })
             .collect()
     }
 

@@ -359,8 +359,13 @@ impl<'a> TypePrinter<'a> {
             .filter(|&member| member != TypeId::UNDEFINED)
             .collect::<Vec<_>>();
 
+        if self.interner.get_union_origin(type_id).is_some() {
+            return type_id;
+        }
+
         if non_undefined.len() == 1
-            && visitor::contains_type_parameters(self.interner, non_undefined[0])
+            && visitor::function_shape_id(self.interner, non_undefined[0]).is_none()
+            && visitor::callable_shape_id(self.interner, non_undefined[0]).is_none()
         {
             return non_undefined[0];
         }
@@ -1375,6 +1380,65 @@ mod tests {
             "`get${Capitalize<string & K>}`"
         );
         assert_eq!(TypePrinter::mapped_name_type_text("asserts T"), "asserts T");
+    }
+
+    #[test]
+    fn optional_param_display_omits_synthesized_primitive_undefined() {
+        let interner = TypeInterner::new();
+        let separator = interner.intern_string("separator");
+        let ty = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "join",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(separator, ty)],
+            None,
+            TypeId::STRING,
+        );
+        assert_eq!(printed, "join(separator?: string): string");
+    }
+
+    #[test]
+    fn optional_param_display_preserves_callback_undefined() {
+        let interner = TypeInterner::new();
+        let compare_fn = interner.intern_string("compareFn");
+        let callback = interner.function(tsz_solver::FunctionShape::new(
+            vec![
+                tsz_solver::ParamInfo::required(interner.intern_string("a"), TypeId::NUMBER),
+                tsz_solver::ParamInfo::required(interner.intern_string("b"), TypeId::NUMBER),
+            ],
+            TypeId::NUMBER,
+        ));
+        let ty = interner.union2(callback, TypeId::UNDEFINED);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "sort",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(compare_fn, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(
+            printed,
+            "sort(compareFn?: ((a: number, b: number) => number) | undefined): void"
+        );
+    }
+
+    #[test]
+    fn optional_param_display_preserves_explicit_union_origin() {
+        let interner = TypeInterner::new();
+        let value = interner.intern_string("value");
+        let ty = interner.union2(TypeId::STRING, TypeId::UNDEFINED);
+        interner.replace_union_origin_for_display(ty, vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let printed = TypePrinter::new(&interner).print_method_signature(
+            "set",
+            false,
+            &[],
+            &[tsz_solver::ParamInfo::optional(value, ty)],
+            None,
+            TypeId::VOID,
+        );
+        assert_eq!(printed, "set(value?: string | undefined): void");
     }
 
     #[test]

@@ -1387,10 +1387,13 @@ impl<'a> CheckerContext<'a> {
                     .map(|info| (def_id, self.types.resolve_atom(info.name)))
             })
             .collect();
-        for (def_id, name) in self.definition_store.all_definition_names() {
-            def_to_name
-                .entry(def_id)
-                .or_insert_with(|| self.types.resolve_atom(name));
+        for (def_id, name_path) in self.definition_store.all_definition_names() {
+            let name = name_path
+                .iter()
+                .map(|&atom| self.types.resolve_atom(atom))
+                .collect::<Vec<_>>()
+                .join(".");
+            def_to_name.entry(def_id).or_insert(name);
         }
         TypeCache {
             symbol_types: self.symbol_types,
