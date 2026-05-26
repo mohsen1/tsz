@@ -5,7 +5,9 @@
 
 use super::declarations::class::class_has_self_references;
 use super::*;
+use crate::emitter::core::PrivateMemberInfo;
 use crate::transforms::emit_utils::{get_extends_expression_index, hygienic_temp_name};
+use crate::transforms::private_fields_es5::collect_private_fields_with_reserved;
 use std::sync::Arc;
 use tracing::debug;
 use tsz_parser::parser::node::NodeAccess;
@@ -1463,6 +1465,14 @@ impl<'a> Printer<'a> {
             return;
         };
         let class_has_decorators = self.modifiers_have_decorator(&class_data.modifiers);
+        let class_name = class_data
+            .name
+            .is_some()
+            .then_some(class_data.name)
+            .and_then(|name| self.arena.get(name))
+            .and_then(|name| self.arena.get_identifier(name))
+            .map(|ident| ident.escaped_text.clone())
+            .unwrap_or_default();
         let class_span_text = self
             .source_text_for_map()
             .map(|src| {
@@ -1480,6 +1490,32 @@ impl<'a> Printer<'a> {
         }
         let class_super_var =
             extends_expression.map(|_| hygienic_temp_name("_classSuper", class_span_text));
+        let prev_private_field_weakmaps = self.private_field_weakmaps.clone();
+        let prev_private_member_info = self.private_member_info.clone();
+        if class_has_decorators && self.ctx.needs_es2022_lowering {
+            let mut used_names = rustc_hash::FxHashSet::default();
+            for field in collect_private_fields_with_reserved(
+                self.arena,
+                class_node,
+                &class_name,
+                &mut used_names,
+            ) {
+                if field.is_static {
+                    continue;
+                }
+                self.private_field_weakmaps
+                    .insert(field.name.clone(), field.weakmap_name.clone());
+                self.private_member_info.insert(
+                    field.name,
+                    PrivateMemberInfo {
+                        kind: "f",
+                        fn_ref: None,
+                        setter_ref: None,
+                        state_var: None,
+                    },
+                );
+            }
+        }
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1561,6 +1597,8 @@ impl<'a> Printer<'a> {
                 continue;
             }
         }
+        self.private_field_weakmaps = prev_private_field_weakmaps;
+        self.private_member_info = prev_private_member_info;
     }
 
     fn seed_tc39_member_decorator_expressions(
@@ -1596,9 +1634,6 @@ impl<'a> Printer<'a> {
     }
 
     fn tc39_member_decorator_expression_needs_seed(&self, expr_idx: NodeIndex) -> bool {
-        if self.ctx.needs_es2022_lowering && self.node_contains_private_identifier(expr_idx) {
-            return false;
-        }
         self.node_contains_this_keyword(expr_idx) || self.node_contains_private_identifier(expr_idx)
     }
 

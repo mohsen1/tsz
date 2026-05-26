@@ -232,6 +232,61 @@ class C {
 }
 
 #[test]
+fn tc39_lower_target_class_decorated_fields_plan_computed_keys_and_private_capture() {
+    let source = "\
+declare let dec: any;
+declare let f: any;
+
+@dec(this)
+class B {
+    [f(this)] = 1;
+
+    @dec(this)
+    b = 2;
+
+    [f(this)] = 3;
+}
+
+@dec(this)
+class C {
+    #a = 1;
+
+    @dec(this, (x: C) => x.#a)
+    b = 2;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a, _b;")
+            && output.contains("this[_a] = 1;")
+            && output.contains("this.b = __runInitializers(this, _b_initializers, 2);")
+            && output.contains("this[_b] = (__runInitializers(this, _b_extraInitializers), 3);")
+            && output.contains("_a = f(this);")
+            && output.contains("_b = (_b_decorators = [dec(this)], f(this));")
+            && !output.contains("_b_decorators = [dec(_outerThis)];"),
+        "Lower-target class-decorated computed fields should plan constructor assignments and key temps in source order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var _C_a;")
+            && output.contains("_C_a.set(this, 1);")
+            && output.contains("_C_a = new WeakMap();")
+            && output.contains(
+                "_b_decorators = [dec(_outerThis, (x) => __classPrivateFieldGet(x, _C_a, \"f\"))];"
+            ),
+        "Lower-target class-decorated private fields should seed WeakMap lowering for member decorator expression capture.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_parenthesized_decorated_class_expression_breaks_after_open_paren() {
     let source = "\
 declare const dec: any;
