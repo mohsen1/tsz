@@ -240,10 +240,10 @@ impl<'a> CheckerState<'a> {
                             }
                         }
                         if extends_type == constraint
-                            || (self.is_assignable_to(extends_type, constraint)
-                                && self.is_assignable_to(constraint, extends_type))
-                            || self.is_assignable_to(extends_resolved, constraint)
-                            || self.is_assignable_to(extends_evaluated, constraint)
+                            || (self.diagnostic_relation_boolean_guard(extends_type, constraint)
+                                && self.diagnostic_relation_boolean_guard(constraint, extends_type))
+                            || self.diagnostic_relation_boolean_guard(extends_resolved, constraint)
+                            || self.diagnostic_relation_boolean_guard(extends_evaluated, constraint)
                         {
                             return true;
                         }
@@ -283,7 +283,7 @@ impl<'a> CheckerState<'a> {
         // → intersection is `{a: string} & {b: number}` which satisfies `{a: string, b: number}`.
         if accumulated_extends.len() >= 2 {
             let intersection = self.ctx.types.intersection(accumulated_extends);
-            if self.is_assignable_to(intersection, constraint) {
+            if self.diagnostic_relation_boolean_guard(intersection, constraint) {
                 return true;
             }
         }
@@ -798,6 +798,34 @@ impl<'a> CheckerState<'a> {
             .binder
             .get_symbol_with_libs(sym_id, &lib_binders)
             .map_or_else(|| "<unknown>".to_string(), |s| s.escaped_name.clone());
+
+        // A type alias that circularly references itself collapses to a
+        // non-generic error type. Applying type arguments to it is therefore
+        // "Type 'X' is not generic" (TS2315), matching tsc's errorType
+        // behavior; a bare reference yields no diagnostic. This must override
+        // the normal arity checks below, which would otherwise read the stale
+        // generic parameter list off the AST and emit TS2314.
+        if self.type_reference_alias_collapsed_to_error(sym_id) {
+            if !type_args_list.nodes.is_empty() {
+                let error_anchor = self
+                    .ctx
+                    .arena
+                    .get(type_ref_idx)
+                    .and_then(|node| self.ctx.arena.get_type_ref(node))
+                    .map(|tr| tr.type_name)
+                    .unwrap_or(type_ref_idx);
+                self.error_at_node_msg(
+                    error_anchor,
+                    crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_GENERIC,
+                    &[base_name.as_str()],
+                );
+                for &arg_idx in &type_args_list.nodes {
+                    self.get_type_of_node(arg_idx);
+                }
+            }
+            return false;
+        }
+
         let type_params = self.get_reference_type_params_for_symbol(sym_id, &base_name);
         if type_params.is_empty() {
             // Before emitting TS2315, check if this symbol's declaration actually has
@@ -1011,14 +1039,14 @@ impl<'a> CheckerState<'a> {
                 } else {
                     evaluated_constraint
                 };
-            if self.is_assignable_to(type_arg, constraint_for_check) {
+            if self.diagnostic_relation_boolean_guard(type_arg, constraint_for_check) {
                 continue;
             }
             let base = self.constraint_check_base_type(type_arg);
             if base != type_arg && base != TypeId::UNKNOWN {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.is_assignable_to(base, constraint_for_check)
+                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
@@ -1030,7 +1058,7 @@ impl<'a> CheckerState<'a> {
             {
                 let base = self.resolve_lazy_members_in_union(base);
                 let base = self.evaluate_type_for_assignability(base);
-                if self.is_assignable_to(base, constraint_for_check)
+                if self.diagnostic_relation_boolean_guard(base, constraint_for_check)
                     || self.base_union_members_satisfy_constraint(base, constraint_for_check)
                 {
                     continue;
@@ -1294,6 +1322,7 @@ mod array_like_constraint_helpers;
 mod callable_constraint_helpers;
 mod conditional_constraint_helpers;
 mod constraint_display_helpers;
+mod constraint_indexed_access_helpers;
 mod constraint_syntax_instantiation;
 mod constraint_validation;
 mod constructor_accessibility_helpers;

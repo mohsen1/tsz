@@ -18,6 +18,7 @@ mod wrapper_provenance;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::diagnostics as diagnostic_query;
 use crate::state::CheckerState;
+use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
@@ -222,11 +223,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Class property declaration names are not source expressions.
-        // When TS2322 is anchored at the property name (e.g., `y` in `y: string = 42`),
-        // the source expression is the initializer, not the name identifier.
-        // Without this guard, get_type_of_node on the name triggers identifier
-        // resolution → TS2304 "Cannot find name" false positive.
+        // Class property names are assignment targets; the initializer is the
+        // source expression, and resolving the name can emit false TS2304.
         if parent_node.kind == syntax_kind_ext::PROPERTY_DECLARATION
             && let Some(prop) = self.ctx.arena.get_property_decl(parent_node)
             && prop.name == expr_idx
@@ -244,13 +242,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Binding-element names are assignment targets, not source expressions.
-        // When TS2322 is anchored at the binding-element name (e.g. `bar` in
-        // `function f({ bar = null }: { bar?: number } = {}) {}`), the source
-        // is the default-value initializer, not the binding name. Without this
-        // guard, `get_type_of_node(bar)` looks up the binding identifier's
-        // post-destructuring local type and the diagnostic source is rendered
-        // as that type instead of the actual default value's type.
+        // Binding-element names are assignment targets; default-value
+        // initializers are the source expressions.
         if parent_node.kind == syntax_kind_ext::BINDING_ELEMENT
             && let Some(elem) = self.ctx.arena.get_binding_element(parent_node)
             && elem.name == expr_idx
@@ -293,11 +286,8 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Primary: scope-chain resolution (works for variables, parameters, etc.)
-        // Fallback: node_symbols direct lookup for declaration-site identifiers.
-        // Class property names are filtered out by scope-chain resolution (they're
-        // class members, not plain values), but `node_symbols` always maps every
-        // declaration-site name to its symbol — giving us the right symbol here.
+        // Scope-chain resolution covers values; `node_symbols` recovers
+        // declaration-site identifiers such as class property names.
         let sym_id = self
             .resolve_identifier_symbol(expr_idx)
             .or_else(|| self.ctx.binder.node_symbols.get(&expr_idx.0).copied())?;
@@ -402,9 +392,11 @@ impl<'a> CheckerState<'a> {
                     node_text_in_arena(decl_arena, param.type_annotation).and_then(|text| {
                         self.sanitize_type_annotation_text_for_diagnostic(text, allow_object_shapes)
                     })?;
+                let annotation_contains_undefined =
+                    type_node_includes_explicit_undefined(decl_arena, param.type_annotation);
                 if param.question_token
                     && self.ctx.strict_null_checks()
-                    && !text.contains("undefined")
+                    && !annotation_contains_undefined
                 {
                     if text.contains("=>") {
                         text = format!("({text}) | undefined");
@@ -426,10 +418,8 @@ impl<'a> CheckerState<'a> {
                 });
             }
 
-            // Class property declarations: `public scopeGetter: () => SymbolScope = null`
-            // The symbol's value_declaration is the PROPERTY_DECLARATION node itself.
-            // tsc shows the declared annotation text in TS2322 messages, not the
-            // evaluated type (which may be `() => error` for unresolved names).
+            // tsc shows class-property annotation text in TS2322, not the
+            // evaluated type, which may be `() => error` for unresolved names.
             if let Some(prop_decl) = decl_arena.get_property_decl(decl)
                 && prop_decl.type_annotation.is_some()
             {
@@ -1591,16 +1581,9 @@ impl<'a> CheckerState<'a> {
                 });
             !is_control_flow_typed_any
         } else {
-            // The expression type is "strictly narrower" if narrowing produced
-            // a subtype, or if narrowing eliminated members of a declared union
-            // (a strict union-member subset). The union-subset path matters
-            // when one of the eliminated members happens to be structurally
-            // assignable to the surviving member — e.g., `A | B` narrowed to
-            // `B` where `class A { private a }` is assignable to `class B {}`
-            // because `B` requires nothing. Without the subset check, the
-            // is_assignable_to-only path would treat `B` as not strictly
-            // narrower than `A | B` and the broad declared display would leak
-            // into the diagnostic.
+            // A type is strictly narrower when it is a subtype or when flow
+            // eliminated declared union members; the subset check handles
+            // surviving members structurally compatible with eliminated ones.
             let expr_is_assignability_narrower = expr_display_type != declared_type
                 && self.diagnostic_relation_boolean_guard(expr_display_type, declared_type)
                 && !self.diagnostic_relation_boolean_guard(declared_type, expr_display_type);
@@ -1984,14 +1967,9 @@ impl<'a> CheckerState<'a> {
     }
 }
 
-/// Strip file extensions from module specifiers for display.
-/// TSC usually omits TS-family extensions in `typeof import("mod")` output, but
-/// preserves JS-family extensions (`.js`, `.jsx`, `.mjs`, `.cjs`) so that
-/// `typeof import("X.js")` keeps the `.js` suffix when the imported module is a
-/// JS file (regression: `lateBoundAssignmentDeclarationSupport2.js`).
-///
-/// Element-access diagnostics for current-file `module.exports[...]` can opt into
-/// the raw namespace display name before this generic property-receiver path runs.
+/// Strip TS-family file extensions from module specifiers for display while
+/// preserving JS-family extensions in `typeof import("mod")` output.
+/// Element-access diagnostics can opt into raw namespace display earlier.
 pub(crate) fn strip_module_specifier_extension(module_name: &str) -> &str {
     tsz_common::file_extensions::strip_ts_extension(module_name)
 }

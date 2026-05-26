@@ -1004,7 +1004,9 @@ impl<'a> CheckerState<'a> {
                             || op == SyntaxKind::GreaterThanGreaterThanToken as u16
                             || op == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16;
 
-                        if is_compound_like && self.is_assignable_to(right_type, widened_left) {
+                        if is_compound_like
+                            && self.diagnostic_relation_boolean_guard(right_type, widened_left)
+                        {
                             check_assignability = false;
                         }
                     }
@@ -1733,7 +1735,7 @@ impl<'a> CheckerState<'a> {
             self.deferred_generic_element_write_target(left_idx, source_type)
         {
             if (source_type != generic_target
-                && !self.is_assignable_to(source_type, generic_target))
+                && !self.diagnostic_relation_boolean_guard(source_type, generic_target))
                 || (source_type != generic_target
                     && !crate::query_boundaries::common::contains_type_parameters(
                         self.ctx.types,

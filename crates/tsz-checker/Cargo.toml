@@ -30,8 +30,16 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "array_element_naked_inference_tests"
+path = "tests/array_element_naked_inference_tests.rs"
+
+[[test]]
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
+
+[[test]]
+name = "block_body_callback_literal_widening_tests"
+path = "tests/block_body_callback_literal_widening_tests.rs"
 
 [[test]]
 name = "extract_alias_distributive_mapped_tests"
@@ -246,6 +254,10 @@ name = "ts2871_always_nullish_tests"
 path = "tests/ts2871_always_nullish_tests.rs"
 
 [[test]]
+name = "ts2871_through_assertions_tests"
+path = "tests/ts2871_through_assertions_tests.rs"
+
+[[test]]
 name = "ts1239_parameter_decorator_tests"
 path = "tests/ts1239_parameter_decorator_tests.rs"
 
@@ -296,6 +308,10 @@ path = "tests/ts2304_tests.rs"
 [[test]]
 name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
+
+[[test]]
+name = "jsx_union_callback_context_tests"
+path = "tests/jsx_union_callback_context_tests.rs"
 
 [[test]]
 name = "jsx_import_source_namespace_tests"
@@ -414,6 +430,10 @@ name = "typeof_function_like_flow_tests"
 path = "tests/typeof_function_like_flow_tests.rs"
 
 [[test]]
+name = "typeof_chained_indexed_access_alias_tests"
+path = "tests/typeof_chained_indexed_access_alias_tests.rs"
+
+[[test]]
 name = "typeof_import_commonjs_object_literal_export_tests"
 path = "tests/typeof_import_commonjs_object_literal_export_tests.rs"
 
@@ -458,6 +478,10 @@ name = "spread_rest_tests"
 path = "tests/spread_rest_tests.rs"
 
 [[test]]
+name = "spread_rest_diagnostics_tests"
+path = "tests/spread_rest_diagnostics_tests.rs"
+
+[[test]]
 name = "thisless_functions_not_context_sensitive_tests"
 path = "tests/thisless_functions_not_context_sensitive_tests.rs"
 
@@ -480,6 +504,10 @@ path = "tests/jsdoc_implements_tests.rs"
 [[test]]
 name = "js_constructor_property_tests"
 path = "tests/js_constructor_property_tests.rs"
+
+[[test]]
+name = "js_constructor_property_more_tests"
+path = "tests/js_constructor_property_more_tests.rs"
 
 [[test]]
 name = "jsdoc_type_tag_tests"
@@ -714,6 +742,10 @@ name = "issue_7653_parameterless_lambda_inference_tests"
 path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
 
 [[test]]
+name = "issue_9780_typeof_generic_call_callback_param"
+path = "tests/issue_9780_typeof_generic_call_callback_param.rs"
+
+[[test]]
 name = "tuple_type_assertion_inference_tests"
 path = "tests/tuple_type_assertion_inference_tests.rs"
 
@@ -740,6 +772,10 @@ path = "tests/enum_recursion_tests.rs"
 [[test]]
 name = "enum_nominality_tests"
 path = "tests/enum_nominality_tests.rs"
+
+[[test]]
+name = "enum_equality_narrowing_tests"
+path = "tests/enum_equality_narrowing_tests.rs"
 
 [[test]]
 name = "ts2367_comparison_overlap_tests"
@@ -826,6 +862,10 @@ name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
 
 [[test]]
+name = "homomorphic_mapped_empty_keyspace_tests"
+path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
+
+[[test]]
 name = "homomorphic_mapped_union_distribution_tests"
 path = "tests/homomorphic_mapped_union_distribution_tests.rs"
 
@@ -856,6 +896,10 @@ path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 [[test]]
 name = "ts2315_explicit_any_type_alias_tests"
 path = "tests/ts2315_explicit_any_type_alias_tests.rs"
+
+[[test]]
+name = "generic_self_circular_alias_tests"
+path = "tests/generic_self_circular_alias_tests.rs"
 
 [[test]]
 name = "generic_type_alias_deferred_eval_tests"
@@ -936,6 +980,14 @@ path = "tests/infer_extends_constraint_substitution_tests.rs"
 [[test]]
 name = "fresh_intersection_display_tests"
 path = "tests/fresh_intersection_display_tests.rs"
+
+[[test]]
+name = "rendered_decision_debt_tests"
+path = "tests/rendered_decision_debt_tests.rs"
+
+[[test]]
+name = "protected_intersection_owner_display_tests"
+path = "tests/protected_intersection_owner_display_tests.rs"
 
 [[test]]
 name = "intersection_signatures"
@@ -1158,6 +1210,10 @@ name = "deferred_keyof_index_access_assignability_tests"
 path = "tests/deferred_keyof_index_access_assignability_tests.rs"
 
 [[test]]
+name = "intersection_mapped_alias_indexed_access_tests"
+path = "tests/intersection_mapped_alias_indexed_access_tests.rs"
+
+[[test]]
 name = "cross_file_js_ts_class_merge_ts2451_suppression_tests"
 path = "tests/cross_file_js_ts_class_merge_ts2451_suppression_tests.rs"
 
@@ -1208,6 +1264,10 @@ path = "tests/indexed_access_unconstrained_param_tests.rs"
 [[test]]
 name = "indexed_access_callback_tests"
 path = "tests/indexed_access_callback_tests.rs"
+
+[[test]]
+name = "ts2322_indexed_access_type_param_tests"
+path = "tests/ts2322_indexed_access_type_param_tests.rs"
 
 [[test]]
 name = "js_exports_surface_fallback_for_named_imports_tests"
@@ -1282,8 +1342,16 @@ name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 
 [[test]]
+name = "template_literal_any_unknown_placeholder_tests"
+path = "tests/template_literal_any_unknown_placeholder_tests.rs"
+
+[[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
+
+[[test]]
+name = "tagged_template_this_binding_tests"
+path = "tests/tagged_template_this_binding_tests.rs"
 
 [[test]]
 name = "template_literal_recursive_replace_tests"
@@ -1370,6 +1438,10 @@ name = "generic_property_mismatch_display_tests"
 path = "tests/generic_property_mismatch_display_tests.rs"
 
 [[test]]
+name = "nominal_application_call_suppression_tests"
+path = "tests/nominal_application_call_suppression_tests.rs"
+
+[[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
@@ -1412,6 +1484,10 @@ path = "tests/recursive_type_references_tests.rs"
 [[test]]
 name = "template_literal_record_key_tests"
 path = "tests/template_literal_record_key_tests.rs"
+
+[[test]]
+name = "template_literal_generic_call_indexed_keyof_constraint_tests"
+path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"
 
 [[test]]
 name = "ts7053_template_mapped_tests"
@@ -1468,6 +1544,10 @@ path = "tests/satisfies_generic_inference_literal_widening_tests.rs"
 [[test]]
 name = "issue_9785_const_type_param_satisfies_repro"
 path = "tests/issue_9785_const_type_param_satisfies_repro.rs"
+
+[[test]]
+name = "issue_9730_readonly_array_element_inference_repro"
+path = "tests/issue_9730_readonly_array_element_inference_repro.rs"
 
 [[test]]
 name = "satisfies_object_property_position_tests"
@@ -1550,6 +1630,10 @@ name = "mixin_any_base_index_sig_tests"
 path = "tests/mixin_any_base_index_sig_tests.rs"
 
 [[test]]
+name = "ts2545_mixin_constructor_shape_tests"
+path = "tests/ts2545_mixin_constructor_shape_tests.rs"
+
+[[test]]
 name = "stage3_lib_namespace_resolution_tests"
 path = "tests/stage3_lib_namespace_resolution_tests.rs"
 
@@ -1568,6 +1652,10 @@ path = "tests/type_parameter_canonical_typeid_tests.rs"
 [[test]]
 name = "jsdoc_enum_member_assignability_tests"
 path = "tests/jsdoc_enum_member_assignability_tests.rs"
+
+[[test]]
+name = "structural_dispatch_void_tests"
+path = "tests/structural_dispatch_void_tests.rs"
 
 [lints]
 workspace = true

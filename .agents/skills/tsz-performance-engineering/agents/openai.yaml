@@ -1,0 +1,4 @@
+interface:
+  display_name: "TSZ Performance Engineering"
+  short_description: "Do TSZ performance work without breaking parity"
+  default_prompt: "Use $tsz-performance-engineering to plan or review TSZ performance work."
