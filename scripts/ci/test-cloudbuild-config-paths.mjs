@@ -14,6 +14,27 @@ const workflowConfigs = new Map([
   [".github/workflows/ci.yml", ["cloudbuild-unit.yaml"]],
 ]);
 const expectedConfigs = [...workflowConfigs.values()].flat();
+const expectedConfigSet = new Set(expectedConfigs);
+
+const rootCloudbuildConfigs = fs
+  .readdirSync(ROOT)
+  .filter((entry) => /^cloudbuild.*\.ya?ml$/.test(entry))
+  .sort();
+assert.deepEqual(
+  rootCloudbuildConfigs,
+  [],
+  "Cloud Build configs should not live at repository root",
+);
+
+const scriptsCloudbuildConfigs = fs
+  .readdirSync(path.join(ROOT, "scripts", "cloudbuild"))
+  .filter((entry) => /^cloudbuild.*\.ya?ml$/.test(entry))
+  .sort();
+assert.deepEqual(
+  scriptsCloudbuildConfigs,
+  [...expectedConfigSet].sort(),
+  "scripts/cloudbuild should contain exactly the expected Cloud Build configs",
+);
 
 for (const config of expectedConfigs) {
   assert.ok(
