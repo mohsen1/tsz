@@ -261,6 +261,23 @@ impl<'a> Printer<'a> {
                     "Printer ES5Class start (idx={}, class_node={})",
                     idx.0, class_node.0
                 );
+                let class_binding_name = self.register_es5_class_binding_name(class_node);
+                if let Some(class_node_ref) = self.arena.get(class_node)
+                    && let Some(class_data) = self.arena.get_class(class_node_ref)
+                    && let Some(class_name) = self.get_identifier_text_opt(class_data.name)
+                {
+                    let binding_name = class_binding_name.as_deref().unwrap_or(&class_name);
+                    if let Some(output) = self.render_simple_tc39_decorated_class_es5(
+                        node,
+                        class_node,
+                        binding_name,
+                        &class_name,
+                    ) {
+                        self.write(&output);
+                        self.skip_comments_for_erased_node(node);
+                        return;
+                    }
+                }
                 // Collect leading comments before the class so the ES5 emitter
                 // can place them after WeakMap storage declarations.
                 let leading_comments = self.collect_leading_comments(node.pos);
@@ -272,7 +289,6 @@ impl<'a> Printer<'a> {
                 } else {
                     None
                 };
-                let class_binding_name = self.register_es5_class_binding_name(class_node);
                 let mut es5_emitter = self.create_es5_class_emitter_with_decorators(class_node);
                 if let Some(comment) = leading_comment_text {
                     es5_emitter.set_leading_comment(comment);

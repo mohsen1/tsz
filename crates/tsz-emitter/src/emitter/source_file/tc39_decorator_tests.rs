@@ -349,6 +349,62 @@ class C {
 }
 
 #[test]
+fn tc39_es5_class_decorated_static_this_members_use_class_capture() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    static { this; }
+    static x: any = this;
+    static m() { this; }
+    static get g() { return this; }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    let decorate_pos = output
+        .find("__esDecorate(null, _classDescriptor = { value: _classThis }")
+        .expect("expected class decorator application");
+    let static_block_pos = output
+        .find("_classThis;\n    })();")
+        .expect("expected static block to run after decoration");
+    let static_field_pos = output
+        .find("_classThis.x = _classThis;")
+        .expect("expected static field initializer to use class capture");
+    let class_init_pos = output
+        .find("__runInitializers(_classThis, _classExtraInitializers);")
+        .expect("expected class extra initializers");
+
+    assert!(
+        output.contains("var C = function () {")
+            && output.contains("var C = _classThis = /** @class */ (function () {")
+            && output.contains("function C_1()")
+            && output.contains("C_1.m = function () { this; };")
+            && output.contains("Object.defineProperty(C_1, \"g\""),
+        "ES5 class-decorated classes should wrap the inner class while leaving methods/accessors on the inner constructor.\nOutput:\n{output}"
+    );
+    assert!(
+        decorate_pos < static_block_pos
+            && static_block_pos < static_field_pos
+            && static_field_pos < class_init_pos,
+        "Static initializers should run against the decorated class capture before class extra initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("C.x = this;") && !output.contains("_a = C;"),
+        "Static `this` should not use the undecorated constructor path.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_es5_static_public_field_decorator_reserves_outer_this_capture() {
     let source = "\
 declare var dec: any;

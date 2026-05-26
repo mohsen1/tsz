@@ -1,7 +1,10 @@
 use super::super::super::{Printer, ScriptTarget};
 use super::class_has_self_references;
+use super::replace_identifier;
+use crate::emitter::core::PropertyNameEmit;
 use crate::transforms::{ClassDecoratorInfo, ClassES5Emitter};
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::ClassData;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
@@ -455,8 +458,9 @@ impl<'a> Printer<'a> {
         };
 
         !self.collect_class_decorators(&class.modifiers).is_empty()
-            && class.members.nodes.is_empty()
             && class.heritage_clauses.is_none()
+            && !self.class_has_tc39_member_decorators(class)
+            && self.class_has_only_supported_tc39_es5_static_members(class)
     }
 
     pub(in crate::emitter) fn render_simple_tc39_decorated_class_es5(
@@ -521,6 +525,7 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        es5_emitter.set_skip_static_members(true);
         let mut inner_output = es5_emitter.emit_class_with_name(idx, &inner_name);
         self.sync_es5_class_emitter_state(&mut es5_emitter);
         inner_output = inner_output.trim_end_matches('\n').to_string();
@@ -528,6 +533,9 @@ impl<'a> Printer<'a> {
         let base_indent = "    ".repeat(self.writer.indent_level() as usize);
         let body_indent = "    ".repeat((self.writer.indent_level() + 1) as usize);
         let decorator_indent = "    ".repeat((self.writer.indent_level() + 2) as usize);
+        let static_initializers =
+            self.render_tc39_es5_decorated_class_static_initializers(class, binding_name);
+        let has_static_initializers = !static_initializers.is_empty();
 
         let inner_prefix = format!("var {inner_name} = ");
         let indented_inner_prefix = format!("{body_indent}{inner_prefix}");
@@ -545,10 +553,252 @@ impl<'a> Printer<'a> {
             inner_output = format!("{body_indent}{inner_output}");
         }
 
+        let (decorator_tail, after_decorator_initializers) = if has_static_initializers {
+            let class_initializer = format!(
+                "{body_indent}(function () {{\n{decorator_indent}__runInitializers(_classThis, _classExtraInitializers);\n{body_indent}}})();\n"
+            );
+            (
+                String::new(),
+                format!("{static_initializers}{class_initializer}"),
+            )
+        } else {
+            (
+                format!(
+                    "{decorator_indent}__runInitializers(_classThis, _classExtraInitializers);\n"
+                ),
+                String::new(),
+            )
+        };
+
         Some(format!(
-            "{base_indent}var {binding_name} = function () {{\n{body_indent}var _classDecorators = [{}];\n{body_indent}var _classDescriptor;\n{body_indent}var _classExtraInitializers = [];\n{body_indent}var _classThis;\n{inner_output}\n{body_indent}__setFunctionName(_classThis, \"{display_name}\");\n{body_indent}(function () {{\n{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n{decorator_indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n{decorator_indent}{binding_name} = _classThis = _classDescriptor.value;\n{decorator_indent}if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n{decorator_indent}__runInitializers(_classThis, _classExtraInitializers);\n{body_indent}}})();\n{body_indent}return {binding_name} = _classThis;\n{base_indent}}}();",
+            "{base_indent}var {binding_name} = function () {{\n{body_indent}var _classDecorators = [{}];\n{body_indent}var _classDescriptor;\n{body_indent}var _classExtraInitializers = [];\n{body_indent}var _classThis;\n{inner_output}\n{body_indent}__setFunctionName(_classThis, \"{display_name}\");\n{body_indent}(function () {{\n{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n{decorator_indent}__esDecorate(null, _classDescriptor = {{ value: _classThis }}, _classDecorators, {{ kind: \"class\", name: _classThis.name, metadata: _metadata }}, null, _classExtraInitializers);\n{decorator_indent}{binding_name} = _classThis = _classDescriptor.value;\n{decorator_indent}if (_metadata) Object.defineProperty(_classThis, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n{decorator_tail}{body_indent}}})();\n{after_decorator_initializers}{body_indent}return {binding_name} = _classThis;\n{base_indent}}}();",
             decorator_exprs.join(", "),
         ))
+    }
+
+    fn class_has_tc39_member_decorators(&self, class: &ClassData) -> bool {
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .is_some_and(|method| {
+                        !self.collect_class_decorators(&method.modifiers).is_empty()
+                    }),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .is_some_and(|prop| !self.collect_class_decorators(&prop.modifiers).is_empty()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .is_some_and(|accessor| {
+                            !self
+                                .collect_class_decorators(&accessor.modifiers)
+                                .is_empty()
+                        })
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    self.arena.get_constructor(member_node).is_some_and(|ctor| {
+                        ctor.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .is_some_and(|param| {
+                                    !self.collect_class_decorators(&param.modifiers).is_empty()
+                                })
+                        })
+                    })
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn class_has_only_supported_tc39_es5_static_members(&self, class: &ClassData) -> bool {
+        class.members.nodes.iter().all(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return true;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        return true;
+                    };
+                    if !self.arena.is_static(&prop.modifiers) {
+                        return true;
+                    }
+                    if self
+                        .arena
+                        .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        return true;
+                    }
+                    let Some(name_node) = self.arena.get(prop.name) else {
+                        return false;
+                    };
+                    name_node.kind != SyntaxKind::PrivateIdentifier as u16
+                        && !self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                        && self.get_property_name_emit(prop.name).is_some()
+                }
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .is_none_or(|method| {
+                        !self.arena.is_static(&method.modifiers)
+                            || !self.arena.get(method.name).is_some_and(|name| {
+                                name.kind == SyntaxKind::PrivateIdentifier as u16
+                            })
+                    }),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena.get_accessor(member_node).is_none_or(|accessor| {
+                        !self.arena.is_static(&accessor.modifiers)
+                            || !self.arena.get(accessor.name).is_some_and(|name| {
+                                name.kind == SyntaxKind::PrivateIdentifier as u16
+                            })
+                    })
+                }
+                _ => true,
+            }
+        })
+    }
+
+    fn render_tc39_es5_decorated_class_static_initializers(
+        &mut self,
+        class: &ClassData,
+        binding_name: &str,
+    ) -> String {
+        let body_indent = "    ".repeat((self.writer.indent_level() + 1) as usize);
+        let mut out = String::new();
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                let before = self.writer.len();
+                self.emit_static_block_iife_expression_with_class_this(member_idx);
+                let captured = self.format_tc39_es5_static_block_iife(
+                    self.writer.get_output()[before..].trim(),
+                    &body_indent,
+                );
+                self.writer.truncate(before);
+                out.push_str(&body_indent);
+                out.push_str(&captured);
+                out.push_str(";\n");
+                continue;
+            }
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self.arena.is_static(&prop.modifiers)
+                || prop.initializer.is_none()
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let Some(name_emit) = self.get_property_name_emit(prop.name) else {
+                continue;
+            };
+            out.push_str(&body_indent);
+            if self.ctx.options.use_define_for_class_fields {
+                out.push_str("Object.defineProperty(_classThis, ");
+                out.push_str(&self.tc39_es5_static_define_property_name(&name_emit));
+                out.push_str(", {\n");
+                out.push_str(&format!("{body_indent}    enumerable: true,\n"));
+                out.push_str(&format!("{body_indent}    configurable: true,\n"));
+                out.push_str(&format!("{body_indent}    writable: true,\n"));
+                out.push_str(&format!("{body_indent}    value: "));
+                out.push_str(
+                    &self.capture_tc39_es5_static_initializer_value(prop.initializer, binding_name),
+                );
+                out.push('\n');
+                out.push_str(&body_indent);
+                out.push_str("});\n");
+            } else {
+                out.push_str(&self.tc39_es5_static_assignment_target(&name_emit));
+                out.push_str(" = ");
+                out.push_str(
+                    &self.capture_tc39_es5_static_initializer_value(prop.initializer, binding_name),
+                );
+                out.push_str(";\n");
+            }
+        }
+        out
+    }
+
+    fn format_tc39_es5_static_block_iife(&self, captured: &str, body_indent: &str) -> String {
+        let Some(inner) = captured
+            .strip_prefix("(function () { ")
+            .and_then(|text| text.strip_suffix(" })()"))
+        else {
+            return captured.to_string();
+        };
+        let statement_indent = format!("{body_indent}    ");
+        format!("(function () {{\n{statement_indent}{inner}\n{body_indent}}})()")
+    }
+
+    fn emit_static_block_iife_expression_with_class_this(&mut self, static_block_idx: NodeIndex) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        self.scoped_static_this_alias = Some(std::sync::Arc::from("_classThis"));
+        self.scoped_static_super_base_alias = None;
+        self.emit_static_block_iife_expression(static_block_idx, self.comment_emit_idx);
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_base_alias = prev_super_alias;
+    }
+
+    fn capture_tc39_es5_static_initializer_value(
+        &mut self,
+        initializer: NodeIndex,
+        binding_name: &str,
+    ) -> String {
+        let before = self.writer.len();
+        self.emit_expression_with_scoped_static_initializer_mode(
+            initializer,
+            Some("_classThis"),
+            None,
+            false,
+        );
+        let after = self.writer.len();
+        let full = self.writer.get_output().to_string();
+        let segment = &full[before..after];
+        let value = replace_identifier(segment, binding_name, "_classThis");
+        self.writer.truncate(before);
+        value
+    }
+
+    fn tc39_es5_static_assignment_target(&self, name_emit: &PropertyNameEmit) -> String {
+        match name_emit {
+            PropertyNameEmit::Dot(name) => format!("_classThis.{name}"),
+            PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                format!("_classThis[{name}]")
+            }
+        }
+    }
+
+    fn tc39_es5_static_define_property_name(&self, name_emit: &PropertyNameEmit) -> String {
+        match name_emit {
+            PropertyNameEmit::Dot(name) => format!("\"{name}\""),
+            PropertyNameEmit::Bracket(name) | PropertyNameEmit::BracketNumeric(name) => {
+                name.clone()
+            }
+        }
     }
 
     pub(in crate::emitter) fn emit_tc39_decorated_class_expression(
