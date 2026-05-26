@@ -76,16 +76,6 @@ use super::{
 };
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
-    fn instantiate_and_evaluate_type_param_default(
-        &mut self,
-        default: TypeId,
-        subst: &TypeSubstitution,
-        actual_this_type: Option<TypeId>,
-    ) -> TypeId {
-        let instantiated = instantiate_call_type(self.interner, default, subst, actual_this_type);
-        self.checker.evaluate_type(instantiated)
-    }
-
     fn duplicate_single_arg_application_value_shape(&self, arg_type: TypeId) -> Option<TypeId> {
         let Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) =
             self.interner.lookup(arg_type)
@@ -2160,7 +2150,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             {
                                 upper
                             } else if let Some(default) = tp.default {
-                                self.instantiate_and_evaluate_type_param_default(
+                                self.eval_type_param_default(
                                     default,
                                     &final_subst,
                                     actual_this_type,
@@ -2321,11 +2311,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             } else if let Some(default) = tp.default {
-                let ty = self.instantiate_and_evaluate_type_param_default(
-                    default,
-                    &final_subst,
-                    actual_this_type,
-                );
+                let ty = self.eval_type_param_default(default, &final_subst, actual_this_type);
                 trace!(resolved_type = ?ty, "Using default type");
                 // Track that this type parameter fell back to its default.
                 // We should NOT check argument assignability against the default
