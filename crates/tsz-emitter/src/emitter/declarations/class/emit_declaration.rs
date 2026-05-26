@@ -714,6 +714,15 @@ impl<'a> Printer<'a> {
                 auto_accessor_storage_reserved = true;
             }
 
+            let is_tc39_decorated_field = !self.ctx.options.legacy_decorators
+                && !self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                && !self.collect_class_decorators(&prop.modifiers).is_empty();
+            if is_tc39_decorated_field {
+                continue;
+            }
+
             if self.es5_computed_name_needs_temp(name_node) {
                 decls.push(es5_temp_name(temp_name_index));
                 temp_name_index += 1;

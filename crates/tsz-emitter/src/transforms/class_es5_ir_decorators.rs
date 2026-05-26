@@ -3,13 +3,16 @@
 //! Extracted from `class_es5_ir.rs` to keep file sizes manageable.
 
 use crate::transforms::ir::IRNode;
+use rustc_hash::FxHashSet;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_parser::syntax::transform_utils::is_private_identifier;
 use tsz_scanner::SyntaxKind;
 
 use super::{
-    ES5ClassTransformer, Tc39Es5MemberDecorator, get_identifier_text, serialize_param_types,
-    serialize_type_for_metadata,
+    ES5ClassTransformer, Tc39Es5ComputedMemberInjection, Tc39Es5MemberDecorator, Tc39Es5MemberName,
+    get_identifier_text, serialize_param_types, serialize_type_for_metadata,
+    tc39_es5_propkey_temp_name,
 };
 
 impl<'a> ES5ClassTransformer<'a> {
@@ -119,6 +122,9 @@ impl<'a> ES5ClassTransformer<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> Vec<Tc39Es5MemberDecorator> {
         let mut result = Vec::new();
+        let mut computed_counter = 0;
+        let mut last_computed_name = None;
+        let mut propkey_counter = 0;
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -146,34 +152,149 @@ impl<'a> ES5ClassTransformer<'a> {
                     };
                     (&accessor.modifiers, accessor.name, "setter")
                 }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if is_private_identifier(self.arena, prop.name)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                    {
+                        continue;
+                    }
+                    (&prop.modifiers, prop.name, "field")
+                }
                 _ => continue,
             };
+
+            if self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
 
             let decorators = self.collect_decorators_from_modifiers(modifiers);
             if decorators.is_empty() {
                 continue;
             }
-            let Some(name) = get_identifier_text(self.arena, name_idx) else {
+            let Some(name) = self.tc39_es5_member_name(
+                name_idx,
+                &mut computed_counter,
+                &mut last_computed_name,
+                &mut propkey_counter,
+            ) else {
                 continue;
             };
-            if name.is_empty() {
-                continue;
-            }
 
             let prefix = if self.arena.is_static(modifiers) {
                 "_static_"
             } else {
                 "_"
             };
+            let kind_prefix = match kind {
+                "getter" => "get_",
+                "setter" => "set_",
+                _ => "",
+            };
+            let (base_name, suffix) = self.tc39_es5_member_var_name_parts(&name, computed_counter);
+            let initializers_var = (kind == "field")
+                .then(|| format!("{prefix}{kind_prefix}{base_name}_initializers{suffix}"));
+            let extra_initializers_var = (kind == "field")
+                .then(|| format!("{prefix}{kind_prefix}{base_name}_extraInitializers{suffix}"));
             result.push(Tc39Es5MemberDecorator {
-                decorators_var: format!("{prefix}{name}_decorators"),
+                member_idx,
+                decorators_var: format!("{prefix}{kind_prefix}{base_name}_decorators{suffix}"),
                 decorator_exprs: self.render_decorator_expressions(&decorators),
                 kind,
                 name,
                 is_static: self.arena.is_static(modifiers),
+                initializers_var,
+                extra_initializers_var,
             });
         }
         result
+    }
+
+    fn tc39_es5_member_name(
+        &self,
+        name_idx: NodeIndex,
+        computed_counter: &mut u32,
+        last_computed_name: &mut Option<String>,
+        propkey_counter: &mut u32,
+    ) -> Option<Tc39Es5MemberName> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16 {
+            let name = get_identifier_text(self.arena, name_idx)?;
+            return (!name.is_empty()).then_some(Tc39Es5MemberName::Identifier(name));
+        }
+
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return None;
+        }
+
+        let computed = self.arena.get_computed_property(name_node)?;
+        if let Some(expr_node) = self.arena.get(computed.expression)
+            && expr_node.kind == SyntaxKind::StringLiteral as u16
+            && let Some(lit) = self.arena.get_literal(expr_node)
+        {
+            self.update_tc39_es5_computed_suffix(
+                lit.text.as_str(),
+                computed_counter,
+                last_computed_name,
+            );
+            return Some(Tc39Es5MemberName::StringLiteral(lit.text.clone()));
+        }
+
+        let expr = self.convert_computed_property_expression(computed.expression, false);
+        let expr_text = self.render_ir_expression(&expr);
+        self.update_tc39_es5_computed_suffix(
+            expr_text.as_str(),
+            computed_counter,
+            last_computed_name,
+        );
+        let key_var = tc39_es5_propkey_temp_name(*propkey_counter);
+        *propkey_counter += 1;
+        Some(Tc39Es5MemberName::Computed { expr_text, key_var })
+    }
+
+    fn update_tc39_es5_computed_suffix(
+        &self,
+        current_name: &str,
+        computed_counter: &mut u32,
+        last_computed_name: &mut Option<String>,
+    ) {
+        if last_computed_name
+            .as_ref()
+            .is_none_or(|prev| prev != current_name)
+        {
+            if last_computed_name.is_some() {
+                *computed_counter += 1;
+            }
+            *last_computed_name = Some(current_name.to_string());
+        }
+    }
+
+    fn tc39_es5_member_var_name_parts(
+        &self,
+        name: &Tc39Es5MemberName,
+        computed_counter: u32,
+    ) -> (String, String) {
+        match name {
+            Tc39Es5MemberName::Identifier(name) => (name.clone(), String::new()),
+            Tc39Es5MemberName::StringLiteral(_) | Tc39Es5MemberName::Computed { .. } => {
+                let suffix = if computed_counter > 0 {
+                    format!("_{computed_counter}")
+                } else {
+                    String::new()
+                };
+                ("member".to_string(), suffix)
+            }
+        }
     }
 
     pub fn wrap_tc39_es5_output(
@@ -187,7 +308,11 @@ impl<'a> ES5ClassTransformer<'a> {
         let class_name = override_name
             .map(ToOwned::to_owned)
             .or_else(|| get_identifier_text(self.arena, class_data.name))?;
-        let member_decorators = self.collect_tc39_es5_member_decorators(class_data);
+        let member_decorators = if self.tc39_es5_member_decorators.is_empty() {
+            self.collect_tc39_es5_member_decorators(class_data)
+        } else {
+            self.tc39_es5_member_decorators.clone()
+        };
         if member_decorators.is_empty() {
             return None;
         }
@@ -206,12 +331,37 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut class_expr_lines = class_expr.lines();
         let first_class_line = class_expr_lines.next().unwrap_or_default();
 
-        let has_instance = member_decorators.iter().any(|member| !member.is_static);
-        let has_static = member_decorators.iter().any(|member| member.is_static);
+        let has_instance = member_decorators
+            .iter()
+            .any(|member| !member.is_static && !member.is_field());
+        let has_static = member_decorators
+            .iter()
+            .any(|member| member.is_static && !member.is_field());
+        let field_pre_iife_assignments =
+            self.tc39_es5_field_pre_iife_assignments(&member_decorators);
+        let computed_member_injections =
+            self.tc39_es5_computed_member_injections(&member_decorators);
+        let mut remaining_class_lines: Vec<String> =
+            class_expr_lines.map(ToOwned::to_owned).collect();
+        self.inject_tc39_es5_computed_member_keys(
+            &mut remaining_class_lines,
+            class_name.as_str(),
+            &computed_member_injections,
+        );
 
         let mut out = String::new();
         out.push_str(&format!("{base_indent}var {class_name} = function () {{\n"));
         out.push_str(&format!("{body_indent}var {alias};\n"));
+        let propkey_vars: Vec<&str> = member_decorators
+            .iter()
+            .filter_map(|member| match &member.name {
+                Tc39Es5MemberName::Computed { key_var, .. } => Some(key_var.as_str()),
+                _ => None,
+            })
+            .collect();
+        if !propkey_vars.is_empty() {
+            out.push_str(&format!("{body_indent}var {};\n", propkey_vars.join(", ")));
+        }
         if has_instance {
             out.push_str(&format!(
                 "{body_indent}var _instanceExtraInitializers = [];\n"
@@ -224,12 +374,19 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         for member in &member_decorators {
             out.push_str(&format!("{body_indent}var {};\n", member.decorators_var));
+            if let Some(initializers_var) = member.initializers_var.as_ref() {
+                out.push_str(&format!("{body_indent}var {initializers_var} = [];\n"));
+            }
+            if let Some(extra_initializers_var) = member.extra_initializers_var.as_ref() {
+                out.push_str(&format!(
+                    "{body_indent}var {extra_initializers_var} = [];\n"
+                ));
+            }
         }
 
         out.push_str(&format!(
             "{body_indent}return {alias} = {first_class_line}\n"
         ));
-        let remaining_class_lines: Vec<&str> = class_expr_lines.collect();
         for (idx, line) in remaining_class_lines.iter().enumerate() {
             out.push_str(&inner_indent);
             out.push_str(line);
@@ -239,29 +396,57 @@ impl<'a> ES5ClassTransformer<'a> {
                 out.push('\n');
             }
         }
+        for assignment in &field_pre_iife_assignments {
+            out.push_str(&format!("{inner_indent}{assignment},\n"));
+        }
         out.push_str(&format!("{inner_indent}(function () {{\n"));
         out.push_str(&format!(
             "{decorator_indent}var _metadata = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"
         ));
+        {
+            let sinked_decorator_vars: FxHashSet<&str> = computed_member_injections
+                .iter()
+                .flat_map(|injection| injection.decorator_vars.iter().map(String::as_str))
+                .collect();
+            for member in member_decorators.iter().filter(|member| {
+                !member.is_field()
+                    && !sinked_decorator_vars.contains(member.decorators_var.as_str())
+            }) {
+                out.push_str(&format!(
+                    "{decorator_indent}{} = [{}];\n",
+                    member.decorators_var,
+                    member.decorator_exprs.join(", ")
+                ));
+            }
+        }
         for member in &member_decorators {
-            out.push_str(&format!(
-                "{decorator_indent}{} = [{}];\n",
-                member.decorators_var,
-                member.decorator_exprs.join(", ")
-            ));
-            let extra_var = if member.is_static {
-                "_staticExtraInitializers"
+            if let (Some(initializers_var), Some(extra_initializers_var)) = (
+                member.initializers_var.as_ref(),
+                member.extra_initializers_var.as_ref(),
+            ) {
+                out.push_str(&format!(
+                    "{decorator_indent}__esDecorate(null, null, {}, {{ kind: \"{}\", name: {}, static: {}, private: false, access: {{ {} }}, metadata: _metadata }}, {initializers_var}, {extra_initializers_var});\n",
+                    member.decorators_var,
+                    member.kind,
+                    self.tc39_es5_context_name(member),
+                    member.is_static,
+                    self.tc39_es5_member_access(member),
+                ));
             } else {
-                "_instanceExtraInitializers"
-            };
-            out.push_str(&format!(
-                "{decorator_indent}__esDecorate({alias}, null, {}, {{ kind: \"{}\", name: \"{}\", static: {}, private: false, access: {{ {} }}, metadata: _metadata }}, null, {extra_var});\n",
-                member.decorators_var,
-                member.kind,
-                member.name,
-                member.is_static,
-                self.tc39_es5_member_access(member),
-            ));
+                let extra_var = if member.is_static {
+                    "_staticExtraInitializers"
+                } else {
+                    "_instanceExtraInitializers"
+                };
+                out.push_str(&format!(
+                    "{decorator_indent}__esDecorate({alias}, null, {}, {{ kind: \"{}\", name: {}, static: {}, private: false, access: {{ {} }}, metadata: _metadata }}, null, {extra_var});\n",
+                    member.decorators_var,
+                    member.kind,
+                    self.tc39_es5_context_name(member),
+                    member.is_static,
+                    self.tc39_es5_member_access(member),
+                ));
+            }
         }
         out.push_str(&format!(
             "{decorator_indent}if (_metadata) Object.defineProperty({alias}, Symbol.metadata, {{ enumerable: true, configurable: true, writable: true, value: _metadata }});\n"
@@ -272,21 +457,298 @@ impl<'a> ES5ClassTransformer<'a> {
             ));
         }
         out.push_str(&format!("{inner_indent}}})(),\n"));
+        for initializer in self.tc39_es5_static_field_initializers(&member_decorators, alias) {
+            out.push_str(&initializer);
+        }
         out.push_str(&format!("{inner_indent}{alias};\n"));
         out.push_str(&format!("{base_indent}}}();"));
         Some(out)
     }
 
     fn tc39_es5_member_access(&self, member: &Tc39Es5MemberDecorator) -> String {
-        let name = &member.name;
+        let key_expr = self.tc39_es5_key_expr(member);
+        let prop_access = match &member.name {
+            Tc39Es5MemberName::Identifier(name) => format!("obj.{name}"),
+            Tc39Es5MemberName::StringLiteral(_) | Tc39Es5MemberName::Computed { .. } => {
+                format!("obj[{key_expr}]")
+            }
+        };
         match member.kind {
             "setter" => format!(
-                "has: function (obj) {{ return \"{name}\" in obj; }}, set: function (obj, value) {{ obj.{name} = value; }}"
+                "has: function (obj) {{ return {key_expr} in obj; }}, set: function (obj, value) {{ {prop_access} = value; }}"
+            ),
+            "field" => format!(
+                "has: function (obj) {{ return {key_expr} in obj; }}, get: function (obj) {{ return {prop_access}; }}, set: function (obj, value) {{ {prop_access} = value; }}"
             ),
             _ => format!(
-                "has: function (obj) {{ return \"{name}\" in obj; }}, get: function (obj) {{ return obj.{name}; }}"
+                "has: function (obj) {{ return {key_expr} in obj; }}, get: function (obj) {{ return {prop_access}; }}"
             ),
         }
+    }
+
+    fn tc39_es5_key_expr(&self, member: &Tc39Es5MemberDecorator) -> String {
+        match &member.name {
+            Tc39Es5MemberName::Identifier(name) | Tc39Es5MemberName::StringLiteral(name) => {
+                format!("\"{name}\"")
+            }
+            Tc39Es5MemberName::Computed { key_var, .. } => key_var.clone(),
+        }
+    }
+
+    fn tc39_es5_context_name(&self, member: &Tc39Es5MemberDecorator) -> String {
+        self.tc39_es5_key_expr(member)
+    }
+
+    fn tc39_es5_computed_member_injections(
+        &self,
+        members: &[Tc39Es5MemberDecorator],
+    ) -> Vec<Tc39Es5ComputedMemberInjection> {
+        let mut result = Vec::new();
+        let mut assignment_queue = Vec::new();
+        let mut decorator_var_queue = Vec::new();
+        for member in members {
+            if member.is_field() {
+                continue;
+            }
+            assignment_queue.push(format!(
+                "{} = [{}]",
+                member.decorators_var,
+                member.decorator_exprs.join(", ")
+            ));
+            decorator_var_queue.push(member.decorators_var.clone());
+            if let Tc39Es5MemberName::Computed { expr_text, key_var } = &member.name {
+                assignment_queue.push(format!(
+                    "{key_var} = {}({expr_text})",
+                    self.helper_name("__propKey")
+                ));
+                result.push(Tc39Es5ComputedMemberInjection {
+                    kind: member.kind,
+                    is_static: member.is_static,
+                    expr_text: expr_text.clone(),
+                    assignments: std::mem::take(&mut assignment_queue),
+                    decorator_vars: std::mem::take(&mut decorator_var_queue),
+                });
+            }
+        }
+        result
+    }
+
+    fn tc39_es5_field_pre_iife_assignments(
+        &self,
+        members: &[Tc39Es5MemberDecorator],
+    ) -> Vec<String> {
+        let mut result = Vec::new();
+        for member in members.iter().filter(|member| member.is_field()) {
+            result.push(format!(
+                "{} = [{}]",
+                member.decorators_var,
+                member.decorator_exprs.join(", ")
+            ));
+            if let Tc39Es5MemberName::Computed { expr_text, key_var } = &member.name {
+                result.push(format!(
+                    "{key_var} = {}({expr_text})",
+                    self.helper_name("__propKey")
+                ));
+            }
+        }
+        result
+    }
+
+    fn tc39_es5_static_field_initializers(
+        &self,
+        members: &[Tc39Es5MemberDecorator],
+        alias: &str,
+    ) -> Vec<String> {
+        let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
+        let body_indent = "    ".repeat((self.indent_base + 3) as usize);
+        let mut result = Vec::new();
+        let mut previous_extra_initializers: Option<String> = None;
+        let mut last_extra_initializers: Option<String> = None;
+
+        for member in members
+            .iter()
+            .filter(|member| member.is_static && member.is_field())
+        {
+            let Some(field_init) = self.tc39_es5_static_field_initializer(
+                member,
+                alias,
+                previous_extra_initializers.as_deref(),
+            ) else {
+                continue;
+            };
+            result.push(field_init);
+            previous_extra_initializers = member.extra_initializers_var.clone();
+            last_extra_initializers = member.extra_initializers_var.clone();
+        }
+
+        if let Some(extra_initializers) = last_extra_initializers {
+            result.push(format!(
+                "{inner_indent}(function () {{\n{body_indent}__runInitializers({alias}, {extra_initializers});\n{inner_indent}}})(),\n"
+            ));
+        }
+
+        result
+    }
+
+    fn tc39_es5_static_field_initializer(
+        &self,
+        member: &Tc39Es5MemberDecorator,
+        alias: &str,
+        previous_extra_initializers: Option<&str>,
+    ) -> Option<String> {
+        let member_node = self.arena.get(member.member_idx)?;
+        let prop = self.arena.get_property_decl(member_node)?;
+        let initializers_var = member.initializers_var.as_ref()?;
+        let initial_value = if self.property_initializer_has_equals(member_node, prop) {
+            self.render_ir_expression(
+                &self.convert_expression_static_with_class_alias(prop.initializer, alias),
+            )
+        } else {
+            "void 0".to_string()
+        };
+        let value = self.tc39_es5_field_initializer_value(
+            alias,
+            initializers_var,
+            previous_extra_initializers,
+            &initial_value,
+        );
+        let inner_indent = "    ".repeat((self.indent_base + 2) as usize);
+        let descriptor_indent = "    ".repeat((self.indent_base + 3) as usize);
+
+        if self.use_define_for_class_fields {
+            Some(format!(
+                "{inner_indent}Object.defineProperty({alias}, {}, {{\n{descriptor_indent}enumerable: true,\n{descriptor_indent}configurable: true,\n{descriptor_indent}writable: true,\n{descriptor_indent}value: {value}\n{inner_indent}}}),\n",
+                self.tc39_es5_define_property_name(member),
+            ))
+        } else {
+            Some(format!(
+                "{inner_indent}{} = {value},\n",
+                self.tc39_es5_member_target(alias, member),
+            ))
+        }
+    }
+
+    pub(super) fn tc39_es5_field_initializer_value(
+        &self,
+        receiver: &str,
+        initializers_var: &str,
+        previous_extra_initializers: Option<&str>,
+        initial_value: &str,
+    ) -> String {
+        let field_initializer =
+            format!("__runInitializers({receiver}, {initializers_var}, {initial_value})");
+        if let Some(previous_extra_initializers) = previous_extra_initializers {
+            format!(
+                "(__runInitializers({receiver}, {previous_extra_initializers}), {field_initializer})"
+            )
+        } else {
+            field_initializer
+        }
+    }
+
+    fn tc39_es5_member_target(&self, receiver: &str, member: &Tc39Es5MemberDecorator) -> String {
+        match &member.name {
+            Tc39Es5MemberName::Identifier(name) => format!("{receiver}.{name}"),
+            Tc39Es5MemberName::StringLiteral(name) => format!("{receiver}[\"{name}\"]"),
+            Tc39Es5MemberName::Computed { key_var, .. } => format!("{receiver}[{key_var}]"),
+        }
+    }
+
+    fn tc39_es5_define_property_name(&self, member: &Tc39Es5MemberDecorator) -> String {
+        self.tc39_es5_key_expr(member)
+    }
+
+    fn inject_tc39_es5_computed_member_keys(
+        &self,
+        lines: &mut [String],
+        class_name: &str,
+        injections: &[Tc39Es5ComputedMemberInjection],
+    ) {
+        let mut consumed = vec![false; lines.len()];
+        for injection in injections {
+            let receiver = if injection.is_static {
+                class_name.to_string()
+            } else {
+                format!("{class_name}.prototype")
+            };
+            let member_prefix = if injection.kind == "method" {
+                format!("{receiver}[")
+            } else {
+                format!("Object.defineProperty({receiver}, ")
+            };
+            let (needle, replacement) = if injection.kind == "method" {
+                (
+                    format!("[{}]", injection.expr_text),
+                    format!("[({})]", injection.assignments.join(", ")),
+                )
+            } else {
+                (
+                    format!("{},", injection.expr_text),
+                    format!("({}),", injection.assignments.join(", ")),
+                )
+            };
+            if let Some((line_index, line)) =
+                lines.iter_mut().enumerate().find(|(line_index, line)| {
+                    !consumed[*line_index]
+                        && line.contains(&member_prefix)
+                        && line.contains(&needle)
+                })
+                && let Some(start) = line.find(&needle)
+            {
+                consumed[line_index] = true;
+                let end = start + needle.len();
+                let mut rewritten = String::with_capacity(line.len() + replacement.len());
+                rewritten.push_str(&line[..start]);
+                rewritten.push_str(&replacement);
+                rewritten.push_str(&line[end..]);
+                *line = rewritten;
+            }
+        }
+    }
+
+    pub(super) fn tc39_es5_decorated_field(
+        &self,
+        member_idx: NodeIndex,
+    ) -> Option<&Tc39Es5MemberDecorator> {
+        self.tc39_es5_member_decorators
+            .iter()
+            .find(|member| member.member_idx == member_idx && member.is_field())
+    }
+
+    pub(super) fn tc39_previous_field_extra_initializers_var(
+        &self,
+        member_idx: NodeIndex,
+        is_static: bool,
+    ) -> Option<&str> {
+        let current_pos = self
+            .tc39_es5_member_decorators
+            .iter()
+            .position(|member| member.member_idx == member_idx && member.is_field())?;
+        self.tc39_es5_member_decorators[..current_pos]
+            .iter()
+            .rev()
+            .find(|member| member.is_static == is_static && member.is_field())
+            .and_then(|member| member.extra_initializers_var.as_deref())
+    }
+
+    pub(super) fn emit_tc39_instance_field_extra_initializers_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        use_this: bool,
+    ) {
+        let Some(extra_initializers) = self
+            .tc39_es5_member_decorators
+            .iter()
+            .rev()
+            .find(|member| !member.is_static && member.is_field())
+            .and_then(|member| member.extra_initializers_var.as_deref())
+        else {
+            return;
+        };
+        let receiver_text = if use_this { "_this" } else { "this" };
+        body.push(IRNode::expr_stmt(IRNode::Raw(
+            format!("__runInitializers({receiver_text}, {extra_initializers})").into(),
+        )));
     }
 
     fn accessor_metadata_strings(

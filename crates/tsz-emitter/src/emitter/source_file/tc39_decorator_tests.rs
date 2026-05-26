@@ -349,6 +349,42 @@ class C {
 }
 
 #[test]
+fn tc39_es5_static_public_field_decorator_reserves_outer_this_capture() {
+    let source = "\
+declare var dec: any;
+
+class C {
+    @dec
+    static field = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    let this_capture_pos = output
+        .find("var _this = this;")
+        .expect("expected outer this capture");
+    let class_pos = output
+        .find("var C = function ()")
+        .expect("expected ES5 class");
+    assert!(
+        this_capture_pos < class_pos,
+        "Static decorated public fields should reserve the ES5 outer this capture before the class.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a.field = __runInitializers(_a, _static_field_initializers, 1),"),
+        "Static decorated public field initialization should run after decoration in the wrapper.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_private_accessors_use_helper_temps() {
     let source = "\
 declare var dec: any;

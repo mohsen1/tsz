@@ -104,14 +104,25 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_scanner::SyntaxKind;
 
-struct Tc39Es5MemberDecorator {
+#[derive(Clone)]
+pub(super) struct Tc39Es5MemberDecorator {
+    member_idx: NodeIndex,
     decorators_var: String,
     decorator_exprs: Vec<String>,
     kind: &'static str,
     name: Tc39Es5MemberName,
     is_static: bool,
+    initializers_var: Option<String>,
+    extra_initializers_var: Option<String>,
 }
 
+impl Tc39Es5MemberDecorator {
+    const fn is_field(&self) -> bool {
+        self.initializers_var.is_some()
+    }
+}
+
+#[derive(Clone)]
 enum Tc39Es5MemberName {
     Identifier(String),
     StringLiteral(String),
@@ -159,6 +170,8 @@ pub struct ES5ClassTransformer<'a> {
     tc39_decorators: bool,
     /// Whether the current TC39-decorated class needs instance extra initializers.
     tc39_has_instance_member_decorators: bool,
+    /// TC39 member decorator metadata for the class currently being transformed.
+    tc39_es5_member_decorators: Vec<Tc39Es5MemberDecorator>,
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
     /// Counter for generating unique temp variable names (_a, _b, _c, ...)
@@ -215,6 +228,7 @@ impl<'a> ES5ClassTransformer<'a> {
             emit_decorator_metadata: false,
             tc39_decorators: false,
             tc39_has_instance_member_decorators: false,
+            tc39_es5_member_decorators: Vec::new(),
             indent_base: 0,
             temp_var_counter: Cell::new(0),
             computed_prop_temp_map: std::collections::HashMap::new(),
@@ -1446,11 +1460,15 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.class_name = class_name;
-        self.tc39_has_instance_member_decorators = self.tc39_decorators
-            && self
-                .collect_tc39_es5_member_decorators(class_data)
-                .iter()
-                .any(|member| !member.is_static);
+        self.tc39_es5_member_decorators = if self.tc39_decorators {
+            self.collect_tc39_es5_member_decorators(class_data)
+        } else {
+            Vec::new()
+        };
+        self.tc39_has_instance_member_decorators = self
+            .tc39_es5_member_decorators
+            .iter()
+            .any(|member| !member.is_static && !member.is_field());
 
         // Collect private fields and accessors
         let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);

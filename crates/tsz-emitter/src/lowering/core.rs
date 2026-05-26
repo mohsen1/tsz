@@ -1211,6 +1211,18 @@ impl<'a> LoweringPass<'a> {
         }
         if has_tc39_decorators {
             self.mark_tc39_decorator_helpers(class);
+            if self.ctx.target_es5
+                && self.class_has_static_tc39_public_field_decorator(class)
+                && let Some(&enclosing_body) = self.enclosing_function_bodies.last()
+            {
+                let capture_name = self
+                    .enclosing_capture_names
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| Arc::from("_this"));
+                self.transforms
+                    .mark_this_capture_scope(enclosing_body, capture_name);
+            }
         }
 
         // Determine the base transform

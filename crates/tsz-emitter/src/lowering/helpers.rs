@@ -1356,6 +1356,41 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
+    pub(super) fn class_has_static_tc39_public_field_decorator(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.has_class_member_modifier(&prop.modifiers, SyntaxKind::StaticKeyword as u16)
+                && !self
+                    .has_class_member_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword as u16)
+                && !self
+                    .has_class_member_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword as u16)
+                && !self
+                    .has_class_member_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword as u16)
+                && self
+                    .arena
+                    .get(prop.name)
+                    .is_none_or(|name| name.kind != SyntaxKind::PrivateIdentifier as u16)
+                && prop.modifiers.as_ref().is_some_and(|mods| {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                    })
+                })
+        })
+    }
+
     /// Check if a class has any decorated members with computed property names
     pub(super) fn class_has_computed_decorated_member(
         &self,

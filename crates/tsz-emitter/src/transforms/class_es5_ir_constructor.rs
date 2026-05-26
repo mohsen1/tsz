@@ -198,6 +198,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             ctor_body.push(ir);
                         }
                     }
+                    self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, true);
 
                     // return _this;
                     ctor_body.push(IRNode::ret(Some(IRNode::id("_this"))));
@@ -224,6 +225,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         ctor_body.push(ir);
                     }
                 }
+                self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, false);
             }
         }
 
@@ -433,6 +435,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         // Emit remaining statements after super()
         // In derived constructors, `this` becomes `_this` after super() call
@@ -527,6 +530,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 try_body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(&mut try_body, true);
 
         if super_stmt_idx.is_some() {
             for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
@@ -617,6 +621,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         let mut prev_stmt_end = body_node.pos;
         for &stmt_idx in &block.statements.nodes {
@@ -944,6 +949,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, false);
 
         // Emit original constructor body
         if let Some(block_node) = self.arena.get(body_idx)

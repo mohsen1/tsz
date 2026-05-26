@@ -235,7 +235,7 @@ impl<'a> ES5ClassTransformer<'a> {
         self.get_method_name_ir(name_idx)
     }
 
-    fn render_ir_expression(&self, expr: &IRNode) -> String {
+    pub(super) fn render_ir_expression(&self, expr: &IRNode) -> String {
         let mut printer = IRPrinter::with_arena(self.arena);
         printer.set_target_es5(true);
         if let Some(source_text) = self.source_text {
@@ -269,7 +269,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
-        let value = if has_initializer_equals {
+        let mut value = if has_initializer_equals {
             self.convert_async_arrow_property_initializer(prop_data.initializer)
                 .unwrap_or_else(|| {
                     if use_this {
@@ -281,6 +281,21 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             IRNode::void_0()
         };
+        if let Some(field_decorator) = self.tc39_es5_decorated_field(prop_idx)
+            && let Some(initializers_var) = field_decorator.initializers_var.as_ref()
+        {
+            let receiver_text = if use_this { "_this" } else { "this" };
+            let value_text = self.render_ir_expression(&value);
+            value = IRNode::Raw(
+                self.tc39_es5_field_initializer_value(
+                    receiver_text,
+                    initializers_var,
+                    self.tc39_previous_field_extra_initializers_var(prop_idx, false),
+                    &value_text,
+                )
+                .into(),
+            );
+        }
 
         if self.use_define_for_class_fields {
             Some(IRNode::DefineProperty {

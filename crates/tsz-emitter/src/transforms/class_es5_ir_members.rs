@@ -967,6 +967,9 @@ impl<'a> ES5ClassTransformer<'a> {
                     if !self.property_initializer_has_equals(member_node, prop_data) {
                         continue;
                     }
+                    if self.tc39_es5_decorated_field(member_idx).is_some() {
+                        continue;
+                    }
                     // Defer static property initializers to after all methods/accessors.
                     // tsc emits methods/accessors in source order first, then static
                     // property initializer assignments.
