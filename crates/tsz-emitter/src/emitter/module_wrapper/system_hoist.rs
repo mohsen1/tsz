@@ -13,6 +13,7 @@ impl<'a> Printer<'a> {
     ) -> Vec<String> {
         self.system_empty_binding_temps.clear();
         self.system_object_rest_export_temps.clear();
+        self.system_binding_pattern_temps.clear();
         let mut names = Vec::new();
         let mut deferred_named_export_names = Vec::new();
         let mut seen_deferred_named_export_names = HashSet::new();
@@ -476,6 +477,35 @@ impl<'a> Printer<'a> {
                         }
                     }
 
+                    // Exported non-empty array or multi-element object binding
+                    // patterns need a planned source before each bound name
+                    // can be published individually via exports_1(). Allocate
+                    // the source temp before bound names only when the
+                    // initializer is not itself reusable, matching tsc's
+                    // `var _a, x, y` vs `var x, y` ordering.
+                    if is_exported_variable
+                        && decl.initializer.is_some()
+                        && self.needs_system_destructuring_export_schedule(decl.name)
+                    {
+                        let source_temp = if self
+                            .reusable_object_rest_export_source(decl.initializer)
+                            .is_some()
+                        {
+                            None
+                        } else {
+                            let temp = self.make_unique_name();
+                            if seen.insert(temp.clone()) {
+                                names.push(temp.clone());
+                            }
+                            Some(temp)
+                        };
+                        let name_pos = self.arena.get(decl.name).map_or(u32::MAX, |n| n.pos);
+                        if name_pos != u32::MAX {
+                            self.system_binding_pattern_temps
+                                .insert(name_pos, source_temp);
+                        }
+                    }
+
                     let mut binding_names = Vec::new();
                     self.collect_binding_names(decl.name, &mut binding_names);
                     for name in binding_names {
@@ -619,6 +649,31 @@ impl<'a> Printer<'a> {
                                 .insert(name_node.pos, source_temp);
                         }
                     }
+                    // Non-empty array or multi-element object binding patterns
+                    // that are exported need a planned source so each bound
+                    // name can be published individually via exports_1().
+                    if is_exported
+                        && decl.initializer.is_some()
+                        && self.needs_system_destructuring_export_schedule(decl.name)
+                    {
+                        let source_temp = if self
+                            .reusable_object_rest_export_source(decl.initializer)
+                            .is_some()
+                        {
+                            None
+                        } else {
+                            let temp = self.make_unique_name();
+                            if seen.insert(temp.clone()) {
+                                names.push(temp.clone());
+                            }
+                            Some(temp)
+                        };
+                        let name_pos = self.arena.get(decl.name).map_or(u32::MAX, |n| n.pos);
+                        if name_pos != u32::MAX {
+                            self.system_binding_pattern_temps
+                                .insert(name_pos, source_temp);
+                        }
+                    }
                     continue;
                 }
                 let source_temp = self.make_unique_name();
@@ -640,6 +695,70 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    /// Returns `true` when an exported destructuring variable declaration can
+    /// publish each bound name individually via `exports_1()`. This covers
+    /// non-empty array binding patterns and object binding patterns with two
+    /// or more non-rest, non-defaulted elements (or a single non-rest,
+    /// non-defaulted element that the existing single-element fast path cannot
+    /// handle, e.g. nested sub-patterns).
+    ///
+    /// Patterns with defaults need per-element default temps and are left to a
+    /// follow-up rather than being partially emitted here.
+    fn needs_system_destructuring_export_schedule(&self, name_idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            let Some(pattern) = self.arena.get_binding_pattern(node) else {
+                return false;
+            };
+            return !pattern.elements.nodes.is_empty()
+                && pattern.elements.nodes.iter().all(|&elem_idx| {
+                    elem_idx.is_none()
+                        || self
+                            .arena
+                            .get(elem_idx)
+                            .and_then(|n| self.arena.get_binding_element(n))
+                            .is_some_and(|e| !e.dot_dot_dot_token && e.initializer.is_none())
+                });
+        }
+        if node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(node) else {
+            return false;
+        };
+        // Object patterns with rest are handled by the existing
+        // emit_system_object_rest_export_initializer path. Defaults need
+        // per-element temps, so exclude them from this no-default schedule.
+        let has_rest_or_default = pattern.elements.nodes.iter().any(|&elem_idx| {
+            self.arena
+                .get(elem_idx)
+                .and_then(|n| self.arena.get_binding_element(n))
+                .is_some_and(|e| e.dot_dot_dot_token || e.initializer.is_some())
+        });
+        if has_rest_or_default {
+            return false;
+        }
+        if pattern.elements.nodes.len() >= 2 {
+            return true;
+        }
+        // Single-element object pattern without rest/default: only needs the
+        // scheduled path when the existing single-element path cannot handle it
+        // (nested sub-pattern as the bound name).
+        if let Some(&elem_idx) = pattern.elements.nodes.first() {
+            if let Some(elem_node) = self.arena.get(elem_idx) {
+                if let Some(elem) = self.arena.get_binding_element(elem_node) {
+                    return self.arena.get(elem.name).is_some_and(|n| {
+                        n.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
+                            || n.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                    });
+                }
+            }
+        }
+        false
     }
 
     fn collect_system_nested_top_level_var_hoisted_names(

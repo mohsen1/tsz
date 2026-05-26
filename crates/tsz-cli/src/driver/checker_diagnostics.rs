@@ -247,15 +247,3 @@ pub(super) fn post_process_checker_diagnostics(
         });
     }
 }
-
-pub(super) const LARGE_WILDCARD_BARREL_EXPORTS: usize = 32;
-
-pub(super) fn has_large_wildcard_barrel(program: &MergedProgram, work_items: &[usize]) -> bool {
-    work_items.iter().any(|&file_idx| {
-        program
-            .files
-            .get(file_idx)
-            .and_then(|file| program.wildcard_reexports.get(&file.file_name))
-            .is_some_and(|sources| sources.len() >= LARGE_WILDCARD_BARREL_EXPORTS)
-    })
-}
