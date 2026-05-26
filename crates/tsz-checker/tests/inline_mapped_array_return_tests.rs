@@ -72,3 +72,55 @@ const bad: number = mapped;
         "inline mapped array return must not enumerate array prototype keys, got {diagnostics:#?}"
     );
 }
+
+#[test]
+fn inline_homomorphic_mapped_return_preserves_readonly_tuple_shape() {
+    let diagnostics = relevant_strict_default_lib_diagnostics(
+        r#"
+declare function mapAll<Items extends readonly any[]>(items: Items): { [Pos in keyof Items]: boolean };
+declare const input: readonly [number, string];
+const mapped = mapAll(input);
+const bad: number = mapped;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got {diagnostics:#?}"));
+
+    assert!(
+        ts2322.1.contains("readonly [boolean, boolean]"),
+        "inline mapped readonly tuple return should display as a readonly tuple, got {diagnostics:#?}"
+    );
+    assert!(
+        !ts2322.1.contains("concat") && !ts2322.1.contains("filter"),
+        "inline mapped readonly tuple return must not enumerate array prototype keys, got {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn inline_homomorphic_mapped_return_preserves_readonly_array_shape() {
+    let diagnostics = relevant_strict_default_lib_diagnostics(
+        r#"
+declare function mapAll<Items extends readonly any[]>(items: Items): { [Pos in keyof Items]: string };
+declare const input: readonly number[];
+const mapped = mapAll(input);
+const bad: number = mapped;
+"#,
+    );
+
+    let ts2322 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == 2322)
+        .unwrap_or_else(|| panic!("expected TS2322, got {diagnostics:#?}"));
+
+    assert!(
+        ts2322.1.contains("readonly string[]"),
+        "inline mapped readonly array return should display as a readonly array, got {diagnostics:#?}"
+    );
+    assert!(
+        !ts2322.1.contains("concat") && !ts2322.1.contains("filter"),
+        "inline mapped readonly array return must not enumerate array prototype keys, got {diagnostics:#?}"
+    );
+}
