@@ -918,7 +918,7 @@ impl<'a> InferenceContext<'a> {
         }
     }
 
-    fn primitive_boxed_source_kind(
+    const fn primitive_boxed_source_kind(
         &self,
         ty: TypeId,
         key: Option<&TypeData>,
