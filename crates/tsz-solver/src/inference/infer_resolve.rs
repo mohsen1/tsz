@@ -169,6 +169,7 @@ impl<'a> InferenceContext<'a> {
                 InferencePriority::ReturnType
                     | InferencePriority::LowPriority
                     | InferencePriority::MappedType
+                    | InferencePriority::LiteralKeyof
             )
         });
         if priority_implies_combination {
@@ -684,6 +685,7 @@ impl<'a> InferenceContext<'a> {
                     InferencePriority::ReturnType
                         | InferencePriority::LowPriority
                         | InferencePriority::MappedType
+                        | InferencePriority::LiteralKeyof
                 )
             })
             .unwrap_or(false);

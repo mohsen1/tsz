@@ -103,3 +103,24 @@ const b = r.b;
 
     assert_no_ts2345(&messages);
 }
+
+#[test]
+fn literal_keyof_contra_candidates_still_intersect() {
+    let messages = strict_messages(
+        r#"
+interface Shape {
+    alpha: string;
+    beta: string;
+}
+
+declare function withDefault<Value = Shape>(first: keyof Value, second: keyof Value): Value;
+declare function withoutDefault<Entity>(first: keyof Entity, second: keyof Entity): Entity;
+
+const a = withDefault<Shape>("alpha", "beta");
+const b = withDefault("alpha", "beta");
+const c = withoutDefault("alpha", "beta");
+"#,
+    );
+
+    assert_no_ts2345(&messages);
+}
