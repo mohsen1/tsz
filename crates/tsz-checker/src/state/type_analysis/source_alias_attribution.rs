@@ -4,7 +4,7 @@ use crate::state::CheckerState;
 use std::collections::HashSet;
 use tsz_binder::{BinderState, symbol_flags};
 use tsz_common::perf_counters::{
-    DirectSourceFileTypeAliasBodyRejectionKind,
+    DirectSourceFileTypeAliasBodyRejectionKind, DirectSourceFileTypeAliasBodyRejectionResidueInput,
     DirectSourceFileTypeAliasTypeReferenceRejectionKind, enabled_fast,
     record_direct_source_file_type_alias_body_rejection_kind,
     record_direct_source_file_type_alias_body_rejection_residue,
@@ -51,18 +51,24 @@ pub(crate) fn record_source_alias_rejection_kinds(
                 global_type_is_lowerable,
             );
         record_direct_source_file_type_alias_body_rejection_residue(
-            type_alias_name(arena, type_alias).unwrap_or("<unknown>"),
-            body_kind,
-            first_type_reference_kind,
-            first_type_reference_name_in_node(arena, node_idx),
-            first_non_lowerable_type_reference.map(|reference| reference.kind),
-            first_non_lowerable_type_reference.and_then(|reference| reference.name),
-            first_non_lowerable_leaf_type_reference.map(|reference| reference.kind),
-            first_non_lowerable_leaf_type_reference.and_then(|reference| reference.name),
-            arena
-                .source_files
-                .first()
-                .map(|source_file| source_file.file_name.as_str()),
+            DirectSourceFileTypeAliasBodyRejectionResidueInput {
+                name: type_alias_name(arena, type_alias).unwrap_or("<unknown>"),
+                body_kind,
+                first_type_reference_kind,
+                first_type_reference_name: first_type_reference_name_in_node(arena, node_idx),
+                first_non_lowerable_type_reference_kind: first_non_lowerable_type_reference
+                    .map(|reference| reference.kind),
+                first_non_lowerable_type_reference_name: first_non_lowerable_type_reference
+                    .and_then(|reference| reference.name),
+                first_non_lowerable_leaf_type_reference_kind:
+                    first_non_lowerable_leaf_type_reference.map(|reference| reference.kind),
+                first_non_lowerable_leaf_type_reference_name:
+                    first_non_lowerable_leaf_type_reference.and_then(|reference| reference.name),
+                target_file: arena
+                    .source_files
+                    .first()
+                    .map(|source_file| source_file.file_name.as_str()),
+            },
         );
         record_type_reference_rejection_kinds_in_node(
             arena,

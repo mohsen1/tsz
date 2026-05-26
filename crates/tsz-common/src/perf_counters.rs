@@ -964,6 +964,21 @@ pub struct DirectSourceFileTypeAliasBodyRejectionResidue {
     pub count: u64,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct DirectSourceFileTypeAliasBodyRejectionResidueInput<'a> {
+    pub name: &'a str,
+    pub body_kind: DirectSourceFileTypeAliasBodyRejectionKind,
+    pub first_type_reference_kind: Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
+    pub first_type_reference_name: Option<&'a str>,
+    pub first_non_lowerable_type_reference_kind:
+        Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
+    pub first_non_lowerable_type_reference_name: Option<&'a str>,
+    pub first_non_lowerable_leaf_type_reference_kind:
+        Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
+    pub first_non_lowerable_leaf_type_reference_name: Option<&'a str>,
+    pub target_file: Option<&'a str>,
+}
+
 static DELEGATE_DECLARATION_FILE_MISS_RESIDUES: OnceLock<
     Mutex<Vec<DelegateDeclarationFileMissResidue>>,
 > = OnceLock::new();
@@ -2419,43 +2434,34 @@ pub fn record_direct_source_file_type_alias_first_type_reference_rejection_kind(
 
 #[inline]
 pub fn record_direct_source_file_type_alias_body_rejection_residue(
-    name: &str,
-    body_kind: DirectSourceFileTypeAliasBodyRejectionKind,
-    first_type_reference_kind: Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
-    first_type_reference_name: Option<&str>,
-    first_non_lowerable_type_reference_kind: Option<
-        DirectSourceFileTypeAliasTypeReferenceRejectionKind,
-    >,
-    first_non_lowerable_type_reference_name: Option<&str>,
-    first_non_lowerable_leaf_type_reference_kind: Option<
-        DirectSourceFileTypeAliasTypeReferenceRejectionKind,
-    >,
-    first_non_lowerable_leaf_type_reference_name: Option<&str>,
-    target_file: Option<&str>,
+    residue: DirectSourceFileTypeAliasBodyRejectionResidueInput<'_>,
 ) {
     if !enabled_fast() {
         return;
     }
 
     let body_kind_name =
-        DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES[body_kind.as_index()];
-    let first_type_reference_kind_name = first_type_reference_kind.map(|kind| {
+        DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES[residue.body_kind.as_index()];
+    let first_type_reference_kind_name = residue.first_type_reference_kind.map(|kind| {
         DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
     });
-    let first_type_reference_name = first_type_reference_name.map(str::to_owned);
+    let first_type_reference_name = residue.first_type_reference_name.map(str::to_owned);
     let first_non_lowerable_type_reference_kind_name =
-        first_non_lowerable_type_reference_kind.map(|kind| {
+        residue.first_non_lowerable_type_reference_kind.map(|kind| {
             DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
         });
-    let first_non_lowerable_type_reference_name =
-        first_non_lowerable_type_reference_name.map(str::to_owned);
-    let first_non_lowerable_leaf_type_reference_kind_name =
-        first_non_lowerable_leaf_type_reference_kind.map(|kind| {
+    let first_non_lowerable_type_reference_name = residue
+        .first_non_lowerable_type_reference_name
+        .map(str::to_owned);
+    let first_non_lowerable_leaf_type_reference_kind_name = residue
+        .first_non_lowerable_leaf_type_reference_kind
+        .map(|kind| {
             DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
         });
-    let first_non_lowerable_leaf_type_reference_name =
-        first_non_lowerable_leaf_type_reference_name.map(str::to_owned);
-    let target_file = target_file.map(|file| {
+    let first_non_lowerable_leaf_type_reference_name = residue
+        .first_non_lowerable_leaf_type_reference_name
+        .map(str::to_owned);
+    let target_file = residue.target_file.map(|file| {
         std::path::Path::new(file)
             .file_name()
             .and_then(|name| name.to_str())
@@ -2466,7 +2472,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(row) = rows.iter_mut().find(|row| {
-        row.name == name
+        row.name == residue.name
             && row.body_kind == body_kind_name
             && row.first_type_reference_kind == first_type_reference_kind_name
             && row.first_type_reference_name == first_type_reference_name
@@ -2486,7 +2492,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
 
     if rows.len() < DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT {
         rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
-            name: name.to_owned(),
+            name: residue.name.to_owned(),
             body_kind: body_kind_name,
             first_type_reference_kind: first_type_reference_kind_name,
             first_type_reference_name,
