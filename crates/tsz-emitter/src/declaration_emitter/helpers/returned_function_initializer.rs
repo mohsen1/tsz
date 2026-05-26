@@ -580,12 +580,52 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten();
         let has_direct_function_return = direct_function_return.is_some();
         let return_text = direct_function_return
+            .or_else(|| self.function_body_returned_parameter_type_text(func, func_body))
             .or_else(|| self.function_body_preferred_return_type_text(func_body))
             .map(|type_text| {
                 self.expand_rest_tuple_parameters_in_function_type_text(func_body, &type_text)
                     .unwrap_or(type_text)
             });
         (return_text, has_direct_function_return)
+    }
+
+    fn function_body_returned_parameter_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_body: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(func_body)?;
+        let returned_name = self.get_identifier_text(returned_identifier)?;
+
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            let param_name = self.get_identifier_text(param.name)?;
+            if param_name != returned_name {
+                continue;
+            }
+            let type_text = self
+                .local_type_annotation_text(param.type_annotation)
+                .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
+            let trimmed = Self::trim_returned_parameter_type_annotation_text(&type_text);
+            if !Self::type_text_contains_mapped_type_literal(&trimmed) {
+                return None;
+            }
+            return (!trimmed.is_empty() && trimmed != "any").then(|| trimmed.to_string());
+        }
+
+        None
+    }
+
+    fn trim_returned_parameter_type_annotation_text(type_text: &str) -> String {
+        let trimmed = type_text.trim_end();
+        let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+        let trimmed = if trimmed.starts_with('{') && trimmed.ends_with(')') {
+            trimmed.trim_end_matches(')').trim_end()
+        } else {
+            trimmed
+        };
+        trimmed.to_string()
     }
 
     pub(in crate::declaration_emitter) fn class_property_function_initializer_type_text(
