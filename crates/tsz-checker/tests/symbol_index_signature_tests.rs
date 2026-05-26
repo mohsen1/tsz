@@ -383,6 +383,64 @@ const dst: { [k: symbol]: string } = src;
     );
 }
 
+#[test]
+fn ts2353_computed_symbol_excess_property_displays_source_name() {
+    let diagnostics = check_source_code_messages(
+        r#"
+const sym = Symbol();
+const obj: { [key: number]: string } = { [sym]: "hello" };
+"#,
+    );
+    let ts2353 = diagnostics
+        .iter()
+        .find(|(code, _)| *code == diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE);
+    let Some((_, msg)) = ts2353 else {
+        panic!(
+            "expected TS2353 for symbol key against number index signature, got: {diagnostics:?}"
+        );
+    };
+    assert!(
+        msg.contains("'[sym]'"),
+        "computed symbol excess-property diagnostics should display the source key, got: {msg:?}",
+    );
+    assert!(
+        !msg.contains("__unique_"),
+        "computed symbol excess-property diagnostics must not leak synthetic symbol keys, got: {msg:?}",
+    );
+}
+
+#[test]
+fn ts7053_branded_string_union_index_display_omits_alias_parentheses() {
+    let diagnostics = check_source_code_messages(
+        r#"
+type Tag1 = { __tag1__: void };
+type Tag2 = { __tag2__: void };
+type TaggedString1 = string & Tag1;
+type TaggedString2 = string & Tag2;
+
+declare let key: TaggedString1 | TaggedString2;
+interface Box { [key: TaggedString1]: string }
+declare let boxy: Box;
+boxy[key];
+"#,
+    );
+    let ts7053 = diagnostics.iter().find(|(code, _)| {
+        *code
+            == diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN
+    });
+    let Some((_, msg)) = ts7053 else {
+        panic!("expected TS7053 for incompatible branded-string union key, got: {diagnostics:?}");
+    };
+    assert!(
+        msg.contains("expression of type 'TaggedString1 | TaggedString2'"),
+        "TS7053 should preserve the union of branded aliases without member parentheses, got: {msg:?}",
+    );
+    assert!(
+        !msg.contains("(TaggedString1) | (TaggedString2)"),
+        "TS7053 should not parenthesize branded alias union members, got: {msg:?}",
+    );
+}
+
 // Same structural rule with different param names to prove the fix is not
 // keyed on identifier spelling ("k", "sym", etc.).
 #[test]
