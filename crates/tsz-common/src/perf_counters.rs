@@ -930,6 +930,7 @@ impl SourceFileSymbolArenaCacheEligibilityOutcome {
 
 pub const DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT: usize = 128;
 pub const DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT: usize = 128;
+pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT: usize = 128;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DelegateDeclarationFileMissResidue {
@@ -949,11 +950,23 @@ pub struct DelegateSourceFileMissResidue {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DirectSourceFileTypeAliasBodyRejectionResidue {
+    pub name: String,
+    pub body_kind: &'static str,
+    pub first_type_reference_kind: Option<&'static str>,
+    pub target_file: Option<String>,
+    pub count: u64,
+}
+
 static DELEGATE_DECLARATION_FILE_MISS_RESIDUES: OnceLock<
     Mutex<Vec<DelegateDeclarationFileMissResidue>>,
 > = OnceLock::new();
 static DELEGATE_SOURCE_FILE_MISS_RESIDUES: OnceLock<Mutex<Vec<DelegateSourceFileMissResidue>>> =
     OnceLock::new();
+static DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUES: OnceLock<
+    Mutex<Vec<DirectSourceFileTypeAliasBodyRejectionResidue>>,
+> = OnceLock::new();
 
 fn delegate_declaration_file_miss_residues()
 -> &'static Mutex<Vec<DelegateDeclarationFileMissResidue>> {
@@ -962,6 +975,11 @@ fn delegate_declaration_file_miss_residues()
 
 fn delegate_source_file_miss_residues() -> &'static Mutex<Vec<DelegateSourceFileMissResidue>> {
     DELEGATE_SOURCE_FILE_MISS_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn direct_source_file_type_alias_body_rejection_residues()
+-> &'static Mutex<Vec<DirectSourceFileTypeAliasBodyRejectionResidue>> {
+    DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:
@@ -2395,6 +2413,63 @@ pub fn record_direct_source_file_type_alias_first_type_reference_rejection_kind(
 }
 
 #[inline]
+pub fn record_direct_source_file_type_alias_body_rejection_residue(
+    name: &str,
+    body_kind: DirectSourceFileTypeAliasBodyRejectionKind,
+    first_type_reference_kind: Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
+    target_file: Option<&str>,
+) {
+    if !enabled_fast() {
+        return;
+    }
+
+    let body_kind_name =
+        DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_NAMES[body_kind.as_index()];
+    let first_type_reference_kind_name = first_type_reference_kind.map(|kind| {
+        DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
+    });
+    let target_file = target_file.map(|file| {
+        std::path::Path::new(file)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(file)
+            .to_owned()
+    });
+    let mut rows = direct_source_file_type_alias_body_rejection_residues()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(row) = rows.iter_mut().find(|row| {
+        row.name == name
+            && row.body_kind == body_kind_name
+            && row.first_type_reference_kind == first_type_reference_kind_name
+            && row.target_file == target_file
+    }) {
+        row.count += 1;
+        return;
+    }
+
+    if rows.len() < DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT {
+        rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
+            name: name.to_owned(),
+            body_kind: body_kind_name,
+            first_type_reference_kind: first_type_reference_kind_name,
+            target_file,
+            count: 1,
+        });
+    } else if let Some(row) = rows.iter_mut().find(|row| row.name == "__truncated__") {
+        row.count += 1;
+    } else {
+        rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
+            name: "__truncated__".to_string(),
+            body_kind: "overflow",
+            first_type_reference_kind: Some("overflow"),
+            target_file: None,
+            count: 1,
+        });
+    }
+}
+
+#[inline]
 pub fn record_direct_actual_lib_intl_interface_outcome(
     outcome: DirectActualLibIntlInterfaceOutcome,
 ) {
@@ -2551,6 +2626,9 @@ impl PerfCounters {
             + &Self::dump_direct_source_file_type_alias_body_rejection_kinds()
             + &Self::dump_direct_source_file_type_alias_type_reference_rejection_kinds()
             + &Self::dump_direct_source_file_type_alias_first_type_reference_rejection_kinds()
+            + &Self::dump_direct_source_file_type_alias_body_rejection_residues(
+                &snap.direct_source_file_type_alias_body_rejection_residues,
+            )
             + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
@@ -3016,6 +3094,25 @@ impl PerfCounters {
         out
     }
 
+    fn dump_direct_source_file_type_alias_body_rejection_residues(
+        rows: &[DirectSourceFileTypeAliasBodyRejectionResidue],
+    ) -> String {
+        if rows.is_empty() {
+            return String::new();
+        }
+
+        let mut out = String::from("\ndirect source-file type-alias body rejection residues:\n");
+        for row in rows {
+            let type_ref_kind = row.first_type_reference_kind.unwrap_or("<none>");
+            let file = row.target_file.as_deref().unwrap_or("<unknown>");
+            out.push_str(&format!(
+                "  {:<32} {:<28} {:<36} {:>8}  {file}\n",
+                row.name, row.body_kind, type_ref_kind, row.count,
+            ));
+        }
+        out
+    }
+
     fn dump_direct_actual_lib_intl_interface_outcomes() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -3315,6 +3412,17 @@ pub struct PerfCounterSnapshot {
     /// most one count per `body_not_direct_lowerable` alias with a type
     /// reference in its rejected body.
     pub direct_source_file_type_alias_first_type_reference_rejection_kinds: Vec<NamedCount>,
+    /// Bounded alias-level attribution for source-file alias bodies rejected
+    /// by the direct-lowering proof.
+    ///
+    /// Captures at most
+    /// `DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT` distinct
+    /// `(name, body_kind, first_type_reference_kind, target_file)` rows in
+    /// perf-counter mode. This keeps the aggregate
+    /// `body_not_direct_lowerable` residue targetable without using names as
+    /// compiler policy.
+    pub direct_source_file_type_alias_body_rejection_residues:
+        Vec<DirectSourceFileTypeAliasBodyRejectionResidue>,
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     ///
     /// Always `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT` long, in
@@ -3766,6 +3874,8 @@ impl PerfCounters {
                     ),
                 })
                 .collect(),
+            direct_source_file_type_alias_body_rejection_residues:
+                Self::snapshot_direct_source_file_type_alias_body_rejection_residues(),
             direct_actual_lib_intl_interface_outcomes: (0
                 ..DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -3818,6 +3928,27 @@ impl PerfCounters {
                     .cmp(&b.name)
                     .then_with(|| a.kind.cmp(b.kind))
                     .then_with(|| a.source.cmp(b.source))
+                    .then_with(|| a.target_file.cmp(&b.target_file))
+            })
+        });
+        rows
+    }
+
+    fn snapshot_direct_source_file_type_alias_body_rejection_residues()
+    -> Vec<DirectSourceFileTypeAliasBodyRejectionResidue> {
+        let mut rows = direct_source_file_type_alias_body_rejection_residues()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.count.cmp(&a.count).then_with(|| {
+                a.name
+                    .cmp(&b.name)
+                    .then_with(|| a.body_kind.cmp(b.body_kind))
+                    .then_with(|| {
+                        a.first_type_reference_kind
+                            .cmp(&b.first_type_reference_kind)
+                    })
                     .then_with(|| a.target_file.cmp(&b.target_file))
             })
         });
@@ -3935,6 +4066,7 @@ mod json_tests {
             "direct_source_file_type_alias_body_rejection_kinds",
             "direct_source_file_type_alias_type_reference_rejection_kinds",
             "direct_source_file_type_alias_first_type_reference_rejection_kinds",
+            "direct_source_file_type_alias_body_rejection_residues",
             "direct_actual_lib_intl_interface_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
@@ -4368,6 +4500,52 @@ mod json_tests {
         assert_eq!(row["source"], "symbol_arenas");
         assert_eq!(row["target_file"], "mapped-types.ts");
         assert_eq!(row["count"], 11);
+    }
+
+    #[test]
+    fn direct_source_file_type_alias_body_rejection_residues_lock_field_shape() {
+        let unique_name = format!("__test_source_alias_body_residue_{}__", std::process::id());
+        {
+            let mut rows = direct_source_file_type_alias_body_rejection_residues()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(DirectSourceFileTypeAliasBodyRejectionResidue {
+                name: unique_name.clone(),
+                body_kind: "mapped_type",
+                first_type_reference_kind: Some("local_type_parameter"),
+                target_file: Some("mapped-types.ts".to_string()),
+                count: 13,
+            });
+        }
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_source_file_type_alias_body_rejection_residues"]
+            .as_array()
+            .expect("direct_source_file_type_alias_body_rejection_residues is array");
+        let row = rows
+            .iter()
+            .find(|row| row["name"] == unique_name)
+            .expect("test residue row is present");
+        let obj = row.as_object().expect("row is object");
+        let actual: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> = [
+            "name",
+            "body_kind",
+            "first_type_reference_kind",
+            "target_file",
+            "count",
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            actual, expected,
+            "direct_source_file_type_alias_body_rejection_residues row field shape drifted",
+        );
+        assert_eq!(row["body_kind"], "mapped_type");
+        assert_eq!(row["first_type_reference_kind"], "local_type_parameter");
+        assert_eq!(row["target_file"], "mapped-types.ts");
+        assert_eq!(row["count"], 13);
     }
 
     #[test]

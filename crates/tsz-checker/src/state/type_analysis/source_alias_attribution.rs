@@ -6,6 +6,7 @@ use tsz_common::perf_counters::{
     DirectSourceFileTypeAliasBodyRejectionKind,
     DirectSourceFileTypeAliasTypeReferenceRejectionKind, enabled_fast,
     record_direct_source_file_type_alias_body_rejection_kind,
+    record_direct_source_file_type_alias_body_rejection_residue,
     record_direct_source_file_type_alias_first_type_reference_rejection_kind,
     record_direct_source_file_type_alias_type_reference_rejection_kind,
 };
@@ -23,14 +24,24 @@ pub(crate) fn record_source_alias_rejection_kinds(
     let body_kind = body_rejection_kind(arena, node_idx);
     record_direct_source_file_type_alias_body_rejection_kind(body_kind);
     if enabled_fast() {
-        if let Some(kind) = first_type_reference_rejection_kind_in_node(
+        let first_type_reference_kind = first_type_reference_rejection_kind_in_node(
             arena,
             delegate_binder,
             node_idx,
             type_param_names,
-        ) {
+        );
+        if let Some(kind) = first_type_reference_kind {
             record_direct_source_file_type_alias_first_type_reference_rejection_kind(kind);
         }
+        record_direct_source_file_type_alias_body_rejection_residue(
+            type_alias_name(arena, type_alias).unwrap_or("<unknown>"),
+            body_kind,
+            first_type_reference_kind,
+            arena
+                .source_files
+                .first()
+                .map(|source_file| source_file.file_name.as_str()),
+        );
         record_type_reference_rejection_kinds_in_node(
             arena,
             delegate_binder,
@@ -38,6 +49,13 @@ pub(crate) fn record_source_alias_rejection_kinds(
             type_param_names,
         );
     }
+}
+
+fn type_alias_name<'a>(arena: &'a NodeArena, type_alias: &TypeAliasData) -> Option<&'a str> {
+    arena
+        .get(type_alias.name)
+        .and_then(|node| arena.get_identifier(node))
+        .map(|identifier| identifier.escaped_text.as_str())
 }
 
 fn body_rejection_kind(
