@@ -394,6 +394,9 @@ mod conditional_infer_callable_arity_tests;
 #[path = "../tests/conditional_keyof_variance_tests.rs"]
 mod conditional_keyof_variance_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_readonly_array_relation_tests.rs"]
+mod conditional_readonly_array_relation_tests;
+#[cfg(test)]
 #[path = "../tests/constraint_tests.rs"]
 mod constraint_tests;
 #[cfg(test)]
