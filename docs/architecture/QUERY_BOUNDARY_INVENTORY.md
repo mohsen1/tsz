@@ -22,6 +22,7 @@ Categories:
 |---|---|---|---|
 | [`mod.rs`](../../crates/tsz-checker/src/query_boundaries/mod.rs) | Stable API policy | boundary module tree and ownership rules | Root module documents allowed checker/solver ownership direction. |
 | [`assignability.rs`](../../crates/tsz-checker/src/query_boundaries/assignability.rs) | Stable API plus quarantine helper | `RelationRequest`, `execute_relation`, assignability gates, property classification | One remaining direct `type_queries::data::get_intersection_members` call should move behind a solver query wrapper. |
+| [`application_keyof.rs`](../../crates/tsz-checker/src/query_boundaries/application_keyof.rs) | Compatibility shim | application/keyof helper facts for assignability fallbacks | Narrower wrapper over broad common queries used by `application_keyof_helpers`. |
 | [`capabilities.rs`](../../crates/tsz-checker/src/query_boundaries/capabilities.rs) | Stable API | environment capability structs and feature gates | Checker-owned capability facts. |
 | [`environment.rs`](../../crates/tsz-checker/src/query_boundaries/environment.rs) | Diagnostic adapter | `CapabilityDiagnostic` and environment diagnostic decisions | Produces diagnostic decisions; caller owns spans/emission. |
 | [`class.rs`](../../crates/tsz-checker/src/query_boundaries/class.rs) | Stable API plus quarantine helper | class member compatibility and base-type predicates | Direct `is_valid_base_type` wrappers are quarantine helpers. |

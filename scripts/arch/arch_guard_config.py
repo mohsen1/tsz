@@ -29,7 +29,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
             "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
             "crates/tsz-checker/src/error_reporter/properties.rs",
-            "crates/tsz-checker/src/error_reporter/render_failure.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/jsdoc/params.rs",

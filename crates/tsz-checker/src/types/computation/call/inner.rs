@@ -417,7 +417,15 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut nullish_cause = None;
-        if node.is_optional_chain() {
+        // A call is in an optional chain when it uses `?.()` directly, or when
+        // the callee expression continues an earlier optional chain such as
+        // `o?.a.b()`.
+        let callee_is_optional_chain = node.is_optional_chain()
+            || crate::types_domain::computation::access::is_optional_chain(
+                self.ctx.arena,
+                call.expression,
+            );
+        if callee_is_optional_chain {
             // Evaluate the callee type to resolve Application/Lazy types before
             // splitting nullish members. Without this, `Transform1<T>` stays as an
             // unevaluated Application and split_nullish_type can't see its union members.

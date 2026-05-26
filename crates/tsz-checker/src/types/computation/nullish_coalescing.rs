@@ -58,6 +58,7 @@ impl<'a> CheckerState<'a> {
         evaluated_left: TypeId,
         non_nullish: Option<TypeId>,
         right_type: TypeId,
+        right_idx: NodeIndex,
     ) -> TypeId {
         let Some(non_nullish) = non_nullish else {
             return right_type;
@@ -69,7 +70,14 @@ impl<'a> CheckerState<'a> {
         let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.ctx.types);
         let non_nullish = evaluator.apply_non_nullable_approximation(evaluated_left, non_nullish);
 
-        if non_nullish == right_type || self.is_subtype_of(right_type, non_nullish) {
+        let right_is_fresh_object =
+            crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, right_type);
+        let right_is_empty_object_literal = self.is_empty_object_literal_expression(right_idx);
+
+        if non_nullish == right_type
+            || ((!right_is_fresh_object || right_is_empty_object_literal)
+                && self.is_subtype_of(right_type, non_nullish))
+        {
             return non_nullish;
         }
         if self.is_subtype_of(non_nullish, right_type) {
@@ -77,6 +85,16 @@ impl<'a> CheckerState<'a> {
         }
 
         self.ctx.types.factory().union2(non_nullish, right_type)
+    }
+
+    fn is_empty_object_literal_expression(&self, idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
+        self.ctx
+            .arena
+            .get(idx)
+            .filter(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            .and_then(|node| self.ctx.arena.get_literal_expr(node))
+            .is_some_and(|lit| lit.elements.nodes.is_empty())
     }
 }
 

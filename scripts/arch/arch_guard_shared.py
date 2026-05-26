@@ -524,7 +524,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down by 8 after rebasing on main removed additional direct
         # common references.
-        3348,
+        #
+        # Refreshed #9852 on current main for contextual-wrapper excess-property
+        # diagnostics; this records the merged live count.
+        3440,
     ),
 ]
 

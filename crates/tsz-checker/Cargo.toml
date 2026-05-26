@@ -1526,6 +1526,10 @@ name = "simple_local_interface_fastpath_tests"
 path = "tests/simple_local_interface_fastpath_tests.rs"
 
 [[test]]
+name = "mapped_tuple_string_index_key_tests"
+path = "tests/mapped_tuple_string_index_key_tests.rs"
+
+[[test]]
 name = "mapped_type_numeric_literal_key_tests"
 path = "tests/mapped_type_numeric_literal_key_tests.rs"
 
@@ -1650,8 +1654,16 @@ name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 
 [[test]]
+name = "mapped_keyof_index_access_tests"
+path = "tests/mapped_keyof_index_access_tests.rs"
+
+[[test]]
 name = "jsdoc_enum_member_assignability_tests"
 path = "tests/jsdoc_enum_member_assignability_tests.rs"
+
+[[test]]
+name = "optional_chain_continuation_undefined_tests"
+path = "tests/optional_chain_continuation_undefined_tests.rs"
 
 [[test]]
 name = "structural_dispatch_void_tests"

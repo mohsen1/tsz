@@ -24,6 +24,9 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 #[cfg(test)]
+mod mapped_tests;
+
+#[cfg(test)]
 mod tests;
 pub(crate) use key_types::{MappedKey, MappedKeys};
 

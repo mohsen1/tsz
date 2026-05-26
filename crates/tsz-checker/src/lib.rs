@@ -679,6 +679,9 @@ mod property_alias_display_tests;
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
 #[cfg(test)]
+#[path = "tests/recursive_callable_infer_cycle_tests.rs"]
+mod recursive_callable_infer_cycle_tests;
+#[cfg(test)]
 #[path = "tests/recursive_generic_arrow_tests.rs"]
 mod recursive_generic_arrow_tests;
 #[cfg(test)]

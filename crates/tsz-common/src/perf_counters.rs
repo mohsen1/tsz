@@ -253,38 +253,21 @@ perf_counter_enum! {
     pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES;
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectCrossFileInterfaceLoweringOutcome {
-    Success = 0,
-    RejectedNonDirectArena = 1,
-    MissingSymbol = 2,
-    NotInterface = 3,
-    DisallowedMergeFlags = 4,
-    MissingDeclarations = 5,
-    ComplexDeclaration = 6,
-    UnknownOrError = 7,
-}
-
-pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT: usize = 8;
-
-pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES: [&str;
-    DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT] = [
-    "success",
-    "rejected_non_direct_arena",
-    "missing_symbol",
-    "not_interface",
-    "disallowed_merge_flags",
-    "missing_declarations",
-    "complex_declaration",
-    "unknown_or_error",
-];
-
-impl DirectCrossFileInterfaceLoweringOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectCrossFileInterfaceLoweringOutcome {
+        Success = 0 => "success",
+        RejectedNonDirectArena = 1 => "rejected_non_direct_arena",
+        MissingSymbol = 2 => "missing_symbol",
+        NotInterface = 3 => "not_interface",
+        DisallowedMergeFlags = 4 => "disallowed_merge_flags",
+        MissingDeclarations = 5 => "missing_declarations",
+        ComplexDeclaration = 6 => "complex_declaration",
+        UnknownOrError = 7 => "unknown_or_error",
     }
+
+    pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT;
+    pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES;
 }
 
 /// How `compute_type_of_symbol` found the symbol payload for a call.
