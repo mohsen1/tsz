@@ -1054,6 +1054,12 @@ impl<'a> CheckerState<'a> {
                 || canonical_sym
                     .is_some_and(|sym| self.ctx.class_instance_resolution_set.contains(&sym))
             {
+                if let Some(&partial_instance) = self.ctx.class_instance_type_cache.get(&decl_idx)
+                    && partial_instance != TypeId::ERROR
+                    && partial_instance != TypeId::ANY
+                {
+                    return Some((partial_instance, Vec::new()));
+                }
                 let fallback = self.ctx.create_lazy_type_ref(active_class_sym);
                 return Some((fallback, Vec::new()));
             }
