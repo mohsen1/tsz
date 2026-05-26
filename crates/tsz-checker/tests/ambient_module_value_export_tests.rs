@@ -108,8 +108,8 @@ const assigned: { nope: number } = value;
     );
 
     assert!(
-        has_code(&diags, 2741) || has_code(&diags, 2322),
-        "expected assignment diagnostic for imported ambient value; got {diags:#?}"
+        has_code(&diags, 2741),
+        "expected TS2741 for missing target property on imported ambient value; got {diags:#?}"
     );
 }
 
