@@ -9,6 +9,21 @@ pub(crate) use super::super::common::is_type_parameter_like as is_type_parameter
 pub(crate) use super::super::common::lazy_def_id as lazy_def_id_for_type;
 pub(crate) use super::super::common::tuple_elements as tuple_elements_for_type;
 
+pub(crate) fn rest_array_element_type_for_type(
+    db: &dyn TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    array_element_type_for_type(db, type_id).or_else(|| {
+        tsz_solver::type_queries::mutable_array_element_for_redeclaration(
+            db,
+            type_id,
+            db.get_array_base_type(),
+            Some(def_store),
+        )
+    })
+}
+
 pub(crate) fn rest_type_needs_aggregate_argument_check(
     db: &dyn TypeDatabase,
     type_id: TypeId,

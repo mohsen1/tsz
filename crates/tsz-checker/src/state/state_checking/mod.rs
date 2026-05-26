@@ -1,6 +1,9 @@
 //! Declaration and statement checking, including `StatementCheckCallbacks`.
 
 pub(crate) mod class;
+mod class_heritage_diagnostics;
+#[cfg(test)]
+mod class_tests;
 mod core;
 pub(crate) mod directive;
 mod dts_rules;

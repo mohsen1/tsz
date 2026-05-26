@@ -1,5 +1,6 @@
 use super::*;
 use crate::construction::TypeInterner;
+use crate::def::{DefinitionInfo, DefinitionStore};
 use crate::types::{
     CallSignature, CallableShape, MappedType, ParamInfo, PropertyInfo, TypeId, TypeParamInfo,
 };
@@ -128,6 +129,54 @@ fn get_call_signatures_intersection_no_call_sigs() {
     let intersection = interner.intersection2(TypeId::STRING, TypeId::NUMBER);
     let sigs = get_call_signatures(&interner, intersection);
     assert!(sigs.is_none());
+}
+
+#[test]
+fn contains_never_index_access_surface_matches_direct_index_access() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let direct = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    let other = interner.index_access(TypeId::OBJECT, TypeId::STRING);
+
+    assert!(contains_never_index_access_surface(
+        &interner, &def_store, direct, 8,
+    ));
+    assert!(!contains_never_index_access_surface(
+        &interner, &def_store, other, 8,
+    ));
+}
+
+#[test]
+fn contains_never_index_access_surface_follows_display_alias() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let structural = interner.object(vec![]);
+    let display_alias = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    interner.store_display_alias(structural, display_alias);
+
+    assert!(contains_never_index_access_surface(
+        &interner, &def_store, structural, 8,
+    ));
+}
+
+#[test]
+fn contains_never_index_access_surface_follows_alias_application_body() {
+    let interner = TypeInterner::new();
+    let def_store = DefinitionStore::new();
+    let body = interner.index_access(TypeId::NEVER, TypeId::STRING);
+    let alias_id = def_store.register(DefinitionInfo::type_alias(
+        interner.intern_string("Boxed"),
+        vec![],
+        body,
+    ));
+    let application = interner.application(interner.lazy(alias_id), vec![]);
+
+    assert!(contains_never_index_access_surface(
+        &interner,
+        &def_store,
+        application,
+        8,
+    ));
 }
 
 #[test]
@@ -1212,4 +1261,33 @@ fn literal_or_primitive_compound_rejects_application() {
     assert!(!is_literal_or_primitive_or_compound_of_those(
         &interner, app
     ));
+}
+
+#[test]
+fn contains_application_unknown_arg_finds_direct_application_arg() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::UNKNOWN]);
+
+    assert!(contains_application_unknown_arg(&interner, app));
+}
+
+#[test]
+fn contains_application_unknown_arg_finds_nested_application_arg() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::UNKNOWN]);
+    let nested = interner.union2(TypeId::STRING, app);
+
+    assert!(contains_application_unknown_arg(&interner, nested));
+}
+
+#[test]
+fn contains_application_unknown_arg_rejects_non_application_unknown() {
+    let interner = TypeInterner::new();
+    let app = interner.application(TypeId::OBJECT, vec![TypeId::ANY]);
+
+    assert!(!contains_application_unknown_arg(
+        &interner,
+        TypeId::UNKNOWN
+    ));
+    assert!(!contains_application_unknown_arg(&interner, app));
 }

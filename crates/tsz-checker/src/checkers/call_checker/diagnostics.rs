@@ -3,7 +3,7 @@
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
+    rest_array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -239,19 +239,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let rest_type = shape.params[0].type_id;
-        let rest_elem = array_element_type_for_type(self.ctx.types, rest_type).or_else(|| {
-            tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
-                elems
-                    .into_iter()
-                    .find(|elem| elem.rest)
-                    .map(|elem| elem.type_id)
-            })
-        });
-        (rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
-            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN))
-            || self
-                .format_type(type_id)
-                .starts_with("(...args: Array<any>) =>")
+        let rest_elem =
+            rest_array_element_type_for_type(self.ctx.types, &self.ctx.definition_store, rest_type)
+                .or_else(|| {
+                    tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
+                        elems
+                            .into_iter()
+                            .find(|elem| elem.rest)
+                            .map(|elem| elem.type_id)
+                    })
+                });
+        rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
+            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN)
     }
 
     pub(super) fn overload_candidate_has_only_retained_generic_rest_any_callback_body_errors(
