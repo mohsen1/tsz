@@ -1499,7 +1499,48 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
-        self.instantiate_callable_result_from_request(idx, result, request)
+        let result = self.instantiate_callable_result_from_request(idx, result, request);
+        // The inner function strips nullish from the object type, but the chain
+        // can still short-circuit, so the result must include `| undefined`.
+        if !request.flow.skip_flow_narrowing() {
+            self.add_chain_continuation_undefined(idx, result)
+        } else {
+            result
+        }
+    }
+
+    fn add_chain_continuation_undefined(&mut self, idx: NodeIndex, result: TypeId) -> TypeId {
+        use crate::types_domain::computation::access::is_optional_chain;
+
+        if matches!(result, TypeId::ERROR | TypeId::ANY | TypeId::NEVER) {
+            return result;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return result;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return result;
+        };
+        if access.question_dot_token {
+            return result;
+        }
+        if !is_optional_chain(self.ctx.arena, access.expression) {
+            return result;
+        }
+        // Only add `| undefined` when the chain can actually short-circuit —
+        // non-nullable roots (e.g., `declare const o: { a: { b: number } }`)
+        // produce just `number` for `o?.a.b`.
+        let obj_type = self.get_type_of_node(access.expression);
+        let obj_eval = self.evaluate_application_type(obj_type);
+        let (_, nullish) = self.split_nullish_type(obj_eval);
+        if nullish.is_some() {
+            crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                result,
+            )
+        } else {
+            result
+        }
     }
 
     pub(crate) fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {
