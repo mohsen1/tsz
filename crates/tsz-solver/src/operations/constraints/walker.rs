@@ -566,6 +566,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             && self.constrain_reverse_mapped_type(
                                 ctx,
                                 var_map,
+                                source,
                                 &source_obj,
                                 &mapped,
                                 keyof_target,
