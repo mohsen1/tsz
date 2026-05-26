@@ -133,7 +133,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// With `exactOptionalPropertyTypes`, an explicit `| undefined` is not the
     /// missing marker and must be preserved. tsz does not model that marker
     /// separately yet, so only the non-exact path can safely remove
-    /// `undefined`.
+    /// `undefined`. The sibling mapped-array shard uses the same rule for
+    /// tuple element mapping.
     pub(super) fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
         if strip && !self.interner().exact_optional_property_types() {
             crate::narrowing::utils::remove_undefined(self.interner(), ty)
