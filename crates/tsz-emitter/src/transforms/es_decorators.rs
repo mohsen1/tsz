@@ -510,11 +510,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         .map(|info| info.storage_name.clone()),
                 )
                 .chain(class_decorator_auto_accessor_infos.iter().flat_map(|info| {
-                    info.getter_temp_var
-                        .iter()
-                        .cloned()
-                        .chain(info.setter_temp_var.iter().cloned())
-                        .chain(std::iter::once(info.storage_name.clone()))
+                    let mut vars = Vec::new();
+                    if info.is_decorated {
+                        vars.push(info.storage_name.clone());
+                    }
+                    vars.extend(info.getter_temp_var.iter().cloned());
+                    vars.extend(info.setter_temp_var.iter().cloned());
+                    if !info.is_decorated {
+                        vars.push(info.storage_name.clone());
+                    }
+                    vars
                 }))
                 .collect();
 
@@ -758,6 +763,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let assignments = self.class_decorator_static_private_temp_assignments(
                 &class_decorator_static_private_methods,
                 &class_decorator_auto_accessor_infos,
+                &decorated_members,
+                &member_vars,
                 &class_this_var,
             );
             if !assignments.is_empty() {
@@ -879,6 +886,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
             for assignment in self.class_decorator_static_private_temp_assignment_list(
                 &class_decorator_static_private_methods,
                 &class_decorator_auto_accessor_infos,
+                &decorated_members,
+                &member_vars,
                 &class_this_var,
             ) {
                 out.push_str(&format!("{i1}{assignment};\n"));
@@ -2663,11 +2672,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
         &self,
         method_infos: &[ClassDecoratorStaticPrivateMethodInfo],
         auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
+        decorated_members: &[DecoratedMember],
+        member_vars: &[MemberVarInfo],
         class_ref: &str,
     ) -> String {
         self.class_decorator_static_private_temp_assignment_list(
             method_infos,
             auto_accessor_infos,
+            decorated_members,
+            member_vars,
             class_ref,
         )
         .join(", ")
@@ -2677,6 +2690,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
         &self,
         method_infos: &[ClassDecoratorStaticPrivateMethodInfo],
         auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
+        decorated_members: &[DecoratedMember],
+        member_vars: &[MemberVarInfo],
         class_ref: &str,
     ) -> Vec<String> {
         let mut assignments: Vec<String> = method_infos
@@ -2729,14 +2744,28 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ) else {
                 continue;
             };
-            assignments.push(format!(
-                "{getter} = function {getter}() {{ return {get_helper}({class_ref}, {class_ref}, \"f\", {}); }}",
-                info.storage_name
-            ));
-            assignments.push(format!(
-                "{setter} = function {setter}(value) {{ {set_helper}({class_ref}, {class_ref}, value, \"f\", {}); }}",
-                info.storage_name
-            ));
+            if info.is_decorated
+                && let Some(descriptor_var) = decorated_members
+                    .iter()
+                    .position(|member| member.member_idx == info.member.member_idx)
+                    .and_then(|index| member_vars[index].descriptor_var.as_deref())
+            {
+                assignments.push(format!(
+                    "{getter} = function {getter}() {{ return {descriptor_var}.get.call(this); }}"
+                ));
+                assignments.push(format!(
+                    "{setter} = function {setter}(value) {{ return {descriptor_var}.set.call(this, value); }}"
+                ));
+            } else {
+                assignments.push(format!(
+                    "{getter} = function {getter}() {{ return {get_helper}({class_ref}, {class_ref}, \"f\", {}); }}",
+                    info.storage_name
+                ));
+                assignments.push(format!(
+                    "{setter} = function {setter}(value) {{ {set_helper}({class_ref}, {class_ref}, value, \"f\", {}); }}",
+                    info.storage_name
+                ));
+            }
         }
 
         assignments

@@ -617,7 +617,7 @@ class C {
     );
 
     assert!(
-        output.contains("var _C_method_get, _C_value_get, _C_value_set, _C_field, _C_accessor_get, _C_accessor_set, _C_accessor_accessor_storage;")
+        output.contains("var _C_method_get, _C_value_get, _C_value_set, _C_field, _C_accessor_accessor_storage, _C_accessor_get, _C_accessor_set;")
             && output.contains("_C_method_get = function _C_method_get() { return _static_private_method_descriptor.value; }")
             && output.contains("_C_value_get = function _C_value_get() { return _static_private_get_value_descriptor.get.call(this); }")
             && output.contains("_C_value_set = function _C_value_set(value) { return _static_private_set_value_descriptor.set.call(this, value); }")
