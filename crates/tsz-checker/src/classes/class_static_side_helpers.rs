@@ -3,6 +3,7 @@
 use crate::diagnostics::diagnostic_codes;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn report_namespace_merged_static_side_mismatch(
