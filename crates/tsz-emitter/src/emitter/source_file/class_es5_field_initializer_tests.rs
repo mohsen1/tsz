@@ -43,6 +43,7 @@ class Test {
     // lifted field comment
     afterComment = (() => this.value)();
 }
+
 ";
 
     let output = emit_es5(source);
@@ -76,5 +77,38 @@ class Test {
             "// lifted field comment\n        this.afterComment = (function () { return _this.value; })();"
         ),
         "Line comments attached to lifted class fields should move with the field initializer.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_class_expression_uses_contextual_object_property_names() {
+    let source = "\
+var foo: any = {};
+foo.alpha = class {};
+foo.break = class {};
+({ beta: class {}, case: class {} });
+";
+
+    let output = emit_es5(source);
+
+    assert!(
+        output.contains("function alpha() {\n    }\n    return alpha;"),
+        "Property assignment class expressions should use the property name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function break_1() {\n    }\n    return break_1;"),
+        "Keyword property assignment class expressions should use a safe derived name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function beta() {") && output.contains("return beta;"),
+        "Object literal class expressions should use the property name.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function case_1() {") && output.contains("return case_1;"),
+        "Keyword object literal class expressions should use a safe derived name.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function class_"),
+        "Contextual object property names should avoid generic class temp names.\nOutput:\n{output}"
     );
 }
