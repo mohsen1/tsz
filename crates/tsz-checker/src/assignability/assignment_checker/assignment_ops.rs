@@ -1123,8 +1123,7 @@ impl<'a> CheckerState<'a> {
         };
         // Build the empty target type once for diagnostic reuse.
         let empty_target = self.ctx.types.factory().object(Vec::new());
-        let source_props: Vec<_> = source_shape.properties.to_vec();
-        for source_prop in source_props {
+        for source_prop in &source_shape.properties {
             let report_idx = self
                 .find_object_literal_property_element(right_idx, source_prop.name)
                 .unwrap_or(right_idx);
