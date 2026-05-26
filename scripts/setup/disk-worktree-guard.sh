@@ -120,6 +120,12 @@ reuse_candidates="$(
         [[ "$wt" != "$REPO_ROOT" ]] || continue
         [[ -d "$wt" ]] || continue
 
+        dirty="$(
+          git -C "$wt" status --porcelain --untracked-files=normal 2>/dev/null \
+            || printf '__status_failed__\n'
+        )"
+        [[ -z "$dirty" ]] || continue
+
         recent="$(
           find "$wt" \
             \( -path "$wt/.git" -o -path "$wt/target" -o -path "$wt/.target" \
