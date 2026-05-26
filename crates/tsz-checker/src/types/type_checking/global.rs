@@ -120,12 +120,13 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_lib_type_by_name("Object");
         let function_type = self.resolve_lib_type_by_name("Function");
 
-        // Eagerly resolve Array public-surface dependencies before resolving
-        // Array itself. Otherwise Array member snapshots can cache unresolved
-        // alias applications as `any<...>` and later dependency resolution is
-        // too late to repair the stored display properties.
-        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
-            let _ = self.resolve_lib_type_by_name(array_dep);
+        // Declaration emit snapshots Array's public mapped surface through the
+        // registered display base. Resolve the late iterator dependency first
+        // so lowering Array's late declarations can keep `ArrayIterator<T>`
+        // named without also eagerly resolving unrelated Array helper aliases or
+        // paying this cost during ordinary type-checking startup.
+        if self.ctx.emit_declarations() {
+            let _ = self.resolve_lib_type_by_name("ArrayIterator");
         }
 
         // For Array<T>, resolve the merged lib type once, then reuse the type
