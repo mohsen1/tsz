@@ -630,14 +630,18 @@ pub fn remove_undefined(types: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
         return TypeId::NEVER;
     }
     if let Some(members) = top_level_union_members(types, type_id) {
-        let filtered: Vec<TypeId> = members
-            .iter()
-            .copied()
-            .filter(|&m| m != TypeId::UNDEFINED)
-            .collect();
-        if filtered.len() == members.len() {
-            return type_id; // no undefined to remove
-        }
+        let Some(undefined_index) = members.iter().position(|&m| m == TypeId::UNDEFINED) else {
+            return type_id;
+        };
+
+        let mut filtered = Vec::with_capacity(members.len() - 1);
+        filtered.extend_from_slice(&members[..undefined_index]);
+        filtered.extend(
+            members[undefined_index + 1..]
+                .iter()
+                .copied()
+                .filter(|&m| m != TypeId::UNDEFINED),
+        );
         match filtered.len() {
             0 => TypeId::NEVER,
             1 => filtered[0],
