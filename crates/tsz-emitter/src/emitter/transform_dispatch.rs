@@ -1424,12 +1424,15 @@ impl<'a> Printer<'a> {
         self.emit_class_member_modifiers_js(&prop.modifiers);
         self.emit(prop.name);
         self.write(" = ");
+        let prev_statement_expression = self.ctx.flags.in_statement_expression;
+        self.ctx.flags.in_statement_expression = false;
         self.emit_expression_with_scoped_static_initializer_mode(
             prop.initializer,
             this_alias,
             Some(super_alias),
             false,
         );
+        self.ctx.flags.in_statement_expression = prev_statement_expression;
         self.write_semicolon();
         let output = self.writer.get_output()[start..].trim_start().to_string();
         self.writer.truncate(start);

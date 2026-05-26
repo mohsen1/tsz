@@ -359,3 +359,45 @@ class C extends Base {
         "Decorated class static field initializers should bind static super tagged-template calls.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn decorated_class_static_field_initializers_rewrite_super_member_writes() {
+    let source = "\
+declare var dec: any;
+declare class Base { static x: number; }
+const key = \"x\";
+
+@dec
+class C extends Base {
+    static a = super.x = 1;
+    static b = super.x++;
+    static c = ++super.x;
+    static d = super[key] += 1;
+}
+
+(@dec class extends Base {
+    static e = super.x = 2;
+});
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("static a = (() => {")
+            && output.contains("return Reflect.set(_classSuper, \"x\", _a = 1, _classThis), _a;"),
+        "Decorated class static field assignment initializers should return the assigned value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), _a = _b++, _b), _classThis), _a;")
+            && output.contains("return Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), _a = ++_b), _classThis), _a;"),
+        "Decorated class static field update initializers should return the update value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return Reflect.set(_classSuper, _a = key, _b = Reflect.get(_classSuper, _a, _classThis) + 1, _classThis), _b;"),
+        "Decorated class static field computed super writes should evaluate the key once and return the assignment value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static e = (() => {")
+            && output.contains("return Reflect.set(_classSuper, \"x\", _a = 2, _classThis), _a;"),
+        "Decorated class-expression static field writes should also return the assigned value.\nOutput:\n{output}"
+    );
+}

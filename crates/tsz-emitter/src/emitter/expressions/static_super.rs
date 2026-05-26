@@ -18,12 +18,13 @@ impl<'a> Printer<'a> {
         operator: u16,
         right: NodeIndex,
     ) -> bool {
-        if !self.ctx.flags.in_statement_expression {
-            return false;
-        }
         let Some(member) = self.scoped_static_super_member(left) else {
             return false;
         };
+
+        if !self.ctx.flags.in_statement_expression {
+            return self.emit_scoped_static_super_value_assignment(&member, operator, right);
+        }
 
         if operator == SyntaxKind::EqualsToken as u16 {
             self.emit_scoped_static_super_set_start(&member);
@@ -53,9 +54,6 @@ impl<'a> Printer<'a> {
         operator: u16,
         is_prefix: bool,
     ) -> bool {
-        if !self.ctx.flags.in_statement_expression {
-            return false;
-        }
         let Some(member) = self.scoped_static_super_member(operand) else {
             return false;
         };
@@ -63,6 +61,10 @@ impl<'a> Printer<'a> {
             && operator != SyntaxKind::MinusMinusToken as u16
         {
             return false;
+        }
+
+        if !self.ctx.flags.in_statement_expression {
+            return self.emit_scoped_static_super_value_update(&member, operator, is_prefix);
         }
 
         let key_temp = self.scoped_static_super_element_key_temp(&member);
@@ -86,6 +88,129 @@ impl<'a> Printer<'a> {
         self.write(")");
         self.emit_scoped_static_super_set_end();
         true
+    }
+
+    fn emit_scoped_static_super_value_assignment(
+        &mut self,
+        member: &StaticSuperMember,
+        operator: u16,
+        right: NodeIndex,
+    ) -> bool {
+        if operator != SyntaxKind::EqualsToken as u16
+            && !self.is_static_super_compound_assignment(operator)
+        {
+            return false;
+        }
+
+        self.emit_scoped_static_super_value_iife(|this| {
+            let key_temp = if operator == SyntaxKind::EqualsToken as u16 {
+                None
+            } else {
+                this.scoped_static_super_element_key_temp(member)
+            };
+            let result_temp = this.make_unique_name();
+
+            let mut temps = Vec::new();
+            if let Some(key_temp) = key_temp.as_ref() {
+                temps.push(key_temp.clone());
+            }
+            temps.push(result_temp.clone());
+
+            this.emit_scoped_static_super_iife_var_decl(&temps);
+            this.write("return ");
+            this.emit_scoped_static_super_set_start_with_key(member, key_temp.as_deref(), true);
+            this.write(&result_temp);
+            this.write(" = ");
+            if operator == SyntaxKind::EqualsToken as u16 {
+                this.emit(right);
+            } else {
+                this.emit_scoped_static_super_get_with_key(member, key_temp.as_deref(), false);
+                this.write(" ");
+                this.write(this.static_super_compound_base_operator(operator));
+                this.write(" ");
+                this.emit(right);
+            }
+            this.emit_scoped_static_super_set_end();
+            this.write(", ");
+            this.write(&result_temp);
+            this.write_semicolon();
+        });
+        true
+    }
+
+    fn emit_scoped_static_super_value_update(
+        &mut self,
+        member: &StaticSuperMember,
+        operator: u16,
+        is_prefix: bool,
+    ) -> bool {
+        if operator != SyntaxKind::PlusPlusToken as u16
+            && operator != SyntaxKind::MinusMinusToken as u16
+        {
+            return false;
+        }
+
+        self.emit_scoped_static_super_value_iife(|this| {
+            let key_temp = this.scoped_static_super_element_key_temp(member);
+            let result_temp = this.make_unique_name();
+            let value_temp = this.make_unique_name();
+            let op_text = get_operator_text(operator);
+
+            let mut temps = Vec::new();
+            if let Some(key_temp) = key_temp.as_ref() {
+                temps.push(key_temp.clone());
+            }
+            temps.push(result_temp.clone());
+            temps.push(value_temp.clone());
+
+            this.emit_scoped_static_super_iife_var_decl(&temps);
+            this.write("return ");
+            this.emit_scoped_static_super_set_start_with_key(member, key_temp.as_deref(), true);
+            this.write("(");
+            this.write(&value_temp);
+            this.write(" = ");
+            this.emit_scoped_static_super_get_with_key(member, key_temp.as_deref(), false);
+            this.write(", ");
+            this.write(&result_temp);
+            this.write(" = ");
+            if is_prefix {
+                this.write(op_text);
+                this.write(&value_temp);
+            } else {
+                this.write(&value_temp);
+                this.write(op_text);
+                this.write(", ");
+                this.write(&value_temp);
+            }
+            this.write(")");
+            this.emit_scoped_static_super_set_end();
+            this.write(", ");
+            this.write(&result_temp);
+            this.write_semicolon();
+        });
+        true
+    }
+
+    fn emit_scoped_static_super_value_iife(&mut self, emit_body: impl FnOnce(&mut Self)) {
+        self.write("(() => {");
+        self.write_line();
+        self.increase_indent();
+        self.push_temp_scope();
+        emit_body(self);
+        self.pop_temp_scope();
+        self.decrease_indent();
+        self.write_line();
+        self.write("})()");
+    }
+
+    fn emit_scoped_static_super_iife_var_decl(&mut self, temps: &[String]) {
+        if temps.is_empty() {
+            return;
+        }
+        self.write("var ");
+        self.write(&temps.join(", "));
+        self.write_semicolon();
+        self.write_line();
     }
 
     pub(in crate::emitter) fn pattern_has_scoped_static_super_assignment_target(
