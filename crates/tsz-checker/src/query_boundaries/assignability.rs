@@ -81,6 +81,20 @@ pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
     tsz_solver::type_queries::remapped_mapped_type_has_no_outer_type_params(db, type_id)
 }
 
+pub(crate) fn optional_mapped_type_adds_implicit_undefined<R: TypeResolver>(
+    db: &dyn QueryDatabase,
+    _resolver: &R,
+    type_id: TypeId,
+) -> bool {
+    let type_db = db.as_type_database();
+    if type_db.get_display_alias(type_id).is_some()
+        || tsz_solver::type_queries::get_type_application(type_db, type_id).is_some()
+    {
+        return false;
+    }
+    tsz_solver::type_queries::optional_mapped_type_adds_implicit_undefined(type_db, type_id)
+}
+
 /// Return an instantiated homomorphic mapped target that projects over `source`.
 ///
 /// This preserves deferred targets such as `{ [P in keyof S]?: S[P] }` through
@@ -1720,8 +1734,9 @@ pub(crate) fn check_application_variance_assignability<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tsz_solver::IndexSignature;
     use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::DefId;
+    use tsz_solver::{IndexSignature, MappedModifier, MappedType, TypeParamInfo};
 
     #[test]
     fn target_property_index_uses_first_atom_match() {
@@ -1795,5 +1810,62 @@ mod tests {
             classify_object_properties(&db, source, target).expect("object classification");
 
         assert_eq!(classification.excess_properties.len(), 1);
+    }
+
+    #[test]
+    fn optional_mapped_implicit_undefined_is_structural_across_param_names() {
+        let db = TypeInterner::new();
+
+        for name in ["K", "Prop"] {
+            let mapped = db.mapped(MappedType {
+                type_param: TypeParamInfo::simple(db.intern_string(name)),
+                constraint: TypeId::STRING,
+                template: TypeId::NUMBER,
+                name_type: None,
+                readonly_modifier: None,
+                optional_modifier: Some(MappedModifier::Add),
+            });
+
+            assert!(optional_mapped_type_adds_implicit_undefined(
+                &db, &db, mapped
+            ));
+        }
+    }
+
+    #[test]
+    fn optional_mapped_implicit_undefined_rejects_existing_undefined_template() {
+        let db = TypeInterner::new();
+        let template = db.union2(TypeId::NUMBER, TypeId::UNDEFINED);
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo::simple(db.intern_string("K")),
+            constraint: TypeId::STRING,
+            template,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: Some(MappedModifier::Add),
+        });
+
+        assert!(!optional_mapped_type_adds_implicit_undefined(
+            &db, &db, mapped
+        ));
+    }
+
+    #[test]
+    fn optional_mapped_implicit_undefined_respects_display_alias_surface() {
+        let db = TypeInterner::new();
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo::simple(db.intern_string("K")),
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: Some(MappedModifier::Add),
+        });
+        let alias = db.application(db.lazy(DefId(1)), vec![TypeId::STRING]);
+        db.store_display_alias(mapped, alias);
+
+        assert!(!optional_mapped_type_adds_implicit_undefined(
+            &db, &db, mapped
+        ));
     }
 }
