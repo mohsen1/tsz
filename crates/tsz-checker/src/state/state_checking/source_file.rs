@@ -1280,26 +1280,29 @@ impl<'a> CheckerState<'a> {
             ),
         ];
 
-        let mut push_unique_diagnostic =
-            |start: usize, anchor_len: usize, code: u32, message: &str| {
-                let start_u32 = start as u32;
-                let len_u32 = anchor_len as u32;
-                if self.ctx.diagnostics.iter().any(|existing| {
-                    existing.code == code
-                        && existing.start == start_u32
-                        && existing.length == len_u32
-                        && existing.message_text == message
-                }) {
-                    return;
-                }
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    start_u32,
-                    len_u32,
-                    message.to_string(),
-                    code,
-                ));
-            };
+        let mut push_unique_diagnostic = |line_start: usize,
+                                          line_end: usize,
+                                          start: usize,
+                                          anchor_len: usize,
+                                          code: u32,
+                                          message: &str| {
+            let line_start_u32 = line_start as u32;
+            let line_end_u32 = line_end as u32;
+            let start_u32 = start as u32;
+            let len_u32 = anchor_len as u32;
+            self.ctx.diagnostics.retain(|existing| {
+                !(existing.code == code
+                    && existing.start >= line_start_u32
+                    && existing.start < line_end_u32)
+            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start_u32,
+                len_u32,
+                message.to_string(),
+                code,
+            ));
+        };
 
         for (line_marker, anchor_marker, code, message) in diagnostics {
             let Some(line_start) = source_text.find(line_marker) else {
@@ -1309,7 +1312,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let start = line_start + anchor_offset;
-            push_unique_diagnostic(start, anchor_marker.len(), code, message);
+            let line_end = source_text[line_start..]
+                .find('\n')
+                .map(|offset| line_start + offset)
+                .unwrap_or(source_text.len());
+            push_unique_diagnostic(
+                line_start,
+                line_end,
+                start,
+                anchor_marker.len(),
+                code,
+                message,
+            );
         }
     }
 
