@@ -519,3 +519,85 @@ class C {
         "ES2015 public instance auto-accessors should initialize generated storage before computed names and chain extra initializers.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es5_public_methods_schedule_computed_key_decorators() {
+    let source = "\
+declare var dec: any;
+declare var method3: any;
+
+class C {
+    @dec(1) method1() {}
+    @dec(2) [\"method2\"]() {}
+    @dec(3) [method3]() {}
+}
+
+class D {
+    @dec(1) static method1() {}
+    @dec(2) static [\"method2\"]() {}
+    @dec(3) static [method3]() {}
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("__runInitializers(this, _instanceExtraInitializers);")
+            && output.contains(
+            "C.prototype[(_method1_decorators = [dec(1)], _member_decorators = [dec(2)], _member_decorators_1 = [dec(3)], _b = __propKey(method3))] = function () { };"
+        )
+            && output.contains(
+                "D[(_static_method1_decorators = [dec(1)], _static_member_decorators = [dec(2)], _static_member_decorators_1 = [dec(3)], _b = __propKey(method3))] = function () { };"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _member_decorators, { kind: \"method\", name: \"method2\", static: false, private: false, access: { has: function (obj) { return \"method2\" in obj; }, get: function (obj) { return obj[\"method2\"]; } }, metadata: _metadata }, null, _instanceExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _member_decorators_1, { kind: \"method\", name: _b, static: false, private: false, access: { has: function (obj) { return _b in obj; }, get: function (obj) { return obj[_b]; } }, metadata: _metadata }, null, _instanceExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _static_member_decorators, { kind: \"method\", name: \"method2\", static: true, private: false, access: { has: function (obj) { return \"method2\" in obj; }, get: function (obj) { return obj[\"method2\"]; } }, metadata: _metadata }, null, _staticExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _static_member_decorators_1, { kind: \"method\", name: _b, static: true, private: false, access: { has: function (obj) { return _b in obj; }, get: function (obj) { return obj[_b]; } }, metadata: _metadata }, null, _staticExtraInitializers);"
+            ),
+        "ES5 TC39 public methods should sink decorator/proKey assignments into the computed method key and use bracket access for string/computed names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es5_abstract_decorated_accessors_have_no_runtime_decorator_output() {
+    let source = "\
+declare var dec: any;
+declare var method3: any;
+
+abstract class C {
+    @dec(1) abstract get method1(): number;
+    @dec(2) abstract set [\"method2\"](value);
+    @dec(3) abstract get [method3](): number;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("__esDecorate(_a")
+            && !output.contains("_method1_decorators")
+            && !output.contains("_member_decorators"),
+        "Abstract decorated accessors should not enter the ES5 TC39 runtime decorator wrapper.\nOutput:\n{output}"
+    );
+}

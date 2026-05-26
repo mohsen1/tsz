@@ -108,8 +108,30 @@ struct Tc39Es5MemberDecorator {
     decorators_var: String,
     decorator_exprs: Vec<String>,
     kind: &'static str,
-    name: String,
+    name: Tc39Es5MemberName,
     is_static: bool,
+}
+
+enum Tc39Es5MemberName {
+    Identifier(String),
+    StringLiteral(String),
+    Computed { expr_text: String, key_var: String },
+}
+
+struct Tc39Es5ComputedMethodInjection {
+    is_static: bool,
+    expr_text: String,
+    assignments: Vec<String>,
+    decorator_vars: Vec<String>,
+}
+
+fn tc39_es5_propkey_temp_name(offset: u32) -> String {
+    let idx = offset + 1;
+    if idx < 26 {
+        format!("_{}", (b'a' + idx as u8) as char)
+    } else {
+        format!("_{idx}")
+    }
 }
 
 /// Context for ES5 class transformation
