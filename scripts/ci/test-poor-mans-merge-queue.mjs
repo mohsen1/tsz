@@ -221,6 +221,17 @@ assert.deepEqual(
     { owner: "agent:M4-B", count: 1 },
   ],
 );
+assert.deepEqual(
+  skipOwnerCounts([
+    { owner: "agent:M4-A", updatedAt: "2026-05-25T10:00:00Z", reason: "draft PR" },
+    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "auto-merge is not armed" },
+  ]),
+  [
+    { owner: "agent:M4-A", count: 2, oldestUpdatedAt: "2026-05-23T08:00:00Z" },
+    { owner: "agent:M4-B", count: 1, oldestUpdatedAt: "2026-05-24T09:00:00Z" },
+  ],
+);
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
@@ -335,6 +346,18 @@ assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
 assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
 assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
+
+const queueSkipOwnerDateFormat = formatResult({
+  selected: null,
+  skips: [
+    { number: 1, owner: "agent:M1-A", reason: "draft PR", updatedAt: "2026-05-25T10:00:00Z" },
+    { number: 2, owner: "agent:M1-A", reason: "auto-merge is not armed", updatedAt: "2026-05-23T08:00:00Z" },
+    { number: 3, owner: "agent:M4-B", reason: "auto-merge is not armed", updatedAt: "2026-05-24T09:00:00Z" },
+  ],
+}, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
+assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \|/);
 
 assert.match(
   formatResult({
