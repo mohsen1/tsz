@@ -97,6 +97,7 @@ Useful live checks:
 ```bash
 scripts/agents/ensure-agent-labels.sh --audit
 scripts/agents/list-owned-work.sh --all
+scripts/agents/list-owned-work.sh --pr-state Studio-F
 node scripts/ci/pr-ownership-report.mjs
 gh issue list --repo mohsen1/tsz --state open --limit 200 --json number,title,labels,updatedAt,url
 ```
