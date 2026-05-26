@@ -229,6 +229,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         };
 
+        if !elem.rest {
+            inner = self.strip_removed_optional_undefined(inner, elem.optional && !optional);
+        }
+
         // Rewrap the rest in `Array<>` when the input rest was array-shaped;
         // opaque rests (type parameter, lazy ref) keep their evaluated form
         // so deferred indexed-access types survive.
