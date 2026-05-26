@@ -521,7 +521,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down after current-main guard tests caught slack in the
         # live direct-reference count.
-        3337,
+        #
+        # Corrected to the live merged count after #10314 landed with a stale
+        # lower cap; removal condition remains #8225 narrowing this quarantine.
+        3342,
     ),
 ]
 
