@@ -427,6 +427,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/array_like_constraint_relation_routing_arch_tests.rs"]
+mod array_like_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/array_literal_spread_inference_widening_tests.rs"]
 mod array_literal_spread_inference_widening_tests;
 #[cfg(test)]
