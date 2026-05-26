@@ -46,6 +46,10 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     fi
 
                     if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+                      if [[ "$*" != *"--json number,title,labels,body,url"* ]]; then
+                        echo "expected PR audit to request url field: $*" >&2
+                        exit 98
+                      fi
                       printf '%s\n' "${FAKE_GH_PRS}"
                       exit 0
                     fi
