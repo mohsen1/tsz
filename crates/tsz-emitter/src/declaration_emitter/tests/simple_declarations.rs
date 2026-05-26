@@ -3478,6 +3478,11 @@ export { g };
         output.contains("export function g(a: {\n    x: string;\n}, b: {\n    y: typeof import(\".\").b;\n}): void | \"\";"),
         "Expected folded JS export function to preserve JSDoc param and return types: {output}"
     );
+    assert_eq!(
+        output.matches("export function g(").count(),
+        1,
+        "Expected folded JS export function to be emitted once: {output}"
+    );
     assert!(
         output.contains(
             "/**\n * @param {{x: string}} a\n * @param {{y: typeof b}} b\n */\nexport function g"
