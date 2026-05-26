@@ -39,6 +39,13 @@ class AllowEntry:
     reason: str
 
 
+@dataclasses.dataclass(frozen=True)
+class FailureSummary:
+    unallowlisted: int = 0
+    over_allowlist: int = 0
+    stale_allowlist: int = 0
+
+
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
     yield from sorted(base.rglob("*.rs"))
 
@@ -147,6 +154,18 @@ def audit(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> list[str
     return failures
 
 
+def summarize_failures(failures: list[str]) -> FailureSummary:
+    summary = FailureSummary()
+    for failure in failures:
+        if "unallowlisted output-surgery call(s)" in failure:
+            summary = dataclasses.replace(summary, unallowlisted=summary.unallowlisted + 1)
+        elif "allowlist entry is stale" in failure:
+            summary = dataclasses.replace(summary, stale_allowlist=summary.stale_allowlist + 1)
+        elif "allowlist max is" in failure:
+            summary = dataclasses.replace(summary, over_allowlist=summary.over_allowlist + 1)
+    return summary
+
+
 def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> None:
     by_path: dict[str, list[Finding]] = defaultdict(list)
     for finding in findings:
@@ -173,6 +192,14 @@ def main(argv: list[str] | None = None) -> int:
         print_report(findings, allowlist)
 
     if failures:
+        summary = summarize_failures(failures)
+        print(
+            "\nOutput-surgery audit summary: "
+            f"unallowlisted={summary.unallowlisted}, "
+            f"over_allowlist={summary.over_allowlist}, "
+            f"stale_allowlist={summary.stale_allowlist}",
+            file=sys.stderr,
+        )
         print("\nOutput-surgery audit failed:", file=sys.stderr)
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)

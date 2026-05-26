@@ -49,6 +49,18 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         )
         self.assertEqual(failures, ["a.rs: 2 output-surgery call(s), allowlist max is 1"])
 
+    def test_failure_summary_counts_failure_classes(self):
+        summary = self.audit.summarize_failures(
+            [
+                "a.rs: 1 unallowlisted output-surgery call(s)",
+                "b.rs: 3 output-surgery call(s), allowlist max is 2",
+                "c.rs: allowlist entry is stale; no matching calls remain",
+            ]
+        )
+        self.assertEqual(summary.unallowlisted, 1)
+        self.assertEqual(summary.over_allowlist, 1)
+        self.assertEqual(summary.stale_allowlist, 1)
+
     def test_scan_ignores_data_cleanup_but_finds_output_surgery(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             base = pathlib.Path(temp_dir)
