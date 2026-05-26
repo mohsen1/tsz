@@ -196,7 +196,8 @@ impl<'a> CheckerState<'a> {
                                 {
                                     let outer_c_eval = self.evaluate_type_with_env(outer_c_type);
                                     let keyof_obj = self.ctx.types.factory().keyof(object_type);
-                                    if self.is_assignable_to(outer_c_eval, keyof_obj)
+                                    if self
+                                        .diagnostic_relation_boolean_guard(outer_c_eval, keyof_obj)
                                         || self.is_keyof_for_current_object(
                                             outer_c_eval,
                                             object_type,
@@ -226,7 +227,7 @@ impl<'a> CheckerState<'a> {
                     let constraint_type = self.get_type_from_type_node(tp.constraint);
                     let constraint_eval = self.evaluate_type_with_env(constraint_type);
                     let keyof_object_param = self.ctx.types.factory().keyof(object_type);
-                    if self.is_assignable_to(constraint_eval, keyof_object_param) {
+                    if self.diagnostic_relation_boolean_guard(constraint_eval, keyof_object_param) {
                         return true;
                     }
                     // Also handle constraints that structurally contain `keyof T`.
@@ -262,7 +263,7 @@ impl<'a> CheckerState<'a> {
                         ) {
                             return true;
                         }
-                        if self.is_assignable_to(next_eval, keyof_object_param) {
+                        if self.diagnostic_relation_boolean_guard(next_eval, keyof_object_param) {
                             return true;
                         }
                         if !crate::query_boundaries::common::is_type_parameter_like(

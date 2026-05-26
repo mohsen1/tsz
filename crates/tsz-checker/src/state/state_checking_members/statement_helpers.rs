@@ -212,15 +212,15 @@ impl<'a> CheckerState<'a> {
             // assignable to number or string, tsc's evaluator would likely succeed
             // (the import resolves to a const with a literal value).
             if eval_result.is_none()
-                && (self.is_assignable_to(init_type, TypeId::NUMBER)
-                    || self.is_assignable_to(init_type, TypeId::STRING))
+                && (self.diagnostic_relation_boolean_guard(init_type, TypeId::NUMBER)
+                    || self.diagnostic_relation_boolean_guard(init_type, TypeId::STRING))
             {
                 continue;
             }
 
             // Evaluation would fail (or unknown with non-number/string type).
             // Emit TS18033 if the type is not assignable to number.
-            if !self.is_assignable_to(init_type, TypeId::NUMBER) {
+            if !self.diagnostic_relation_boolean_guard(init_type, TypeId::NUMBER) {
                 // tsc displays widened types in TS18033: 'string' not '"bar"'
                 let widened =
                     crate::query_boundaries::common::widen_literal_type(self.ctx.types, init_type);
