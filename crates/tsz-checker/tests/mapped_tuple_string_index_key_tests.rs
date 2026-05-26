@@ -149,3 +149,50 @@ fn homomorphic_value_template_resolves_through_string_key() {
         "#,
     );
 }
+
+#[test]
+fn rest_tuple_tail_key_is_number_not_fixed_string_index() {
+    assert_no_errors(
+        "rest tuple mapped key is number",
+        r#"
+        type Idx<T> = { [K in keyof T]: K };
+        type R = Idx<[...number[]]>;
+        const ok: number = null as any as R[0];
+        "#,
+    );
+    assert_has_code(
+        "rest tuple key is not the fixed string literal \"0\"",
+        r#"
+        type Idx<T> = { [K in keyof T]: K };
+        type R = Idx<[...number[]]>;
+        const bad: "0" = null as any as R[0];
+        "#,
+        2322,
+    );
+}
+
+#[test]
+fn fixed_head_keeps_string_key_while_rest_tail_uses_number() {
+    assert_no_errors(
+        "fixed tuple head key and rest tail key",
+        r#"
+        type Idx<T> = { [K in keyof T]: K };
+        type R = Idx<[string, ...number[]]>;
+        const head: "0" = null as any as R[0];
+        const tail: number = null as any as R[1];
+        "#,
+    );
+}
+
+#[test]
+fn homomorphic_value_template_preserves_rest_element_type() {
+    assert_no_errors(
+        "T[K] over rest tuple tail preserves the rest element",
+        r#"
+        type Copy<T> = { [K in keyof T]: T[K] };
+        type R = Copy<[string, ...number[]]>;
+        const copied: R = ["head", 1, 2];
+        const tail: number = copied[1];
+        "#,
+    );
+}

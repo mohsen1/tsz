@@ -1,5 +1,7 @@
 use crate::evaluation::evaluate::TypeEvaluator;
-use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::instantiation::instantiate::{
+    TypeSubstitution, instantiate_type, instantiate_type_preserving_with_declared,
+};
 use crate::relations::subtype::TypeResolver;
 use crate::types::{MappedModifier, MappedType, TupleElement, TupleListId, TypeData, TypeId};
 
@@ -102,6 +104,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
     }
 
+    /// Instantiate a mapped type template for an array rest segment inside a
+    /// tuple. Fixed tuple positions bind `K` to string-literal keys (`"0"`),
+    /// but a rest tail is keyed by `number`. When the template reads `T[K]`,
+    /// preserve the rest element type so `[H, ...R[]]` maps its tail as `R[]`
+    /// instead of `T[number][]` (`H | R`)[].
+    fn map_template_at_array_rest(
+        &mut self,
+        mapped: &MappedType,
+        rest_element_type: TypeId,
+    ) -> TypeId {
+        let subst = TypeSubstitution::single(mapped.type_param.name, TypeId::NUMBER);
+        let instantiated = if let Some(source) =
+            self.extract_template_index_source(mapped.template, mapped.type_param.name)
+        {
+            instantiate_type_preserving_with_declared(
+                self.interner(),
+                mapped.template,
+                &subst,
+                source,
+                mapped.type_param.name,
+                rest_element_type,
+            )
+        } else {
+            instantiate_type(self.interner(), mapped.template, &subst)
+        };
+        self.evaluate(instantiated)
+    }
+
     /// Evaluate a homomorphic mapped type over a Tuple type.
     ///
     /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
@@ -120,16 +150,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 seen_rest = true;
                 let rest_type = elem.type_id;
                 let mapped_rest_type = match self.interner().lookup(rest_type) {
-                    Some(TypeData::Array(_)) if is_first_rest => {
+                    Some(TypeData::Array(inner_elem)) if is_first_rest => {
                         // `...E[]` as the first rest: every position before it is
-                        // fixed, so this position's index unambiguously resolves
-                        // to the rest element's own type. Re-wrap as an array so
-                        // the slot stays a rest element.
+                        // fixed, so a homomorphic `T[K]` can resolve to the rest
+                        // element's own type. The rest tail's key is still
+                        // `number`, not a fixed string index. Re-wrap as an array
+                        // so the slot stays a rest element.
                         //
                         // A later rest cannot use this: `tuple_index_literal`
                         // short-circuits on the first rest it meets, so positions
                         // after an earlier rest/variadic spread are unreliable.
-                        let mapped_element = self.map_template_at_index(mapped, i);
+                        let mapped_element = self.map_template_at_array_rest(mapped, inner_elem);
                         self.interner().array(mapped_element)
                     }
                     Some(TypeData::Array(inner_elem)) => {

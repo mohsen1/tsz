@@ -112,3 +112,18 @@ p;
         "expected tuple literal to assign to distributive conditional union, got: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn rest_only_tuple_intersection_length_context_forces_tuple_literal() {
+    let source = r#"
+type test1 = [...number[]]
+type fixed1 = test1 & { length: 2 }
+let var1: fixed1 = [0, 0]
+"#;
+
+    let diagnostics = check_default(source);
+    assert!(
+        diagnostics.iter().all(|diag| diag.code != 2322),
+        "expected [0, 0] to keep tuple context for rest-only tuple intersection, got: {diagnostics:#?}"
+    );
+}
