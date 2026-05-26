@@ -24,7 +24,7 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 01:57 UTC lane refresh:
+- 2026-05-26 02:00 UTC lane refresh:
   - Direct `agent:M1-A` PR queue is empty after `#10190` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
@@ -131,11 +131,11 @@ node scripts/ci/pr-ownership-report.mjs
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off.
-  - The latest ownership report shows 41 ready main-based PRs with
-    `mergeStateStatus=BLOCKED`; owner counts are led by `agent:M1-C: 10`,
-    `agent:M4-A: 9`, and `agent:M4-C: 6`, with all listed rows currently
-    auto-merge off. Do not take them over unless the owner asks or a stale
-    branch needs a signed handoff.
+  - Use the ownership report's `Blocked Ready Main PRs` section for the current
+    ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
+    state asynchronously, so do not freeze the count in the lane note; re-run
+    the report for current owner counts and rows. Do not take those PRs over
+    unless the owner asks or a stale branch needs a signed handoff.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
