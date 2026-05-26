@@ -2097,6 +2097,12 @@ impl<'a> AstToIr<'a> {
                 };
                 let key_expr = self.convert_property_key_to_string_expr(accessor.name)?;
                 let func = self.convert_accessor_to_function_expr(node)?;
+                let descriptor_source_range =
+                    self.arena.get_extended(elem_idx).and_then(|extended| {
+                        let parent = extended.parent;
+                        let parent_node = self.arena.get(parent)?;
+                        Some((parent_node.pos, parent_node.end))
+                    });
                 // Object.defineProperty(_a, key, { get/set: function() {...}, enumerable: false, configurable: true })
                 let descriptor_props = vec![
                     IRProperty {
@@ -2125,7 +2131,7 @@ impl<'a> AstToIr<'a> {
                         key_expr,
                         IRNode::ObjectLiteral {
                             properties: descriptor_props,
-                            source_range: None,
+                            source_range: descriptor_source_range,
                             extra_indent: 0,
                         },
                     ],

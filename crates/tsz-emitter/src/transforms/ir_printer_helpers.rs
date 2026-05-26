@@ -22,6 +22,25 @@ impl<'a> IRPrinter<'a> {
         }) // Default to single-line if no source text
     }
 
+    pub(super) fn object_literal_source_has_trailing_comma(&self, pos: u32, end: u32) -> bool {
+        self.source_text.is_some_and(|text| {
+            let start = pos as usize;
+            let end = std::cmp::min(end as usize, text.len());
+            if start >= end {
+                return false;
+            }
+            let slice = &text[start..end];
+            let Some(close_brace) = slice.rfind('}') else {
+                return false;
+            };
+            slice[..close_brace]
+                .chars()
+                .rev()
+                .find(|ch| !ch.is_whitespace())
+                .is_some_and(|ch| ch == ',')
+        })
+    }
+
     pub(super) fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
         body_source_range
             .and_then(|(pos, end)| {

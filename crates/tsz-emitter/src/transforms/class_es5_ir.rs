@@ -464,17 +464,10 @@ impl<'a> ES5ClassTransformer<'a> {
         self.source_text = Some(source_text);
     }
 
-    /// Append the property's immediately-preceding leading block comment (if any)
+    /// Append the property's immediately-preceding leading comment (if any)
     /// to `body`. When a class property's initializer is lifted into the
     /// constructor, the comment that decorated the property in source must move
     /// with it — otherwise the user-authored documentation silently disappears.
-    ///
-    /// We scan backwards from the property's `pos` through whitespace and
-    /// newlines and, if the previous bytes form `*/`, capture the enclosing
-    /// `/* ... */` (or `/** ... */`) span as a leading `Raw` IR node. This
-    /// covers the common JSDoc case targeted by this fix; line comments before
-    /// properties are still handled by the existing trivia logic when they
-    /// happen to land in the surrounding leading-comment range.
     fn emit_property_leading_comment(&self, body: &mut Vec<IRNode>, prop_idx: NodeIndex) {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
@@ -489,6 +482,11 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') {
             i -= 1;
+        }
+        let line_start = text[..i].rfind('\n').map_or(0, |idx| idx + 1);
+        if text[line_start..i].trim_start().starts_with("//") {
+            body.push(IRNode::Raw(text[line_start..i].to_string().into()));
+            return;
         }
         if i < 2 || &bytes[i - 2..i] != b"*/" {
             return;

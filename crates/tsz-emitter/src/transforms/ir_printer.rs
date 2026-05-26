@@ -832,6 +832,9 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     false
                 };
+                let has_source_trailing_comma = source_range.is_some_and(|(pos, end)| {
+                    self.object_literal_source_has_trailing_comma(pos, end)
+                });
 
                 if is_multiline {
                     // Multiline format
@@ -842,7 +845,7 @@ impl<'a> IRPrinter<'a> {
                     for (i, prop) in properties.iter().enumerate() {
                         self.write_indent();
                         self.emit_property(prop);
-                        if i < properties.len() - 1 {
+                        if i < properties.len() - 1 || has_source_trailing_comma {
                             self.write(",");
                         }
                         self.write_line();

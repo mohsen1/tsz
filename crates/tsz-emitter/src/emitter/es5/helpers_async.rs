@@ -1560,7 +1560,7 @@ impl<'a> Printer<'a> {
         } else {
             let temp_name = self
                 .get_class_expression_name(class_node)
-                .unwrap_or_else(|| self.get_temp_var_name());
+                .unwrap_or_else(|| self.make_unique_name_from_base("class"));
             let output = es5_emitter.emit_class_with_name(class_node, &temp_name);
             (temp_name, output)
         };
