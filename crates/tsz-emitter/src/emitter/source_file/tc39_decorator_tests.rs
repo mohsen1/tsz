@@ -62,7 +62,11 @@ class C {
     @dec
     m(): void {}
     @dec
+    objectResult(): { x: number } { return { x: 1 }; }
+    @dec
     get value(): number { return 1; }
+    @dec
+    get objectValue(): { x: number } { return { x: 1 }; }
 }
 ";
 
@@ -76,11 +80,17 @@ class C {
     );
 
     assert!(
-        output.contains("m() { }") && output.contains("get value() { return 1; }"),
+        output.contains("m() { }")
+            && output.contains("objectResult() { return { x: 1 }; }")
+            && output.contains("get value() { return 1; }")
+            && output.contains("get objectValue() { return { x: 1 }; }"),
         "Decorated public method/accessor emit should keep JS member syntax.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("m(): void") && !output.contains("value(): number"),
+        !output.contains("m(): void")
+            && !output.contains("objectResult(): { x: number }")
+            && !output.contains("value(): number")
+            && !output.contains("objectValue(): { x: number }"),
         "Decorated public method/accessor emit must not copy return type annotations.\nOutput:\n{output}"
     );
 }
