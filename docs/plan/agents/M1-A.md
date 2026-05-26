@@ -133,6 +133,15 @@ node scripts/ci/pr-ownership-report.mjs
     `0b7d82391b ci: summarize conflicting ready ownership (#10201)`.
     The ownership report's `Owner Summary` now includes a `Conflicting ready`
     column and `ownerSummaries[].conflictingReadyMain` JSON field.
+  - `#10203` merged on 2026-05-26 as
+    `f66f66cef0 ci: show conflicting ready update dates (#10203)`.
+    `Conflicting Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
+    conflicting-main JSON rows include `updatedAt` for stale-handoff triage.
+  - `#10205` merged on 2026-05-26 as
+    `a7acc60e67 ci: show blocked ready update dates (#10205)`.
+    `Blocked Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
+    blocked-ready JSON rows include `updatedAt` so stale blocked-ready
+    handoffs have the same quick age signal as conflicting-ready handoffs.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -166,13 +175,15 @@ node scripts/ci/pr-ownership-report.mjs
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
     the report for current owner counts and rows. Do not take those PRs over
-    unless the owner asks or a stale branch needs a signed handoff.
+    unless the owner asks or a stale branch needs a signed handoff. The
+    `updated` date in each row is the quick staleness signal.
   - Use the ownership report's `Conflicting Main PRs` section for the current
     dirty/conflicting main-based branch surface. Treat those rows as handoff
     evidence for the owning lane, not permission to take over implementation
     branches without an explicit request or stale-branch handoff comment.
   - Use the ownership report's `Conflicting Ready Main PRs` section when
     deciding which non-draft branch blockers need owner handoff before queueing.
+    The `updated` date in each row is the quick staleness signal.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
