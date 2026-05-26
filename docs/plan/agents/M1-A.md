@@ -152,6 +152,11 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue-branch cleanup dry runs now show active queue-run status and
     start time in the `Active Queue Runs` table, so preserved active queue
     branches can be age-triaged without opening each Actions run.
+  - `#10211` merged on 2026-05-26 as
+    `c2c4259aeb ci: show owners in queue skip report (#10211)`.
+    Verbose queue dry runs now include the canonical `agent:*` owner label in
+    skipped-PR rows, so `auto-merge off` and `draft PR` blocks can be handed
+    off by lane without cross-referencing the ownership report.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -181,7 +186,9 @@ node scripts/ci/pr-ownership-report.mjs
     rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
-    either drafts, not auto-merge armed, or already handed off.
+    either drafts, not auto-merge armed, or already handed off. Use
+    `--verbose` when triaging this surface; skipped PR rows include owner
+    labels for direct lane handoff.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
