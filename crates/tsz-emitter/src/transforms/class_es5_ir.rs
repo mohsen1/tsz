@@ -118,7 +118,8 @@ enum Tc39Es5MemberName {
     Computed { expr_text: String, key_var: String },
 }
 
-struct Tc39Es5ComputedMethodInjection {
+struct Tc39Es5ComputedMemberInjection {
+    kind: &'static str,
     is_static: bool,
     expr_text: String,
     assignments: Vec<String>,

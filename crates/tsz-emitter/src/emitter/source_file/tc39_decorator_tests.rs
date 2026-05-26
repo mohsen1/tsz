@@ -601,3 +601,66 @@ abstract class C {
         "Abstract decorated accessors should not enter the ES5 TC39 runtime decorator wrapper.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es5_public_accessors_schedule_computed_key_decorators() {
+    let source = "\
+declare var dec: any;
+declare var method3: any;
+
+class C {
+    @dec(11) get method1() { return 0; }
+    @dec(12) set method1(value) {}
+    @dec(21) get [\"method2\"]() { return 0; }
+    @dec(22) set [\"method2\"](value) {}
+    @dec(31) get [method3]() { return 0; }
+    @dec(32) set [method3](value) {}
+}
+
+class D {
+    @dec(11) static get method1() { return 0; }
+    @dec(12) static set method1(value) {}
+    @dec(21) static get [\"method2\"]() { return 0; }
+    @dec(22) static set [\"method2\"](value) {}
+    @dec(31) static get [method3]() { return 0; }
+    @dec(32) static set [method3](value) {}
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "Object.defineProperty(C.prototype, (_get_method1_decorators = [dec(11)], _set_method1_decorators = [dec(12)], _get_member_decorators = [dec(21)], _set_member_decorators = [dec(22)], _get_member_decorators_1 = [dec(31)], _b = __propKey(method3)), {"
+        )
+            && output.contains(
+                "Object.defineProperty(C.prototype, (_set_member_decorators_1 = [dec(32)], _c = __propKey(method3)), {"
+            )
+            && output.contains(
+                "Object.defineProperty(D, (_static_get_method1_decorators = [dec(11)], _static_set_method1_decorators = [dec(12)], _static_get_member_decorators = [dec(21)], _static_set_member_decorators = [dec(22)], _static_get_member_decorators_1 = [dec(31)], _b = __propKey(method3)), {"
+            )
+            && output.contains(
+                "Object.defineProperty(D, (_static_set_member_decorators_1 = [dec(32)], _c = __propKey(method3)), {"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _get_member_decorators_1, { kind: \"getter\", name: _b, static: false, private: false, access: { has: function (obj) { return _b in obj; }, get: function (obj) { return obj[_b]; } }, metadata: _metadata }, null, _instanceExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _set_member_decorators_1, { kind: \"setter\", name: _c, static: false, private: false, access: { has: function (obj) { return _c in obj; }, set: function (obj, value) { obj[_c] = value; } }, metadata: _metadata }, null, _instanceExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _static_get_member_decorators_1, { kind: \"getter\", name: _b, static: true, private: false, access: { has: function (obj) { return _b in obj; }, get: function (obj) { return obj[_b]; } }, metadata: _metadata }, null, _staticExtraInitializers);"
+            )
+            && output.contains(
+                "__esDecorate(_a, null, _static_set_member_decorators_1, { kind: \"setter\", name: _c, static: true, private: false, access: { has: function (obj) { return _c in obj; }, set: function (obj, value) { obj[_c] = value; } }, metadata: _metadata }, null, _staticExtraInitializers);"
+            ),
+        "ES5 TC39 public accessors should sink decorator/proKey assignments into computed Object.defineProperty keys and use bracket access for computed names.\nOutput:\n{output}"
+    );
+}
