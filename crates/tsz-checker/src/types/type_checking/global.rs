@@ -169,11 +169,9 @@ impl<'a> CheckerState<'a> {
         // method signatures. Without registering these types' bodies in TypeEnvironment,
         // the solver's resolve_lazy falls through to a SymbolId-based fallback that can
         // produce wrong types due to DefId/SymbolId value collisions.
-        // NOTE: ArrayIterator is NOT eagerly resolved here — it costs ~55ms due to deep
-        // interface merging chains (ArrayIterator → IteratorObject → Iterator + Disposable
-        // + esnext.iterator). Since the TypeInterner (DashMap) is shared across parallel
-        // checkers, ArrayIterator is resolved lazily on first use and cached globally.
-        for array_dep in &["ConcatArray", "FlatArray"] {
+        // ArrayIterator is part of Array's public declaration surface under
+        // ES2015+ libs, so resolve it before Array member snapshots are cached.
+        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
             let _ = self.resolve_lib_type_by_name(array_dep);
         }
 
