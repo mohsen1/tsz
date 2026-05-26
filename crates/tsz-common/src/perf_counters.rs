@@ -179,141 +179,78 @@ pub const LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS: [u64; LOCK_WAIT_BUCKET_COUNT] = [
     u64::MAX,    // overflow
 ];
 
-/// How `delegate_cross_arena_symbol_resolution` found the target arena for
-/// a cache miss that must construct a child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissSource {
-    /// `binder.symbol_arenas` pointed at a non-current arena.
-    SymbolArena = 0,
-    /// `binder.declaration_arenas` found a non-current declaration arena.
-    DeclarationArena = 1,
-    /// `cross_file_symbol_targets` resolved the target file index.
-    SymbolFileTarget = 2,
-    /// Fallback bucket for unexpected delegation shapes.
-    Unknown = 3,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT: usize = 4;
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT] = [
-    "symbol_arenas",
-    "declaration_arenas",
-    "symbol_file_targets",
-    "unknown",
-];
-
-impl CrossArenaSymbolMissSource {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// How `delegate_cross_arena_symbol_resolution` found the target arena for
+    /// a cache miss that must construct a child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissSource {
+        /// `binder.symbol_arenas` pointed at a non-current arena.
+        SymbolArena = 0 => "symbol_arenas",
+        /// `binder.declaration_arenas` found a non-current declaration arena.
+        DeclarationArena = 1 => "declaration_arenas",
+        /// `cross_file_symbol_targets` resolved the target file index.
+        SymbolFileTarget = 2 => "symbol_file_targets",
+        /// Fallback bucket for unexpected delegation shapes.
+        Unknown = 3 => "unknown",
     }
+
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES;
 }
 
-/// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissKind {
-    TypeAlias = 0,
-    Interface = 1,
-    Class = 2,
-    Function = 3,
-    Variable = 4,
-    Property = 5,
-    Method = 6,
-    Accessor = 7,
-    Enum = 8,
-    Module = 9,
-    Alias = 10,
-    TypeParameter = 11,
-    TypeLiteral = 12,
-    Signature = 13,
-    Constructor = 14,
-    ObjectLiteral = 15,
-    Unresolved = 16,
-    Other = 17,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT: usize = 18;
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT] = [
-    "type_alias",
-    "interface",
-    "class",
-    "function",
-    "variable",
-    "property",
-    "method",
-    "accessor",
-    "enum",
-    "module",
-    "alias",
-    "type_parameter",
-    "type_literal",
-    "signature",
-    "constructor",
-    "object_literal",
-    "unresolved",
-    "other",
-];
-
-impl CrossArenaSymbolMissKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissKind {
+        TypeAlias = 0 => "type_alias",
+        Interface = 1 => "interface",
+        Class = 2 => "class",
+        Function = 3 => "function",
+        Variable = 4 => "variable",
+        Property = 5 => "property",
+        Method = 6 => "method",
+        Accessor = 7 => "accessor",
+        Enum = 8 => "enum",
+        Module = 9 => "module",
+        Alias = 10 => "alias",
+        TypeParameter = 11 => "type_parameter",
+        TypeLiteral = 12 => "type_literal",
+        Signature = 13 => "signature",
+        Constructor = 14 => "constructor",
+        ObjectLiteral = 15 => "object_literal",
+        Unresolved = 16 => "unresolved",
+        Other = 17 => "other",
     }
+
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES;
 }
 
-/// Outcome of the no-child named-alias shortcut attempted before constructing
-/// a `DelegateCrossArenaSymbol` child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaAliasShortcutOutcome {
-    Success = 0,
-    NotAlias = 1,
-    MissingSymbol = 2,
-    MissingModule = 3,
-    MissingImportName = 4,
-    NamespaceImport = 5,
-    DefaultImport = 6,
-    MissingAliasFile = 7,
-    MissingTarget = 8,
-    SelfTarget = 9,
-    MissingTargetSymbol = 10,
-    TargetAlias = 11,
-    AliasPartner = 12,
-    InterfaceValueMerge = 13,
-    UnknownResult = 14,
-    ErrorResult = 15,
-}
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT: usize = 16;
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES: [&str;
-    CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT] = [
-    "success",
-    "not_alias",
-    "missing_symbol",
-    "missing_module",
-    "missing_import_name",
-    "namespace_import",
-    "default_import",
-    "missing_alias_file",
-    "missing_target",
-    "self_target",
-    "missing_target_symbol",
-    "target_alias",
-    "alias_partner",
-    "interface_value_merge",
-    "unknown_result",
-    "error_result",
-];
-
-impl CrossArenaAliasShortcutOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome of the no-child named-alias shortcut attempted before
+    /// constructing a `DelegateCrossArenaSymbol` child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaAliasShortcutOutcome {
+        Success = 0 => "success",
+        NotAlias = 1 => "not_alias",
+        MissingSymbol = 2 => "missing_symbol",
+        MissingModule = 3 => "missing_module",
+        MissingImportName = 4 => "missing_import_name",
+        NamespaceImport = 5 => "namespace_import",
+        DefaultImport = 6 => "default_import",
+        MissingAliasFile = 7 => "missing_alias_file",
+        MissingTarget = 8 => "missing_target",
+        SelfTarget = 9 => "self_target",
+        MissingTargetSymbol = 10 => "missing_target_symbol",
+        TargetAlias = 11 => "target_alias",
+        AliasPartner = 12 => "alias_partner",
+        InterfaceValueMerge = 13 => "interface_value_merge",
+        UnknownResult = 14 => "unknown_result",
+        ErrorResult = 15 => "error_result",
     }
+
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT;
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES;
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

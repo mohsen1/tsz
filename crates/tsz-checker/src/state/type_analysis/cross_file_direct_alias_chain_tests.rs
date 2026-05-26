@@ -334,6 +334,25 @@ fn direct_source_file_type_alias_lowers_indexed_type_literal_with_local_alias_va
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_type_literal_property_local_alias_application() {
+    with_two_file_state(
+        "type Leaf<X> = X | null;\ntype Pick<X> = X extends unknown ? 1 : 0;\nexport type Select<T> = { 1: Leaf<T>, 0: never }[Pick<T>];",
+        "import { Select } from './target';",
+        |state, target_binder| {
+            let select_sym = target_binder.file_locals.get("Select").expect("Select");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(select_sym, Some(1), true)
+                .expect(
+                    "type-literal property values with safe local alias applications should lower",
+                );
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Select should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_type_literal_with_computed_name() {
     with_two_file_state(
         "declare const key: unique symbol;\nexport type Box<T> = { [key]: T };",
@@ -345,6 +364,23 @@ fn direct_source_file_type_alias_rejects_type_literal_with_computed_name() {
                     .direct_source_file_type_alias_result(box_sym, Some(1), true)
                     .is_none(),
                 "computed property names must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_type_literal_property_typeof_alias_application() {
+    with_two_file_state(
+        "const value = 1;\ntype Leaf<X> = X | typeof value;\ntype Pick<X> = X extends unknown ? 1 : 0;\nexport type Select<T> = { 1: Leaf<T>, 0: never }[Pick<T>];",
+        "import { Select } from './target';",
+        |state, target_binder| {
+            let select_sym = target_binder.file_locals.get("Select").expect("Select");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(select_sym, Some(1), true)
+                    .is_none(),
+                "flow-sensitive local alias applications in type-literal properties must stay on the child-checker path",
             );
         },
     );
