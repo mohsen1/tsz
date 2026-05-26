@@ -1,5 +1,6 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -194,6 +195,44 @@ pub(crate) fn cases_exhaust_type(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+/// Apply an inferred predicate guard to a parameter type.
+///
+/// The checker owns recognizing an inferable predicate body and matching the
+/// guard target to a parameter. This boundary owns the reusable semantic guard
+/// application and wires the optional `TypeEnvironment` so `Lazy(DefId)` inputs
+/// resolve consistently during solver narrowing.
+pub(crate) fn narrow_inferred_predicate_guard(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    param_type: TypeId,
+    guard: &TypeGuard,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_type(param_type, guard, GuardSense::Positive)
+}
+
+/// Return true when a falsy branch type contains only nullish constituents.
+///
+/// The checker owns recognizing double-negation truthiness in an inferable
+/// predicate body. This boundary owns the reusable type-shape classification
+/// that decides whether the false branch is narrow enough for tsc-style
+/// inferred predicate synthesis.
+pub(crate) fn is_nullish_only_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+        return true;
+    }
+    if let Some(members) = union_members_for_type(db, type_id) {
+        return !members.is_empty()
+            && members
+                .iter()
+                .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+    }
+    false
 }
 
 fn resolve_assignment_reduction_type(

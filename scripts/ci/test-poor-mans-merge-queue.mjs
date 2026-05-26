@@ -5,8 +5,11 @@ import {
   activeRunOwnerStatusCounts,
   activeSyntheticQueueRun,
   failureCommentBody,
+  forceWithLeaseArgForOid,
   formatResult,
   hasPendingPlaceholderQueueStatus,
+  normalizeRestPullRequest,
+  normalizeRestWorkflowRun,
   pendingQueueRun,
   parseArgs,
   queueBranchMetadata,
@@ -77,6 +80,14 @@ assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 1
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
 assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", "a".repeat(40)),
+  `--force-with-lease=refs/heads/automation/merge-queue/pr-123:${"a".repeat(40)}`,
+);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", ""),
+  "--force-with-lease=refs/heads/automation/merge-queue/pr-123:",
+);
 assert.deepEqual(
   queueBranchMetadata("automation/merge-queue/pr-123-a56115a-m4c"),
   { number: 123, suffix: "a56115a-m4c" },
@@ -190,6 +201,64 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.deepEqual(
+  normalizeRestPullRequest({
+    auto_merge: { merge_method: "squash" },
+    base: { ref: "main", repo: { full_name: "owner/repo" } },
+    body: "AgentName: TestAgent",
+    draft: false,
+    head: { ref: "feature", repo: { full_name: "owner/repo" }, sha: "b".repeat(40) },
+    html_url: "https://github.example/owner/repo/pull/42",
+    labels: [{ name: "agent:M4-A" }],
+    number: 42,
+    title: "fix(ci): sample",
+    updated_at: "2026-05-26T10:00:00Z",
+  }, "owner/repo", [{ context: "CI Summary", state: "success" }]),
+  {
+    autoMergeRequest: { merge_method: "squash" },
+    baseRefName: "main",
+    body: "AgentName: TestAgent",
+    headRefName: "feature",
+    headRefOid: "b".repeat(40),
+    isCrossRepository: false,
+    isDraft: false,
+    labels: [{ name: "agent:M4-A" }],
+    number: 42,
+    statusCheckRollup: [{ context: "CI Summary", state: "success" }],
+    title: "fix(ci): sample",
+    updatedAt: "2026-05-26T10:00:00Z",
+    url: "https://github.example/owner/repo/pull/42",
+  },
+);
+assert.equal(
+  normalizeRestPullRequest({
+    base: { ref: "main", repo: { full_name: "owner/repo" } },
+    head: { ref: "feature", repo: { full_name: "fork/repo" }, sha: "b".repeat(40) },
+  }, "owner/repo").isCrossRepository,
+  true,
+);
+assert.deepEqual(
+  normalizeRestWorkflowRun({
+    id: 123,
+    status: "in_progress",
+    conclusion: null,
+    head_sha: "c".repeat(40),
+    html_url: "https://github.example/runs/123",
+    created_at: "2026-05-26T10:00:00Z",
+    run_started_at: "2026-05-26T10:01:00Z",
+    updated_at: "2026-05-26T10:02:00Z",
+  }),
+  {
+    databaseId: 123,
+    status: "in_progress",
+    conclusion: "",
+    headSha: "c".repeat(40),
+    url: "https://github.example/runs/123",
+    createdAt: "2026-05-26T10:00:00Z",
+    startedAt: "2026-05-26T10:01:00Z",
+    updatedAt: "2026-05-26T10:02:00Z",
+  },
+);
 assert.deepEqual(
   skipReasonCounts([
     { number: 1, reason: "draft PR" },
