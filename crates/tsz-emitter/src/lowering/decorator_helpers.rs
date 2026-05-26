@@ -66,7 +66,10 @@ impl<'a> LoweringPass<'a> {
         let needs_class_set_fn_name = has_class_decorators
             && ((self.ctx.target_es5 || self.ctx.needs_es2022_lowering)
                 || class_data.name.is_none()
-                || self.class_has_static_private_method(class_data));
+                || self.class_has_static_private_method(class_data)
+                || self.class_has_plain_static_auto_accessor_member(class_data));
+        let needs_class_auto_accessor_helpers =
+            has_class_decorators && self.class_has_plain_static_auto_accessor_member(class_data);
 
         let helpers = self.transforms.helpers_mut();
         helpers.es_decorate = true;
@@ -80,6 +83,41 @@ impl<'a> LoweringPass<'a> {
         if needs_set_function_name || needs_class_set_fn_name {
             helpers.set_function_name = true;
         }
+        if needs_class_auto_accessor_helpers {
+            helpers.mark_class_private_field_get();
+            helpers.mark_class_private_field_set();
+        }
+    }
+
+    fn class_has_plain_static_auto_accessor_member(&self, class_data: &ClassData) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                return false;
+            }
+            let Some(property) = self.arena.get_property_decl(member_node) else {
+                return false;
+            };
+            self.arena.is_static(&property.modifiers)
+                && self
+                    .arena
+                    .has_modifier(&property.modifiers, SyntaxKind::AccessorKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&property.modifiers, SyntaxKind::AbstractKeyword)
+                && !self
+                    .arena
+                    .has_modifier(&property.modifiers, SyntaxKind::DeclareKeyword)
+                && !property.modifiers.as_ref().is_some_and(|mods| {
+                    mods.nodes.iter().any(|&mod_idx| {
+                        self.arena
+                            .get(mod_idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                    })
+                })
+        })
     }
 
     pub(super) fn is_tc39_decorated_anonymous_class_expression(&self, idx: NodeIndex) -> bool {

@@ -104,6 +104,7 @@ declare var dec: any;
 class C {
     static { this; }
     static x: any = this;
+    static accessor a: any = this;
     static m() { this; }
 }
 ";
@@ -120,11 +121,15 @@ class C {
     assert!(
         es2022_output.contains("static { _classThis; }")
             && es2022_output.contains("static x = _classThis;")
+            && es2022_output.contains("_C_a_accessor_storage = { value: _classThis };")
+            && es2022_output.contains("static get a() { return __classPrivateFieldGet(_classThis, _classThis, \"f\", _C_a_accessor_storage); }")
+            && es2022_output.contains("static set a(value) { __classPrivateFieldSet(_classThis, _classThis, value, \"f\", _C_a_accessor_storage); }")
             && es2022_output.contains("static m() { this; }"),
-        "Class-decorated static blocks and fields should use the class capture without changing method `this`.\nOutput:\n{es2022_output}"
+        "Class-decorated static blocks, fields, and auto-accessors should use the class capture without changing method `this`.\nOutput:\n{es2022_output}"
     );
     assert!(
-        !es2022_output.contains("static x: any = this"),
+        !es2022_output.contains("static x: any = this")
+            && !es2022_output.contains("static accessor a: any = this"),
         "Class-decorated static field emit must not copy TypeScript-only syntax.\nOutput:\n{es2022_output}"
     );
 
@@ -140,11 +145,15 @@ class C {
     assert!(
         es2015_output.contains("_classThis;\n    })();")
             && es2015_output.contains("_classThis.x = _classThis;")
+            && es2015_output.contains("_C_a_accessor_storage = { value: _classThis };")
+            && es2015_output.contains("static get a() { return __classPrivateFieldGet(_classThis, _classThis, \"f\", _C_a_accessor_storage); }")
             && es2015_output.contains("static m() { this; }"),
-        "Lowered class-decorated static blocks and fields should use the class capture.\nOutput:\n{es2015_output}"
+        "Lowered class-decorated static blocks, fields, and auto-accessors should use the class capture.\nOutput:\n{es2015_output}"
     );
     assert!(
-        !es2015_output.contains("static { this; }") && !es2015_output.contains("x: any = this"),
+        !es2015_output.contains("static { this; }")
+            && !es2015_output.contains("x: any = this")
+            && !es2015_output.contains("accessor a: any = this"),
         "Lowered class-decorated static members must not keep raw TypeScript syntax.\nOutput:\n{es2015_output}"
     );
 }

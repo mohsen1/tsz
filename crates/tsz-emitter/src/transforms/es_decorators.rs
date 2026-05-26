@@ -45,6 +45,7 @@ struct ClassBodyCtx<'a> {
     member_vars: &'a [MemberVarInfo],
     computed_key_vars: &'a [(usize, String)],
     class_decorator_static_private_methods: &'a [ClassDecoratorStaticPrivateMethodInfo],
+    class_decorator_auto_accessor_infos: &'a [ClassDecoratorAutoAccessorInfo],
 }
 
 struct ClassBodyFlags<'a> {
@@ -343,12 +344,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else {
                 Vec::new()
             };
-        let auto_accessor_storage_decls: Vec<String> = if self.use_static_blocks {
+        let class_decorator_auto_accessor_infos = if has_class_decorators {
+            self.collect_class_decorator_auto_accessor_info(
+                class_data,
+                &decorated_members,
+                &class_name,
+            )
+        } else {
             Vec::new()
+        };
+        let auto_accessor_storage_decls: Vec<String> = if self.use_static_blocks {
+            class_decorator_auto_accessor_infos
+                .iter()
+                .map(|info| info.storage_name.clone())
+                .collect()
         } else {
             decorated_auto_accessor_infos
                 .iter()
                 .map(|info| format!("_{class_name}_{}_accessor_storage", info.storage_base))
+                .chain(
+                    class_decorator_auto_accessor_infos
+                        .iter()
+                        .map(|info| info.storage_name.clone()),
+                )
                 .collect()
         };
 
@@ -517,7 +535,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ));
                 } else if !self.expression_mode
                     && !class_name.is_empty()
-                    && (class_name_was_empty || !class_decorator_static_private_methods.is_empty())
+                    && (class_name_was_empty
+                        || !class_decorator_static_private_methods.is_empty()
+                        || !class_decorator_auto_accessor_infos.is_empty())
                 {
                     let set_fn = self.helper("__setFunctionName");
                     out.push_str(&format!(
@@ -615,6 +635,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 member_vars: &member_vars,
                 computed_key_vars: &computed_key_vars,
                 class_decorator_static_private_methods: &class_decorator_static_private_methods,
+                class_decorator_auto_accessor_infos: &class_decorator_auto_accessor_infos,
             },
             &ClassBodyFlags {
                 has_any_instance,
@@ -907,6 +928,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             member_vars,
             computed_key_vars,
             class_decorator_static_private_methods,
+            class_decorator_auto_accessor_infos,
         } = ctx;
         let ClassBodyFlags {
             has_any_instance,
@@ -948,6 +970,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
         > = class_decorator_static_private_methods
             .iter()
             .map(|info| (info.member_idx, info))
+            .collect();
+        let class_decorator_auto_accessor_map: std::collections::HashMap<
+            NodeIndex,
+            &ClassDecoratorAutoAccessorInfo,
+        > = class_decorator_auto_accessor_infos
+            .iter()
+            .map(|info| (info.member.member_idx, info))
             .collect();
         let field_infos = self.collect_decorated_field_info(decorated_members, computed_key_vars);
         let auto_accessor_infos =
@@ -1016,6 +1045,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         plain_static_field_idx_set.insert(*member_idx);
                         plain_static_field_assignments.push(statement);
                     }
+                    continue;
+                }
+                if let Some(info) = class_decorator_auto_accessor_map.get(member_idx)
+                    && info.member.is_static
+                {
+                    let value =
+                        self.class_decorator_auto_accessor_initializer_value(info, _class_alias);
+                    plain_static_field_assignments
+                        .push(format!("{} = {{ value: {value} }}", info.storage_name));
                     continue;
                 }
                 if decorated_field_idx_set.contains(member_idx) {
@@ -1088,6 +1126,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         info.member_name, info.temp_var
                     ));
                 }
+                continue;
+            }
+            if let Some(info) = class_decorator_auto_accessor_map.get(&member_idx) {
+                self.emit_class_decorator_auto_accessor_member(info, _class_alias, indent, out);
                 continue;
             }
             let next_boundary = if emit_i + 1 < all_members.len() {
@@ -1763,6 +1805,39 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
+    fn emit_class_decorator_auto_accessor_member(
+        &self,
+        info: &ClassDecoratorAutoAccessorInfo,
+        class_ref: &str,
+        indent: &str,
+        out: &mut String,
+    ) {
+        let member = &info.member;
+        let static_prefix = if member.is_static { "static " } else { "" };
+        let member_name = self.auto_accessor_member_syntax(member);
+        let get_helper = self.helper("__classPrivateFieldGet");
+        let set_helper = self.helper("__classPrivateFieldSet");
+
+        if self.use_static_blocks && member.is_static {
+            let value = self.class_decorator_auto_accessor_initializer_value(info, class_ref);
+            out.push_str(&format!(
+                "{indent}static {{\n{indent}    {} = {{ value: {value} }};\n{indent}}}\n",
+                info.storage_name
+            ));
+        }
+
+        if member.is_static {
+            out.push_str(&format!(
+                "{indent}{static_prefix}get {member_name}() {{ return {get_helper}({class_ref}, {class_ref}, \"f\", {}); }}\n",
+                info.storage_name
+            ));
+            out.push_str(&format!(
+                "{indent}{static_prefix}set {member_name}(value) {{ {set_helper}({class_ref}, {class_ref}, value, \"f\", {}); }}\n",
+                info.storage_name
+            ));
+        }
+    }
+
     fn auto_accessor_member_name(
         &self,
         member: &DecoratedMember,
@@ -1778,7 +1853,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 }
                 format!("[{}]", info.name)
             }
+            MemberName::StringLiteral(name) => format!("[\"{name}\"]"),
             _ => info.name.clone(),
+        }
+    }
+
+    fn auto_accessor_member_syntax(&self, member: &DecoratedMember) -> String {
+        match &member.name {
+            MemberName::Identifier(name) | MemberName::Private(name) => name.clone(),
+            MemberName::StringLiteral(name) => format!("[\"{name}\"]"),
+            MemberName::Computed(expr_idx) => format!("[{}]", self.node_text(*expr_idx)),
         }
     }
 
@@ -1804,6 +1888,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ", void 0".to_string()
         } else {
             format!(", {}", info.initializer_text)
+        }
+    }
+
+    fn class_decorator_auto_accessor_initializer_value(
+        &self,
+        info: &ClassDecoratorAutoAccessorInfo,
+        class_ref: &str,
+    ) -> String {
+        if info.initializer_idx == NodeIndex::NONE {
+            "void 0".to_string()
+        } else if class_ref == "_classThis" && self.node_is_this_keyword(info.initializer_idx) {
+            class_ref.to_string()
+        } else {
+            info.initializer_text.clone()
         }
     }
 
@@ -2949,6 +3047,87 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 initializer_text: self.get_field_initializer_text(member.member_idx),
                 storage_base,
                 member_var_index: i,
+            });
+        }
+
+        result
+    }
+
+    fn collect_class_decorator_auto_accessor_info(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+        decorated_members: &[DecoratedMember],
+        class_name: &str,
+    ) -> Vec<ClassDecoratorAutoAccessorInfo> {
+        let decorated_member_indices: std::collections::HashSet<NodeIndex> = decorated_members
+            .iter()
+            .map(|member| member.member_idx)
+            .collect();
+        let mut result = Vec::new();
+        let mut generated_name_index = 0u32;
+
+        for &member_idx in &class_data.members.nodes {
+            if decorated_member_indices.contains(&member_idx) {
+                continue;
+            }
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
+                continue;
+            }
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if !self
+                .arena
+                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                || self
+                    .arena
+                    .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                continue;
+            }
+            let is_static = self.arena.is_static(&prop.modifiers);
+            if !is_static {
+                continue;
+            }
+
+            let (name, is_private) = self.resolve_member_name(prop.name);
+            let storage_base = match &name {
+                MemberName::Identifier(name) | MemberName::Private(name) => {
+                    name.trim_start_matches('#').to_string()
+                }
+                MemberName::StringLiteral(_) | MemberName::Computed(_) => {
+                    let storage_base = generated_auto_accessor_name(generated_name_index);
+                    generated_name_index += 1;
+                    storage_base
+                }
+            };
+            let storage_name = self.auto_accessor_weakmap_storage_name(
+                class_name,
+                &DecoratedAutoAccessorInfo {
+                    name: String::new(),
+                    initializer_text: String::new(),
+                    storage_base,
+                    member_var_index: 0,
+                },
+            );
+            result.push(ClassDecoratorAutoAccessorInfo {
+                member: DecoratedMember {
+                    member_idx,
+                    kind: MemberKind::Accessor,
+                    name,
+                    is_static,
+                    is_private,
+                    decorator_exprs: Vec::new(),
+                },
+                storage_name,
+                initializer_idx: prop.initializer,
+                initializer_text: self.get_field_initializer_text(member_idx),
             });
         }
 
