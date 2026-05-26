@@ -401,6 +401,38 @@ fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
 }
 
 #[test]
+fn conditional_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+        "{}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a: number;\n    b: number;\n} | {\n    a?: undefined;\n    b?: undefined;\n}"
+    );
+}
+
+#[test]
+fn conditional_empty_then_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{}".to_string(),
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n}"
+    );
+}
+
+#[test]
 fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
     let own_members = vec!["z: number".to_string()];
 

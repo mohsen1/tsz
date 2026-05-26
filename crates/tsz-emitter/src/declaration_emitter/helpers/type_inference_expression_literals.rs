@@ -7,6 +7,41 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn conditional_object_literal_union_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            return None;
+        }
+        let conditional = self.arena.get_conditional_expr(expr_node)?;
+        let mut arms = Vec::with_capacity(2);
+        for branch_idx in [conditional.when_true, conditional.when_false] {
+            let branch_idx = self.skip_parenthesized_expression(branch_idx)?;
+            let branch_node = self.arena.get(branch_idx)?;
+            if branch_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            arms.push(self.infer_object_literal_type_text_at(branch_idx, depth)?);
+        }
+        Self::normalized_object_literal_union_text(arms)
+    }
+
+    pub(in crate::declaration_emitter) fn normalized_object_literal_union_text(
+        arms: Vec<String>,
+    ) -> Option<String> {
+        let mut distinct = Vec::new();
+        for arm in arms {
+            if !distinct.iter().any(|existing| existing == &arm) {
+                distinct.push(arm);
+            }
+        }
+        Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
+        (!distinct.is_empty()).then(|| distinct.join(" | "))
+    }
+
     pub(in crate::declaration_emitter) fn array_literal_expression_type_text(
         &self,
         expr_idx: NodeIndex,
