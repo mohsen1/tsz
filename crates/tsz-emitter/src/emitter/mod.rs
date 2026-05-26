@@ -45,6 +45,7 @@ mod jsx;
 mod literals;
 mod module_emission;
 mod module_wrapper;
+mod namespace_directives;
 mod recovery_helpers;
 mod source_file;
 mod special_expressions;
