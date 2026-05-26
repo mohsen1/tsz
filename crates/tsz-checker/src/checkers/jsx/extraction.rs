@@ -1216,11 +1216,13 @@ impl<'a> CheckerState<'a> {
             // G4: Skip overloaded SFCs — we don't do JSX overload resolution.
             // Picking the first non-generic overload would produce wrong errors
             // when later overloads match the provided attributes.
-            let non_generic: Vec<_> = sigs.iter().filter(|s| s.type_params.is_empty()).collect();
-            if non_generic.len() != 1 {
+            let mut non_generic = sigs.iter().filter(|s| s.type_params.is_empty());
+            let Some(sig) = non_generic.next() else {
+                return None;
+            };
+            if non_generic.next().is_some() {
                 return None;
             }
-            let sig = non_generic[0];
             let props = sig
                 .params
                 .first()
@@ -1455,11 +1457,14 @@ impl<'a> CheckerState<'a> {
         let first_sig = if sigs.len() == 1 {
             sigs.first()?
         } else {
-            let with_props: Vec<_> = sigs.iter().filter(|sig| !sig.params.is_empty()).collect();
-            match with_props.len() {
-                1 => with_props[0],
-                _ => return None,
+            let mut with_props = sigs.iter().filter(|sig| !sig.params.is_empty());
+            let Some(sig) = with_props.next() else {
+                return None;
+            };
+            if with_props.next().is_some() {
+                return None;
             }
+            sig
         };
 
         let inferred_sig = Some(first_sig.clone())
