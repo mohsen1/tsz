@@ -12,7 +12,7 @@ struct ContextualTypeParamInstantiationRequest<'a> {
 }
 
 impl<'a> ContextualTypeParamInstantiationRequest<'a> {
-    fn new(
+    const fn new(
         type_id: TypeId,
         type_params: &'a [TypeParamInfo],
         current_substitution: &'a TypeSubstitution,
@@ -31,7 +31,7 @@ struct ContextualTypeParamInstantiationPlan {
 }
 
 impl ContextualTypeParamInstantiationPlan {
-    fn new(substitution: TypeSubstitution, infer_bindings: Vec<(Atom, TypeId)>) -> Self {
+    const fn new(substitution: TypeSubstitution, infer_bindings: Vec<(Atom, TypeId)>) -> Self {
         Self {
             substitution,
             infer_bindings,
