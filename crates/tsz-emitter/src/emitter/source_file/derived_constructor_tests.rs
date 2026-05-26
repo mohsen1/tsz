@@ -22,7 +22,7 @@ fn emit(source: &str, target: ScriptTarget) -> String {
 
 #[test]
 fn derived_constructor_fields_follow_parenthesized_super_call() {
-    let source = "class Base {}\nclass Plain extends Base {\n    prop = true;\n    constructor() {\n        (super());\n    }\n}\nclass AfterStatement extends Base {\n    prop = true;\n    constructor() {\n        this.touch;\n        (super());\n    }\n}\nclass BeforeStatement extends Base {\n    prop = true;\n    constructor() {\n        (super());\n        this.touch;\n    }\n}\n";
+    let source = "class Base {}\nclass Plain extends Base {\n    prop = true;\n    constructor() {\n        (super());\n    }\n}\nclass AfterStatement extends Base {\n    prop = true;\n    constructor() {\n        this.touch;\n        (super());\n    }\n}\nclass BeforeStatement extends Base {\n    prop = true;\n    constructor() {\n        (super());\n        this.touch;\n    }\n}\nclass SuperArgument extends Base {\n    prop = true;\n    constructor() {\n        super(this);\n    }\n}\n";
 
     let output = emit(source, ScriptTarget::ES2015);
 
@@ -61,5 +61,11 @@ fn derived_constructor_fields_follow_parenthesized_super_call() {
             "function BeforeStatement() {\n        var _this = (_this = _super.call(this) || this);\n        _this.prop = true;\n        _this.touch;\n        return _this;\n    }"
         ),
         "ES5 derived constructor lowering should place following statements after field initializers.\nOutput:\n{es5_output}"
+    );
+    assert!(
+        es5_output.contains(
+            "function SuperArgument() {\n        var _this = _super.call(this, _this) || this;\n        _this.prop = true;\n        return _this;\n    }"
+        ),
+        "ES5 derived constructor lowering should route `this` in super-call arguments through the constructor result temp.\nOutput:\n{es5_output}"
     );
 }

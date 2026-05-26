@@ -1079,10 +1079,10 @@ impl<'a> ES5ClassTransformer<'a> {
         let value = if self.is_parenthesized_root_super_call_statement(stmt_idx) {
             IRNode::Parenthesized(Box::new(IRNode::assign(
                 IRNode::id("_this"),
-                self.emit_super_call_assignment_value_ir(stmt_idx),
+                self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, true),
             )))
         } else {
-            self.emit_super_call_assignment_value_ir(stmt_idx)
+            self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, true)
         };
         IRNode::var_decl("_this", Some(value))
     }
@@ -1105,10 +1105,6 @@ impl<'a> ES5ClassTransformer<'a> {
         } else {
             assignment
         }
-    }
-
-    fn emit_super_call_assignment_value_ir(&self, stmt_idx: NodeIndex) -> IRNode {
-        self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, false)
     }
 
     fn emit_super_call_assignment_value_ir_with_arg_capture(
