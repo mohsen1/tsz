@@ -5,7 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::{GuardSense, TypeGuard, TypeofKind};
+use tsz_solver::narrowing::{TypeGuard, TypeofKind};
 use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
@@ -1388,7 +1388,7 @@ impl<'a> FlowAnalyzer<'a> {
             false,
             tsz_binder::FlowNodeId::NONE,
         );
-        if !self.is_nullish_only_type(falsy) {
+        if !flow_query::is_nullish_only_type(self.interner, falsy) {
             return None;
         }
 
@@ -1425,19 +1425,6 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             None
         }
-    }
-
-    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
-        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
-            return true;
-        }
-        if let Some(members) = flow_query::union_members_for_type(self.interner, type_id) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
-        }
-        false
     }
 
     fn try_infer_logical_or_type_predicate(
@@ -1740,14 +1727,13 @@ impl<'a> FlowAnalyzer<'a> {
         param_type: TypeId,
         guard: &TypeGuard,
     ) -> TypeId {
-        if let Some(env) = &self.type_environment {
-            let env_borrow = env.borrow();
-            let narrowing = self.make_narrowing_context().with_resolver(&*env_borrow);
-            narrowing.narrow_type(param_type, guard, GuardSense::Positive)
-        } else {
-            self.make_narrowing_context()
-                .narrow_type(param_type, guard, GuardSense::Positive)
-        }
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_inferred_predicate_guard(
+            self.interner,
+            env_borrow.as_deref(),
+            param_type,
+            guard,
+        )
     }
 
     /// Check if a node is a simple reference (identifier or property access).
