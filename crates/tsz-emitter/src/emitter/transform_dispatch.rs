@@ -1213,6 +1213,12 @@ impl<'a> Printer<'a> {
             } else if let Some(name) = self.resolve_class_expr_binding_name(_idx) {
                 emitter.set_function_name(name);
             }
+            if let Some(class) = self.arena.get_class(node)
+                && class.name.is_none()
+                && !self.collect_class_decorators(&class.modifiers).is_empty()
+            {
+                emitter.set_anonymous_class_name(self.next_tc39_anonymous_class_name());
+            }
         }
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);

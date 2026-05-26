@@ -54,6 +54,30 @@ fn anonymous_tc39_decorated_class_expression_uses_shorthand_default_name() {
 }
 
 #[test]
+fn anonymous_tc39_decorated_class_expressions_use_file_unique_runtime_names() {
+    let source = "\
+declare var dec: any;
+{ let x = @dec class {}; }
+{ let y = @dec class {}; }
+{ let z = @dec class {}; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("var class_1 = class")
+            && output.contains("var class_2 = class")
+            && output.contains("var class_3 = class"),
+        "Repeated decorated anonymous class expressions should allocate file-unique runtime names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return class_1 = _classThis;")
+            && output.contains("return class_2 = _classThis;")
+            && output.contains("return class_3 = _classThis;"),
+        "Each decorated anonymous class expression should return through its own runtime name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn anonymous_tc39_decorated_class_expression_uses_computed_object_key_temp() {
     let source = "declare var dec: any;\ndeclare var x: any;\n({ [x]: @dec class {} });\n";
     let output = emit_tc39_decorator_source(source);

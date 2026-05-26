@@ -627,7 +627,7 @@ impl<'a> Printer<'a> {
         expr
     }
 
-    fn next_tc39_anonymous_class_name(&mut self) -> String {
+    pub(in crate::emitter) fn next_tc39_anonymous_class_name(&mut self) -> String {
         for suffix in 1.. {
             let candidate = format!("class_{suffix}");
             if !self.file_identifiers.contains(&candidate)
