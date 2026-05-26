@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 01:43 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10187` merged.
+- 2026-05-26 02:30 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10190` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -104,6 +104,39 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue-branch cleanup dry runs now include cleanup-specific
     `Skip Reason Counts`, grouping detailed rows such as open PR branches and
     active queue runs without losing per-branch evidence.
+  - `#10190` merged on 2026-05-26 as
+    `a5aac8d71a ci: report blocked ready PR ownership (#10190)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `Blocked Ready Main
+    PRs` section with owner counts and JSON fields for ready main-based PRs
+    whose `mergeStateStatus` is `BLOCKED`.
+  - `#10193` merged on 2026-05-26 as
+    `e115436a07 ci: report conflicting main PR ownership (#10193)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Main PRs`
+    section and JSON fields for main-based PRs whose current head is dirty or
+    conflicting, grouped by owner.
+  - `#10195` merged on 2026-05-26 as
+    `a1057e55d0 ci: summarize PR ownership by owner (#10195)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes an `Owner Summary`
+    section and `ownerSummaries` JSON with per-owner open, ready, draft, WIP,
+    stacked-child, blocked-ready, conflicting-main, and auto-merge counts.
+  - `#10197` merged on 2026-05-26 as
+    `006e6e596f ci: list WIP PR ownership (#10197)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `WIP PRs` section and
+    `wipPrs`/`wipOwnerCounts` JSON so cleanup agents can inspect the exact WIP
+    rows behind owner-level WIP counts.
+  - `#10199` merged on 2026-05-26 as
+    `b82cd0be7b ci: report conflicting ready PR ownership (#10199)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Ready
+    Main PRs` section and `conflictingReadyMainPrs`/`conflictingReadyMainOwnerCounts`
+    JSON for the ready-only subset of dirty or conflicting main-based PRs.
+  - `#10201` merged on 2026-05-26 as
+    `0b7d82391b ci: summarize conflicting ready ownership (#10201)`.
+    The ownership report's `Owner Summary` now includes a `Conflicting ready`
+    column and `ownerSummaries[].conflictingReadyMain` JSON field.
+  - `#10203` merged on 2026-05-26 as
+    `f66f66cef0 ci: show conflicting ready update dates (#10203)`.
+    `Conflicting Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
+    conflicting-main JSON rows include `updatedAt` for stale-handoff triage.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -123,14 +156,28 @@ node scripts/ci/pr-ownership-report.mjs
 - Current PR-garden surfaces to inspect before issue backlog:
   - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
     Its stale synthetic branch was cleaned after merge.
+  - Use the ownership report's `Owner Summary` section for the current
+    owner-by-owner workload and handoff view. Counts are live GitHub state and
+    should be re-run each cycle, not copied into this lane note. The
+    `Conflicting ready` column is the quick owner-level view of non-draft PRs
+    that still need conflict handoff before queueing.
+  - Use the ownership report's `WIP PRs` section for the current WIP marker
+    rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off.
-  - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
-    `mergeable=MERGEABLE` include `#9632`, `#9912`, `#10078`, `#10081`,
-    `#10084`, `#10087`, `#10126`, and `#10147`. These currently
-    belong to other lanes; do not take them over unless the owner asks or a
-    stale branch needs a signed handoff.
+  - Use the ownership report's `Blocked Ready Main PRs` section for the current
+    ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
+    state asynchronously, so do not freeze the count in the lane note; re-run
+    the report for current owner counts and rows. Do not take those PRs over
+    unless the owner asks or a stale branch needs a signed handoff.
+  - Use the ownership report's `Conflicting Main PRs` section for the current
+    dirty/conflicting main-based branch surface. Treat those rows as handoff
+    evidence for the owning lane, not permission to take over implementation
+    branches without an explicit request or stale-branch handoff comment.
+  - Use the ownership report's `Conflicting Ready Main PRs` section when
+    deciding which non-draft branch blockers need owner handoff before queueing.
+    The `updated` date in each row is the quick staleness signal.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale

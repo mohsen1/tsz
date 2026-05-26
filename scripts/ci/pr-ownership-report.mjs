@@ -36,8 +36,12 @@ function normalizePr(raw) {
     number: Number(raw.number),
     title: String(raw.title ?? ""),
     isDraft: Boolean(raw.isDraft),
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : null,
     baseRefName: String(raw.baseRefName || "main"),
     headRefName: String(raw.headRefName || ""),
+    mergeStateStatus: String(raw.mergeStateStatus || "UNKNOWN"),
+    mergeable: String(raw.mergeable || "UNKNOWN"),
+    autoMergeArmed: Boolean(raw.autoMergeRequest),
     labels,
     body: String(raw.body ?? ""),
   };
@@ -58,7 +62,7 @@ function loadPulls(fixture) {
       "--limit",
       "500",
       "--json",
-      "number,title,isDraft,baseRefName,headRefName,labels,body",
+      "number,title,isDraft,updatedAt,baseRefName,headRefName,labels,body,mergeStateStatus,mergeable,autoMergeRequest",
     ],
     { encoding: "utf8" },
   );
@@ -118,7 +122,7 @@ function prSummary(report, number, prefix = "#") {
     return `${prefix}${number}`;
   }
   const state = pr.draft ? "draft" : "ready";
-  const wip = pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title) ? ", WIP" : "";
+  const wip = isWipPr(pr) ? ", WIP" : "";
   const owner = pr.agentName ?? "no AgentName";
   const stack = pr.stackRole ? `, ${pr.stackRole}` : "";
   return `${prefix}${number} (${state}${wip}, ${owner}${stack})`;
@@ -140,13 +144,58 @@ function draftStackState(draftCount, stackedDraftCount) {
   return "mixed stacked/unstacked drafts";
 }
 
+function ownerCounts(prs) {
+  return [...prs
+    .reduce((counts, pr) => {
+      const owner = ownerOf(pr);
+      counts.set(owner, (counts.get(owner) || 0) + 1);
+      return counts;
+    }, new Map())
+    .entries()]
+    .map(([owner, count]) => ({ owner, count }))
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
+function ownerOf(pr) {
+  if (pr.agentLabel) {
+    return pr.agentLabel;
+  }
+  if (Array.isArray(pr.agentLabels) && pr.agentLabels.length === 1) {
+    return `agent:${pr.agentLabels[0]}`;
+  }
+  return pr.agentName || "unowned";
+}
+
+function isWipPr(pr) {
+  return pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title);
+}
+
+function wipMarkers(pr) {
+  const markers = [];
+  if (pr.labels.includes("WIP")) {
+    markers.push("label");
+  }
+  if (/^\[wip\]/i.test(pr.title)) {
+    markers.push("title");
+  }
+  return markers;
+}
+
+function shortDate(value) {
+  return value ? value.slice(0, 10) : "unknown";
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
     title: pr.title,
     draft: pr.isDraft,
+    updatedAt: pr.updatedAt,
     base: pr.baseRefName,
     head: pr.headRefName,
+    mergeStateStatus: pr.mergeStateStatus,
+    mergeable: pr.mergeable,
+    autoMergeArmed: pr.autoMergeArmed,
     labels: pr.labels.sort(),
     agentName: agentNameFrom(pr.body),
     agentLabels: agentLabelsFrom(pr.labels),
@@ -238,6 +287,103 @@ function makeReport(pulls) {
     }))
     .sort((a, b) => a.number - b.number);
 
+  const blockedReadyMainPrs = normalized
+    .filter((pr) => !pr.draft && pr.base === "main" && pr.mergeStateStatus === "BLOCKED")
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      autoMergeArmed: pr.autoMergeArmed,
+      mergeable: pr.mergeable,
+      title: pr.title,
+    }))
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+  const blockedReadyMainOwnerCounts = ownerCounts(blockedReadyMainPrs);
+
+  const conflictingMainPrs = normalized
+    .filter((pr) => pr.base === "main" && (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY"))
+    .map((pr) => ({
+      number: pr.number,
+      draft: pr.draft,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      autoMergeArmed: pr.autoMergeArmed,
+      updatedAt: pr.updatedAt,
+      mergeStateStatus: pr.mergeStateStatus,
+      mergeable: pr.mergeable,
+      title: pr.title,
+    }))
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+  const conflictingMainOwnerCounts = ownerCounts(conflictingMainPrs);
+  const conflictingReadyMainPrs = conflictingMainPrs.filter((pr) => !pr.draft);
+  const conflictingReadyMainOwnerCounts = ownerCounts(conflictingReadyMainPrs);
+
+  const wipPrs = normalized
+    .filter(isWipPr)
+    .map((pr) => ({
+      number: pr.number,
+      draft: pr.draft,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      base: pr.base,
+      stackRole: pr.stackRole,
+      markers: wipMarkers(pr),
+      title: pr.title,
+    }))
+    .sort((a, b) => ownerOf(a).localeCompare(ownerOf(b)) || a.number - b.number);
+  const wipOwnerCounts = ownerCounts(wipPrs);
+
+  const ownerSummaries = [...normalized
+    .reduce((summaries, pr) => {
+      const owner = ownerOf(pr);
+      if (!summaries.has(owner)) {
+        summaries.set(owner, {
+          owner,
+          open: 0,
+          ready: 0,
+          draft: 0,
+          wip: 0,
+          stackedChildren: 0,
+          blockedReadyMain: 0,
+          conflictingReadyMain: 0,
+          conflictingMain: 0,
+          autoMergeArmed: 0,
+        });
+      }
+      const summary = summaries.get(owner);
+      summary.open += 1;
+      if (pr.draft) {
+        summary.draft += 1;
+      } else {
+        summary.ready += 1;
+      }
+      if (isWipPr(pr)) {
+        summary.wip += 1;
+      }
+      if (pr.stackRole === "stack child" || pr.stackRole === "stack middle") {
+        summary.stackedChildren += 1;
+      }
+      if (!pr.draft && pr.base === "main" && pr.mergeStateStatus === "BLOCKED") {
+        summary.blockedReadyMain += 1;
+      }
+      if (
+        !pr.draft &&
+        pr.base === "main" &&
+        (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY")
+      ) {
+        summary.conflictingReadyMain += 1;
+      }
+      if (pr.base === "main" && (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY")) {
+        summary.conflictingMain += 1;
+      }
+      if (pr.autoMergeArmed) {
+        summary.autoMergeArmed += 1;
+      }
+      return summaries;
+    }, new Map())
+    .values()]
+    .sort((a, b) => b.open - a.open || a.owner.localeCompare(b.owner));
+
   return {
     generatedAt: new Date().toISOString(),
     counts: {
@@ -251,10 +397,19 @@ function makeReport(pulls) {
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
       .sort((a, b) => a.base.localeCompare(b.base)),
+    ownerSummaries,
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
     duplicateDraftCleanupTargets,
+    blockedReadyMainPrs,
+    blockedReadyMainOwnerCounts,
+    conflictingReadyMainPrs,
+    conflictingReadyMainOwnerCounts,
+    conflictingMainPrs,
+    conflictingMainOwnerCounts,
+    wipPrs,
+    wipOwnerCounts,
     agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
@@ -266,6 +421,24 @@ function printMarkdown(report) {
   console.log(
     `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
+  console.log("");
+  console.log("## Owner Summary");
+  if (report.ownerSummaries.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log(
+      "| Owner | Open | Ready | Draft | WIP | Stacked children | Blocked ready main | Conflicting ready | Conflicting main | Auto-merge armed |",
+    );
+    console.log(
+      "|-------|------|-------|-------|-----|------------------|--------------------|-------------------|------------------|------------------|",
+    );
+    for (const owner of report.ownerSummaries) {
+      console.log(
+        `| ${owner.owner} | ${owner.open} | ${owner.ready} | ${owner.draft} | ${owner.wip} | ${owner.stackedChildren} | ${owner.blockedReadyMain} | ${owner.conflictingReadyMain} | ${owner.conflictingMain} | ${owner.autoMergeArmed} |`,
+      );
+    }
+  }
   console.log("");
   console.log("## Base Branches");
   for (const entry of report.byBase) {
@@ -315,6 +488,84 @@ function printMarkdown(report) {
           duplicate.unstackedDraftCount
         }): ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`,
       );
+    }
+  }
+  console.log("");
+  console.log("## Blocked Ready Main PRs");
+  if (report.blockedReadyMainPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.blockedReadyMainOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.blockedReadyMainPrs) {
+      const owner = ownerOf(pr);
+      const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
+      console.log(`- #${pr.number}: ${owner}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
+    }
+  }
+  console.log("");
+  console.log("## Conflicting Ready Main PRs");
+  if (report.conflictingReadyMainPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.conflictingReadyMainOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.conflictingReadyMainPrs) {
+      const owner = ownerOf(pr);
+      const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
+      console.log(
+        `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
+      );
+    }
+  }
+  console.log("");
+  console.log("## Conflicting Main PRs");
+  if (report.conflictingMainPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.conflictingMainOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.conflictingMainPrs) {
+      const owner = ownerOf(pr);
+      const state = pr.draft ? "draft" : "ready";
+      const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
+      console.log(
+        `- #${pr.number}: ${owner}; ${state}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
+      );
+    }
+  }
+  console.log("");
+  console.log("## WIP PRs");
+  if (report.wipPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.wipOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.wipPrs) {
+      const owner = ownerOf(pr);
+      const state = pr.draft ? "draft" : "ready";
+      const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
+      console.log(`- #${pr.number}: ${owner}; ${state}; ${pr.markers.join("+")}${stack}; ${pr.title}`);
     }
   }
   console.log("");

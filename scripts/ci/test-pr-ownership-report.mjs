@@ -99,6 +99,43 @@ withTempDir((dir) => {
       labels: ["agent:zeta"],
       body: "AgentName: zeta\n\nAddresses #9694\n",
     },
+    {
+      number: 17,
+      title: "fix(checker): ready but blocked",
+      isDraft: false,
+      baseRefName: "main",
+      headRefName: "agent/blocked-ready",
+      mergeStateStatus: "BLOCKED",
+      mergeable: "MERGEABLE",
+      autoMergeRequest: null,
+      labels: ["agent:epsilon"],
+      body: "AgentName: epsilon\n",
+    },
+    {
+      number: 18,
+      title: "fix(solver): conflicting ready branch",
+      isDraft: false,
+      updatedAt: "2026-05-24T10:20:30Z",
+      baseRefName: "main",
+      headRefName: "agent/conflicting-ready",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      autoMergeRequest: null,
+      labels: ["agent:zeta"],
+      body: "AgentName: zeta\n",
+    },
+    {
+      number: 19,
+      title: "fix(checker): conflicting draft branch",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/conflicting-draft",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      autoMergeRequest: null,
+      labels: ["agent:delta"],
+      body: "AgentName: delta\n",
+    },
   ]);
 
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
@@ -108,6 +145,10 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
   assert.match(result.stdout, /AgentName\/label mismatches: 1/);
+  assert.match(
+    result.stdout,
+    /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
+  );
   assert.match(result.stdout, /agent\/mapped-a: root #10; children #12/);
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
   assert.match(
@@ -124,20 +165,134 @@ withTempDir((dir) => {
   );
   assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
+  assert.match(
+    result.stdout,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+  );
+  assert.match(
+    result.stdout,
+    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+  );
+  assert.match(
+    result.stdout,
+    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+  );
+  assert.match(
+    result.stdout,
+    /WIP PRs[\s\S]*Owner counts:[\s\S]*agent:alpha: 1[\s\S]*agent:omega: 1[\s\S]*PRs:[\s\S]*#10: agent:alpha; draft; label; stack root; fix\(checker\): preserve mapped access \(#42\)[\s\S]*#11: agent:omega; draft; label\+title; \[WIP\] fix\(checker\): preserve mapped access \(#42\)/,
+  );
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 8,
-    draft: 7,
-    ready: 1,
+    open: 11,
+    draft: 8,
+    ready: 3,
     stacked: 2,
     missingAgentName: 2,
     agentLabelMismatches: 1,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11, 14, 15, 16, 42] },
+    { base: "main", prs: [10, 11, 14, 15, 16, 17, 18, 19, 42] },
     { base: "unknown-base", prs: [13] },
+  ]);
+  assert.deepEqual(report.ownerSummaries, [
+    {
+      owner: "agent:delta",
+      open: 2,
+      ready: 0,
+      draft: 2,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 1,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:zeta",
+      open: 2,
+      ready: 1,
+      draft: 1,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 1,
+      conflictingMain: 1,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "unowned",
+      open: 2,
+      ready: 0,
+      draft: 2,
+      wip: 0,
+      stackedChildren: 1,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:alpha",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 1,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:epsilon",
+      open: 1,
+      ready: 1,
+      draft: 0,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 1,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:gamma",
+      open: 1,
+      ready: 1,
+      draft: 0,
+      wip: 0,
+      stackedChildren: 1,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:omega",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 1,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "delta",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
   ]);
   assert.deepEqual(report.stacks, [
     { base: "agent/mapped-a", root: 10, children: [12] },
@@ -167,6 +322,85 @@ withTempDir((dir) => {
     },
   ]);
   assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
+  assert.deepEqual(report.blockedReadyMainPrs, [
+    {
+      number: 17,
+      agentName: "epsilon",
+      agentLabel: "agent:epsilon",
+      autoMergeArmed: false,
+      mergeable: "MERGEABLE",
+      title: "fix(checker): ready but blocked",
+    },
+  ]);
+  assert.deepEqual(report.blockedReadyMainOwnerCounts, [{ owner: "agent:epsilon", count: 1 }]);
+  assert.deepEqual(report.conflictingMainPrs, [
+    {
+      number: 19,
+      draft: true,
+      agentName: "delta",
+      agentLabel: "agent:delta",
+      autoMergeArmed: false,
+      updatedAt: null,
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(checker): conflicting draft branch",
+    },
+    {
+      number: 18,
+      draft: false,
+      agentName: "zeta",
+      agentLabel: "agent:zeta",
+      autoMergeArmed: false,
+      updatedAt: "2026-05-24T10:20:30Z",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(solver): conflicting ready branch",
+    },
+  ]);
+  assert.deepEqual(report.conflictingMainOwnerCounts, [
+    { owner: "agent:delta", count: 1 },
+    { owner: "agent:zeta", count: 1 },
+  ]);
+  assert.deepEqual(report.conflictingReadyMainPrs, [
+    {
+      number: 18,
+      draft: false,
+      agentName: "zeta",
+      agentLabel: "agent:zeta",
+      autoMergeArmed: false,
+      updatedAt: "2026-05-24T10:20:30Z",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(solver): conflicting ready branch",
+    },
+  ]);
+  assert.deepEqual(report.conflictingReadyMainOwnerCounts, [{ owner: "agent:zeta", count: 1 }]);
+  assert.deepEqual(report.wipPrs, [
+    {
+      number: 10,
+      draft: true,
+      agentName: "alpha",
+      agentLabel: "agent:alpha",
+      base: "main",
+      stackRole: "stack root",
+      markers: ["label"],
+      title: "fix(checker): preserve mapped access (#42)",
+    },
+    {
+      number: 11,
+      draft: true,
+      agentName: "beta",
+      agentLabel: "agent:omega",
+      base: "main",
+      stackRole: null,
+      markers: ["label", "title"],
+      title: "[WIP] fix(checker): preserve mapped access (#42)",
+    },
+  ]);
+  assert.deepEqual(report.wipOwnerCounts, [
+    { owner: "agent:alpha", count: 1 },
+    { owner: "agent:omega", count: 1 },
+  ]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).issueRefs, [9694, 9712, 9826]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).claimedIssueRefs, [9712]);
