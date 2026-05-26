@@ -709,6 +709,9 @@ mod overload_anchor_at_argument_tests;
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
+#[path = "tests/polymorphic_this_relation_routing_arch_tests.rs"]
+mod polymorphic_this_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
