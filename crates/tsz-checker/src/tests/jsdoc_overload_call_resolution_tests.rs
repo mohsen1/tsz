@@ -81,6 +81,38 @@ const b = choose("x");
 }
 
 #[test]
+fn jsdoc_overload_call_rejects_unmatched_implementation_argument() {
+    let messages = check_js_source_code_messages(
+        r#"
+/**
+ * @overload
+ * @param {number} value
+ * @returns {string}
+ */
+/**
+ * @overload
+ * @param {string} value
+ * @returns {number}
+ */
+/**
+ * @param {number | string | boolean} value
+ * @returns {string | number | boolean}
+ */
+function choose(value) { return value; }
+
+choose(true);
+"#,
+    );
+
+    let ts2769 = messages_for_code(&messages, 2769);
+    assert_eq!(ts2769.len(), 1, "expected one TS2769, got {messages:?}");
+    assert!(
+        ts2769[0].contains("No overload matches this call."),
+        "expected no-overload diagnostic, got {ts2769:?}"
+    );
+}
+
+#[test]
 fn jsdoc_without_overload_keeps_implementation_signature_callable() {
     let messages = check_js_source_code_messages(
         r#"
