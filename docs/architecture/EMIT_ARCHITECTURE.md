@@ -279,11 +279,14 @@ strings. Existing semantic output surgery is migration debt tracked by:
 
 ```bash
 python3 scripts/emit/audit-output-surgery.py
+python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json
 ```
 
 The audit ratchets current debt by file and category. New semantic
 `replace`/`replacen`/`replace_range` usage must either remove existing debt or
-be explicitly categorized with a removal reason in the allowlist.
+be explicitly categorized with a removal reason in the allowlist. Use the JSON
+report when CI or agent handoffs need machine-readable counts for
+unallowlisted, over-allowlist, and stale-allowlist failures.
 
 ### 7.1 SourceWriter
 
@@ -497,8 +500,9 @@ For any non-trivial emitter PR, ask:
 7. Does this maintain source map accuracy through `SourceWriter`?
 8. Does this keep new target logic in `EmitTargetFacts`/`EmitPlan` instead of
    scattering raw target gates?
-9. Does `python3 scripts/emit/audit-output-surgery.py` still pass without
-   increasing output-surgery debt?
+9. Does `python3 scripts/emit/audit-output-surgery.py --json-report <path>`
+   still pass, or fail only with known ratcheted debt, without increasing
+   output-surgery debt?
 
 ---
 

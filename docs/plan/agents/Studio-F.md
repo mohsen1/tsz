@@ -19,7 +19,7 @@ scripts/agents/show-goal.sh Studio-F
 scripts/agents/disk-preflight.sh Studio-F
 scripts/agents/list-owned-work.sh Studio-F
 python3 scripts/arch/arch_guard.py --json-report /tmp/tsz-arch-guard.json
-python3 scripts/emit/audit-output-surgery.py
+python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json
 ```
 
 ## Current Assignment
@@ -35,7 +35,8 @@ python3 scripts/emit/audit-output-surgery.py
   down, remove an allowlist entry, split a file over a documented ceiling, or
   make a release-gate artifact harder to misread.
 - Current known debt: `python3 scripts/emit/audit-output-surgery.py` reports
-  `4` unallowlisted calls and `1` stale allowlist entry.
+  `2` real unallowlisted semantic rewrites, `0` over-allowlist files, and
+  `0` stale allowlist entries.
 - First live command: run the start-cycle commands and inspect guard failures
   before choosing cleanup work.
 - Next concrete step: pick one measurable guardrail or launch-script gap and

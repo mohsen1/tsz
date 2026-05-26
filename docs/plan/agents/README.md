@@ -112,8 +112,28 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 ```
 
+When reviewing or developing a branch that edits a lane goal file, use
+`scripts/agents/show-goal.sh <AgentName> --local` to preview the branch-local
+file. The default command still prefers `origin/main` so launch sessions can be
+redirected without first merging the in-progress branch.
+
 Then run the remaining commands listed in that lane's `Start Every Cycle`
 section.
+
+## GitHub Actions Outages
+
+When GitHub Actions is unavailable or checkout/action-download failures are
+clearly infrastructure-wide, do not rerun jobs as a watcher and do not enable
+auto-merge. Keep the lane moving with local, cheap evidence:
+
+1. Confirm the branch is clean and synced with `origin/main`.
+2. Run the lane's local guardrail commands and any narrow script tests that
+   answer the PR's risk.
+3. Leave a signed PR comment naming the external blocker, the exact head SHA,
+   the local verification, and the next action after Actions recovers.
+
+Resume CI only after the external outage clears, and re-check the exact head
+before changing draft/ready state or auto-merge.
 
 ## Worktree And Cache Policy
 
