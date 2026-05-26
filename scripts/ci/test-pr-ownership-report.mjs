@@ -100,6 +100,10 @@ withTempDir((dir) => {
     result.stdout,
     /#42 \(mixed stacked\/unstacked drafts\): PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/,
   );
+  assert.match(
+    result.stdout,
+    /Duplicate Draft Cleanup Targets[\s\S]*#42 \(mixed stacked\/unstacked drafts; unstacked drafts: 1\): PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/,
+  );
   assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
 
