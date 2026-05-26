@@ -34,13 +34,17 @@ python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surge
 - Architecture cleanup metric: every cleanup PR must ratchet a named guard
   down, remove an allowlist entry, split a file over a documented ceiling, or
   make a release-gate artifact harder to misread.
-- Current known debt: `python3 scripts/emit/audit-output-surgery.py` reports
-  `2` real unallowlisted semantic rewrites, `0` over-allowlist files, and
-  `0` stale allowlist entries.
+- Current active PR: #10308 is rebased onto `main` after #10261 landed and
+  burns down the remaining unallowlisted output-surgery debt. On the #10308
+  head,
+  `python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surgery.json`
+  passes with `0` unallowlisted, `0` over-allowlist, and `0` stale entries
+  (`31` ratcheted calls across `9` allowlisted files).
 - First live command: run the start-cycle commands and inspect guard failures
   before choosing cleanup work.
-- Next concrete step: pick one measurable guardrail or launch-script gap and
-  keep it behavior-preserving unless it directly fixes a release blocker.
+- Next concrete step: keep #10308 current while CI/queueing settles, then pick
+  the next measurable guardrail or launch-script gap and keep it
+  behavior-preserving unless it directly fixes a release blocker.
 
 ## Existing Work To Inspect First
 
