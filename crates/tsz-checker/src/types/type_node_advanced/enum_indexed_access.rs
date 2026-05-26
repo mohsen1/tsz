@@ -2,6 +2,18 @@ use super::super::type_node::TypeNodeChecker;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
+    pub(super) fn enum_namespace_property_object(&self, type_id: TypeId) -> Option<TypeId> {
+        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
+        let symbol = self.ctx.binder.symbols.get(sym_id)?;
+        if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
+            || symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
+        {
+            return None;
+        }
+
+        self.ctx.enum_namespace_types.get(&sym_id).copied()
+    }
+
     pub(super) fn full_enum_member_union_parent_type(&self, type_id: TypeId) -> Option<TypeId> {
         let list_id = crate::query_boundaries::common::union_list_id(self.ctx.types, type_id)?;
         let members = self.ctx.types.type_list(list_id);

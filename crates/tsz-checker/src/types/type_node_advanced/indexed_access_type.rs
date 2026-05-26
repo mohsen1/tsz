@@ -404,7 +404,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // Check property existence against the materialized object so
                     // unevaluated mapped-alias intersection members contribute their
                     // keys (see `evaluate_type_for_property_check`).
-                    let property_object = self.evaluate_type_for_property_check(resolved_object);
+                    let property_object = self
+                        .enum_namespace_property_object(resolved_object)
+                        .unwrap_or_else(|| self.evaluate_type_for_property_check(resolved_object));
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
                             self.ctx.types,
