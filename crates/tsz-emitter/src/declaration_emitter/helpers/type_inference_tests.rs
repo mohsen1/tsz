@@ -401,6 +401,37 @@ fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
 }
 
 #[test]
+fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
+    let own_members = vec!["z: number".to_string()];
+
+    let projected = DeclarationEmitter::prepend_object_members_to_type_literal_text(
+        "{\n    a: string;\n    b: string;\n}",
+        &own_members,
+        0,
+    );
+
+    assert_eq!(
+        projected,
+        Some("{\n    z: number;\n    a: string;\n    b: string;\n}".to_string())
+    );
+}
+
+#[test]
+fn object_spread_projection_splits_object_literal_union_arms() {
+    let arms = DeclarationEmitter::object_type_literal_union_arms_from_text(
+        "{\n    a: string;\n} | {\n    b: string;\n}",
+    );
+
+    assert_eq!(
+        arms,
+        Some(vec![
+            "{\n    a: string;\n}".to_string(),
+            "{\n    b: string;\n}".to_string(),
+        ])
+    );
+}
+
+#[test]
 fn object_union_property_scan_ignores_nested_members() {
     assert_eq!(
         DeclarationEmitter::object_type_top_level_member_names(

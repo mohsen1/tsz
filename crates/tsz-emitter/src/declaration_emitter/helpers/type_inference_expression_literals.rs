@@ -388,6 +388,11 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> Option<String> {
         let object_node = self.arena.get(object_expr_idx)?;
         let object = self.arena.get_literal_expr(object_node)?;
+        if let Some(type_text) =
+            self.object_literal_spread_with_own_members_type_text(object, depth)
+        {
+            return Some(type_text);
+        }
         if let Some(type_text) = self.single_spread_object_literal_type_text(object) {
             return Some(type_text);
         }
@@ -464,6 +469,205 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn object_literal_spread_with_own_members_type_text(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+        depth: u32,
+    ) -> Option<String> {
+        let mut spread_expr = None;
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                if spread_expr.is_some() {
+                    return None;
+                }
+                spread_expr = Some(self.arena.get_spread(member_node)?.expression);
+            }
+        }
+        let spread_expr = spread_expr?;
+        if object.elements.nodes.len() <= 1 {
+            return None;
+        }
+
+        let own_members = self.object_literal_own_member_texts(object, depth)?;
+        if own_members.is_empty() {
+            return None;
+        }
+        if let Some(spread_arms) = self.object_spread_type_literal_arms(spread_expr) {
+            return Self::prepend_members_to_object_type_literal_arms(
+                spread_arms,
+                &own_members,
+                depth,
+            );
+        }
+
+        let spread_type = self
+            .get_node_type_or_names(&[spread_expr])
+            .or_else(|| self.get_symbol_cached_type(spread_expr))
+            .or_else(|| self.get_type_via_symbol(spread_expr))?;
+        let interner = self.type_interner?;
+        match tsz_solver::type_queries::classify_object_spread_dts_projection(interner, spread_type)
+        {
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::InvalidSpread => return None,
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::EmptyObject => {
+                return self.object_literal_own_member_type_text(object, depth);
+            }
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => {}
+        }
+
+        let spread_arms = self.object_spread_type_literal_arms(spread_expr)?;
+        Self::prepend_members_to_object_type_literal_arms(spread_arms, &own_members, depth)
+    }
+
+    fn prepend_members_to_object_type_literal_arms(
+        spread_arms: Vec<String>,
+        own_members: &[String],
+        depth: u32,
+    ) -> Option<String> {
+        let mut projected_arms = Vec::with_capacity(spread_arms.len());
+        for arm in spread_arms {
+            projected_arms.push(Self::prepend_object_members_to_type_literal_text(
+                &arm,
+                &own_members,
+                depth,
+            )?);
+        }
+        (!projected_arms.is_empty()).then(|| projected_arms.join(" | "))
+    }
+
+    fn object_spread_type_literal_arms(&self, spread_expr: NodeIndex) -> Option<Vec<String>> {
+        self.reference_declared_object_type_literal_arm_texts(spread_expr)
+            .or_else(|| {
+                self.local_variable_initializer_type_text(spread_expr)
+                    .and_then(|type_text| {
+                        Self::object_type_literal_union_arms_from_text(&type_text)
+                    })
+            })
+    }
+
+    fn object_literal_own_member_texts(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+        depth: u32,
+    ) -> Option<Vec<String>> {
+        let mut setter_names = rustc_hash::FxHashSet::<String>::default();
+        let mut getter_names = rustc_hash::FxHashSet::<String>::default();
+        for &idx in &object.elements.nodes {
+            let Some(n) = self.arena.get(idx) else {
+                continue;
+            };
+            if n.kind == syntax_kind_ext::SET_ACCESSOR {
+                if let Some(acc) = self.arena.get_accessor(n)
+                    && let Some(name) = self.object_literal_member_name_text(acc.name)
+                {
+                    setter_names.insert(name);
+                }
+            } else if n.kind == syntax_kind_ext::GET_ACCESSOR
+                && let Some(acc) = self.arena.get_accessor(n)
+                && let Some(name) = self.object_literal_member_name_text(acc.name)
+            {
+                getter_names.insert(name);
+            }
+        }
+
+        let mut members = Vec::new();
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                continue;
+            }
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                return None;
+            }
+            let member_text = self.infer_object_member_type_text_named_at(
+                member_idx,
+                &name,
+                depth + 1,
+                getter_names.contains(&name),
+                setter_names.contains(&name),
+            )?;
+            if member_text.trim_start().starts_with(':') {
+                return None;
+            }
+            if !self.remove_comments {
+                for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
+                    members.push(Self::format_object_member_jsdoc_text(&jsdoc));
+                }
+            }
+            members.push(member_text);
+        }
+        Some(members)
+    }
+
+    fn object_literal_own_member_type_text(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+        depth: u32,
+    ) -> Option<String> {
+        let members = self.object_literal_own_member_texts(object, depth)?;
+        (!members.is_empty()).then(|| Self::object_type_literal_text_from_members(&members, depth))
+    }
+
+    fn object_type_literal_text_from_members(members: &[String], depth: u32) -> String {
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members: Vec<String> = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect();
+        format!("{{\n{}\n{closing_indent}}}", formatted_members.join("\n"))
+    }
+
+    pub(in crate::declaration_emitter) fn object_type_literal_union_arms_from_text(
+        type_text: &str,
+    ) -> Option<Vec<String>> {
+        let parts = Self::split_top_level_union_type_parts(type_text);
+        let parts = if parts.is_empty() {
+            vec![type_text.trim().to_string()]
+        } else {
+            parts
+        };
+        if parts
+            .iter()
+            .all(|part| part.trim().starts_with('{') && part.trim().ends_with('}'))
+        {
+            Some(parts)
+        } else {
+            None
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn prepend_object_members_to_type_literal_text(
+        type_text: &str,
+        members: &[String],
+        depth: u32,
+    ) -> Option<String> {
+        let trimmed = type_text.trim();
+        if trimmed == "{}" {
+            return Some(Self::object_type_literal_text_from_members(members, depth));
+        }
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+            return None;
+        }
+
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let mut lines = trimmed.lines().map(str::to_string).collect::<Vec<_>>();
+        if lines.len() < 2 {
+            return None;
+        }
+        let insert_at = 1;
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>();
+        lines.splice(insert_at..insert_at, formatted_members);
+        Some(lines.join("\n"))
+    }
+
     pub(in crate::declaration_emitter) fn single_spread_object_literal_type_text(
         &self,
         object: &tsz_parser::parser::node::LiteralExprData,
@@ -477,13 +681,13 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let spread = self.arena.get_spread(member_node)?;
-        if !self.expression_references_parameter(spread.expression) {
-            return None;
-        }
         let spread_type = self
             .get_node_type_or_names(&[spread.expression])
             .or_else(|| self.get_symbol_cached_type(spread.expression))
             .or_else(|| self.get_type_via_symbol(spread.expression))?;
+        let spread_object_text = self
+            .object_spread_type_literal_arms(spread.expression)
+            .map(|arms| arms.join(" | "));
         let interner = self.type_interner?;
         match tsz_solver::type_queries::classify_object_spread_dts_projection(interner, spread_type)
         {
@@ -491,19 +695,32 @@ impl<'a> DeclarationEmitter<'a> {
                 Some("any".to_string())
             }
             tsz_solver::type_queries::ObjectSpreadDtsProjection::EmptyObject => {
-                Some("{}".to_string())
+                spread_object_text.or_else(|| Some("{}".to_string()))
             }
-            tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => self
-                .reference_declared_source_type_annotation_text(spread.expression)
-                .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
-                .filter(|type_text| !type_text.is_empty())
-                .or_else(|| {
-                    self.reference_declared_type_annotation_text(spread.expression)
-                        .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
-                })
-                .filter(|type_text| !type_text.is_empty())
-                .or_else(|| self.preferred_expression_type_text(spread.expression))
-                .or_else(|| Some(self.print_type_id_for_inferred_declaration(spread_type))),
+            tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => {
+                if !self.expression_references_parameter(spread.expression)
+                    && self
+                        .local_variable_initializer_type_text(spread.expression)
+                        .is_none()
+                    && self
+                        .reference_declared_type_annotation_text(spread.expression)
+                        .is_none()
+                {
+                    return None;
+                }
+                self.reference_declared_source_type_annotation_text(spread.expression)
+                    .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
+                    .filter(|type_text| !type_text.is_empty())
+                    .or_else(|| {
+                        self.reference_declared_type_annotation_text(spread.expression)
+                            .map(|type_text| Self::parenthesize_union_intersection_arms(&type_text))
+                    })
+                    .filter(|type_text| !type_text.is_empty())
+                    .or(spread_object_text)
+                    .or_else(|| self.local_variable_initializer_type_text(spread.expression))
+                    .or_else(|| self.preferred_expression_type_text(spread.expression))
+                    .or_else(|| Some(self.print_type_id_for_inferred_declaration(spread_type)))
+            }
         }
     }
 
