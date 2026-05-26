@@ -240,6 +240,46 @@ const o1 = getProps(myAny, ["foo", "bar"]);
     );
 }
 
+#[test]
+fn generic_call_constrained_mapped_return_uses_concrete_constraint_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function f1<T1>(): { [P in keyof T1]: void };
+declare function f2<T1 extends string>(): { [P in keyof T1]: void };
+declare function f3<T1 extends number>(): { [P in keyof T1]: void };
+interface Number {
+    toString(): string;
+    toFixed(): string;
+    toExponential(): string;
+    toPrecision(): string;
+    valueOf(): number;
+    toLocaleString(): string;
+}
+declare function f4<T1 extends Number>(): { [P in keyof T1]: void };
+
+let x1 = f1();
+let x2 = f2();
+let x3 = f3();
+let x4 = f4();
+"#,
+    );
+
+    assert!(
+        output.contains("declare let x2: string;"),
+        "Expected string-constrained mapped call result to expand to string: {output}"
+    );
+    assert!(
+        output.contains("declare let x3: number;"),
+        "Expected number-constrained mapped call result to expand to number: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare let x4: {\n    toString: void;\n    toFixed: void;\n    toExponential: void;\n    toPrecision: void;\n    valueOf: void;\n    toLocaleString: void;\n};"
+        ),
+        "Expected object-wrapper mapped call result to expand public members: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================

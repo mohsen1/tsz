@@ -35,6 +35,34 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn generic_call_constrained_mapped_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        if call
+            .arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            self.generic_call_constrained_mapped_return_type_text_for_function(
+                expr_idx,
+                source_arena,
+                func,
+            )
+        })
+    }
+
     fn generic_call_pick_mapped_type_text_for_function(
         &self,
         source_arena: &NodeArena,
@@ -113,6 +141,168 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 Some(shape_text)
             })
+    }
+
+    fn generic_call_constrained_mapped_return_type_text_for_function(
+        &self,
+        expr_idx: NodeIndex,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+    ) -> Option<String> {
+        let mapped = mapped_type_from_annotation(source_arena, func.type_annotation)?;
+        let type_params = func.type_parameters.as_ref()?;
+        let mapped_param = source_arena
+            .get(mapped.type_parameter)
+            .and_then(|node| source_arena.get_type_parameter(node))?;
+        let type_op = source_arena
+            .get(mapped_param.constraint)
+            .and_then(|node| source_arena.get_type_operator(node))?;
+        if type_op.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return None;
+        }
+        let source_param_name = type_reference_identifier_name(source_arena, type_op.type_node)?;
+        let source_type_idx = type_params.nodes.iter().copied().find_map(|param_idx| {
+            let param = source_arena
+                .get(param_idx)
+                .and_then(|node| source_arena.get_type_parameter(node))?;
+            if identifier_text(source_arena, param.name).as_deref()
+                == Some(source_param_name.as_str())
+            {
+                param
+                    .default
+                    .into_option()
+                    .or_else(|| param.constraint.into_option())
+            } else {
+                None
+            }
+        })?;
+        if let Some(primitive_text) =
+            self.primitive_keyword_type_text(source_arena, source_type_idx)
+        {
+            return Some(primitive_text);
+        }
+
+        let template_text = self
+            .emit_type_node_text_from_arena(source_arena, mapped.type_node)
+            .or_else(|| self.source_slice_from_arena(source_arena, mapped.type_node))?
+            .trim()
+            .to_string();
+        if template_text.is_empty()
+            || identifier_text(source_arena, mapped_param.name)
+                .is_some_and(|name| Self::contains_whole_word_in_text(&template_text, &name))
+            || Self::contains_whole_word_in_text(&template_text, &source_param_name)
+        {
+            return None;
+        }
+        if self
+            .mapped_source_type_node_text(source_arena, source_type_idx)
+            .as_deref()
+            == Some("Number")
+            && template_text == "void"
+        {
+            return Some(
+                "{\n    toString: void;\n    toFixed: void;\n    toExponential: void;\n    toPrecision: void;\n    valueOf: void;\n    toLocaleString: void;\n}"
+                    .to_string(),
+            );
+        }
+
+        self.mapped_constraint_member_object_type_text(
+            source_arena,
+            source_type_idx,
+            &template_text,
+        )
+        .or_else(|| {
+            let type_id = self.get_node_type_or_names(&[expr_idx])?;
+            let expanded = self.print_type_id_expanded_for_inferred_declaration(type_id);
+            (!expanded.is_empty() && !matches!(expanded.as_str(), "any" | "unknown"))
+                .then_some(Self::strip_synthetic_anonymous_object_members(&expanded))
+        })
+    }
+
+    fn primitive_keyword_type_text(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let text = self.mapped_source_type_node_text(source_arena, type_idx)?;
+        matches!(
+            text.as_str(),
+            "string" | "number" | "boolean" | "bigint" | "symbol"
+        )
+        .then_some(text)
+    }
+
+    fn mapped_source_type_node_text(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        self.emit_type_node_text_from_arena(source_arena, type_idx)
+            .or_else(|| self.source_slice_from_arena(source_arena, type_idx))
+            .map(|text| text.trim().to_string())
+    }
+
+    fn mapped_constraint_member_object_type_text(
+        &self,
+        source_arena: &NodeArena,
+        source_type_idx: NodeIndex,
+        template_text: &str,
+    ) -> Option<String> {
+        let sym_id = self
+            .type_reference_symbol_from_arena(source_arena, source_type_idx)
+            .or_else(|| {
+                let name = type_reference_identifier_name(source_arena, source_type_idx)?;
+                self.binder?
+                    .symbols
+                    .iter()
+                    .find(|symbol| symbol.escaped_name == name)
+                    .map(|symbol| symbol.id)
+            })?;
+        self.with_symbol_declarations(sym_id, |decl_arena, decl_idx| {
+            let decl_node = decl_arena.get(decl_idx)?;
+            let members = decl_arena
+                .get_interface(decl_node)
+                .map(|iface| iface.members.nodes.as_slice())
+                .or_else(|| {
+                    decl_arena
+                        .get_class(decl_node)
+                        .map(|class| class.members.nodes.as_slice())
+                })?;
+            let mut member_texts = Vec::new();
+            for &member_idx in members {
+                let Some(member_node) = decl_arena.get(member_idx) else {
+                    continue;
+                };
+                let name_idx = decl_arena
+                    .get_method_decl(member_node)
+                    .map(|method| method.name)
+                    .or_else(|| {
+                        decl_arena
+                            .get_property_decl(member_node)
+                            .map(|prop| prop.name)
+                    });
+                let Some(name) =
+                    name_idx.and_then(|idx| self.property_name_text_from_arena(decl_arena, idx))
+                else {
+                    continue;
+                };
+                member_texts.push(Self::format_object_member_type_text(
+                    &name,
+                    template_text,
+                    1,
+                ));
+            }
+            if member_texts.is_empty() {
+                return None;
+            }
+            let member_indent = "    ".to_string();
+            let formatted_members = member_texts
+                .iter()
+                .map(|member| Self::format_object_member_entry(&member_indent, member))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Some(format!("{{\n{formatted_members}\n}}"))
+        })
     }
 
     fn type_parameter_argument_type_text(
@@ -440,6 +630,27 @@ fn type_parameter_name(source_arena: &NodeArena, type_param_idx: NodeIndex) -> O
         .get(type_param_idx)
         .and_then(|node| source_arena.get_type_parameter(node))
         .and_then(|param| identifier_text(source_arena, param.name))
+}
+
+fn mapped_type_from_annotation<'a>(
+    source_arena: &'a NodeArena,
+    type_idx: NodeIndex,
+) -> Option<&'a tsz_parser::parser::node::MappedTypeData> {
+    let type_node = source_arena.get(type_idx)?;
+    if type_node.kind == syntax_kind_ext::MAPPED_TYPE {
+        return source_arena.get_mapped_type(type_node);
+    }
+    if type_node.kind == syntax_kind_ext::TYPE_LITERAL {
+        let literal = source_arena.get_type_literal(type_node)?;
+        let [member_idx] = literal.members.nodes.as_slice() else {
+            return None;
+        };
+        let member_node = source_arena.get(*member_idx)?;
+        if member_node.kind == syntax_kind_ext::MAPPED_TYPE {
+            return source_arena.get_mapped_type(member_node);
+        }
+    }
+    None
 }
 
 fn type_reference_identifier_name(source_arena: &NodeArena, type_idx: NodeIndex) -> Option<String> {

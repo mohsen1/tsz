@@ -18,6 +18,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.generic_call_pick_mapped_type_text(expr_idx))
+                    .or_else(|| self.generic_call_constrained_mapped_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_function_object_type_text(expr_idx))
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
