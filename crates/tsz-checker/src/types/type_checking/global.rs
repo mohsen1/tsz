@@ -273,6 +273,19 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
                 if !display_props.is_empty() {
+                    for prop in &display_props {
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        if name.starts_with("[Symbol.") {
+                            // Lib display props can carry canonical `[Symbol.*]`
+                            // names without a merged value symbol. Use the atom as
+                            // a stable fallback identity so declaration-surface
+                            // mapped evaluation can keep the symbol key distinct.
+                            self.register_well_known_symbol_name_from_canonical(
+                                name.as_ref(),
+                                Some(tsz_solver::SymbolRef(prop.name.0)),
+                            );
+                        }
+                    }
                     self.ctx.types.store_display_properties(ty, display_props);
                 }
             }

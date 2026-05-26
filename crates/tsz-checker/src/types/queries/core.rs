@@ -1636,6 +1636,21 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn register_well_known_symbol_name_from_canonical(
+        &self,
+        name: &str,
+        fallback_symbol_ref: Option<tsz_solver::SymbolRef>,
+    ) -> bool {
+        let Some(symbol_ref) = self
+            .resolve_well_known_symbol_ref_from_name(name)
+            .or(fallback_symbol_ref)
+        else {
+            return false;
+        };
+        self.register_well_known_symbol_name_mapping(name, symbol_ref);
+        true
+    }
+
     /// Recover the `SymbolRef` behind a canonical `[Symbol.xxx]` property-name
     /// key so `keyof` can contribute the precise `typeof Symbol.xxx`
     /// (`UniqueSymbol(ref)`) key type instead of widening to the generic
@@ -1671,24 +1686,50 @@ impl<'a> CheckerState<'a> {
 
     fn resolve_well_known_symbol_ref_from_name(&self, name: &str) -> Option<tsz_solver::SymbolRef> {
         let member_name = name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
-        let symbol_ctor = self.resolve_global_value_symbol("Symbol")?;
         let lib_binders = self.get_lib_binders();
-        let symbol_ctor_sym = self
-            .ctx
-            .binder
-            .get_symbol_with_libs(symbol_ctor, &lib_binders)?;
-        let member_sym = symbol_ctor_sym
-            .members
-            .as_ref()
-            .and_then(|members| members.get(member_name))
-            .or_else(|| {
-                symbol_ctor_sym
-                    .exports
-                    .as_ref()
-                    .and_then(|exports| exports.get(member_name))
-            })?;
 
-        Some(tsz_solver::SymbolRef(member_sym.0))
+        if let Some(symbol_ctor) = self.resolve_global_value_symbol("Symbol")
+            && let Some(symbol_ctor_sym) = self
+                .ctx
+                .binder
+                .get_symbol_with_libs(symbol_ctor, &lib_binders)
+            && let Some(member_sym) = symbol_ctor_sym
+                .members
+                .as_ref()
+                .and_then(|members| members.get(member_name))
+                .or_else(|| {
+                    symbol_ctor_sym
+                        .exports
+                        .as_ref()
+                        .and_then(|exports| exports.get(member_name))
+                })
+        {
+            return Some(tsz_solver::SymbolRef(member_sym.0));
+        }
+
+        for lib_binder in lib_binders.iter() {
+            let Some(symbol_ctor) = lib_binder.file_locals.get("Symbol") else {
+                continue;
+            };
+            let Some(symbol_ctor_sym) = lib_binder.get_symbol(symbol_ctor) else {
+                continue;
+            };
+            if let Some(member_sym) = symbol_ctor_sym
+                .members
+                .as_ref()
+                .and_then(|members| members.get(member_name))
+                .or_else(|| {
+                    symbol_ctor_sym
+                        .exports
+                        .as_ref()
+                        .and_then(|exports| exports.get(member_name))
+                })
+            {
+                return Some(tsz_solver::SymbolRef(member_sym.0));
+            }
+        }
+
+        None
     }
 
     pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {

@@ -245,6 +245,17 @@ fn homomorphic_array_source_prefers_es5_display_head() {
         make_prop("toString", 4),
     ]);
     interner.set_array_display_base_type(array_base);
+    interner.store_display_properties(
+        array_base,
+        vec![
+            make_prop("includes", 1),
+            make_prop("length", 2),
+            make_prop("toLocaleString", 3),
+            make_prop("toString", 4),
+            make_prop("flatMap", 5),
+            make_prop("flat", 6),
+        ],
+    );
 
     let source = interner.array(TypeId::NUMBER);
     let ordered = collect_homomorphic_source_property_infos(&interner, source);
@@ -256,6 +267,8 @@ fn homomorphic_array_source_prefers_es5_display_head() {
         &names[..4],
         ["length", "toString", "toLocaleString", "includes"]
     );
+    assert!(names.iter().any(|name| name == "flatMap"));
+    assert!(names.iter().any(|name| name == "flat"));
 }
 
 #[test]

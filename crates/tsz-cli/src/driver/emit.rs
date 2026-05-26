@@ -41,6 +41,7 @@ fn type_cache_view(cache: &tsz::checker::TypeCache) -> tsz_emitter::type_cache_v
         def_type_params: cache.def_type_params.clone(),
         boxed_types: cache.boxed_types.clone(),
         boxed_def_ids: cache.boxed_def_ids.clone(),
+        well_known_symbol_names: cache.well_known_symbol_names.clone(),
         def_to_name: cache.def_to_name.clone(),
     }
 }

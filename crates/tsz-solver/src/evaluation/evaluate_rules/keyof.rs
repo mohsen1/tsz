@@ -337,6 +337,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 .starts_with("__private_brand_")
     }
 
+    fn display_keyof_properties_if_richer(
+        &self,
+        type_id: TypeId,
+        raw_properties: &[PropertyInfo],
+    ) -> Option<Vec<PropertyInfo>> {
+        let display_props = self.interner().get_display_properties(type_id)?;
+        if display_props.len() <= raw_properties.len() {
+            return None;
+        }
+        let mut props: Vec<_> = display_props
+            .iter()
+            .filter(|prop| self.should_include_keyof_property(prop))
+            .cloned()
+            .collect();
+        props.sort_by_key(|prop| prop.declaration_order);
+        Some(props)
+    }
+
     /// Helper to recursively evaluate keyof while respecting depth limits.
     /// Creates a `KeyOf` type and evaluates it through the main `evaluate()` method.
     fn recurse_keyof(&mut self, operand: TypeId) -> TypeId {
@@ -524,15 +542,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // declaration order. Mirroring that here ensures the printer's
                     // alloc-order-based union sort displays keys in source order
                     // (e.g. `"foo" | "bar"` for `{ foo: ...; bar: ... }`).
-                    let mut props: Vec<&PropertyInfo> = shape
-                        .properties
-                        .iter()
-                        .filter(|p| self.should_include_keyof_property(p))
-                        .collect();
-                    props.sort_by_key(|p| p.declaration_order);
+                    let props = self
+                        .display_keyof_properties_if_richer(evaluated_operand, &shape.properties)
+                        .unwrap_or_else(|| {
+                            let mut props: Vec<_> = shape
+                                .properties
+                                .iter()
+                                .filter(|p| self.should_include_keyof_property(p))
+                                .cloned()
+                                .collect();
+                            props.sort_by_key(|p| p.declaration_order);
+                            props
+                        });
                     let key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_to_key_type(p))
+                        .map(|p| self.property_name_to_key_type(&p))
                         .collect();
                     if key_types.is_empty() {
                         return TypeId::NEVER;
@@ -541,15 +565,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::ObjectWithIndex(shape_id) => {
                     let shape = self.interner().object_shape(shape_id);
-                    let mut props: Vec<&PropertyInfo> = shape
-                        .properties
-                        .iter()
-                        .filter(|p| self.should_include_keyof_property(p))
-                        .collect();
-                    props.sort_by_key(|p| p.declaration_order);
+                    let props = self
+                        .display_keyof_properties_if_richer(evaluated_operand, &shape.properties)
+                        .unwrap_or_else(|| {
+                            let mut props: Vec<_> = shape
+                                .properties
+                                .iter()
+                                .filter(|p| self.should_include_keyof_property(p))
+                                .cloned()
+                                .collect();
+                            props.sort_by_key(|p| p.declaration_order);
+                            props
+                        });
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_to_key_type(p))
+                        .map(|p| self.property_name_to_key_type(&p))
                         .collect();
 
                     extend_keyof_with_index_signature_keys(
@@ -568,15 +598,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 TypeData::Callable(shape_id) => {
                     let shape = self.interner().callable_shape(shape_id);
-                    let mut props: Vec<&PropertyInfo> = shape
-                        .properties
-                        .iter()
-                        .filter(|p| self.should_include_keyof_property(p))
-                        .collect();
-                    props.sort_by_key(|p| p.declaration_order);
+                    let props = self
+                        .display_keyof_properties_if_richer(evaluated_operand, &shape.properties)
+                        .unwrap_or_else(|| {
+                            let mut props: Vec<_> = shape
+                                .properties
+                                .iter()
+                                .filter(|p| self.should_include_keyof_property(p))
+                                .cloned()
+                                .collect();
+                            props.sort_by_key(|p| p.declaration_order);
+                            props
+                        });
                     let mut key_types: Vec<TypeId> = props
                         .into_iter()
-                        .map(|p| self.property_name_to_key_type(p))
+                        .map(|p| self.property_name_to_key_type(&p))
                         .collect();
 
                     extend_keyof_with_index_signature_keys(

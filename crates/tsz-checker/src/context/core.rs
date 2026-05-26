@@ -93,6 +93,8 @@ impl TypeCache {
         self.def_to_name.extend(other.def_to_name);
         self.def_types.extend(other.def_types);
         self.def_type_params.extend(other.def_type_params);
+        self.well_known_symbol_names
+            .extend(other.well_known_symbol_names);
         self.boxed_types.extend(other.boxed_types);
         for (kind, def_ids) in other.boxed_def_ids {
             self.boxed_def_ids.entry(kind).or_default().extend(def_ids);
@@ -1406,6 +1408,7 @@ impl<'a> CheckerContext<'a> {
             def_type_params: type_env.snapshot_def_type_params(),
             boxed_types,
             boxed_def_ids,
+            well_known_symbol_names: type_env.snapshot_well_known_symbol_names(),
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
@@ -1847,6 +1850,7 @@ mod tests {
             def_type_params: FxHashMap::default(),
             boxed_types: FxHashMap::default(),
             boxed_def_ids: FxHashMap::default(),
+            well_known_symbol_names: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),

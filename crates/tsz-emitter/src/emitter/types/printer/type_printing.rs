@@ -345,6 +345,10 @@ impl<'a> TypePrinter<'a> {
     }
 
     fn optional_param_display_type(&self, type_id: TypeId) -> TypeId {
+        if visitor::type_param_info(self.interner, type_id).is_some() {
+            return self.interner.union2(type_id, TypeId::UNDEFINED);
+        }
+
         let Some(list_id) = visitor::union_list_id(self.interner, type_id) else {
             return type_id;
         };
@@ -371,6 +375,16 @@ impl<'a> TypePrinter<'a> {
         }
 
         type_id
+    }
+
+    pub(crate) fn print_optional_param_type(&self, type_id: TypeId) -> String {
+        let display_type = self.optional_param_display_type(type_id);
+        let text = self.print_type(display_type);
+        if self.type_param_scope_contains_name(&text) {
+            format!("{text} | undefined")
+        } else {
+            text
+        }
     }
 
     pub(crate) fn property_is_accessor(&self, property: &tsz_solver::types::PropertyInfo) -> bool {
@@ -667,12 +681,11 @@ impl<'a> TypePrinter<'a> {
                 }
                 result.push_str(": ");
             }
-            let display_type = if param.optional {
-                scoped.optional_param_display_type(param.type_id)
+            if param.optional {
+                result.push_str(&scoped.print_optional_param_type(param.type_id));
             } else {
-                param.type_id
-            };
-            result.push_str(&scoped.print_type(display_type));
+                result.push_str(&scoped.print_type(param.type_id));
+            }
         }
         result.push(')');
 
@@ -826,12 +839,11 @@ impl<'a> TypePrinter<'a> {
                 part.push_str("...");
             }
 
-            let display_type = if param.optional {
-                self.optional_param_display_type(param.type_id)
+            if param.optional {
+                part.push_str(&self.print_optional_param_type(param.type_id));
             } else {
-                param.type_id
-            };
-            part.push_str(&self.print_type(display_type));
+                part.push_str(&self.print_type(param.type_id));
+            }
             if param.name.is_none() && param.optional && !param.rest {
                 part.push('?');
             }

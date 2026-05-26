@@ -45,6 +45,22 @@ where
         ordered
     }
 
+    fn display_props_if_richer(
+        db: &dyn TypeDatabase,
+        source: TypeId,
+        raw_prop_count: usize,
+    ) -> Option<Vec<PropertyInfo>> {
+        let display_props = db.get_display_properties(source)?;
+        if display_props.len() <= raw_prop_count {
+            return None;
+        }
+        let mut display_props = display_props.as_ref().clone();
+        if display_props.iter().any(|prop| prop.declaration_order > 0) {
+            display_props.sort_by_key(|prop| prop.declaration_order);
+        }
+        Some(display_props)
+    }
+
     fn collect_array_property_infos(
         db: &dyn TypeDatabase,
         element_type: TypeId,
@@ -112,11 +128,15 @@ where
     match db.lookup(evaluated) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
-            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+            display_props_if_richer(db, evaluated, shape.properties.len()).unwrap_or_else(|| {
+                sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+            })
         }
         Some(TypeData::Callable(shape_id)) => {
             let shape = db.callable_shape(shape_id);
-            sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+            display_props_if_richer(db, evaluated, shape.properties.len()).unwrap_or_else(|| {
+                sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
+            })
         }
         Some(TypeData::Array(element_type)) => {
             collect_array_property_infos(db, element_type, evaluate)
@@ -179,7 +199,10 @@ fn is_array_type_id(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     matches!(db.lookup(type_id), Some(TypeData::Array(_)))
 }
 
-fn sort_array_homomorphic_source_properties(db: &dyn TypeDatabase, props: &mut [PropertyInfo]) {
+pub(crate) fn sort_array_homomorphic_source_properties(
+    db: &dyn TypeDatabase,
+    props: &mut [PropertyInfo],
+) {
     props.sort_by(|a, b| {
         match (
             array_property_rank(db, a.name),

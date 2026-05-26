@@ -434,6 +434,16 @@ impl<'a> TypeInstantiator<'a> {
         instantiated
     }
 
+    fn propagate_instantiated_display_properties(&mut self, source: TypeId, result: TypeId) {
+        let Some(display_props) = self.interner.get_display_properties(source) else {
+            return;
+        };
+        let props = self
+            .instantiate_properties_if_changed(display_props.as_ref())
+            .unwrap_or_else(|| display_props.as_ref().clone());
+        self.interner.store_display_properties(result, props);
+    }
+
     /// Instantiate an optional index signature.
     fn instantiate_index_signature_if_changed(
         &mut self,
@@ -952,8 +962,13 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(instantiated) =
                     self.instantiate_properties_if_changed(&shape.properties)
                 {
-                    self.interner
-                        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                    let result = self.interner.object_with_flags_and_symbol(
+                        instantiated,
+                        shape.flags,
+                        shape.symbol,
+                    );
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
@@ -979,13 +994,15 @@ impl<'a> TypeInstantiator<'a> {
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
                 {
-                    self.interner.object_with_index(ObjectShape {
+                    let result = self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
                         symbol: shape.symbol,
-                    })
+                    });
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
