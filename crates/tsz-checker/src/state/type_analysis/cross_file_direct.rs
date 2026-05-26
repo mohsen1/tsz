@@ -1569,9 +1569,17 @@ impl<'a> CheckerState<'a> {
                 &type_param_names,
             )
         };
-        let record_rejection = record_source_alias_rejection_kinds;
         if !body_is_direct_lowerable {
-            record_rejection(symbol_arena, delegate_binder, type_alias, &type_param_names);
+            let global_type_is_lowerable = |type_name: &str| {
+                self.source_file_global_type_is_direct_lowerable(delegate_binder, type_name)
+            };
+            record_source_alias_rejection_kinds(
+                symbol_arena,
+                delegate_binder,
+                type_alias,
+                &type_param_names,
+                &global_type_is_lowerable,
+            );
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
         }

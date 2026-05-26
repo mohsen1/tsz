@@ -956,6 +956,8 @@ pub struct DirectSourceFileTypeAliasBodyRejectionResidue {
     pub body_kind: &'static str,
     pub first_type_reference_kind: Option<&'static str>,
     pub first_type_reference_name: Option<String>,
+    pub first_non_lowerable_type_reference_kind: Option<&'static str>,
+    pub first_non_lowerable_type_reference_name: Option<String>,
     pub target_file: Option<String>,
     pub count: u64,
 }
@@ -2419,6 +2421,10 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
     body_kind: DirectSourceFileTypeAliasBodyRejectionKind,
     first_type_reference_kind: Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
     first_type_reference_name: Option<&str>,
+    first_non_lowerable_type_reference_kind: Option<
+        DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+    >,
+    first_non_lowerable_type_reference_name: Option<&str>,
     target_file: Option<&str>,
 ) {
     if !enabled_fast() {
@@ -2431,6 +2437,12 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
         DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
     });
     let first_type_reference_name = first_type_reference_name.map(str::to_owned);
+    let first_non_lowerable_type_reference_kind_name =
+        first_non_lowerable_type_reference_kind.map(|kind| {
+            DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
+        });
+    let first_non_lowerable_type_reference_name =
+        first_non_lowerable_type_reference_name.map(str::to_owned);
     let target_file = target_file.map(|file| {
         std::path::Path::new(file)
             .file_name()
@@ -2446,6 +2458,10 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
             && row.body_kind == body_kind_name
             && row.first_type_reference_kind == first_type_reference_kind_name
             && row.first_type_reference_name == first_type_reference_name
+            && row.first_non_lowerable_type_reference_kind
+                == first_non_lowerable_type_reference_kind_name
+            && row.first_non_lowerable_type_reference_name
+                == first_non_lowerable_type_reference_name
             && row.target_file == target_file
     }) {
         row.count += 1;
@@ -2458,6 +2474,8 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
             body_kind: body_kind_name,
             first_type_reference_kind: first_type_reference_kind_name,
             first_type_reference_name,
+            first_non_lowerable_type_reference_kind: first_non_lowerable_type_reference_kind_name,
+            first_non_lowerable_type_reference_name,
             target_file,
             count: 1,
         });
@@ -2469,6 +2487,8 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
             body_kind: "overflow",
             first_type_reference_kind: Some("overflow"),
             first_type_reference_name: Some("overflow".to_string()),
+            first_non_lowerable_type_reference_kind: Some("overflow"),
+            first_non_lowerable_type_reference_name: Some("overflow".to_string()),
             target_file: None,
             count: 1,
         });
@@ -3111,10 +3131,23 @@ impl PerfCounters {
         for row in rows {
             let type_ref_kind = row.first_type_reference_kind.unwrap_or("<none>");
             let type_ref_name = row.first_type_reference_name.as_deref().unwrap_or("<none>");
+            let non_lowerable_kind = row
+                .first_non_lowerable_type_reference_kind
+                .unwrap_or("<none>");
+            let non_lowerable_name = row
+                .first_non_lowerable_type_reference_name
+                .as_deref()
+                .unwrap_or("<none>");
             let file = row.target_file.as_deref().unwrap_or("<unknown>");
             out.push_str(&format!(
-                "  {:<32} {:<28} {:<36} {:<28} {:>8}  {file}\n",
-                row.name, row.body_kind, type_ref_kind, type_ref_name, row.count,
+                "  {:<32} {:<28} {:<36} {:<28} {:<36} {:<28} {:>8}  {file}\n",
+                row.name,
+                row.body_kind,
+                type_ref_kind,
+                type_ref_name,
+                non_lowerable_kind,
+                non_lowerable_name,
+                row.count,
             ));
         }
         out
@@ -3960,6 +3993,14 @@ impl PerfCounters {
                         a.first_type_reference_name
                             .cmp(&b.first_type_reference_name)
                     })
+                    .then_with(|| {
+                        a.first_non_lowerable_type_reference_kind
+                            .cmp(&b.first_non_lowerable_type_reference_kind)
+                    })
+                    .then_with(|| {
+                        a.first_non_lowerable_type_reference_name
+                            .cmp(&b.first_non_lowerable_type_reference_name)
+                    })
                     .then_with(|| a.target_file.cmp(&b.target_file))
             })
         });
@@ -4525,6 +4566,8 @@ mod json_tests {
                 body_kind: "mapped_type",
                 first_type_reference_kind: Some("local_type_parameter"),
                 first_type_reference_name: Some("T".to_string()),
+                first_non_lowerable_type_reference_kind: Some("unresolved_identifier"),
+                first_non_lowerable_type_reference_name: Some("Missing".to_string()),
                 target_file: Some("mapped-types.ts".to_string()),
                 count: 13,
             });
@@ -4546,6 +4589,8 @@ mod json_tests {
             "body_kind",
             "first_type_reference_kind",
             "first_type_reference_name",
+            "first_non_lowerable_type_reference_kind",
+            "first_non_lowerable_type_reference_name",
             "target_file",
             "count",
         ]
@@ -4558,6 +4603,11 @@ mod json_tests {
         assert_eq!(row["body_kind"], "mapped_type");
         assert_eq!(row["first_type_reference_kind"], "local_type_parameter");
         assert_eq!(row["first_type_reference_name"], "T");
+        assert_eq!(
+            row["first_non_lowerable_type_reference_kind"],
+            "unresolved_identifier",
+        );
+        assert_eq!(row["first_non_lowerable_type_reference_name"], "Missing");
         assert_eq!(row["target_file"], "mapped-types.ts");
         assert_eq!(row["count"], 13);
     }
