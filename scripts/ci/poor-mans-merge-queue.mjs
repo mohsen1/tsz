@@ -409,7 +409,7 @@ function readPullRequestState(repository, number) {
     "api",
     `repos/${repository}/pulls/${number}`,
     "--jq",
-    "{number: .number, state: .state, merged: (.merged_at != null)}",
+    "{number: .number, state: .state, merged: (.merged_at != null), updatedAt: .updated_at}",
   ]);
 }
 
@@ -598,6 +598,7 @@ function cleanupQueueBranches(repository, options) {
               owner,
               reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
               summaryReason: "active queue run",
+              updatedAt: pullRequest.updatedAt || "",
             });
           }
           continue;
@@ -609,6 +610,7 @@ function cleanupQueueBranches(repository, options) {
             owner,
             reason: `PR #${number} is open`,
             summaryReason: "open PR branch",
+            updatedAt: pullRequest.updatedAt || "",
           });
         }
         continue;
