@@ -407,6 +407,15 @@ function readPullRequestState(repository, number) {
   ]);
 }
 
+function readPullRequestOwner(repository, number) {
+  const pr = runGhJson([
+    "pr", "view", String(number),
+    "--repo", repository,
+    "--json", "labels",
+  ]);
+  return agentLabel(pr.labels);
+}
+
 function deleteRemoteBranch(branch) {
   git(["push", "origin", `:refs/heads/${branch}`], { stdio: "inherit" });
 }
@@ -520,6 +529,7 @@ function cleanupQueueBranches(repository, options) {
 
     const pullRequest = readPullRequestState(repository, number);
     if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
+      const owner = readPullRequestOwner(repository, number);
       const supersededReason = options.cleanupSupersededOpenQueueBranches
         ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
         : null;
@@ -530,6 +540,7 @@ function cleanupQueueBranches(repository, options) {
           activeRuns.push({
             branch: queueBranchInfo.branch,
             number,
+            owner,
             runId: activeRun.databaseId || null,
             url: activeRun.url || "",
             status: activeRun.status || "",
@@ -538,6 +549,7 @@ function cleanupQueueBranches(repository, options) {
           if (options.verbose) {
             skips.push({
               branch: queueBranchInfo.branch,
+              owner,
               reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
               summaryReason: "active queue run",
             });
@@ -548,6 +560,7 @@ function cleanupQueueBranches(repository, options) {
         if (options.verbose) {
           skips.push({
             branch: queueBranchInfo.branch,
+            owner,
             reason: `PR #${number} is open`,
             summaryReason: "open PR branch",
           });
@@ -562,6 +575,7 @@ function cleanupQueueBranches(repository, options) {
       activeRuns.push({
         branch: queueBranchInfo.branch,
         number,
+        owner: "",
         runId: activeRun.databaseId || null,
         url: activeRun.url || "",
         status: activeRun.status || "",
@@ -570,6 +584,7 @@ function cleanupQueueBranches(repository, options) {
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
+          owner: "",
           reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
           summaryReason: "active queue run",
         });
@@ -833,11 +848,11 @@ export function formatResult(result, options) {
       }
     }
     if (options.verbose && result.activeRuns?.length) {
-      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Run | Status | Started |", "|--------|----|-----|--------|---------|");
+      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Owner | Run | Status | Started |", "|--------|----|-------|-----|--------|---------|");
       for (const run of result.activeRuns.slice(0, 50)) {
         const runId = run.runId || "(unknown)";
         const runLink = run.url ? `[${runId}](${run.url})` : runId;
-        lines.push(`| \`${run.branch}\` | #${run.number} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
@@ -846,12 +861,12 @@ export function formatResult(result, options) {
       for (const entry of summary) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
-      lines.push("", "### Skips", "", "| Branch | Reason |", "|--------|--------|");
+      lines.push("", "### Skips", "", "| Branch | Owner | Reason |", "|--------|-------|--------|");
       for (const skip of result.skips.slice(0, 50)) {
-        lines.push(`| \`${skip.branch}\` | ${skip.reason.replace(/\|/g, "\\|")} |`);
+        lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
       }
       if (result.skips.length > 50) {
-        lines.push(`| ... | ${result.skips.length - 50} more skipped branch(es) omitted |`);
+        lines.push(`| ... |  | ${result.skips.length - 50} more skipped branch(es) omitted |`);
       }
     }
   } else if (!result.selected) {
