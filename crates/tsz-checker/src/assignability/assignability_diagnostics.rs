@@ -606,6 +606,49 @@ impl<'a> CheckerState<'a> {
         source_idx: NodeIndex,
         diag_idx: NodeIndex,
     ) -> bool {
+        self.check_assignable_or_report_at_with_display_types_and_options(
+            source,
+            target,
+            source_for_display,
+            target_for_display,
+            source_idx,
+            diag_idx,
+            false,
+        )
+    }
+
+    /// Like `check_assignable_or_report_at_with_display_types`, but keeps the
+    /// diagnostic anchored at `diag_idx` without drilling into the source shape.
+    pub(crate) fn check_assignable_or_report_at_exact_anchor_without_source_elaboration_with_display_types(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        self.check_assignable_or_report_at_with_display_types_and_options(
+            source,
+            target,
+            source_for_display,
+            target_for_display,
+            source_idx,
+            diag_idx,
+            true,
+        )
+    }
+
+    fn check_assignable_or_report_at_with_display_types_and_options(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_for_display: TypeId,
+        target_for_display: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+        skip_source_elaboration: bool,
+    ) -> bool {
         let source = self.narrow_this_from_enclosing_typeof_guard(source_idx, source);
         if self.should_suppress_assignability_diagnostic(source, target) {
             return true;
@@ -623,7 +666,9 @@ impl<'a> CheckerState<'a> {
         let analysis = self.analyze_assignability_failure(source, target);
 
         // Try to elaborate the source error first
-        if self.try_elaborate_assignment_source_error(source_idx, target) {
+        if !skip_source_elaboration
+            && self.try_elaborate_assignment_source_error(source_idx, target)
+        {
             return false;
         }
 

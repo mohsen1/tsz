@@ -3914,6 +3914,36 @@ fn test_nested_object_literal_property_diagnostics_use_exact_anchor_relation_hel
     );
 }
 
+/// Mapped object-literal property diagnostics need a display target distinct
+/// from the relation target, but the relation decision still belongs in the
+/// canonical exact-anchor helper.
+#[test]
+fn test_mapped_object_literal_property_diagnostics_use_display_relation_helper() {
+    let source = fs::read_to_string("src/state/state_checking/mapped_object_literals.rs")
+        .expect("failed to read mapped_object_literals.rs");
+
+    assert!(
+        source.contains(
+            "check_assignable_or_report_at_exact_anchor_without_source_elaboration_with_display_types("
+        ),
+        "mapped object-literal property diagnostics must use the display-aware \
+         exact-anchor relation helper"
+    );
+    assert!(
+        !source.contains("error_type_not_assignable_at_with_anchor("),
+        "mapped object-literal property diagnostics must not bypass relation outcome \
+         handling with the manual TS2322 reporter"
+    );
+    assert!(
+        !source.contains("diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)")
+            && !source.contains(
+                "diagnostic_relation_boolean_guard(source_type, target_prop_type_for_check)"
+            ),
+        "mapped object-literal property diagnostics must not pre-gate the canonical \
+         relation helper with raw boolean relations"
+    );
+}
+
 /// Object-literal property diagnostics must route declared-property and
 /// contextual-property assignability through canonical relation diagnostic
 /// helpers instead of raw boolean relations plus manual TS2322 reporting.
