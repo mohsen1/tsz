@@ -29,10 +29,13 @@ use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::QueryCache;
 use crate::intern::TypeInterner;
-use crate::relations::relation_queries::RelationPolicy;
+use crate::relations::relation_queries::{
+    RelationContext, RelationKind, RelationPolicy, query_relation,
+};
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
-    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationCacheKind, RelationFlags,
+    CachedAnyMode, PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationCacheKind,
+    RelationFlags,
 };
 
 /// Assert that two `RelationPolicy` configurations produce distinct
@@ -721,5 +724,49 @@ fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
         )),
         Some(true),
         "typed assignability policy path must insert under the policy-derived cache key",
+    );
+}
+
+#[test]
+fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
+    let policy = RelationPolicy::default().with_strict_any_propagation(true);
+
+    let uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    );
+    let cached = db.is_assignable_to_with_policy(source, target, policy);
+    let cached_again = db.is_assignable_to_with_policy(source, target, policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        cached,
+        uncached.is_related(),
+        "cached strict-any assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        cached_again, cached,
+        "second strict-any lookup should reuse the same policy-shaped answer",
+    );
+    assert!(
+        stats.assignability_hits >= 1,
+        "second strict-any lookup should hit the assignability cache",
+    );
+    assert!(
+        stats.assignability_misses >= 1,
+        "first strict-any lookup should miss before inserting",
+    );
+    assert!(
+        !cached,
+        "strict-any policy must not let nested `any` silence the property mismatch",
     );
 }
