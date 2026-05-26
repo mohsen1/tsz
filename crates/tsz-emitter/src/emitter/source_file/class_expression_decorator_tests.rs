@@ -272,3 +272,37 @@ class C3 extends ((() => {}) as any) {
         "Decorator superclass capture should use emitted JS expression text, not raw heritage source.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn decorated_class_static_field_initializers_rewrite_super_member_calls() {
+    let source = "\
+declare var dec: any;
+declare class Base { static method(...args: any[]): number; }
+const method = \"method\";
+
+@dec
+class C extends Base {
+    static a = super.method();
+    static b = super[method]();
+    static c = super.method``;
+    static d = super[method]``;
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains(
+            "static a = Reflect.get(_classSuper, \"method\", _classThis).call(_classThis);"
+        ) && output
+            .contains("static b = Reflect.get(_classSuper, method, _classThis).call(_classThis);"),
+        "Decorated class static field initializers should rewrite static super calls.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static c = Reflect.get(_classSuper, \"method\", _classThis).bind(_classThis) ``;"
+        ) && output.contains(
+            "static d = Reflect.get(_classSuper, method, _classThis).bind(_classThis) ``;"
+        ),
+        "Decorated class static field initializers should bind static super tagged-template calls.\nOutput:\n{output}"
+    );
+}

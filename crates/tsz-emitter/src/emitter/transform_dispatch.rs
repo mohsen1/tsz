@@ -8,6 +8,7 @@ use super::*;
 use crate::transforms::emit_utils::{get_extends_expression_index, hygienic_temp_name};
 use std::sync::Arc;
 use tracing::debug;
+use tsz_parser::parser::node::NodeAccess;
 
 #[path = "transform_dispatch_chain.rs"]
 mod transform_dispatch_chain;
@@ -1298,6 +1299,26 @@ impl<'a> Printer<'a> {
                 }
                 continue;
             }
+            if let Some(prop) = self.arena.get_property_decl(member_node) {
+                if self.arena.is_static(&prop.modifiers)
+                    && let Some(super_alias) = class_super_var.as_deref()
+                    && prop.initializer != NodeIndex::NONE
+                    && self.node_contains_super_keyword(prop.initializer)
+                    && !self
+                        .arena
+                        .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::AccessorKeyword)
+                {
+                    self.seed_tc39_decorator_static_member(
+                        emitter,
+                        member_idx,
+                        prop,
+                        class_this_var.as_deref(),
+                        super_alias,
+                    );
+                }
+                self.seed_tc39_decorator_field_initializer(emitter, member_idx, prop);
+                continue;
+            }
             if let Some(method) = self.arena.get_method_decl(member_node) {
                 let is_private = self.arena.get(method.name).is_some_and(|name| {
                     name.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
@@ -1320,9 +1341,6 @@ impl<'a> Printer<'a> {
                     self.seed_tc39_decorator_function_body(emitter, accessor.body);
                 }
                 continue;
-            }
-            if let Some(prop) = self.arena.get_property_decl(member_node) {
-                self.seed_tc39_decorator_field_initializer(emitter, member_idx, prop);
             }
         }
     }
@@ -1387,6 +1405,44 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_index_value_access = prev_super_index_value;
 
         emitter.set_static_block_text(member_idx, output);
+    }
+
+    fn seed_tc39_decorator_static_member(
+        &mut self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        member_idx: NodeIndex,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+        this_alias: Option<&str>,
+        super_alias: &str,
+    ) {
+        let start = self.writer.len();
+        self.emit_class_member_modifiers_js(&prop.modifiers);
+        self.emit(prop.name);
+        self.write(" = ");
+        self.emit_expression_with_scoped_static_initializer_mode(
+            prop.initializer,
+            this_alias,
+            Some(super_alias),
+            false,
+        );
+        self.write_semicolon();
+        let output = self.writer.get_output()[start..].trim_start().to_string();
+        self.writer.truncate(start);
+        emitter.set_static_member_text(member_idx, output);
+    }
+
+    fn node_contains_super_keyword(&self, idx: NodeIndex) -> bool {
+        let mut stack = vec![idx];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+            if node.kind == tsz_scanner::SyntaxKind::SuperKeyword as u16 {
+                return true;
+            }
+            stack.extend(self.arena.get_children(current));
+        }
+        false
     }
 
     fn seed_tc39_decorator_extends_text(

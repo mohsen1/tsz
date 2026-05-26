@@ -125,6 +125,9 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Static block text rendered by the main emitter when raw source text
     /// would miss scoped static `super` rewrites.
     static_block_texts: FxHashMap<NodeIndex, String>,
+    /// Static member text rendered by the main emitter when raw source text
+    /// would miss scoped static `super` rewrites in field initializers.
+    static_member_texts: FxHashMap<NodeIndex, String>,
     /// Extends expression text rendered by the main emitter when raw source
     /// text would preserve type-only syntax or named-evaluation-sensitive forms.
     extends_text: Option<String>,
@@ -149,6 +152,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             function_body_texts: FxHashMap::default(),
             field_initializer_texts: FxHashMap::default(),
             static_block_texts: FxHashMap::default(),
+            static_member_texts: FxHashMap::default(),
             extends_text: None,
             use_define_for_class_fields: false,
         }
@@ -204,6 +208,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_static_block_text(&mut self, member_idx: NodeIndex, text: String) {
         self.static_block_texts.insert(member_idx, text);
+    }
+
+    pub fn set_static_member_text(&mut self, member_idx: NodeIndex, text: String) {
+        self.static_member_texts.insert(member_idx, text);
     }
 
     pub fn set_extends_text(&mut self, text: String) {
@@ -1078,6 +1086,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let member_text = if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
             {
                 self.static_block_texts
+                    .get(&member_idx)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                    })
+            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                self.static_member_texts
                     .get(&member_idx)
                     .cloned()
                     .unwrap_or_else(|| {
