@@ -99,6 +99,18 @@ withTempDir((dir) => {
       labels: ["agent:zeta"],
       body: "AgentName: zeta\n\nAddresses #9694\n",
     },
+    {
+      number: 17,
+      title: "fix(checker): ready but blocked",
+      isDraft: false,
+      baseRefName: "main",
+      headRefName: "agent/blocked-ready",
+      mergeStateStatus: "BLOCKED",
+      mergeable: "MERGEABLE",
+      autoMergeRequest: null,
+      labels: ["agent:epsilon"],
+      body: "AgentName: epsilon\n",
+    },
   ]);
 
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
@@ -124,19 +136,23 @@ withTempDir((dir) => {
   );
   assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
+  assert.match(
+    result.stdout,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+  );
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 8,
+    open: 9,
     draft: 7,
-    ready: 1,
+    ready: 2,
     stacked: 2,
     missingAgentName: 2,
     agentLabelMismatches: 1,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11, 14, 15, 16, 42] },
+    { base: "main", prs: [10, 11, 14, 15, 16, 17, 42] },
     { base: "unknown-base", prs: [13] },
   ]);
   assert.deepEqual(report.stacks, [
@@ -167,6 +183,17 @@ withTempDir((dir) => {
     },
   ]);
   assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
+  assert.deepEqual(report.blockedReadyMainPrs, [
+    {
+      number: 17,
+      agentName: "epsilon",
+      agentLabel: "agent:epsilon",
+      autoMergeArmed: false,
+      mergeable: "MERGEABLE",
+      title: "fix(checker): ready but blocked",
+    },
+  ]);
+  assert.deepEqual(report.blockedReadyMainOwnerCounts, [{ owner: "agent:epsilon", count: 1 }]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).issueRefs, [9694, 9712, 9826]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).claimedIssueRefs, [9712]);
