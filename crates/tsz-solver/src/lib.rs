@@ -304,6 +304,9 @@ mod bidirectional_tests;
 // infer_tests: loaded from inference/infer.rs
 // instantiate_tests: loaded from caches/instantiation_cache.rs
 #[cfg(test)]
+#[path = "../tests/infer_pattern_variadic_residual_tests.rs"]
+mod infer_pattern_variadic_residual_tests;
+#[cfg(test)]
 #[path = "../tests/integration_tests.rs"]
 mod integration_tests;
 // intern_tests: loaded from intern/mod.rs
@@ -411,6 +414,9 @@ mod mapped_architecture_tests;
 #[cfg(test)]
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/mapped_empty_keyspace_subtype_tests.rs"]
+mod mapped_empty_keyspace_subtype_tests;
 #[cfg(test)]
 #[path = "../tests/matching_tests.rs"]
 mod matching_tests;

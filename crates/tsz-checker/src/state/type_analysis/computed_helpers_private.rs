@@ -91,7 +91,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return true;
                 }
-                if self.is_assignable_to(object_type, declaring_type) {
+                if self.diagnostic_relation_boolean_guard(object_type, declaring_type) {
                     return true;
                 }
                 // Last resort: check if the object type has the private property
@@ -105,7 +105,7 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_success()
             }
-            _ => self.is_assignable_to(object_type, declaring_type),
+            _ => self.diagnostic_relation_boolean_guard(object_type, declaring_type),
         }
     }
 
@@ -699,7 +699,7 @@ impl<'a> CheckerState<'a> {
                 &property_name,
             )
         } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
-            || self.is_assignable_to(object_type_for_check, declaring_type)
+            || self.diagnostic_relation_boolean_guard(object_type_for_check, declaring_type)
         {
             true
         } else {
@@ -752,7 +752,7 @@ impl<'a> CheckerState<'a> {
                         } else if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {
-                            self.is_assignable_to(object_type_for_check, ty)
+                            self.diagnostic_relation_boolean_guard(object_type_for_check, ty)
                         }
                     })
             });

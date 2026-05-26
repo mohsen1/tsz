@@ -140,7 +140,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !self.is_assignable_to_with_env(source_return, target_return) {
+        if !self.diagnostic_relation_boolean_guard_with_env(source_return, target_return) {
             return false;
         }
 
@@ -149,7 +149,7 @@ impl<'a> CheckerState<'a> {
             self.get_generator_next_type_argument(target_return_type),
         ) {
             (Some(source_next), Some(target_next)) => {
-                self.is_assignable_to_with_env(target_next, source_next)
+                self.diagnostic_relation_boolean_guard_with_env(target_next, source_next)
             }
             _ => true,
         }

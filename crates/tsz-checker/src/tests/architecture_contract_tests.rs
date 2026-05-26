@@ -2458,6 +2458,33 @@ fn test_rendered_type_decision_patterns_do_not_grow() {
 }
 
 #[test]
+fn test_top_rest_any_callable_policy_avoids_rendered_signature_prefixes() {
+    let path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/checkers/call_checker/diagnostics.rs");
+    let src =
+        fs::read_to_string(&path).unwrap_or_else(|_| panic!("failed to read {}", path.display()));
+    let forbidden = [
+        "format_type(type_id)",
+        ".starts_with(\"(...args: Array<any>) =>\")",
+        "(...args: Array<any>) =>",
+    ];
+
+    let violations = forbidden
+        .iter()
+        .filter(|pattern| src.contains(**pattern))
+        .copied()
+        .collect::<Vec<_>>();
+
+    assert!(
+        violations.is_empty(),
+        "top rest-any callable policy must use TypeId facts, not rendered \
+         signature prefixes. Violations in {}:\n  {}",
+        path.display(),
+        violations.join("\n  ")
+    );
+}
+
+#[test]
 fn test_callable_missing_property_suppression_uses_signature_queries() {
     let src = fs::read_to_string("src/error_reporter/assignability_callable_suppression.rs")
         .expect("failed to read assignability callable suppression source");

@@ -800,7 +800,7 @@ impl<'a> FlowAnalyzer<'a> {
 
     /// Resolve the type of an expression operand using `node_types` cache,
     /// literal detection, or reference resolution.
-    fn resolve_operand_type(&self, idx: NodeIndex) -> Option<TypeId> {
+    pub(super) fn resolve_operand_type(&self, idx: NodeIndex) -> Option<TypeId> {
         let idx = self.skip_parens_and_assertions(idx);
         // Try node_types first
         if let Some(ty) = self.node_types.and_then(|nt| nt.get(&idx.0).copied()) {

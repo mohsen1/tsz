@@ -51,8 +51,8 @@ impl<'a> CheckerState<'a> {
     /// Substitute every in-scope type parameter in `type_id` with its declared
     /// constraint (or `unknown` when the parameter is unconstrained). The
     /// result is used to give a concrete instantiation of a generic-reference
-    /// type argument so that `is_assignable_to(concrete, target_constraint)`
-    /// can be evaluated without ambiguity. (#3063)
+    /// type argument so the target constraint relation can be evaluated
+    /// without ambiguity. (#3063)
     pub(super) fn scoped_type_param_substituted_form(&self, type_id: TypeId) -> TypeId {
         if self.ctx.type_parameter_scope.is_empty() {
             return type_id;
@@ -123,8 +123,8 @@ impl<'a> CheckerState<'a> {
         let true_base_evaluated = self.evaluate_type_for_assignability(true_base_resolved);
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
         true_base_evaluated == constraint_evaluated
-            || self.is_assignable_to(true_base_evaluated, constraint_evaluated)
-            || self.is_assignable_to(true_base_resolved, constraint_resolved)
+            || self.diagnostic_relation_boolean_guard(true_base_evaluated, constraint_evaluated)
+            || self.diagnostic_relation_boolean_guard(true_base_resolved, constraint_resolved)
     }
 
     pub(super) fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
@@ -258,7 +258,7 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(type_arg_resolved);
         let type_arg_evaluated = self.evaluate_type_with_resolution(type_arg_resolved);
         type_arg_evaluated == source
-            || self.is_assignable_to(type_arg_evaluated, source)
+            || self.diagnostic_relation_boolean_guard(type_arg_evaluated, source)
             || self.type_satisfies_required_source_properties(type_arg_resolved, &properties)
             || (type_arg_evaluated != type_arg_resolved
                 && self.type_satisfies_required_source_properties(type_arg_evaluated, &properties))
@@ -330,7 +330,7 @@ impl<'a> CheckerState<'a> {
             if arg_prop.type_id != source_prop.type_id {
                 let arg_type = self.evaluate_type_for_assignability(arg_prop.type_id);
                 let source_type = self.evaluate_type_for_assignability(source_prop.type_id);
-                if !self.is_assignable_to(arg_type, source_type) {
+                if !self.diagnostic_relation_boolean_guard(arg_type, source_type) {
                     return false;
                 }
             }
@@ -367,7 +367,9 @@ impl<'a> CheckerState<'a> {
 
             let arg_type = self.get_type_from_type_node(arg_type_node);
             let source_type = self.get_type_from_type_node(source_type_node);
-            if arg_type != source_type && !self.is_assignable_to(arg_type, source_type) {
+            if arg_type != source_type
+                && !self.diagnostic_relation_boolean_guard(arg_type, source_type)
+            {
                 return false;
             }
         }
