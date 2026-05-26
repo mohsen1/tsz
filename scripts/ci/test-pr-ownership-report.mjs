@@ -129,6 +129,7 @@ withTempDir((dir) => {
       number: 19,
       title: "fix(checker): conflicting draft branch",
       isDraft: true,
+      updatedAt: "2026-05-22T08:00:00Z",
       baseRefName: "main",
       headRefName: "agent/conflicting-draft",
       mergeStateStatus: "DIRTY",
@@ -168,15 +169,15 @@ withTempDir((dir) => {
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
   assert.match(
     result.stdout,
-    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1 \(oldest updated 2026-05-23\)[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
   );
   assert.match(
     result.stdout,
-    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1 \(oldest updated 2026-05-22\)[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24\)[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
   assert.match(
     result.stdout,
-    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24\)[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
   assert.match(
     result.stdout,
@@ -334,7 +335,9 @@ withTempDir((dir) => {
       title: "fix(checker): ready but blocked",
     },
   ]);
-  assert.deepEqual(report.blockedReadyMainOwnerCounts, [{ owner: "agent:epsilon", count: 1 }]);
+  assert.deepEqual(report.blockedReadyMainOwnerCounts, [
+    { owner: "agent:epsilon", count: 1, oldestUpdatedAt: "2026-05-23T09:15:00Z" },
+  ]);
   assert.deepEqual(report.conflictingMainPrs, [
     {
       number: 19,
@@ -342,7 +345,7 @@ withTempDir((dir) => {
       agentName: "delta",
       agentLabel: "agent:delta",
       autoMergeArmed: false,
-      updatedAt: null,
+      updatedAt: "2026-05-22T08:00:00Z",
       mergeStateStatus: "DIRTY",
       mergeable: "CONFLICTING",
       title: "fix(checker): conflicting draft branch",
@@ -360,8 +363,8 @@ withTempDir((dir) => {
     },
   ]);
   assert.deepEqual(report.conflictingMainOwnerCounts, [
-    { owner: "agent:delta", count: 1 },
-    { owner: "agent:zeta", count: 1 },
+    { owner: "agent:delta", count: 1, oldestUpdatedAt: "2026-05-22T08:00:00Z" },
+    { owner: "agent:zeta", count: 1, oldestUpdatedAt: "2026-05-24T10:20:30Z" },
   ]);
   assert.deepEqual(report.conflictingReadyMainPrs, [
     {
@@ -376,7 +379,9 @@ withTempDir((dir) => {
       title: "fix(solver): conflicting ready branch",
     },
   ]);
-  assert.deepEqual(report.conflictingReadyMainOwnerCounts, [{ owner: "agent:zeta", count: 1 }]);
+  assert.deepEqual(report.conflictingReadyMainOwnerCounts, [
+    { owner: "agent:zeta", count: 1, oldestUpdatedAt: "2026-05-24T10:20:30Z" },
+  ]);
   assert.deepEqual(report.wipPrs, [
     {
       number: 10,
