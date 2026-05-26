@@ -742,6 +742,10 @@ name = "issue_7653_parameterless_lambda_inference_tests"
 path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
 
 [[test]]
+name = "issue_9780_typeof_generic_call_callback_param"
+path = "tests/issue_9780_typeof_generic_call_callback_param.rs"
+
+[[test]]
 name = "tuple_type_assertion_inference_tests"
 path = "tests/tuple_type_assertion_inference_tests.rs"
 
@@ -892,6 +896,10 @@ path = "tests/ts2344_extra_with_2314_suppression_tests.rs"
 [[test]]
 name = "ts2315_explicit_any_type_alias_tests"
 path = "tests/ts2315_explicit_any_type_alias_tests.rs"
+
+[[test]]
+name = "generic_self_circular_alias_tests"
+path = "tests/generic_self_circular_alias_tests.rs"
 
 [[test]]
 name = "generic_type_alias_deferred_eval_tests"

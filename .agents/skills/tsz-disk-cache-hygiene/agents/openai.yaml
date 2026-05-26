@@ -1,0 +1,4 @@
+interface:
+  display_name: "TSZ Disk Cache Hygiene"
+  short_description: "Preserve caches while avoiding full disks."
+  default_prompt: "Use $tsz-disk-cache-hygiene before creating worktrees or running large TSZ builds."
