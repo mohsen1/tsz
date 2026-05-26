@@ -283,6 +283,20 @@ function printMarkdown(report) {
     }
   }
   console.log("");
+  console.log("## Duplicate Draft Cleanup Targets");
+  const issueCleanupTargets = issueDuplicates.filter((entry) => entry.unstackedDraftCount > 0);
+  if (issueCleanupTargets.length === 0) {
+    console.log("- none");
+  } else {
+    for (const duplicate of issueCleanupTargets) {
+      console.log(
+        `- #${duplicate.issue} (${duplicate.draftStackState}; unstacked drafts: ${
+          duplicate.unstackedDraftCount
+        }): ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`,
+      );
+    }
+  }
+  console.log("");
   console.log("## AgentName / Label Mismatches");
   if (report.agentLabelMismatches.length === 0) {
     console.log("- none");
