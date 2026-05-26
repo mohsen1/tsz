@@ -181,7 +181,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-prepare.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${target_sha}" \
             --format='value(id)' \
@@ -257,7 +257,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-prepare.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-prepare.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}" \
             --format='value(id)' \
@@ -933,7 +933,7 @@ jobs:
             --async \
             --project=tsz-ci \
             --region=us-central1 \
-            --config=cloudbuild-bench-shard.yaml \
+            --config=scripts/cloudbuild/cloudbuild-bench-shard.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             --substitutions=_BENCH_TARGET_SHA="${BENCH_TARGET_SHA}",_BENCH_SHARD_LABEL="${{ matrix.label }}",_BENCH_SHARD_FILTER="${{ matrix.filter }}" \
             --format='value(id)' \
