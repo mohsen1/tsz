@@ -216,6 +216,25 @@ pub(crate) fn narrow_inferred_predicate_guard(
     narrowing.narrow_type(param_type, guard, GuardSense::Positive)
 }
 
+/// Return true when a falsy branch type contains only nullish constituents.
+///
+/// The checker owns recognizing double-negation truthiness in an inferable
+/// predicate body. This boundary owns the reusable type-shape classification
+/// that decides whether the false branch is narrow enough for tsc-style
+/// inferred predicate synthesis.
+pub(crate) fn is_nullish_only_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
+        return true;
+    }
+    if let Some(members) = union_members_for_type(db, type_id) {
+        return !members.is_empty()
+            && members
+                .iter()
+                .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
+    }
+    false
+}
+
 fn resolve_assignment_reduction_type(
     db: &dyn TypeDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,

@@ -1388,7 +1388,7 @@ impl<'a> FlowAnalyzer<'a> {
             false,
             tsz_binder::FlowNodeId::NONE,
         );
-        if !self.is_nullish_only_type(falsy) {
+        if !flow_query::is_nullish_only_type(self.interner, falsy) {
             return None;
         }
 
@@ -1425,19 +1425,6 @@ impl<'a> FlowAnalyzer<'a> {
         } else {
             None
         }
-    }
-
-    fn is_nullish_only_type(&self, type_id: TypeId) -> bool {
-        if matches!(type_id, TypeId::NEVER | TypeId::NULL | TypeId::UNDEFINED) {
-            return true;
-        }
-        if let Some(members) = flow_query::union_members_for_type(self.interner, type_id) {
-            return !members.is_empty()
-                && members
-                    .iter()
-                    .all(|member| matches!(*member, TypeId::NULL | TypeId::UNDEFINED));
-        }
-        false
     }
 
     fn try_infer_logical_or_type_predicate(
