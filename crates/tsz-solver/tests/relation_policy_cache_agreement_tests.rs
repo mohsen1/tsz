@@ -175,3 +175,67 @@ fn assignability_cache_strict_function_types_matches_uncached_function_variance(
         "strict and loose variance policies should miss in separate cache slots",
     );
 }
+
+#[test]
+fn subtype_cache_allow_void_return_matches_uncached_function_return_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+    let target = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+
+    let strict_policy = RelationPolicy::from_flags(0);
+    let allow_void_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_ALLOW_VOID_RETURN);
+
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_policy,
+        RelationContext::default(),
+    );
+    let allow_void_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        allow_void_policy,
+        RelationContext::default(),
+    );
+
+    let strict_cached = db.is_subtype_of_with_policy(source, target, strict_policy);
+    let allow_void_cached = db.is_subtype_of_with_policy(source, target, allow_void_policy);
+    let strict_cached_again = db.is_subtype_of_with_policy(source, target, strict_policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        strict_cached,
+        strict_uncached.is_related(),
+        "cached strict return subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        allow_void_cached,
+        allow_void_uncached.is_related(),
+        "cached allow-void return subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        strict_cached_again, strict_cached,
+        "second strict return lookup should reuse the policy-shaped answer",
+    );
+    assert!(
+        !strict_cached,
+        "strict return compatibility should reject `() => string` where `() => void` is required",
+    );
+    assert!(
+        allow_void_cached,
+        "allow-void return compatibility should accept ignored source return values",
+    );
+    assert!(
+        stats.subtype_hits >= 1,
+        "second strict return lookup should hit the subtype cache",
+    );
+    assert!(
+        stats.subtype_misses >= 2,
+        "strict and allow-void return policies should miss in separate cache slots",
+    );
+}
