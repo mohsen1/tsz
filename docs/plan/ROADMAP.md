@@ -58,7 +58,7 @@ denominators.
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 | Open bug issues | `49` open `bug` issues in live GitHub orientation |
-| Output-surgery audit | red: `4` unallowlisted calls, `1` stale allowlist entry |
+| Output-surgery audit | red: `2` unallowlisted calls, `0` stale allowlist entries |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -120,7 +120,7 @@ changes the picture.
    needs to move away from late semantic discovery during printing toward a
    precomputed declaration/public-API summary.
 8. Output-surgery audit debt is visible rather than normalized: the current
-   audit reports `4` unallowlisted calls and `1` stale allowlist entry. Treat
+   audit reports `2` unallowlisted calls and `0` stale allowlist entries. Treat
    that as Studio-F cleanup intake and as a guardrail for Studio-C/D emit work.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
