@@ -570,6 +570,7 @@ impl<'a> CheckerState<'a> {
                         evaluated_left,
                         non_nullish,
                         right_type,
+                        right_idx,
                     );
                     type_stack.push(result);
                 } else {
@@ -581,6 +582,7 @@ impl<'a> CheckerState<'a> {
                         evaluated_left,
                         non_nullish,
                         right_type,
+                        right_idx,
                     );
                     type_stack.push(result);
                 }
