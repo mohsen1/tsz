@@ -12,8 +12,8 @@
 
 use crate::operations::expression_ops::normalize_fresh_object_literal_union_members;
 use crate::types::{
-    CallSignature, CallableShape, FunctionShape, LiteralValue, ObjectShape, ObjectShapeId,
-    ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId,
+    CallSignature, CallableShape, FunctionShape, IntrinsicKind, LiteralValue, ObjectShape,
+    ObjectShapeId, ParamInfo, PropertyInfo, TupleElement, TypeData, TypeId,
 };
 use crate::utils::{self, TupleRestExpansion};
 use crate::visitor;
@@ -668,6 +668,12 @@ impl<'a> InferenceContext<'a> {
             }
         }
 
+        if let Some(source_kind) = self.primitive_boxed_source_kind(source, source_key.as_ref())
+            && self.is_boxed_target_for_primitive(source_kind, target, target_key.as_ref())
+        {
+            return true;
+        }
+
         // Array and tuple structural checks
         if let (Some(TypeData::Array(s_elem)), Some(TypeData::Array(t_elem))) =
             (source_key.as_ref(), target_key.as_ref())
@@ -910,6 +916,49 @@ impl<'a> InferenceContext<'a> {
                 _ => false,
             },
         }
+    }
+
+    fn primitive_boxed_source_kind(
+        &self,
+        ty: TypeId,
+        key: Option<&TypeData>,
+    ) -> Option<IntrinsicKind> {
+        match ty {
+            TypeId::STRING => Some(IntrinsicKind::String),
+            TypeId::NUMBER => Some(IntrinsicKind::Number),
+            TypeId::BOOLEAN | TypeId::BOOLEAN_TRUE | TypeId::BOOLEAN_FALSE => {
+                Some(IntrinsicKind::Boolean)
+            }
+            TypeId::BIGINT => Some(IntrinsicKind::Bigint),
+            TypeId::SYMBOL => Some(IntrinsicKind::Symbol),
+            _ => match key {
+                Some(TypeData::Literal(LiteralValue::String(_))) => Some(IntrinsicKind::String),
+                Some(TypeData::Literal(LiteralValue::Number(_))) => Some(IntrinsicKind::Number),
+                Some(TypeData::Literal(LiteralValue::Boolean(_))) => Some(IntrinsicKind::Boolean),
+                Some(TypeData::Literal(LiteralValue::BigInt(_))) => Some(IntrinsicKind::Bigint),
+                _ => None,
+            },
+        }
+    }
+
+    fn is_boxed_target_for_primitive(
+        &self,
+        source_kind: IntrinsicKind,
+        target: TypeId,
+        target_key: Option<&TypeData>,
+    ) -> bool {
+        self.is_registered_boxed_target(target, target_key, source_kind)
+            || self.is_registered_boxed_target(target, target_key, IntrinsicKind::Object)
+    }
+
+    fn is_registered_boxed_target(
+        &self,
+        target: TypeId,
+        target_key: Option<&TypeData>,
+        boxed_kind: IntrinsicKind,
+    ) -> bool {
+        self.interner.get_boxed_type(boxed_kind) == Some(target)
+            || matches!(target_key, Some(TypeData::Lazy(def_id)) if self.interner.is_boxed_def_id(*def_id, boxed_kind))
     }
 
     fn is_object_keyword_type(&self, source: TypeId) -> bool {

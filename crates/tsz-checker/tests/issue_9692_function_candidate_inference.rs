@@ -4,7 +4,7 @@
 //! be unioned in a way that lets later incompatible candidates pass unchecked.
 
 use tsz_checker::context::CheckerOptions;
-use tsz_checker::test_utils::check_source;
+use tsz_checker::test_utils::{check_source, check_source_with_libs, load_default_lib_files};
 
 fn strict_messages(source: &str) -> Vec<(u32, String)> {
     check_source(
@@ -14,6 +14,24 @@ fn strict_messages(source: &str) -> Vec<(u32, String)> {
             strict: true,
             ..CheckerOptions::default()
         },
+    )
+    .into_iter()
+    .filter(|diag| diag.code != 2318)
+    .map(|diag| (diag.code, diag.message_text))
+    .collect()
+}
+
+fn strict_messages_with_libs(source: &str) -> Vec<(u32, String)> {
+    let libs = load_default_lib_files();
+    assert!(!libs.is_empty(), "expected default libs to load");
+    check_source_with_libs(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            ..CheckerOptions::default()
+        },
+        &libs,
     )
     .into_iter()
     .filter(|diag| diag.code != 2318)
@@ -83,6 +101,26 @@ fn compatible_function_candidates_still_pass() {
 declare function f<T>(a: T, b: T): T;
 
 const r = f((x: number) => {}, (x: number) => {});
+"#,
+    );
+
+    assert_no_ts2345(&messages);
+}
+
+#[test]
+fn nonsymmetric_function_variable_candidates_still_pass() {
+    let messages = strict_messages_with_libs(
+        r#"
+function foo<T>(x: T, y: T) {
+    var r: T;
+    return r;
+}
+
+var accepts_object: (x: Object) => string;
+var accepts_string: (x: string) => string;
+
+var first = foo(accepts_object, accepts_string);
+var second = foo(accepts_string, accepts_object);
 "#,
     );
 
