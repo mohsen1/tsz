@@ -168,6 +168,11 @@ node scripts/ci/pr-ownership-report.mjs
     `Skip Owner Counts` tables before their capped detail rows, so lane-level
     blockers remain visible even when individual skipped PR or branch rows are
     omitted.
+  - `#10217` merged on 2026-05-26 as
+    `6c0daa7979 ci: show queue skip owner staleness (#10217)`.
+    Verbose queue dry runs now add `Oldest updated` to `Skip Owner Counts`
+    when skipped PR timestamp data is available, so owner-level handoffs show
+    both volume and stale age without opening each PR.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -199,7 +204,8 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off. Use
     `--verbose` when triaging this surface; `Skip Owner Counts` gives the full
-    lane summary and skipped PR rows include owner labels for direct handoff.
+    lane summary with oldest-update dates when available, and skipped PR rows
+    include owner labels for direct handoff.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
