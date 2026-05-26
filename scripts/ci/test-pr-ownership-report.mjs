@@ -138,6 +138,16 @@ withTempDir((dir) => {
       draftStackState: "mixed stacked/unstacked drafts",
     },
   ]);
+  assert.deepEqual(report.duplicateDraftCleanupTargets, [
+    {
+      issue: 42,
+      prs: [10, 11],
+      draftCount: 2,
+      stackedDraftCount: 1,
+      unstackedDraftCount: 1,
+      draftStackState: "mixed stacked/unstacked drafts",
+    },
+  ]);
   assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.deepEqual(report.prs.find((pr) => pr.number === 10).agentLabels, ["alpha"]);
