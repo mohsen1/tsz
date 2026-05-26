@@ -200,6 +200,11 @@ node scripts/ci/pr-ownership-report.mjs
     `Active Queue Run Owner Status Counts`, so lanes can see queued vs
     in-progress active synthetic-run blockers and oldest ages before scanning
     details.
+  - `#10229` merged on 2026-05-26 as
+    `0e142dfbf6 ci: show queue skip owner ages (#10229)`.
+    Verbose queue and queue-branch cleanup dry runs now add `Oldest age` to
+    `Skip Owner Counts` when timestamp data is available, so owner-level stale
+    handoffs no longer require converting dates by hand.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -231,10 +236,10 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off. Use
     `--verbose` when triaging this surface; `Skip Owner Counts` gives the full
-    lane summary with oldest-update dates when available, `Skip Owner Reason
-    Counts` splits each lane by blocker type, and skipped PR rows include owner
-    labels plus per-row updated dates for direct handoff when timestamp data is
-    available.
+    lane summary with oldest-update dates and ages when available, `Skip Owner
+    Reason Counts` splits each lane by blocker type, and skipped PR rows
+    include owner labels plus per-row updated dates for direct handoff when
+    timestamp data is available.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
