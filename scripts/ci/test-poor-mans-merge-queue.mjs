@@ -388,6 +388,7 @@ const cleanupOwnerDateFormat = formatResult({
   skippedOpen: 3,
   skippedUnrecognized: 0,
   supersededOpen: 0,
+  now: "2026-05-26T11:15:00Z",
   skips: [
     {
       branch: "automation/merge-queue/pr-9515",
@@ -413,9 +414,9 @@ const cleanupOwnerDateFormat = formatResult({
   ],
   wouldDelete: 0,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
-assert.match(cleanupOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
-assert.match(cleanupOwnerDateFormat, /\| 2 \| agent:M4-A \| 2026-05-24 \|/);
-assert.match(cleanupOwnerDateFormat, /\| 1 \| agent:M4-C \| 2026-05-23 \|/);
+assert.match(cleanupOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
+assert.match(cleanupOwnerDateFormat, /\| 2 \| agent:M4-A \| 2026-05-24 \| 2d 2h \|/);
+assert.match(cleanupOwnerDateFormat, /\| 1 \| agent:M4-C \| 2026-05-23 \| 3d 3h \|/);
 assert.match(cleanupOwnerDateFormat, /\| Branch \| Owner \| Updated \| Reason \|/);
 assert.match(cleanupOwnerDateFormat, /\| `automation\/merge-queue\/pr-9632` \| agent:M4-A \| 2026-05-24 \| PR #9632 is open \|/);
 
@@ -441,6 +442,7 @@ assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
 
 const queueSkipOwnerDateFormat = formatResult({
+  now: "2026-05-26T11:15:00Z",
   selected: null,
   skips: [
     { number: 1, owner: "agent:M1-A", reason: "draft PR", updatedAt: "2026-05-25T10:00:00Z" },
@@ -448,9 +450,9 @@ const queueSkipOwnerDateFormat = formatResult({
     { number: 3, owner: "agent:M4-B", reason: "auto-merge is not armed", updatedAt: "2026-05-24T09:00:00Z" },
   ],
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
-assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
-assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \|/);
-assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \|/);
+assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \| 3d 3h \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \| 2d 2h \|/);
 assert.match(queueSkipOwnerDateFormat, /\| PR \| Owner \| Updated \| Reason \|/);
 assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| auto-merge is not armed \|/);
 
