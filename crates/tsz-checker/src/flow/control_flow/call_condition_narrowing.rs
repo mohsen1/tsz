@@ -1,6 +1,7 @@
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::flow_analysis as flow_query;
+use smallvec::SmallVec;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{AccessExprData, Node};
 use tsz_solver::TypeId;
@@ -176,7 +177,7 @@ impl<'a> FlowAnalyzer<'a> {
 
             let members = flow_query::union_members_for_type(self.interner, type_id)
                 .unwrap_or_else(|| vec![type_id]);
-            let excluded_members: Vec<TypeId> = members
+            let excluded_members: SmallVec<[TypeId; 4]> = members
                 .iter()
                 .copied()
                 .filter(|member| self.is_assignable_to(*member, predicate_type))
