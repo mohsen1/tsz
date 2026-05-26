@@ -3,6 +3,7 @@
 //! These helpers locate the precise AST node to anchor a diagnostic on
 //! when reporting overload and literal argument mismatch errors.
 use crate::state::CheckerState;
+use smallvec::SmallVec;
 use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 use tsz_solver::computation::ContextualTypeContext;
@@ -17,16 +18,22 @@ impl<'a> CheckerState<'a> {
     /// the call-result handler. Treating tagged templates uniformly here keeps
     /// overload/argument anchor logic from collapsing onto the tag callee when
     /// the offending node is actually a substitution expression.
-    pub(super) fn logical_call_argument_nodes(&self, idx: NodeIndex) -> Option<Vec<NodeIndex>> {
+    pub(super) fn logical_call_argument_nodes(
+        &self,
+        idx: NodeIndex,
+    ) -> Option<SmallVec<[NodeIndex; 4]>> {
         use tsz_parser::parser::syntax_kind_ext;
 
         let node = self.ctx.arena.get(idx)?;
         if let Some(call) = self.ctx.arena.get_call_expr(node) {
-            return call.arguments.as_ref().map(|args| args.nodes.to_vec());
+            return call
+                .arguments
+                .as_ref()
+                .map(|args| args.nodes.iter().copied().collect());
         }
         if node.kind == syntax_kind_ext::TAGGED_TEMPLATE_EXPRESSION {
             let tagged = self.ctx.arena.get_tagged_template(node)?.clone();
-            let mut nodes = Vec::with_capacity(4);
+            let mut nodes = SmallVec::new();
             nodes.push(tagged.template);
             if let Some(template_node) = self.ctx.arena.get(tagged.template)
                 && template_node.kind == syntax_kind_ext::TEMPLATE_EXPRESSION
