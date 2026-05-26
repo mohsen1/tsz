@@ -34,8 +34,8 @@ use crate::relations::relation_queries::{
 };
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
-    CachedAnyMode, PropertyInfo, RelationCacheConfig, RelationCacheKey, RelationCacheKind,
-    RelationFlags,
+    CachedAnyMode, FunctionShape, PropertyInfo, RelationCacheConfig, RelationCacheKey,
+    RelationCacheKind, RelationFlags, TypeParamInfo,
 };
 
 /// Assert that two `RelationPolicy` configurations produce distinct
@@ -836,5 +836,105 @@ fn assignability_policy_flip_matches_uncached_relation_query() {
         )),
         Some(loose_uncached),
         "non-strict policy result must be stored under the non-strict policy-derived key",
+    );
+}
+
+#[test]
+fn assignability_cache_erase_generics_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let target_t = TypeParamInfo {
+        name: interner.intern_string("Target"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let target_t_type = interner.type_param(target_t);
+    let source = interner.function(FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: target_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+    let target = interner.function(FunctionShape {
+        type_params: vec![target_t],
+        params: vec![],
+        this_type: None,
+        return_type: target_t_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let erased = RelationPolicy::default().with_erase_generics(true);
+    let strict = RelationPolicy::default().with_erase_generics(false);
+    let erased_key = RelationCacheKey::for_assignability(source, target, erased.cache_config());
+    let strict_key = RelationCacheKey::for_assignability(source, target, strict.cache_config());
+
+    assert_ne!(
+        erased_key, strict_key,
+        "erased and strict generic-signature policies must occupy distinct cache slots",
+    );
+
+    let uncached_erased = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        erased,
+        RelationContext::default(),
+    );
+    let uncached_strict = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict,
+        RelationContext::default(),
+    );
+
+    assert!(
+        uncached_erased.is_related(),
+        "erased generic-signature compatibility should allow the relation",
+    );
+    assert!(
+        !uncached_strict.is_related(),
+        "strict member compatibility must not promote an outer type parameter into a generic signature",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict),
+        uncached_strict.is_related(),
+        "cached strict generic policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(uncached_strict.is_related()),
+        "strict generic result must be stored in the strict slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(erased_key),
+        None,
+        "erased-generic lookup must not hit the strict slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, erased),
+        uncached_erased.is_related(),
+        "cached erased generic policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(erased_key),
+        Some(uncached_erased.is_related()),
+        "erased generic result must be stored in the erased slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(uncached_strict.is_related()),
+        "strict generic slot must remain intact after the erased lookup",
     );
 }
