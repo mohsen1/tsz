@@ -694,6 +694,9 @@ mod recursive_generic_arrow_tests;
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
 #[cfg(test)]
+#[path = "tests/relation_flags_boundary_contract_tests.rs"]
+mod relation_flags_boundary_contract_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]

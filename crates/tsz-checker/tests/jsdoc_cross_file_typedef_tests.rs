@@ -217,6 +217,36 @@ const u = { id: 1, extra: true };
 }
 
 #[test]
+fn jsdoc_import_type_object_typedef_checks_non_literal_initializer_source() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ id: number }} User */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+const candidate = /** @type {{ id: string }} */ ({ id: "wrong" });
+
+/** @type {import('./types.js').User} */
+const u = candidate;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected imported object typedef @type to check non-literal initializer source, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn non_import_jsdoc_object_union_preserves_contextual_literal_initializer() {
     let diagnostics = check_js_file_with_types_diagnostics(
         "types.js",
