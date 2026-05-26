@@ -120,6 +120,14 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_lib_type_by_name("Object");
         let function_type = self.resolve_lib_type_by_name("Function");
 
+        // Eagerly resolve Array public-surface dependencies before resolving
+        // Array itself. Otherwise Array member snapshots can cache unresolved
+        // alias applications as `any<...>` and later dependency resolution is
+        // too late to repair the stored display properties.
+        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
+            let _ = self.resolve_lib_type_by_name(array_dep);
+        }
+
         // For Array<T>, resolve the merged lib type once, then reuse the type
         // parameters registered for its canonical symbol. Re-running the
         // per-lib parameter resolver in every project checker repeatedly lowers
@@ -164,16 +172,6 @@ impl<'a> CheckerState<'a> {
             array_type_params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
         }
         let array_type_params_for_flow = array_type_params.clone();
-
-        // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
-        // method signatures. Without registering these types' bodies in TypeEnvironment,
-        // the solver's resolve_lazy falls through to a SymbolId-based fallback that can
-        // produce wrong types due to DefId/SymbolId value collisions.
-        // ArrayIterator is part of Array's public declaration surface under
-        // ES2015+ libs, so resolve it before Array member snapshots are cached.
-        for array_dep in &["ConcatArray", "FlatArray", "ArrayIterator"] {
-            let _ = self.resolve_lib_type_by_name(array_dep);
-        }
 
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.

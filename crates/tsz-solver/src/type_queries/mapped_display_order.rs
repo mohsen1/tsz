@@ -9,6 +9,19 @@ pub fn collect_homomorphic_source_property_infos(
     db: &dyn TypeDatabase,
     source: TypeId,
 ) -> Vec<PropertyInfo> {
+    collect_homomorphic_source_property_infos_with_evaluator(db, source, &mut |type_id| {
+        crate::evaluation::evaluate::evaluate_type(db, type_id)
+    })
+}
+
+pub fn collect_homomorphic_source_property_infos_with_evaluator<F>(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    evaluate: &mut F,
+) -> Vec<PropertyInfo>
+where
+    F: FnMut(TypeId) -> TypeId,
+{
     fn sort_by_display_or_declaration_order(
         db: &dyn TypeDatabase,
         source: TypeId,
@@ -35,6 +48,7 @@ pub fn collect_homomorphic_source_property_infos(
     fn collect_array_property_infos(
         db: &dyn TypeDatabase,
         element_type: TypeId,
+        evaluate: &mut impl FnMut(TypeId) -> TypeId,
     ) -> Vec<PropertyInfo> {
         let Some(array_base) = db
             .get_array_display_base_type()
@@ -42,7 +56,8 @@ pub fn collect_homomorphic_source_property_infos(
         else {
             return Vec::new();
         };
-        let mut base_props = collect_homomorphic_source_property_infos(db, array_base);
+        let mut base_props =
+            collect_homomorphic_source_property_infos_with_evaluator(db, array_base, evaluate);
         let Some(array_param) = db.get_array_base_type_params().first() else {
             sort_array_homomorphic_source_properties(db, &mut base_props);
             return base_props;
@@ -53,18 +68,16 @@ pub fn collect_homomorphic_source_property_infos(
         let mut props: Vec<_> = base_props
             .into_iter()
             .map(|mut prop| {
-                prop.type_id = crate::evaluation::evaluate::evaluate_type(
+                prop.type_id = evaluate(crate::instantiation::instantiate::instantiate_type(
                     db,
-                    crate::instantiation::instantiate::instantiate_type(db, prop.type_id, &subst),
-                );
-                prop.write_type = crate::evaluation::evaluate::evaluate_type(
+                    prop.type_id,
+                    &subst,
+                ));
+                prop.write_type = evaluate(crate::instantiation::instantiate::instantiate_type(
                     db,
-                    crate::instantiation::instantiate::instantiate_type(
-                        db,
-                        prop.write_type,
-                        &subst,
-                    ),
-                );
+                    prop.write_type,
+                    &subst,
+                ));
                 if crate::contains_this_type(db, prop.type_id) {
                     prop.type_id = crate::instantiation::instantiate::substitute_this_type_cached(
                         db,
@@ -92,10 +105,10 @@ pub fn collect_homomorphic_source_property_infos(
     if !source.is_intrinsic()
         && let Some(TypeData::Array(element_type)) = db.lookup(source)
     {
-        return collect_array_property_infos(db, element_type);
+        return collect_array_property_infos(db, element_type, evaluate);
     }
 
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, source);
+    let evaluated = evaluate(source);
     match db.lookup(evaluated) {
         Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
             let shape = db.object_shape(shape_id);
@@ -105,7 +118,9 @@ pub fn collect_homomorphic_source_property_infos(
             let shape = db.callable_shape(shape_id);
             sort_by_display_or_declaration_order(db, evaluated, &shape.properties)
         }
-        Some(TypeData::Array(element_type)) => collect_array_property_infos(db, element_type),
+        Some(TypeData::Array(element_type)) => {
+            collect_array_property_infos(db, element_type, evaluate)
+        }
         _ => Vec::new(),
     }
 }

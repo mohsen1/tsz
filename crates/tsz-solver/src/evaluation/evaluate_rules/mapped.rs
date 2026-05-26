@@ -360,10 +360,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
             // Homomorphic `any` sources still expand through the normal key path.
             let mut source_props = {
-                let ordered = crate::type_queries::collect_homomorphic_source_property_infos(
-                    self.interner(),
-                    source,
-                );
+                let mut source_evaluator =
+                    TypeEvaluator::with_resolver(self.interner(), self.resolver());
+                let ordered =
+                    crate::type_queries::collect_homomorphic_source_property_infos_with_evaluator(
+                        self.interner(),
+                        source,
+                        &mut |type_id| source_evaluator.evaluate(type_id),
+                    );
                 if !ordered.is_empty() {
                     ordered
                 } else {
