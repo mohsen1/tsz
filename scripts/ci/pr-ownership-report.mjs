@@ -294,6 +294,7 @@ function makeReport(pulls) {
       agentName: pr.agentName,
       agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
       autoMergeArmed: pr.autoMergeArmed,
+      updatedAt: pr.updatedAt,
       mergeable: pr.mergeable,
       title: pr.title,
     }))
@@ -505,7 +506,7 @@ function printMarkdown(report) {
     for (const pr of report.blockedReadyMainPrs) {
       const owner = ownerOf(pr);
       const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
-      console.log(`- #${pr.number}: ${owner}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
+      console.log(`- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
     }
   }
   console.log("");
