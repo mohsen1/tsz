@@ -20,6 +20,15 @@ use tsz_parser::parser::node::Node;
 use tsz_parser::{NodeIndex, node_flags, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
+mod expando;
+mod imports;
+mod model;
+mod support;
+
+pub use model::{DocumentSymbol, SymbolKind};
+use model::{DocumentSymbolEntry, document_symbols_from_entries};
+use support::*;
+
 const MAX_DOCUMENT_SYMBOL_ENTRIES: usize = 3000;
 const MAX_DOCUMENT_SYMBOL_DEPTH: usize = 64;
 const MORE_DOCUMENT_SYMBOL_NAME: &str = "more...";
@@ -29,9 +38,9 @@ thread_local! {
     static DOCUMENT_SYMBOL_DEPTH: Cell<usize> = const { Cell::new(0) };
 }
 
-fn with_document_symbol_collection_limit<F>(f: F) -> Vec<DocumentSymbol>
+fn with_document_symbol_collection_limit<F>(f: F) -> Vec<DocumentSymbolEntry>
 where
-    F: FnOnce() -> Vec<DocumentSymbol>,
+    F: FnOnce() -> Vec<DocumentSymbolEntry>,
 {
     DOCUMENT_SYMBOL_REMAINING.with(|remaining| {
         DOCUMENT_SYMBOL_DEPTH.with(|depth| {
@@ -65,7 +74,7 @@ fn document_symbol_depth_guard(kind: u16) -> DocumentSymbolDepthGuard {
     DocumentSymbolDepthGuard { active }
 }
 
-fn document_symbol_budget_precheck(kind: u16, range: Range) -> Option<Vec<DocumentSymbol>> {
+fn document_symbol_budget_precheck(kind: u16, range: Range) -> Option<Vec<DocumentSymbolEntry>> {
     let may_emit = document_symbol_node_may_emit_direct(kind);
     let exhausted = DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.get() == 0);
     if exhausted {
@@ -89,7 +98,7 @@ fn document_symbol_budget_precheck(kind: u16, range: Range) -> Option<Vec<Docume
     None
 }
 
-fn document_symbol_budget_account(symbols: &mut Vec<DocumentSymbol>) {
+fn document_symbol_budget_account(symbols: &mut Vec<DocumentSymbolEntry>) {
     if symbols.is_empty() {
         DOCUMENT_SYMBOL_REMAINING.with(|remaining| remaining.set(remaining.get() + 1));
         return;
@@ -140,154 +149,6 @@ const fn document_symbol_node_may_emit_direct(kind: u16) -> bool {
     )
 }
 
-/// A symbol kind (matches LSP `SymbolKind` values).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[repr(u8)]
-pub enum SymbolKind {
-    File = 1,
-    Module = 2,
-    Namespace = 3,
-    Package = 4,
-    Class = 5,
-    Method = 6,
-    Property = 7,
-    Field = 8,
-    Constructor = 9,
-    Enum = 10,
-    Interface = 11,
-    Function = 12,
-    Variable = 13,
-    Constant = 14,
-    String = 15,
-    Number = 16,
-    Boolean = 17,
-    Array = 18,
-    Object = 19,
-    Key = 20,
-    Null = 21,
-    EnumMember = 22,
-    Struct = 23,
-    Event = 24,
-    Operator = 25,
-    TypeParameter = 26,
-    // Non-LSP kinds used internally for tsserver parity (the LSP `SymbolKind`
-    // enum has no getter/setter/alias distinction — clients that surface
-    // these via LSP should treat Alias as a variable/module and
-    // Getter/Setter as a property).
-    Alias = 27,
-    Getter = 28,
-    Setter = 29,
-    // Interface/object-type signatures — nameless declarations that tsc
-    // represents with synthetic text (`()`, `new()`, `[]`) and dedicated
-    // ScriptElementKind strings. Non-LSP; treat as Property downstream.
-    CallSignature = 30,
-    ConstructSignature = 31,
-    IndexSignature = 32,
-    // A function declaration that was promoted to a class through
-    // expando / prototype assignments. Its nav entry is labeled
-    // `constructor` but the underlying node is still a
-    // FunctionDeclaration — tsc sorts it by that kind rather than
-    // treating it as nameless the way a real Constructor member is.
-    SynthesizedConstructor = 33,
-    // Unknown kind — rendered as an empty ScriptElementKind string.
-    // tsc returns `ScriptElementKind.unknown ("")` for some nav
-    // entries (expando property assignments where the RHS isn't a
-    // function, certain JS patterns). Keep the name field populated
-    // and let the navbar/navtree serializer omit the kind field when
-    // it's an empty string to match tsserver's wire format.
-    Unknown = 34,
-}
-
-impl SymbolKind {
-    /// Convert to tsserver's `ScriptElementKind` string.
-    pub const fn to_script_element_kind(self) -> &'static str {
-        match self {
-            Self::File => "script",
-            Self::Module | Self::Namespace | Self::Package => "module",
-            Self::Class => "class",
-            Self::Method => "method",
-            Self::Property | Self::Field | Self::Key => "property",
-            Self::Constructor | Self::SynthesizedConstructor => "constructor",
-            Self::Enum => "enum",
-            Self::Interface => "interface",
-            Self::Function | Self::Event | Self::Operator => "function",
-            Self::Variable | Self::Boolean | Self::Array | Self::Object | Self::Null => "var",
-            Self::Constant | Self::String | Self::Number => "const",
-            Self::EnumMember => "enum member",
-            Self::TypeParameter => "type parameter",
-            Self::Struct => "type",
-            Self::Alias => "alias",
-            Self::Getter => "getter",
-            Self::Setter => "setter",
-            Self::CallSignature => "call",
-            Self::ConstructSignature => "construct",
-            Self::IndexSignature => "index",
-            Self::Unknown => "",
-        }
-    }
-}
-
-/// Represents programming constructs like variables, classes, interfaces, etc.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct DocumentSymbol {
-    /// The name of this symbol.
-    pub name: String,
-    /// More detail for this symbol, e.g. the signature of a function.
-    pub detail: Option<String>,
-    /// The kind of this symbol.
-    pub kind: SymbolKind,
-    /// Comma-separated modifier flags (e.g. "export,declare,abstract").
-    /// Corresponds to tsserver's `kindModifiers`.
-    pub kind_modifiers: String,
-    /// The range enclosing this symbol (entire definition).
-    pub range: Range,
-    /// The range that should be selected and revealed when this symbol is being picked (just the identifier).
-    pub selection_range: Range,
-    /// The name of the containing symbol (for flat symbol lists).
-    pub container_name: Option<String>,
-    /// Children of this symbol, e.g. properties of a class.
-    pub children: Vec<Self>,
-}
-
-impl DocumentSymbol {
-    /// Create a new document symbol.
-    pub const fn new(name: String, kind: SymbolKind, range: Range, selection_range: Range) -> Self {
-        Self {
-            name,
-            detail: None,
-            kind,
-            kind_modifiers: String::new(),
-            range,
-            selection_range,
-            container_name: None,
-            children: Vec::new(),
-        }
-    }
-
-    /// Add a child symbol.
-    pub fn add_child(&mut self, child: Self) {
-        self.children.push(child);
-    }
-
-    /// Set the detail field.
-    pub fn with_detail(mut self, detail: String) -> Self {
-        self.detail = Some(detail);
-        self
-    }
-
-    /// Set the `kind_modifiers` field.
-    pub fn with_kind_modifiers(mut self, modifiers: String) -> Self {
-        self.kind_modifiers = modifiers;
-        self
-    }
-
-    /// Set the `container_name` field.
-    pub fn with_container_name(mut self, container: String) -> Self {
-        self.container_name = Some(container);
-        self
-    }
-}
-
 define_lsp_provider!(minimal DocumentSymbolProvider, "Document symbol provider.");
 
 impl<'a> DocumentSymbolProvider<'a> {
@@ -296,7 +157,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         let mut symbols =
             with_document_symbol_collection_limit(|| self.collect_symbols(root, None));
         cap_document_symbols(&mut symbols);
-        symbols
+        document_symbols_from_entries(symbols)
     }
 
     /// Extract kind modifiers from a modifier node list.
@@ -341,7 +202,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         &self,
         node_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Vec<DocumentSymbolEntry> {
         let Some(node) = self.arena.get(node_idx) else {
             return Vec::new();
         };
@@ -426,7 +287,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         children = self.collect_returned_object_members(func.body, Some(&name));
                     }
 
-                    let mut sym = DocumentSymbol {
+                    let mut sym = DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Function,
@@ -475,7 +336,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Class,
@@ -512,7 +373,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Interface,
@@ -544,7 +405,7 @@ impl<'a> DocumentSymbolProvider<'a> {
 
                     let modifiers = self.get_kind_modifiers_from_list(&alias.modifiers);
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         // Use Struct as a marker for type aliases.
@@ -613,7 +474,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                                                 decl.initializer,
                                                 Some(&name),
                                             );
-                                            symbols.push(DocumentSymbol {
+                                            symbols.push(DocumentSymbolEntry {
                                                 name,
                                                 detail: None,
                                                 kind,
@@ -669,7 +530,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         children.extend(self.collect_symbols(member, Some(&name)));
                     }
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Enum,
@@ -708,7 +569,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, name_node);
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::EnumMember,
@@ -738,7 +599,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // classes/functions/interfaces/enums/type aliases.
                     let children = self.collect_children_from_block(method.body, Some(&name));
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Method,
@@ -776,7 +637,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     // the body, `z = { a, b }` surfaces object members.
                     let children = self.collect_initializer_children(prop.initializer, Some(&name));
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Property,
@@ -802,7 +663,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         node_range(self.arena, self.line_map, self.source_text, sig.name);
                     let modifiers = self.get_kind_modifiers_from_list(&sig.modifiers);
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Property,
@@ -822,7 +683,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             // ScriptElementKind "call".
             k if k == syntax_kind_ext::CALL_SIGNATURE => {
                 let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
-                vec![DocumentSymbol {
+                vec![DocumentSymbolEntry {
                     name: "()".to_string(),
                     detail: None,
                     kind: SymbolKind::CallSignature,
@@ -837,7 +698,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Construct signature: `new(): IPoint` — text `new()`.
             k if k == syntax_kind_ext::CONSTRUCT_SIGNATURE => {
                 let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
-                vec![DocumentSymbol {
+                vec![DocumentSymbolEntry {
                     name: "new()".to_string(),
                     detail: None,
                     kind: SymbolKind::ConstructSignature,
@@ -852,7 +713,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Index signature: `[key: string]: number` — text `[]`.
             k if k == syntax_kind_ext::INDEX_SIGNATURE => {
                 let range = node_range(self.arena, self.line_map, self.source_text, node_idx);
-                vec![DocumentSymbol {
+                vec![DocumentSymbolEntry {
                     name: "[]".to_string(),
                     detail: None,
                     kind: SymbolKind::IndexSignature,
@@ -875,7 +736,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         node_range(self.arena, self.line_map, self.source_text, sig.name);
                     let modifiers = self.get_kind_modifiers_from_list(&sig.modifiers);
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Method,
@@ -900,7 +761,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     out.reserve(1 + ctor.parameters.nodes.len());
                     let children = self.collect_children_from_block(ctor.body, container_name);
                     let modifiers = self.get_kind_modifiers_from_list(&ctor.modifiers);
-                    out.push(DocumentSymbol {
+                    out.push(DocumentSymbolEntry {
                         name: "constructor".to_string(),
                         detail: None,
                         kind: SymbolKind::Constructor,
@@ -945,7 +806,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                             node_range(self.arena, self.line_map, self.source_text, param_idx);
                         let selection_range =
                             node_range(self.arena, self.line_map, self.source_text, param.name);
-                        out.push(DocumentSymbol {
+                        out.push(DocumentSymbolEntry {
                             name,
                             detail: None,
                             kind: SymbolKind::Property,
@@ -989,7 +850,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
                     let children = self.collect_children_from_block(accessor.body, Some(&name));
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Getter,
@@ -1017,7 +878,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let modifiers = self.get_kind_modifiers_from_list(&accessor.modifiers);
                     let children = self.collect_children_from_block(accessor.body, Some(&name));
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Setter,
@@ -1117,7 +978,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         propagate_ambient_modifier(&mut children);
                     }
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Module,
@@ -1276,7 +1137,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                             }
                             _ => (SymbolKind::Variable, Vec::new()),
                         };
-                        return vec![DocumentSymbol {
+                        return vec![DocumentSymbolEntry {
                             name: "default".to_string(),
                             detail: None,
                             kind,
@@ -1326,7 +1187,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let expr_idx = export_assign.expression;
                     let (kind, children) = self.classify_export_expression(expr_idx);
 
-                    vec![DocumentSymbol {
+                    vec![DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind,
@@ -1360,7 +1221,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         &self,
         init_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Vec<DocumentSymbolEntry> {
         if init_idx.is_none() {
             return Vec::new();
         }
@@ -1407,7 +1268,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         &self,
         obj_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Vec<DocumentSymbolEntry> {
         let Some(obj_node) = self.arena.get(obj_idx) else {
             return Vec::new();
         };
@@ -1433,7 +1294,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                 // become methods, everything else stays a property.
                 let (kind, children) =
                     self.classify_property_initializer(prop.initializer, Some(&name));
-                symbols.push(DocumentSymbol {
+                symbols.push(DocumentSymbolEntry {
                     name,
                     detail: None,
                     kind,
@@ -1450,7 +1311,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                     let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
                     let selection_range =
                         node_range(self.arena, self.line_map, self.source_text, short.name);
-                    symbols.push(DocumentSymbol {
+                    symbols.push(DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Property,
@@ -1484,7 +1345,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         self.source_text,
                         spread.expression,
                     );
-                    symbols.push(DocumentSymbol {
+                    symbols.push(DocumentSymbolEntry {
                         name,
                         detail: None,
                         kind: SymbolKind::Property,
@@ -1508,7 +1369,10 @@ impl<'a> DocumentSymbolProvider<'a> {
     ///   - call expression → `const`, members come from an
     ///     object-literal argument if present
     ///   - anything else → `var`
-    fn classify_export_expression(&self, expr_idx: NodeIndex) -> (SymbolKind, Vec<DocumentSymbol>) {
+    fn classify_export_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> (SymbolKind, Vec<DocumentSymbolEntry>) {
         if expr_idx.is_none() {
             return (SymbolKind::Variable, Vec::new());
         }
@@ -1592,7 +1456,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         &self,
         init_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> (SymbolKind, Vec<DocumentSymbol>) {
+    ) -> (SymbolKind, Vec<DocumentSymbolEntry>) {
         if init_idx.is_none() {
             return (SymbolKind::Property, Vec::new());
         }
@@ -1646,7 +1510,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         kind: SymbolKind,
         modifiers: &str,
         container_name: Option<&str>,
-        out: &mut Vec<DocumentSymbol>,
+        out: &mut Vec<DocumentSymbolEntry>,
     ) {
         if pattern_idx.is_none() {
             return;
@@ -1686,7 +1550,7 @@ impl<'a> DocumentSymbolProvider<'a> {
             };
             let range = node_range(self.arena, self.line_map, self.source_text, elem_idx);
             let selection_range = node_range(self.arena, self.line_map, self.source_text, name_idx);
-            out.push(DocumentSymbol {
+            out.push(DocumentSymbolEntry {
                 name: name.clone(),
                 detail: None,
                 kind,
@@ -1701,9 +1565,9 @@ impl<'a> DocumentSymbolProvider<'a> {
 
     /// Walk top-level statements for `@typedef` / `@callback` JSDoc tags and surface
     /// their names as `type` nav entries. Stub until JSDoc AST nodes flow through the parser.
-    const fn apply_jsdoc_typedefs(_statements: &[NodeIndex], _symbols: &mut [DocumentSymbol]) {
+    const fn apply_jsdoc_typedefs(_statements: &[NodeIndex], _symbols: &mut [DocumentSymbolEntry]) {
         // TODO: when the parser exposes JSDoc nodes, walk them for
-        // `@typedef T` and append `DocumentSymbol { name: T, kind:
+        // `@typedef T` and append `DocumentSymbolEntry { name: T, kind:
         // SymbolKind::Struct }` entries. Until then this is a no-op.
     }
 
@@ -1719,7 +1583,7 @@ impl<'a> DocumentSymbolProvider<'a> {
     fn apply_commonjs_exports_chain(
         &self,
         statements: &[NodeIndex],
-        symbols: &mut Vec<DocumentSymbol>,
+        symbols: &mut Vec<DocumentSymbolEntry>,
     ) {
         // Walk an assignment, collecting (name, stmt_idx) in order.
         // Returns None if the chain breaks (non-exports LHS or wrong
@@ -1784,13 +1648,13 @@ impl<'a> DocumentSymbolProvider<'a> {
             // Build nested chain: names[0] is outermost, names[n-1]
             // innermost. tsc renders them all as `const`.
             let range = node_range(self.arena, self.line_map, self.source_text, stmt_idx);
-            let mut inner: Option<DocumentSymbol> = None;
+            let mut inner: Option<DocumentSymbolEntry> = None;
             for name in names.iter().rev() {
                 let mut children = Vec::new();
                 if let Some(child) = inner.take() {
                     children.push(child);
                 }
-                inner = Some(DocumentSymbol {
+                inner = Some(DocumentSymbolEntry {
                     name: name.clone(),
                     detail: None,
                     kind: SymbolKind::Constant,
@@ -1815,12 +1679,12 @@ impl<'a> DocumentSymbolProvider<'a> {
     fn apply_nested_named_expressions(
         &self,
         statements: &[NodeIndex],
-        symbols: &mut Vec<DocumentSymbol>,
+        symbols: &mut Vec<DocumentSymbolEntry>,
     ) {
         fn walk(
             provider: &DocumentSymbolProvider,
             expr_idx: NodeIndex,
-            out: &mut Vec<DocumentSymbol>,
+            out: &mut Vec<DocumentSymbolEntry>,
         ) {
             if expr_idx.is_none() {
                 return;
@@ -1852,7 +1716,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                         for &member in &class.members.nodes {
                             children.extend(provider.collect_symbols(member, Some(&name)));
                         }
-                        out.push(DocumentSymbol {
+                        out.push(DocumentSymbolEntry {
                             name,
                             detail: None,
                             kind: SymbolKind::Class,
@@ -1897,7 +1761,7 @@ impl<'a> DocumentSymbolProvider<'a> {
     fn apply_identifier_object_assignments(
         &self,
         statements: &[NodeIndex],
-        symbols: &mut Vec<DocumentSymbol>,
+        symbols: &mut Vec<DocumentSymbolEntry>,
     ) {
         // Collect top-level assignments `x = { foo: function() {…}, … }`
         // where x is a previously-declared (empty) var. tsc surfaces
@@ -1906,7 +1770,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         // ExpressionStatement, which is a direct child of the source
         // file), not as children of `x`. Non-function-valued properties
         // are dropped.
-        let mut new_entries: Vec<DocumentSymbol> = Vec::new();
+        let mut new_entries: Vec<DocumentSymbolEntry> = Vec::new();
         for &stmt_idx in statements {
             let Some(stmt_node) = self.arena.get(stmt_idx) else {
                 continue;
@@ -1988,7 +1852,7 @@ impl<'a> DocumentSymbolProvider<'a> {
                 let range = node_range(self.arena, self.line_map, self.source_text, prop_idx);
                 let selection_range =
                     node_range(self.arena, self.line_map, self.source_text, prop.name);
-                new_entries.push(DocumentSymbol {
+                new_entries.push(DocumentSymbolEntry {
                     name,
                     detail: None,
                     kind: SymbolKind::Method,
@@ -2003,479 +1867,11 @@ impl<'a> DocumentSymbolProvider<'a> {
         symbols.extend(new_entries);
     }
 
-    fn apply_expando_assignments(&self, statements: &[NodeIndex], symbols: &mut [DocumentSymbol]) {
-        // Group expando members by owner name. `(owner → Vec<(member_name,
-        // prototype?, method?, fn_body?)>)`. We also track whether any
-        // assignment for that owner came through `.prototype` — that
-        // drives whether a synthetic constructor is injected.
-        // Kind override for a prototype-object method shorthand. tsc
-        // uses ScriptElementKind.method for `X.prototype = { m() {} }`
-        // and ScriptElementKind.function for `X.prototype.m = function(){}`.
-        #[derive(Clone, Copy, Debug)]
-        enum MemberKindHint {
-            None,
-            Method,
-        }
-        struct ExpandoMember {
-            name: String,
-            is_fn: bool,
-            body: NodeIndex,
-            stmt_idx: NodeIndex,
-            /// Property descriptor node from `Object.defineProperty` calls; `NodeIndex::NONE` otherwise.
-            descriptor: NodeIndex,
-            via_prototype: bool,
-            kind_hint: MemberKindHint,
-        }
-        #[derive(Default)]
-        struct Expando {
-            members: Vec<ExpandoMember>,
-            via_prototype: bool,
-        }
-        let mut groups: std::collections::BTreeMap<String, Expando> =
-            std::collections::BTreeMap::new();
-
-        for &stmt_idx in statements {
-            let Some(stmt_node) = self.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-                continue;
-            }
-            let Some(exp_stmt) = self.arena.get_expression_statement(stmt_node) else {
-                continue;
-            };
-            let expr_idx = exp_stmt.expression;
-            let Some(expr_node) = self.arena.get(expr_idx) else {
-                continue;
-            };
-            if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
-                let Some(bin) = self.arena.get_binary_expr(expr_node) else {
-                    continue;
-                };
-                if bin.operator_token != SyntaxKind::EqualsToken as u16 {
-                    continue;
-                }
-                // Special case: `X.prototype = { a, b() {}, … }` — treat
-                // each property of the RHS object literal as a prototype
-                // member (same as `X.prototype.a = …` for each).
-                if let Some(owner) = self.parse_prototype_assignment(bin.left) {
-                    let rhs = self.arena.get(bin.right);
-                    if let Some(rhs_node) = rhs
-                        && rhs_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-                        && let Some(obj) = self.arena.get_literal_expr(rhs_node)
-                    {
-                        let entry = groups.entry(owner).or_default();
-                        entry.via_prototype = true;
-                        for &prop_idx in &obj.elements.nodes {
-                            let Some(prop_node) = self.arena.get(prop_idx) else {
-                                continue;
-                            };
-                            let (name_idx, init_idx, is_shorthand_method) = match prop_node.kind {
-                                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                                    let Some(prop) = self.arena.get_property_assignment(prop_node)
-                                    else {
-                                        continue;
-                                    };
-                                    (prop.name, prop.initializer, false)
-                                }
-                                k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                                    let Some(m) = self.arena.get_method_decl(prop_node) else {
-                                        continue;
-                                    };
-                                    (m.name, NodeIndex::NONE, true)
-                                }
-                                k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                                    let Some(s) = self.arena.get_shorthand_property(prop_node)
-                                    else {
-                                        continue;
-                                    };
-                                    (s.name, NodeIndex::NONE, false)
-                                }
-                                _ => continue,
-                            };
-                            let Some(member_name) = self.get_name(name_idx) else {
-                                continue;
-                            };
-                            let is_fn =
-                                is_shorthand_method || self.is_function_like_expression(init_idx);
-                            let body = if is_fn {
-                                if is_shorthand_method {
-                                    self.arena
-                                        .get_method_decl_at(prop_idx)
-                                        .map_or(NodeIndex::NONE, |m| m.body)
-                                } else {
-                                    self.arena
-                                        .get(init_idx)
-                                        .and_then(|n| self.arena.get_function(n))
-                                        .map_or(NodeIndex::NONE, |f| f.body)
-                                }
-                            } else {
-                                NodeIndex::NONE
-                            };
-                            let hint = if is_shorthand_method {
-                                MemberKindHint::Method
-                            } else {
-                                MemberKindHint::None
-                            };
-                            entry.members.push(ExpandoMember {
-                                name: member_name,
-                                is_fn,
-                                body,
-                                stmt_idx,
-                                descriptor: NodeIndex::NONE,
-                                via_prototype: true,
-                                kind_hint: hint,
-                            });
-                        }
-                        continue;
-                    }
-                }
-                if let Some((owner, name, via_prototype)) = self.parse_expando_lhs(bin.left) {
-                    let is_fn = self.is_function_like_expression(bin.right);
-                    let body = if is_fn {
-                        self.arena
-                            .get(bin.right)
-                            .and_then(|n| self.arena.get_function(n))
-                            .map_or(NodeIndex::NONE, |f| f.body)
-                    } else {
-                        NodeIndex::NONE
-                    };
-                    let entry = groups.entry(owner).or_default();
-                    entry.members.push(ExpandoMember {
-                        name,
-                        is_fn,
-                        body,
-                        stmt_idx,
-                        descriptor: NodeIndex::NONE,
-                        via_prototype,
-                        kind_hint: MemberKindHint::None,
-                    });
-                    entry.via_prototype |= via_prototype;
-                }
-            } else if expr_node.kind == syntax_kind_ext::CALL_EXPRESSION {
-                // `Object.defineProperty(X, 'y', descriptor)` /
-                // `Object.defineProperty(X.prototype, 'y', descriptor)` —
-                // descriptor's own property members (e.g. `get`/`set`)
-                // surface as the navbar entry's children. is_fn=false
-                // gives it `Unknown` kind so tsc's omit-empty-kind
-                // behavior kicks in.
-                if let Some((owner, name, via_prototype, descriptor)) =
-                    self.parse_define_property(expr_idx)
-                {
-                    let entry = groups.entry(owner).or_default();
-                    entry.members.push(ExpandoMember {
-                        name,
-                        is_fn: false,
-                        body: NodeIndex::NONE,
-                        stmt_idx,
-                        descriptor,
-                        via_prototype,
-                        kind_hint: MemberKindHint::None,
-                    });
-                    entry.via_prototype |= via_prototype;
-                }
-            }
-        }
-
-        if groups.is_empty() {
-            return;
-        }
-
-        for sym in symbols.iter_mut() {
-            let Some(expando) = groups.get(&sym.name) else {
-                continue;
-            };
-            // Only promote var / function entries — actual `class X {}`
-            // declarations keep their own structure.
-            let promote = matches!(
-                sym.kind,
-                SymbolKind::Function | SymbolKind::Variable | SymbolKind::Constant
-            );
-            if !promote {
-                continue;
-            }
-            let was_function = matches!(sym.kind, SymbolKind::Function);
-            sym.kind = SymbolKind::Class;
-            // Add synthetic constructor when the underlying declaration
-            // was a function (callable as `new X()`) or we've seen a
-            // `.prototype.*` write against a var. Mirrors tsc's
-            // promoted-class output which always shows a constructor.
-            let has_ctor = sym.children.iter().any(|c| c.name == "constructor");
-            if (was_function || expando.via_prototype) && !has_ctor {
-                sym.children.insert(
-                    0,
-                    DocumentSymbol {
-                        name: "constructor".to_string(),
-                        detail: None,
-                        // Always use SynthesizedConstructor for expando-
-                        // promoted classes. The presence of this kind
-                        // is the signal `sort_symbols_deep` uses to
-                        // switch its sort to source-position order for
-                        // this container's children (matches tsc's
-                        // behavior for expando nav nodes that tryGetName
-                        // can't name).
-                        kind: SymbolKind::SynthesizedConstructor,
-                        kind_modifiers: String::new(),
-                        range: sym.range,
-                        selection_range: sym.selection_range,
-                        container_name: sym.container_name.clone(),
-                        children: vec![],
-                    },
-                );
-            }
-            for member in &expando.members {
-                let children = if member.body.is_some() {
-                    self.collect_children_from_block(member.body, Some(&sym.name))
-                } else if member.descriptor.is_some() {
-                    // defineProperty descriptor — walk its literal
-                    // members so `get` / `set` show up as methods.
-                    self.collect_object_literal_members(member.descriptor, Some(&sym.name))
-                } else {
-                    Vec::new()
-                };
-                let kind = match member.kind_hint {
-                    MemberKindHint::Method => SymbolKind::Method,
-                    MemberKindHint::None => {
-                        if member.is_fn {
-                            SymbolKind::Function
-                        } else if member.descriptor.is_some() {
-                            // `Object.defineProperty(X, 'y', …)` has no
-                            // inferable kind at tsc — the entry renders
-                            // with no kind field.
-                            SymbolKind::Unknown
-                        } else if member.via_prototype {
-                            // `X.prototype.y = 0` is treated as a
-                            // prototype property assignment →
-                            // ScriptElementKind.property.
-                            SymbolKind::Property
-                        } else {
-                            // `X.y = 0` (static, non-function) — tsc
-                            // omits the kind field entirely.
-                            SymbolKind::Unknown
-                        }
-                    }
-                };
-                // Use the original statement's range so the
-                // expando-child sort (by source position) orders these
-                // relative to the synthesized constructor in the same
-                // order they appear in source.
-                let range =
-                    node_range(self.arena, self.line_map, self.source_text, member.stmt_idx);
-                sym.children.push(DocumentSymbol {
-                    name: member.name.clone(),
-                    detail: None,
-                    kind,
-                    kind_modifiers: String::new(),
-                    range,
-                    selection_range: range,
-                    container_name: Some(sym.name.clone()),
-                    children,
-                });
-            }
-        }
-    }
-
-    /// Parse the LHS of an assignment as an expando access chain:
-    ///   `X.Y` → (X, Y, false)
-    ///   `X.prototype.Y` → (X, Y, true)
-    ///   `X[Symbol.something]` → (X, "[Symbol.something]", false)
-    /// Returns `None` if the shape isn't a simple dotted/bracketed
-    /// access rooted at an identifier.
-    /// Match the LHS of an assignment as `X.prototype` (or
-    /// `X["prototype"]`). Returns `X`'s name on success. This is the
-    /// whole-object prototype form (`X.prototype = {...}`), not the
-    /// per-member form handled by `parse_expando_lhs`.
-    fn parse_prototype_assignment(&self, lhs: NodeIndex) -> Option<String> {
-        let node = self.arena.get(lhs)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-        let access = self.arena.get_access_expr(node)?;
-        let member = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            self.get_name(access.name_or_argument)?
-        } else {
-            let arg = self.arena.get(access.name_or_argument)?;
-            if arg.kind != SyntaxKind::StringLiteral as u16 {
-                return None;
-            }
-            self.arena.get_literal(arg)?.text.clone()
-        };
-        if member != "prototype" {
-            return None;
-        }
-        let root = self.arena.get(access.expression)?;
-        if root.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        self.get_name(access.expression)
-    }
-
-    fn parse_expando_lhs(&self, lhs: NodeIndex) -> Option<(String, String, bool)> {
-        let node = self.arena.get(lhs)?;
-        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            return None;
-        }
-        let access = self.arena.get_access_expr(node)?;
-        // The rhs (name_or_argument) can be a name (property access) or
-        // an expression (element access). Stringify with get_name so
-        // computed accesses like `f[Symbol.iterator]` surface a
-        // `[Symbol.iterator]` text just like computed property names do.
-        let member_name = if node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            self.get_name(access.name_or_argument)?
-        } else {
-            // Element access: for string-literal keys (`X["a"]`) keep
-            // the quoted source form (tsc's navbar uses the literal
-            // text with quotes). For computed accesses (e.g.
-            // `f[Symbol.iterator]`) emit the `[expr]` bracket form.
-            let arg = self.arena.get(access.name_or_argument)?;
-            if arg.kind == SyntaxKind::StringLiteral as u16 {
-                let start = arg.pos as usize;
-                let end = arg.end as usize;
-                if start > end || end > self.source_text.len() {
-                    return None;
-                }
-                self.source_text[start..end].trim().to_string()
-            } else {
-                let start = arg.pos as usize;
-                let end = arg.end as usize;
-                if start > end || end > self.source_text.len() {
-                    return None;
-                }
-                // Parser records `end` as the position after the next
-                // consumed token, so for `f[Symbol.iterator]` the arg
-                // slice picks up the closing `]`. Trim trailing `]`
-                // before wrapping so the bracket form doesn't double up.
-                let mut inner = self.source_text[start..end].trim();
-                if inner.ends_with(']') {
-                    inner = &inner[..inner.len() - 1];
-                }
-                format!("[{}]", inner.trim_end())
-            }
-        };
-
-        // Inner expression: `X` (identifier), `X.prototype`, or
-        // `X["prototype"]`.
-        let inner = access.expression;
-        let inner_node = self.arena.get(inner)?;
-        if inner_node.kind == SyntaxKind::Identifier as u16 {
-            let owner = self.get_name(inner)?;
-            return Some((owner, member_name, false));
-        }
-        if inner_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
-            || inner_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
-        {
-            let inner_access = self.arena.get_access_expr(inner_node)?;
-            // Inner member must be the string "prototype" — either the
-            // identifier `prototype` or a `["prototype"]` literal.
-            let proto = if inner_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-                self.get_name(inner_access.name_or_argument)?
-            } else {
-                let arg = self.arena.get(inner_access.name_or_argument)?;
-                if arg.kind != SyntaxKind::StringLiteral as u16 {
-                    return None;
-                }
-                self.arena.get_literal(arg)?.text.clone()
-            };
-            if proto != "prototype" {
-                return None;
-            }
-            let root = self.arena.get(inner_access.expression)?;
-            if root.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let owner = self.get_name(inner_access.expression)?;
-            return Some((owner, member_name, true));
-        }
-        None
-    }
-
-    /// Detect `Object.defineProperty(X, 'y', descriptor)` — returns
-    /// `(X_name, y_name, via_prototype, descriptor_idx)`. Returns None
-    /// for any non-matching call shape.
-    fn parse_define_property(
-        &self,
-        call_idx: NodeIndex,
-    ) -> Option<(String, String, bool, NodeIndex)> {
-        let call_node = self.arena.get(call_idx)?;
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = self.arena.get_call_expr(call_node)?;
-        // Callee must be `Object.defineProperty`.
-        let callee = self.arena.get(call.expression)?;
-        if callee.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            return None;
-        }
-        let callee_access = self.arena.get_access_expr(callee)?;
-        let callee_name = self.get_name(callee_access.name_or_argument)?;
-        if callee_name != "defineProperty" {
-            return None;
-        }
-        let root = self.arena.get(callee_access.expression)?;
-        if root.kind != SyntaxKind::Identifier as u16 {
-            return None;
-        }
-        let root_name = self.get_name(callee_access.expression)?;
-        if root_name != "Object" {
-            return None;
-        }
-        // Need at least two args: target, name-literal.
-        let args = call.arguments.as_ref()?;
-        if args.nodes.len() < 2 {
-            return None;
-        }
-        let target_idx = args.nodes[0];
-        let name_idx = args.nodes[1];
-        let name_node = self.arena.get(name_idx)?;
-        if name_node.kind != SyntaxKind::StringLiteral as u16 {
-            return None;
-        }
-        let member = self.arena.get_literal(name_node)?.text.clone();
-        let descriptor = args.nodes.get(2).copied().unwrap_or(NodeIndex::NONE);
-        // Target: either `X` (identifier) or `X.prototype`.
-        let target = self.arena.get(target_idx)?;
-        if target.kind == SyntaxKind::Identifier as u16 {
-            let owner = self.get_name(target_idx)?;
-            return Some((owner, member, false, descriptor));
-        }
-        if target.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
-            let access = self.arena.get_access_expr(target)?;
-            let proto_name = self.get_name(access.name_or_argument)?;
-            if proto_name != "prototype" {
-                return None;
-            }
-            let root = self.arena.get(access.expression)?;
-            if root.kind != SyntaxKind::Identifier as u16 {
-                return None;
-            }
-            let owner = self.get_name(access.expression)?;
-            return Some((owner, member, true, descriptor));
-        }
-        None
-    }
-
-    /// Check whether an expression is a function-like value
-    /// (`function () {}`, `function name() {}`, or `(a) => {}`).
-    fn is_function_like_expression(&self, expr: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(expr) else {
-            return false;
-        };
-        matches!(
-            node.kind,
-            k if k == syntax_kind_ext::FUNCTION_EXPRESSION
-                || k == syntax_kind_ext::ARROW_FUNCTION
-        )
-    }
-
     fn collect_returned_object_members(
         &self,
         block_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Vec<DocumentSymbolEntry> {
         if block_idx.is_none() {
             return Vec::new();
         }
@@ -2518,7 +1914,7 @@ impl<'a> DocumentSymbolProvider<'a> {
         &self,
         block_idx: NodeIndex,
         container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
+    ) -> Vec<DocumentSymbolEntry> {
         let mut symbols = Vec::new();
         if block_idx.is_none() {
             return symbols;
@@ -2553,486 +1949,6 @@ impl<'a> DocumentSymbolProvider<'a> {
         }
         symbols
     }
-
-    /// A class-member name is "complex-computed" when it's a
-    /// `[expr]` bracket form whose inner expression isn't a simple
-    /// identifier or literal. tsc omits these entries from the
-    /// navbar outline entirely (compare
-    /// `navigationBarPropertyDeclarations`: `[1+1]` → not surfaced).
-    fn is_complex_computed_name(&self, name_idx: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(name_idx) else {
-            return false;
-        };
-        if node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return false;
-        }
-        let Some(comp) = self.arena.get_computed_property(node) else {
-            return false;
-        };
-        let expr_idx = comp.expression;
-        let Some(expr_node) = self.arena.get(expr_idx) else {
-            return false;
-        };
-        // Simple identifier / literal cases are not complex.
-        matches!(
-            expr_node.kind,
-            k if !(k == SyntaxKind::Identifier as u16
-                || k == SyntaxKind::PrivateIdentifier as u16
-                || k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NumericLiteral as u16
-                || k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
-        )
-    }
-
-    /// The declaration arms use `<class>`, `<function>`, etc. as a stable
-    /// placeholder when a declaration has no identifier. When such a
-    /// placeholder bubbles up through a default export, tsc replaces it
-    /// with the literal `default` as the nav item's text — these are the
-    /// forms we'd substitute.
-    fn is_synthetic_placeholder_name(&self, name: &str) -> bool {
-        matches!(
-            name,
-            "<class>" | "<function>" | "<anonymous>" | "<interface>" | "<type>" | "<enum>"
-        )
-    }
-
-    /// Check if a node kind is a declaration. Used in the
-    /// `EXPORT_DECLARATION` arm to decide whether to recurse into the
-    /// exported clause (declarations) vs. treat it as a re-export
-    /// (`NAMED_EXPORTS` etc).
-    const fn is_declaration(&self, kind: u16) -> bool {
-        kind == syntax_kind_ext::FUNCTION_DECLARATION
-            || kind == syntax_kind_ext::CLASS_DECLARATION
-            || kind == syntax_kind_ext::VARIABLE_STATEMENT
-            || kind == syntax_kind_ext::INTERFACE_DECLARATION
-            || kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
-            || kind == syntax_kind_ext::ENUM_DECLARATION
-            // `export namespace X {}` inside an ambient module wraps
-            // the MODULE_DECLARATION in an EXPORT_DECLARATION. Without
-            // this, the module body drops on the floor.
-            || kind == syntax_kind_ext::MODULE_DECLARATION
-    }
-
-    /// Build an `alias` entry for a single import/export binding. The `name`
-    /// is the local identifier the binding introduces into scope (e.g. `B`
-    /// for `import { x as B }` or `export { a as B }`). `decl_idx` is the
-    /// enclosing statement used for the range span — tsc anchors specifier
-    /// spans to the whole statement, not the specifier token.
-    fn alias_symbol(
-        &self,
-        name: String,
-        name_node: NodeIndex,
-        decl_idx: NodeIndex,
-        container_name: Option<&str>,
-        modifiers: String,
-    ) -> DocumentSymbol {
-        let range = node_range(self.arena, self.line_map, self.source_text, decl_idx);
-        let selection_range = if name_node.is_some() {
-            node_range(self.arena, self.line_map, self.source_text, name_node)
-        } else {
-            self.get_range_keyword(decl_idx, 6)
-        };
-        DocumentSymbol {
-            name,
-            detail: None,
-            kind: SymbolKind::Alias,
-            kind_modifiers: modifiers,
-            range,
-            selection_range,
-            container_name: container_name.map(std::string::ToString::to_string),
-            children: vec![],
-        }
-    }
-
-    /// Collect specifiers from a `NAMED_EXPORTS` / `NAMED_IMPORTS` clause.
-    /// Each specifier's local name becomes an alias. When `treat_as_export`
-    /// is true, the `export` modifier is applied (used for
-    /// `export { a } from "x"` so we can attach modifiers at the
-    /// declaration site; currently tsc doesn't emit `export` on these so we
-    /// always pass false).
-    fn collect_import_export_specifiers(
-        &self,
-        clause_idx: NodeIndex,
-        container_name: Option<&str>,
-        treat_as_export: bool,
-    ) -> Vec<DocumentSymbol> {
-        let Some(clause_node) = self.arena.get(clause_idx) else {
-            return Vec::new();
-        };
-        let Some(named) = self.arena.get_named_imports(clause_node) else {
-            return Vec::new();
-        };
-        let mut symbols = Vec::new();
-        for &spec_idx in &named.elements.nodes {
-            let Some(spec_node) = self.arena.get(spec_idx) else {
-                continue;
-            };
-            let Some(spec) = self.arena.get_specifier(spec_node) else {
-                continue;
-            };
-            let name = self
-                .get_name(spec.name)
-                .unwrap_or_else(|| "<unknown>".to_string());
-            let mods = if treat_as_export {
-                String::from("export")
-            } else {
-                String::new()
-            };
-            symbols.push(self.alias_symbol(name, spec.name, spec_idx, container_name, mods));
-        }
-        symbols
-    }
-
-    /// Collect aliases from an `import ...` declaration.
-    fn collect_import_decl(
-        &self,
-        node: &Node,
-        node_idx: NodeIndex,
-        container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return Vec::new();
-        };
-        let clause_idx = import.import_clause;
-        if clause_idx.is_none() {
-            return Vec::new();
-        }
-        let Some(clause_node) = self.arena.get(clause_idx) else {
-            return Vec::new();
-        };
-        let Some(clause) = self.arena.get_import_clause(clause_node) else {
-            return Vec::new();
-        };
-        let mut symbols = Vec::new();
-
-        // `import foo from "..."` — default import.
-        if clause.name.is_some()
-            && let Some(name) = self.get_name(clause.name)
-        {
-            symbols.push(self.alias_symbol(
-                name,
-                clause.name,
-                node_idx,
-                container_name,
-                String::new(),
-            ));
-        }
-
-        // Named bindings: either `NAMESPACE_IMPORT` (for `* as ns`) or
-        // `NAMED_IMPORTS` (for `{ a, b as B }`).
-        let named_idx = clause.named_bindings;
-        if named_idx.is_some()
-            && let Some(named_node) = self.arena.get(named_idx)
-        {
-            if named_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
-                if let Some(named) = self.arena.get_named_imports(named_node) {
-                    let name = if named.name.is_some() {
-                        self.get_name(named.name)
-                            .unwrap_or_else(|| "<unknown>".to_string())
-                    } else {
-                        "<unknown>".to_string()
-                    };
-                    symbols.push(self.alias_symbol(
-                        name,
-                        named.name,
-                        node_idx,
-                        container_name,
-                        String::new(),
-                    ));
-                }
-            } else if named_node.kind == syntax_kind_ext::NAMED_IMPORTS {
-                symbols.extend(self.collect_import_export_specifiers(
-                    named_idx,
-                    container_name,
-                    false,
-                ));
-            }
-        }
-
-        symbols
-    }
-
-    /// Collect an alias from an `import e = require("...")` / `import e = x.y`
-    /// declaration. When the statement has an `export` modifier, it is
-    /// surfaced as a `kindModifier` on the alias.
-    fn collect_import_equals(
-        &self,
-        node: &Node,
-        node_idx: NodeIndex,
-        container_name: Option<&str>,
-    ) -> Vec<DocumentSymbol> {
-        let Some(import) = self.arena.get_import_decl(node) else {
-            return Vec::new();
-        };
-        // For IMPORT_EQUALS_DECLARATION, `import_clause` is the identifier
-        // on the LHS of the `=`.
-        let name_idx = import.import_clause;
-        let Some(name) = self.get_name(name_idx) else {
-            return Vec::new();
-        };
-        let modifiers = self.get_kind_modifiers_from_list(&import.modifiers);
-        vec![self.alias_symbol(name, name_idx, node_idx, container_name, modifiers)]
-    }
-
-    /// Get range for a keyword (when no identifier exists, e.g. "constructor").
-    fn get_range_keyword(&self, node_idx: NodeIndex, len: u32) -> Range {
-        if let Some(node) = self.arena.get(node_idx) {
-            let start = self.line_map.offset_to_position(node.pos, self.source_text);
-            let end = self
-                .line_map
-                .offset_to_position(node.pos + len, self.source_text);
-            Range::new(start, end)
-        } else {
-            Range::new(Position::new(0, 0), Position::new(0, 0))
-        }
-    }
-
-    /// Extract text from identifier node.
-    fn get_name(&self, node_idx: NodeIndex) -> Option<String> {
-        if node_idx.is_none() {
-            return None;
-        }
-        if let Some(node) = self.arena.get(node_idx) {
-            if node.kind == SyntaxKind::Identifier as u16 {
-                return self.arena.get_identifier(node).and_then(|id| {
-                    // An empty identifier is typically produced by
-                    // parser error recovery (e.g. `function;` gives a
-                    // name-less FUNCTION_DECLARATION). Treat as missing
-                    // so callers fall back to `<function>` / `<class>`.
-                    if id.escaped_text.is_empty() {
-                        None
-                    } else {
-                        Some(id.escaped_text.clone())
-                    }
-                });
-            } else if node.kind == SyntaxKind::PrivateIdentifier as u16 {
-                // Private identifiers keep their `#` prefix in navbar
-                // output (`#foo`). The scanner's token value may or may
-                // not already include the `#` — normalize by prepending
-                // when missing.
-                return self.arena.get_identifier(node).map(|id| {
-                    if id.escaped_text.starts_with('#') {
-                        id.escaped_text.clone()
-                    } else {
-                        format!("#{}", id.escaped_text)
-                    }
-                });
-            } else if node.kind == SyntaxKind::StringLiteral as u16 {
-                // tsc's `nodeText(name)` returns the literal's source
-                // form — keep the surrounding quotes so `"prop": 1` in
-                // an object literal becomes navbar text `"prop"` (and
-                // `declare module 'x'` stays `'x'` with single quotes).
-                let start = node.pos as usize;
-                let end = node.end as usize;
-                if start <= end && end <= self.source_text.len() {
-                    return Some(self.source_text[start..end].trim().to_string());
-                }
-                return self.arena.get_literal(node).map(|l| l.text.clone());
-            } else if node.kind == SyntaxKind::NumericLiteral as u16 {
-                return self.arena.get_literal(node).map(|l| l.text.clone());
-            } else if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                // `["bar"]` / `[key]` on a class/interface/object member.
-                // tsc uses the source-text form verbatim (including the
-                // surrounding brackets) as the nav item's `text`. The
-                // parser records `end` as the position after the next
-                // token (so `["bar"]:` or `["bar"] ` creeps in). Cut at
-                // the last `]` to keep just the bracket form.
-                let start = node.pos as usize;
-                let end = node.end as usize;
-                if start <= end && end <= self.source_text.len() {
-                    let slice = &self.source_text[start..end];
-                    if let Some(close) = slice.rfind(']') {
-                        return Some(slice[..=close].to_string());
-                    }
-                    return Some(slice.to_string());
-                }
-            }
-        }
-        None
-    }
-}
-
-/// Mirror tsc's `cleanText`: truncate to 150 characters (appending
-/// `...`) and strip ECMAScript line terminators, including the
-/// trailing backslash from multiline string literal continuations.
-/// Used exclusively for module names — tsc applies this to every
-/// navbar/navtree text, but for our purposes identifier text doesn't
-/// ever contain line terminators so applying it narrowly is enough.
-fn clean_module_text(text: &str) -> String {
-    const MAX_LEN: usize = 150;
-    let truncated = if text.chars().count() > MAX_LEN {
-        let head: String = text.chars().take(MAX_LEN).collect();
-        format!("{head}...")
-    } else {
-        text.to_string()
-    };
-    let mut out = String::with_capacity(truncated.len());
-    let mut chars = truncated.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            // Backslash before a newline (line continuation inside a
-            // multi-line string) — drop both.
-            '\\' if matches!(chars.peek(), Some('\r' | '\n' | '\u{2028}' | '\u{2029}')) => {
-                // consume the paired line terminator (handling \r\n too)
-                if let Some('\r') = chars.next()
-                    && matches!(chars.peek(), Some('\n'))
-                {
-                    chars.next();
-                }
-            }
-            // Bare line terminators are removed.
-            '\r' => {
-                if matches!(chars.peek(), Some('\n')) {
-                    chars.next();
-                }
-            }
-            '\n' | '\u{2028}' | '\u{2029}' => {}
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
-/// Append `declare` to every descendant's `kindModifiers` (skipping
-/// duplicates). tsc implicitly applies `declare` to every declaration
-/// nested inside an ambient namespace/module, so the nav output
-/// reads `export,declare` for `declare namespace Windows { export
-/// var A }` instead of just `export`.
-fn propagate_ambient_modifier(symbols: &mut [DocumentSymbol]) {
-    for sym in symbols.iter_mut() {
-        let mut buf = sym.kind_modifiers.clone();
-        append_modifier(&mut buf, "declare");
-        sym.kind_modifiers = buf;
-        propagate_ambient_modifier(&mut sym.children);
-    }
-}
-
-/// Merge sibling Module/Namespace entries that share a name — tsc's
-/// `mergeChildren` behavior for TypeScript's declaration merging
-/// (`namespace A {} / namespace A {}` shows one entry whose children
-/// combine both declarations). Recurses so nested namespaces
-/// (`namespace A.B {} / namespace A {}`) also merge at every level.
-fn merge_same_name_modules(symbols: &mut Vec<DocumentSymbol>) {
-    // Walk left-to-right; for each mergeable entry, fold same-name
-    // siblings into it (collecting their children), then recurse into
-    // the now-complete children list.  This single-pass approach avoids
-    // the O(2^depth) blowup that arises when merging and recursing are
-    // interleaved: doing an initial "recurse first" pass followed by a
-    // post-merge re-recurse doubles the work at every level of a deeply
-    // nested chain.
-    let mut i = 0;
-    while i < symbols.len() {
-        let mergeable = is_mergeable_kind(symbols[i].kind);
-        if mergeable.is_none() {
-            // Non-mergeable: just recurse into children and move on.
-            merge_same_name_modules(&mut symbols[i].children);
-            i += 1;
-            continue;
-        }
-        let target_group = mergeable.unwrap();
-        let name = symbols[i].name.clone();
-        let mut j = i + 1;
-        while j < symbols.len() {
-            let same =
-                is_mergeable_kind(symbols[j].kind) == Some(target_group) && symbols[j].name == name;
-            if same {
-                let other = symbols.remove(j);
-                symbols[i].children.extend(other.children);
-            } else {
-                j += 1;
-            }
-        }
-        // After all same-name siblings have been folded in, recurse into
-        // the merged children list once.  Any duplicates introduced by
-        // the fold (e.g. `namespace A { interface I {} } + namespace A {
-        // interface I {} }` → merged A with two `I` children) are handled
-        // by this single recursive call.
-        merge_same_name_modules(&mut symbols[i].children);
-        i += 1;
-    }
-}
-
-fn cap_document_symbols(symbols: &mut Vec<DocumentSymbol>) {
-    let mut remaining = MAX_DOCUMENT_SYMBOL_ENTRIES;
-    cap_document_symbols_at_depth(symbols, 0, &mut remaining);
-}
-
-fn cap_document_symbols_at_depth(
-    symbols: &mut Vec<DocumentSymbol>,
-    depth: usize,
-    remaining: &mut usize,
-) {
-    let original = std::mem::take(symbols);
-    let mut capped = Vec::with_capacity(original.len().min(*remaining));
-    let mut iter = original.into_iter().peekable();
-
-    while let Some(mut symbol) = iter.next() {
-        if *remaining == 0 {
-            break;
-        }
-        if *remaining == 1 && iter.peek().is_some() {
-            capped.push(more_document_symbol(symbol.range));
-            *remaining = 0;
-            break;
-        }
-
-        *remaining -= 1;
-        if depth + 1 >= MAX_DOCUMENT_SYMBOL_DEPTH {
-            if !symbol.children.is_empty() {
-                symbol.children.clear();
-                if *remaining > 0 {
-                    *remaining -= 1;
-                    symbol.children.push(more_document_symbol(symbol.range));
-                }
-            }
-        } else {
-            cap_document_symbols_at_depth(&mut symbol.children, depth + 1, remaining);
-        }
-        capped.push(symbol);
-    }
-
-    *symbols = capped;
-}
-
-fn more_document_symbol(range: Range) -> DocumentSymbol {
-    DocumentSymbol {
-        name: MORE_DOCUMENT_SYMBOL_NAME.to_string(),
-        detail: None,
-        kind: SymbolKind::Module,
-        kind_modifiers: String::new(),
-        range,
-        selection_range: range,
-        container_name: None,
-        children: Vec::new(),
-    }
-}
-
-/// Group mergeable nav kinds — tsc's declaration-merge rules allow
-/// same-name modules/namespaces, interfaces, and enums to fold their
-/// children together, but not mixed-kind siblings. Returns Some for
-/// mergeable groups and None otherwise (functions, variables, classes,
-/// etc., which never merge).
-const fn is_mergeable_kind(kind: SymbolKind) -> Option<u8> {
-    match kind {
-        SymbolKind::Module | SymbolKind::Namespace | SymbolKind::Package => Some(1),
-        SymbolKind::Interface => Some(2),
-        SymbolKind::Enum => Some(3),
-        _ => None,
-    }
-}
-
-/// Helper to append a modifier to a comma-separated string.
-fn append_modifier(result: &mut String, modifier: &str) {
-    // tsc never emits the same modifier twice on a single
-    // kindModifiers entry. Skip duplicates so concatenation across
-    // nested AST shapes (e.g. `export var x`) stays stable.
-    if result.split(',').any(|existing| existing == modifier) {
-        return;
-    }
-    if !result.is_empty() {
-        result.push(',');
-    }
-    result.push_str(modifier);
 }
 
 #[cfg(test)]

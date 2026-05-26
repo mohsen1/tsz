@@ -35,6 +35,101 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn function_body_parameter_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let type_annotation = self.function_parameter_type_annotation(func, returned_identifier)?;
+        let type_text = self
+            .single_line_mapped_type_annotation_text(type_annotation)
+            .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
+        (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn function_parameter_type_annotation(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        identifier_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let identifier_name = self.get_identifier_text(identifier_idx)?;
+        for param_idx in func.parameters.nodes.iter().copied() {
+            let param_node = self.arena.get(param_idx)?;
+            let param = self.arena.get_parameter(param_node)?;
+            let param_name = self.get_identifier_text(param.name)?;
+            if param_name == identifier_name && param.type_annotation.is_some() {
+                return Some(param.type_annotation);
+            }
+        }
+        None
+    }
+
+    fn single_line_mapped_type_annotation_text(
+        &self,
+        type_annotation: NodeIndex,
+    ) -> Option<String> {
+        let type_node = self.arena.get(type_annotation)?;
+        if type_node.kind != syntax_kind_ext::MAPPED_TYPE {
+            return None;
+        }
+        let mapped = self.arena.get_mapped_type(type_node)?;
+        if mapped
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.nodes.is_empty())
+        {
+            return None;
+        }
+        let type_param_node = self.arena.get(mapped.type_parameter)?;
+        let type_param = self.arena.get_type_parameter(type_param_node)?;
+        let type_param_name = self.get_identifier_text(type_param.name)?;
+        let constraint_text = self.single_line_type_node_text(type_param.constraint)?;
+        let value_text = self.single_line_type_node_text(mapped.type_node)?;
+
+        let readonly_text = if let Some(readonly_node) = self.arena.get(mapped.readonly_token) {
+            match readonly_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => "+readonly ",
+                k if k == SyntaxKind::MinusToken as u16 => "-readonly ",
+                _ => "readonly ",
+            }
+        } else {
+            ""
+        };
+        let name_type_text = if mapped.name_type.is_some() {
+            format!(" as {}", self.single_line_type_node_text(mapped.name_type)?)
+        } else {
+            String::new()
+        };
+        let question_text = if let Some(question_node) = self.arena.get(mapped.question_token) {
+            match question_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => "+?",
+                k if k == SyntaxKind::MinusToken as u16 => "-?",
+                _ => "?",
+            }
+        } else {
+            ""
+        };
+
+        Some(format!(
+            "{{ {readonly_text}[{type_param_name} in {constraint_text}{name_type_text}]{question_text}: {value_text}; }}"
+        ))
+    }
+
+    fn single_line_type_node_text(&self, type_idx: NodeIndex) -> Option<String> {
+        let type_text = self.emit_type_node_text(type_idx)?;
+        if type_text.chars().any(|ch| ch == '\n' || ch == '\r') {
+            return None;
+        }
+        Some(
+            type_text
+                .trim()
+                .trim_end_matches(';')
+                .trim_end()
+                .to_string(),
+        )
+    }
+
     pub(in crate::declaration_emitter) fn function_body_single_spread_object_literal_type_text(
         &self,
         body_idx: NodeIndex,
