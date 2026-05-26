@@ -728,18 +728,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2022: with class decorators, emit _classThis capture block first
             if has_class_decorators {
                 out.push_str(&format!("{i2}static {{ {class_this_var} = this; }}\n"));
-                // For class expressions, emit `__setFunctionName(_classThis, ...)`
-                // only when the source class was *anonymous*. A named class
-                // expression (`class C { ... }`) carries its own name through
-                // to the engine — tsc does not emit the helper in that case
-                // (e.g. `export const C = @dec class C {}` round-trips to a
-                // bare `var C = class { static { _classThis = this; } ... }`
-                // with no `__setFunctionName` static block).
                 if self.expression_mode && class_name_was_empty {
                     let fn_name = self.function_name_arg("");
                     let set_fn = self.helper("__setFunctionName");
                     out.push_str(&format!(
                         "{i2}static {{ {set_fn}({class_this_var}, {fn_name}); }}\n"
+                    ));
+                } else if self.expression_mode
+                    && self.function_name.is_none()
+                    && (!class_decorator_static_private_methods.is_empty()
+                        || !class_decorator_auto_accessor_infos.is_empty()
+                        || !class_decorator_static_private_fields.is_empty())
+                {
+                    let set_fn = self.helper("__setFunctionName");
+                    out.push_str(&format!(
+                        "{i2}static {{ {set_fn}(this, \"{class_name}\"); }}\n"
                     ));
                 } else if !self.expression_mode
                     && !class_name.is_empty()

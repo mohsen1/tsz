@@ -309,6 +309,10 @@ impl<'a> Printer<'a> {
             // `/** ... */ (x)` with a space before the paren.
         }
         self.write("(");
+        let suppress_inner_comments_for_transformed_decorated_class = !(self.ctx.options.target
+            == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields)
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression);
         let break_after_open_for_decorated_class = self.ctx.options.target == ScriptTarget::ESNext
             && self.parenthesized_inner_is_decorated_class_expression(paren.expression)
             && self
@@ -325,6 +329,7 @@ impl<'a> Printer<'a> {
         // comment already on the following source line gets a printed newline.
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
+            && !suppress_inner_comments_for_transformed_decorated_class
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);

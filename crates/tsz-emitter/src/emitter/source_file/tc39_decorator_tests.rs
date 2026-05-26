@@ -416,6 +416,50 @@ class C {
 }
 
 #[test]
+fn transformed_parenthesized_decorated_class_expression_uses_iife_wrapper_layout() {
+    let source = "\
+declare const dec: any;
+
+/*1*/
+(
+/*2*/
+@dec
+class C {
+    @dec
+    static #m() {}
+}
+);
+";
+
+    let es2015_output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+    assert!(
+        es2015_output.contains("/*1*/\n((() => {") && !es2015_output.contains("/*2*/"),
+        "Lower-target transformed decorated class expressions should let the IIFE own the class expression while keeping the outer parens.\nOutput:\n{es2015_output}"
+    );
+
+    let es2022_output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+    assert!(
+        es2022_output.contains("/*1*/\n((() => {")
+            && es2022_output.contains("static { __setFunctionName(this, \"C\"); }")
+            && !es2022_output.contains("/*2*/"),
+        "ES2022 transformed parenthesized class expressions should preserve wrapper layout and name the generated class.\nOutput:\n{es2022_output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;
