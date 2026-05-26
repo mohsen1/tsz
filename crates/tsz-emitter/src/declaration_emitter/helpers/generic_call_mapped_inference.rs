@@ -1,7 +1,8 @@
 //! Declaration emit helpers for generic calls through mapped utility surfaces.
 
 use super::super::DeclarationEmitter;
-use tsz_parser::parser::node::{FunctionData, NodeArena};
+use tsz_binder::SymbolId;
+use tsz_parser::parser::node::{FunctionData, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -41,7 +42,7 @@ impl<'a> DeclarationEmitter<'a> {
         arguments: &NodeList,
     ) -> Option<String> {
         if let Some((return_object_idx, return_key_idx)) =
-            pick_type_reference_args(source_arena, func.type_annotation)
+            self.pick_type_reference_args(source_arena, func.type_annotation)
         {
             let object_text = self.type_parameter_argument_type_text(
                 source_arena,
@@ -74,7 +75,7 @@ impl<'a> DeclarationEmitter<'a> {
             .find_map(|(param_idx, arg_idx)| {
                 let param_node = source_arena.get(param_idx)?;
                 let param = source_arena.get_parameter(param_node)?;
-                let pick = pick_type_reference_in_type(source_arena, param.type_annotation)?;
+                let pick = self.pick_type_reference_in_type(source_arena, param.type_annotation)?;
                 let object_text = self
                     .emit_type_node_text_from_arena(source_arena, pick.object_type)
                     .or_else(|| self.source_slice_from_arena(source_arena, pick.object_type))?
@@ -267,6 +268,102 @@ impl<'a> DeclarationEmitter<'a> {
             .and_then(|func| func.type_parameters.as_ref())
             .is_some_and(|params| !params.nodes.is_empty())
     }
+
+    fn pick_type_reference_args(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<(NodeIndex, NodeIndex)> {
+        let type_node = source_arena.get(type_idx)?;
+        if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = source_arena.get_type_ref(type_node)?;
+        let type_args = type_ref.type_arguments.as_ref()?;
+        let [object_type, key_type] = type_args.nodes.as_slice() else {
+            return None;
+        };
+        let sym_id = self.type_reference_symbol_from_arena(source_arena, type_ref.type_name)?;
+        self.symbol_declares_pick_like_alias(sym_id)
+            .then_some((*object_type, *key_type))
+    }
+
+    fn pick_type_reference_in_type(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<PickTypeReference> {
+        self.pick_type_reference_in_type_inner(source_arena, type_idx, false)
+    }
+
+    fn pick_type_reference_in_type_inner(
+        &self,
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+        requires_single_property_unwrap: bool,
+    ) -> Option<PickTypeReference> {
+        let type_node = source_arena.get(type_idx)?;
+        match type_node.kind {
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if let Some((object_type, key_type)) =
+                    self.pick_type_reference_args(source_arena, type_idx)
+                {
+                    return Some(PickTypeReference {
+                        object_type,
+                        key_type,
+                        requires_single_property_unwrap,
+                    });
+                }
+                let type_ref = source_arena.get_type_ref(type_node)?;
+                type_ref
+                    .type_arguments
+                    .as_ref()?
+                    .nodes
+                    .iter()
+                    .copied()
+                    .find_map(|arg_idx| {
+                        self.pick_type_reference_in_type_inner(source_arena, arg_idx, true)
+                    })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => source_arena
+                .get_wrapped_type(type_node)
+                .and_then(|wrapped| {
+                    self.pick_type_reference_in_type_inner(
+                        source_arena,
+                        wrapped.type_node,
+                        requires_single_property_unwrap,
+                    )
+                }),
+            _ => None,
+        }
+    }
+
+    fn type_reference_symbol_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_name_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        let binder = self.binder?;
+        if std::ptr::eq(source_arena, self.arena)
+            && let Some(sym_id) = binder.get_node_symbol(type_name_idx)
+        {
+            return Some(sym_id);
+        }
+        let name = identifier_text(source_arena, type_name_idx)?;
+        binder
+            .file_locals
+            .get(&name)
+            .or_else(|| self.resolve_identifier_symbol(type_name_idx, &name))
+    }
+
+    fn symbol_declares_pick_like_alias(&self, sym_id: SymbolId) -> bool {
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let alias_node = source_arena.get(decl_idx)?;
+            let alias = source_arena.get_type_alias(alias_node)?;
+            type_alias_is_pick_like(source_arena, alias).then_some(())
+        })
+        .is_some()
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -274,70 +371,6 @@ struct PickTypeReference {
     object_type: NodeIndex,
     key_type: NodeIndex,
     requires_single_property_unwrap: bool,
-}
-
-fn pick_type_reference_args(
-    source_arena: &NodeArena,
-    type_idx: NodeIndex,
-) -> Option<(NodeIndex, NodeIndex)> {
-    let type_node = source_arena.get(type_idx)?;
-    if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
-        return None;
-    }
-    let type_ref = source_arena.get_type_ref(type_node)?;
-    if identifier_text(source_arena, type_ref.type_name).as_deref() != Some("Pick") {
-        return None;
-    }
-    let type_args = type_ref.type_arguments.as_ref()?;
-    let [object_type, key_type] = type_args.nodes.as_slice() else {
-        return None;
-    };
-    Some((*object_type, *key_type))
-}
-
-fn pick_type_reference_in_type(
-    source_arena: &NodeArena,
-    type_idx: NodeIndex,
-) -> Option<PickTypeReference> {
-    pick_type_reference_in_type_inner(source_arena, type_idx, false)
-}
-
-fn pick_type_reference_in_type_inner(
-    source_arena: &NodeArena,
-    type_idx: NodeIndex,
-    requires_single_property_unwrap: bool,
-) -> Option<PickTypeReference> {
-    let type_node = source_arena.get(type_idx)?;
-    match type_node.kind {
-        k if k == syntax_kind_ext::TYPE_REFERENCE => {
-            if let Some((object_type, key_type)) = pick_type_reference_args(source_arena, type_idx)
-            {
-                return Some(PickTypeReference {
-                    object_type,
-                    key_type,
-                    requires_single_property_unwrap,
-                });
-            }
-            let type_ref = source_arena.get_type_ref(type_node)?;
-            type_ref
-                .type_arguments
-                .as_ref()?
-                .nodes
-                .iter()
-                .copied()
-                .find_map(|arg_idx| pick_type_reference_in_type_inner(source_arena, arg_idx, true))
-        }
-        k if k == syntax_kind_ext::PARENTHESIZED_TYPE => source_arena
-            .get_wrapped_type(type_node)
-            .and_then(|wrapped| {
-                pick_type_reference_in_type_inner(
-                    source_arena,
-                    wrapped.type_node,
-                    requires_single_property_unwrap,
-                )
-            }),
-        _ => None,
-    }
 }
 
 fn array_type_element_identifier_name(
@@ -350,6 +383,63 @@ fn array_type_element_identifier_name(
     }
     let array = source_arena.get_array_type(type_node)?;
     type_reference_identifier_name(source_arena, array.element_type)
+}
+
+fn type_alias_is_pick_like(source_arena: &NodeArena, alias: &TypeAliasData) -> bool {
+    let Some(type_params) = alias.type_parameters.as_ref() else {
+        return false;
+    };
+    let [object_param_idx, key_param_idx] = type_params.nodes.as_slice() else {
+        return false;
+    };
+    let Some(object_param_name) = type_parameter_name(source_arena, *object_param_idx) else {
+        return false;
+    };
+    let Some(key_param_name) = type_parameter_name(source_arena, *key_param_idx) else {
+        return false;
+    };
+
+    let Some(type_node) = source_arena.get(alias.type_node) else {
+        return false;
+    };
+    if type_node.kind != syntax_kind_ext::MAPPED_TYPE {
+        return false;
+    }
+    let Some(mapped) = source_arena.get_mapped_type(type_node) else {
+        return false;
+    };
+    let Some(mapped_param) = source_arena
+        .get(mapped.type_parameter)
+        .and_then(|node| source_arena.get_type_parameter(node))
+    else {
+        return false;
+    };
+    let Some(mapped_param_name) = identifier_text(source_arena, mapped_param.name) else {
+        return false;
+    };
+    if type_reference_identifier_name(source_arena, mapped_param.constraint).as_deref()
+        != Some(key_param_name.as_str())
+    {
+        return false;
+    }
+
+    let Some(template_node) = source_arena.get(mapped.type_node) else {
+        return false;
+    };
+    let Some(indexed) = source_arena.get_indexed_access_type(template_node) else {
+        return false;
+    };
+    type_reference_identifier_name(source_arena, indexed.object_type).as_deref()
+        == Some(object_param_name.as_str())
+        && type_reference_identifier_name(source_arena, indexed.index_type).as_deref()
+            == Some(mapped_param_name.as_str())
+}
+
+fn type_parameter_name(source_arena: &NodeArena, type_param_idx: NodeIndex) -> Option<String> {
+    source_arena
+        .get(type_param_idx)
+        .and_then(|node| source_arena.get_type_parameter(node))
+        .and_then(|param| identifier_text(source_arena, param.name))
 }
 
 fn type_reference_identifier_name(source_arena: &NodeArena, type_idx: NodeIndex) -> Option<String> {
