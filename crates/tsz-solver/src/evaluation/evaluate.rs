@@ -11,6 +11,9 @@
 //! - Handles deferred evaluation when type parameters are unknown
 //! - Supports distributivity for naked type parameters in unions
 
+mod application_types;
+mod array_methods;
+
 use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefKind};
@@ -30,6 +33,11 @@ use crate::types::{
     TypeId, TypeListId, TypeParamInfo,
 };
 use crate::visitors::visitor_predicates::contains_type_matching;
+use application_types::{ApplicationEvalContext, ApplicationEvalOutcome, HomomorphicMappedArg};
+pub(crate) use array_methods::{
+    ARRAY_METHODS_RETURN_ANY, ARRAY_METHODS_RETURN_BOOLEAN, ARRAY_METHODS_RETURN_NUMBER,
+    ARRAY_METHODS_RETURN_STRING, ARRAY_METHODS_RETURN_VOID,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
@@ -137,48 +145,6 @@ const DEFAULT_MAX_MAPPED_KEYS: usize = 250;
 #[cfg(not(target_arch = "wasm32"))]
 const DEFAULT_MAX_MAPPED_KEYS: usize = 500;
 
-/// Array methods that return any (used for apparent type computation).
-pub(crate) const ARRAY_METHODS_RETURN_ANY: &[&str] = &[
-    "concat",
-    "filter",
-    "flat",
-    "flatMap",
-    "map",
-    "reverse",
-    "slice",
-    "sort",
-    "splice",
-    "toReversed",
-    "toSorted",
-    "toSpliced",
-    "with",
-    "at",
-    "find",
-    "findLast",
-    "pop",
-    "shift",
-    "entries",
-    "keys",
-    "values",
-    "reduce",
-    "reduceRight",
-];
-/// Array methods that return boolean.
-pub(crate) const ARRAY_METHODS_RETURN_BOOLEAN: &[&str] = &["every", "includes", "some"];
-/// Array methods that return number.
-pub(crate) const ARRAY_METHODS_RETURN_NUMBER: &[&str] = &[
-    "findIndex",
-    "findLastIndex",
-    "indexOf",
-    "lastIndexOf",
-    "push",
-    "unshift",
-];
-/// Array methods that return void.
-pub(crate) const ARRAY_METHODS_RETURN_VOID: &[&str] = &["forEach", "copyWithin", "fill"];
-/// Array methods that return string.
-pub(crate) const ARRAY_METHODS_RETURN_STRING: &[&str] = &["join", "toLocaleString", "toString"];
-
 impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
@@ -207,63 +173,6 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             silent_depth_bailed: false,
         }
     }
-}
-
-/// Snapshot of resolver/interner state needed for an `Application(base, args)`
-/// evaluation. Built once by [`TypeEvaluator::application_evaluation_context`]
-/// so the rest of `evaluate_application` operates on a typed bundle rather
-/// than recomputing the same facts at multiple call sites.
-struct ApplicationEvalContext {
-    /// Formal type parameters declared on the `DefId` resolved from
-    /// `app.base`, when the resolver exposes them. `None` triggers the
-    /// lite-resolver fallback that extracts parameters from the resolved
-    /// body's structure.
-    type_params: Option<Vec<TypeParamInfo>>,
-    /// The resolved body of the `DefId`, when known.
-    resolved: Option<TypeId>,
-    /// Set when `app.base` resolves to a `DefKind::TypeAlias` (vs a class
-    /// or interface). Drives display-alias storage policy.
-    is_type_alias_def: bool,
-    /// Whether display-alias bookkeeping should prefer the `Application`
-    /// form. True only for non-conditional type-alias applications.
-    prefer_application_display_alias: bool,
-    /// Set when `app.base` is a `TypeQuery` (i.e. `typeof ClassName<T>`).
-    /// For `TypeQuery`-based applications the caller wants the constructor
-    /// type, not the instance type, so `extract_class_instance_body` must
-    /// be skipped.
-    base_is_type_query: bool,
-}
-
-/// Common opening preamble for the homomorphic-mapped shortcuts:
-/// `try_homomorphic_mapped_passthrough` and `try_distribute_mapped_union_arg`
-/// both require `body == { [P in keyof Tᵢ]: ... }` with `Tᵢ` resolvable in
-/// `type_params`. Sharing the destructure protects against drift between
-/// the two call sites and avoids re-evaluating the same argument twice.
-struct HomomorphicMappedArg {
-    mapped: MappedType,
-    source: TypeId,
-    tp: TypeParamInfo,
-    idx: usize,
-    resolved_arg: TypeId,
-}
-
-/// Distinguishes shortcut paths in `evaluate_application` (cache hits,
-/// homomorphic passthrough, mapped-union distribution) from the full
-/// instantiation path.
-///
-/// Shortcut paths historically returned via early `decrement_def_depth` +
-/// `return`, which leaves `self.apparent_conditional_branch == None` for
-/// the outer caller. The full path restores the outer caller's apparent
-/// branch and runs display-alias bookkeeping. The orchestrator uses this
-/// outcome to apply the right cleanup without losing the historical
-/// invariant.
-enum ApplicationEvalOutcome {
-    /// Cache hit or body-aware shortcut. Outer caller's apparent branch
-    /// is NOT restored.
-    ShortCircuit(TypeId),
-    /// Result computed via the full instantiation pipeline. Apparent
-    /// branch is restored and display-alias bookkeeping runs.
-    Computed(TypeId),
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {

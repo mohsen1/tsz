@@ -12,48 +12,16 @@
 //!   Variants that unwrap through `ReadonlyType`, `NoInfer`, and `TypeParameter` constraints.
 //! - **Object classification**: `ObjectTypeKind` enum and `classify_object_type`.
 
+mod identity_comparable;
+mod predicate_pool;
+
 use crate::construction::TypeDatabase;
 use crate::types::{IntrinsicKind, ObjectShapeId};
 use crate::{TypeData, TypeId};
-use rustc_hash::{FxHashMap, FxHashSet};
-use std::cell::RefCell;
+pub use identity_comparable::is_identity_comparable_type;
+use predicate_pool::with_predicate_buffers;
+use rustc_hash::FxHashMap;
 use tsz_common::Atom;
-
-// Reusable scratch buffers for the four predicate DFS walkers in this
-// module (`contains_type_parameter_named`, `_shallow`, the
-// identity-target variants). Each call previously allocated a fresh
-// `FxHashSet<TypeId>` + `Vec<TypeId>`; pooling them in a thread-local
-// shaves the allocator round-trip and the 2–4 grow reallocations.
-// Reentrant calls (predicate from within another predicate's
-// callback chain) fall through to fresh allocations because `take()`
-// has already emptied the slot. Mirrors PR #4722's
-// `walk_referenced_types` pool.
-type PredicatePool = (FxHashSet<TypeId>, Vec<TypeId>);
-
-thread_local! {
-    static PREDICATE_POOL: RefCell<Option<PredicatePool>> = const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_predicate_buffers<R>(f: impl FnOnce(&mut FxHashSet<TypeId>, &mut Vec<TypeId>) -> R) -> R {
-    let mut pool = PREDICATE_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_else(|| (FxHashSet::default(), Vec::new()));
-    pool.0.clear();
-    pool.1.clear();
-    let r = f(&mut pool.0, &mut pool.1);
-    PREDICATE_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some((existing, _)) => pool.0.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(pool);
-        }
-    });
-    r
-}
 
 // =============================================================================
 // Specialized Type Predicate Visitors
@@ -546,71 +514,6 @@ pub fn is_generic_application(types: &dyn TypeDatabase, type_id: TypeId) -> bool
         return false;
     }
     matches!(types.lookup(type_id), Some(TypeData::Application(_)))
-}
-
-/// Check if a type can be compared by `TypeId` identity alone (O(1) equality).
-///
-/// Identity-comparable types are types where subtyping reduces to identity: two different
-/// identity-comparable types are always disjoint (neither is a subtype of the other).
-///
-/// This is used as an optimization to skip structural recursion in subtype checking.
-/// For example, comparing `[E.A, E.B]` vs `[E.C, E.D]` can return `source == target`
-/// in O(1) instead of walking into each tuple element.
-///
-/// Identity-comparable types include:
-/// - Literal types (string, number, boolean, bigint literals)
-/// - Enum members (`TypeData::Enum`)
-/// - Unique symbols
-/// - null, undefined, void, never
-/// - Tuples where ALL elements are identity-comparable (and no rest elements)
-///
-/// NOTE: This is NOT the same as tsc's `isUnitType` (which excludes void, never, and tuples).
-/// For tsc-compatible unit type semantics, use `type_queries::is_unit_type`.
-///
-/// NOTE: This does NOT handle `ReadonlyType` - readonly tuples must be checked separately
-/// because `["a"]` is a subtype of `readonly ["a"]` even though they have different `TypeIds`.
-pub fn is_identity_comparable_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
-    is_identity_comparable_type_impl(types, type_id, 0)
-}
-
-const MAX_IDENTITY_COMPARABLE_DEPTH: u32 = 10;
-
-fn is_identity_comparable_type_impl(types: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
-    // Prevent stack overflow on pathological types
-    if depth > MAX_IDENTITY_COMPARABLE_DEPTH {
-        return false;
-    }
-
-    // Check well-known singleton types first
-    if type_id == TypeId::NULL
-        || type_id == TypeId::UNDEFINED
-        || type_id == TypeId::VOID
-        || type_id == TypeId::NEVER
-    {
-        return true;
-    }
-    // Fast path: BOOLEAN_TRUE / BOOLEAN_FALSE are reserved intrinsic TypeIds
-    // whose TypeData::lookup returns Literal(Boolean) — identity-comparable.
-    // All other intrinsics lookup to Intrinsic(_) which falls to `_ => false`.
-    if type_id.is_intrinsic() {
-        return type_id == TypeId::BOOLEAN_TRUE || type_id == TypeId::BOOLEAN_FALSE;
-    }
-
-    match types.lookup(type_id) {
-        // Identity-comparable scalar types.
-        Some(TypeData::Literal(_))
-        | Some(TypeData::Enum(_, _))
-        | Some(TypeData::UniqueSymbol(_)) => true,
-
-        // Tuples are NOT identity-comparable because labeled tuples like [a: 1]
-        // and [b: 1] are compatible despite having different TypeIds.
-        // Similarly, [1, 2?] and [a: 1, b?: 2] must go through structural comparison
-        // (check_tuple_subtype) which correctly ignores labels.
-        // This matches the same reasoning as ReadonlyType below.
-
-        // Everything else is not identity-comparable.
-        _ => false,
-    }
 }
 
 // =============================================================================
