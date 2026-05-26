@@ -801,6 +801,36 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    fn import_equals_exported_namespace_receiver_display(
+        &mut self,
+        receiver: NodeIndex,
+    ) -> Option<String> {
+        let receiver = self.ctx.arena.skip_parenthesized_and_assertions(receiver);
+        let receiver_node = self.ctx.arena.get(receiver)?;
+        if receiver_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.resolve_identifier_symbol(receiver)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol.value_declaration.into_option()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
+            return None;
+        }
+
+        let import_decl = self.ctx.arena.get_import_decl(decl_node)?;
+        let module_name = self.get_require_module_specifier(import_decl.module_specifier)?;
+        let declaring_file_idx = self.ctx.resolve_symbol_file_index(sym_id);
+        let exports_table =
+            self.resolve_effective_module_exports_from_file(&module_name, declaring_file_idx)?;
+        let display_module_name =
+            self.resolve_namespace_display_module_name(&exports_table, &module_name);
+        let fallback_module_name = self.imported_namespace_display_module_name(&module_name);
+        (display_module_name != fallback_module_name)
+            .then(|| format!("typeof import(\"{display_module_name}\")"))
+    }
+
     fn property_receiver_display_for_node(&mut self, type_id: TypeId, idx: NodeIndex) -> String {
         let idx = self.ctx.arena.skip_parenthesized_and_assertions(idx);
         if let Some(name) = self.js_constructor_receiver_display_for_node(idx) {
@@ -827,6 +857,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 class_name
             };
+        }
+        if let Some(receiver) = self.access_receiver_for_diagnostic_node(idx)
+            && let Some(display) = self.import_equals_exported_namespace_receiver_display(receiver)
+        {
+            return display;
         }
         // When the receiver has a declared type annotation, prefer the source-text
         // annotation for the property-receiver display in cases where tsz's

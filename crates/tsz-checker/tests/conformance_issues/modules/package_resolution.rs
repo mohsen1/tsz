@@ -988,6 +988,60 @@ types.A;
 }
 
 #[test]
+fn test_import_equals_export_equals_type_only_namespace_display() {
+    let files = [
+        (
+            "/a.ts",
+            r#"
+class A {}
+export type { A };
+"#,
+        ),
+        (
+            "/b.ts",
+            r#"
+import * as a from "./a";
+export = a;
+"#,
+        ),
+        (
+            "/c.ts",
+            r#"
+import a = require("./b");
+new a.A();
+"#,
+        ),
+    ];
+    let diagnostics = compile_named_files_get_diagnostics_with_options(
+        &files,
+        "/c.ts",
+        CheckerOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            es_module_interop: true,
+            no_lib: true,
+            ..Default::default()
+        },
+    );
+    let relevant: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, _)| *code != 2318)
+        .collect();
+    let ts2339: Vec<_> = relevant.iter().filter(|(code, _)| *code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "Expected one TS2339 for value access to type-only export through import-equals/export-equals namespace. Got: {relevant:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .1
+            .contains("Property 'A' does not exist on type 'typeof import(\"a\")'"),
+        "Expected TS2339 receiver to preserve the original namespace import module, got: {ts2339:#?}"
+    );
+}
+
+#[test]
 fn test_named_import_from_export_equals_ambient_module_preserves_ts2454() {
     let ambient_source = r#"
 declare namespace Express {
