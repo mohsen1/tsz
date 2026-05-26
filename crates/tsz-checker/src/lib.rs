@@ -439,6 +439,9 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[path = "tests/class_feature_target_gates_tests.rs"]
 mod class_feature_target_gates_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_jsdoc_heritage_relation_routing_arch_tests.rs"]
+mod class_implements_jsdoc_heritage_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
