@@ -83,6 +83,7 @@ impl<'a> CheckerState<'a> {
 
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
+            && !self.ctx.emit_declarations()
             && !self.lib_name_has_local_augmentation(name)
             && let Some(ty) = TypeResolver::get_array_base_type(&self.ctx.types)
         {
@@ -116,6 +117,7 @@ impl<'a> CheckerState<'a> {
 
         let mut lib_types: Vec<TypeId> = Vec::new();
         let mut first_params: Option<Vec<TypeParamInfo>> = None;
+        let mut symbol_has_interface = false;
         // Track canonical TypeIds for the first definition's type parameters.
         // Subsequent definitions will have their type params substituted with these.
         let mut canonical_param_type_ids: Vec<TypeId> = Vec::new();
@@ -124,6 +126,7 @@ impl<'a> CheckerState<'a> {
             if let Some(sym_id) = lib_ctx.binder.file_locals.get(name)
                 && let Some(symbol) = lib_ctx.binder.get_symbol(sym_id)
             {
+                symbol_has_interface |= symbol.has_any_flags(symbol_flags::INTERFACE);
                 // Multi-arena setup: Get the fallback arena
                 let fallback_arena: &NodeArena = resolve_lib_context_fallback_arena(
                     &lib_ctx.binder,
@@ -274,7 +277,11 @@ impl<'a> CheckerState<'a> {
             n if n > 1 => {
                 let mut merged = lib_types[0];
                 for &ty in &lib_types[1..] {
-                    merged = factory.intersection2(merged, ty);
+                    merged = if symbol_has_interface {
+                        self.merge_interface_types(merged, ty)
+                    } else {
+                        factory.intersection2(merged, ty)
+                    };
                 }
                 Some(merged)
             }
