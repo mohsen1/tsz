@@ -136,6 +136,9 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Field initializer text rendered by the main emitter when raw source text
     /// would miss nested transforms.
     field_initializer_texts: FxHashMap<NodeIndex, String>,
+    /// Member decorator expression text rendered by the main emitter for
+    /// generated static/IIFE application sites.
+    decorator_expression_texts: FxHashMap<NodeIndex, String>,
     /// Static block text rendered by the main emitter when raw source text
     /// would miss scoped static `super` rewrites.
     static_block_texts: FxHashMap<NodeIndex, String>,
@@ -165,6 +168,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             anonymous_class_name: None,
             function_body_texts: FxHashMap::default(),
             field_initializer_texts: FxHashMap::default(),
+            decorator_expression_texts: FxHashMap::default(),
             static_block_texts: FxHashMap::default(),
             static_member_texts: FxHashMap::default(),
             extends_text: None,
@@ -218,6 +222,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_field_initializer_text(&mut self, member_idx: NodeIndex, text: String) {
         self.field_initializer_texts.insert(member_idx, text);
+    }
+
+    pub fn set_decorator_expression_text(&mut self, expr_idx: NodeIndex, text: String) {
+        self.decorator_expression_texts.insert(expr_idx, text);
     }
 
     pub fn set_static_block_text(&mut self, member_idx: NodeIndex, text: String) {
@@ -355,7 +363,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 computed_key_vars.push((i, var));
             }
         }
-
         // Compute member variable names
         let member_vars = self.compute_all_member_vars(&decorated_members);
         let decorated_auto_accessor_infos =
@@ -718,7 +725,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let mut assign_parts: Vec<String> = Vec::new();
                 for (i, member) in decorated_members.iter().enumerate() {
                     let var_info = &member_vars[i];
-                    let dec_exprs = member.decorator_exprs.join(", ");
+                    let dec_exprs = member.captured_decorator_exprs.join(", ");
                     assign_parts.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
                 }
                 for (mi, var_name) in &computed_key_vars {
@@ -1008,7 +1015,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if emit_assignments_here {
             for (i, member) in decorated_members.iter().enumerate() {
                 let var_info = &member_vars[i];
-                let dec_exprs = member.decorator_exprs.join(", ");
+                let dec_exprs = member.captured_decorator_exprs.join(", ");
                 out.push_str(&format!(
                     "{indent}{} = [{}];\n",
                     var_info.decorators_var, dec_exprs
@@ -3192,6 +3199,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
             // Collect decorator expressions
             let mut decorator_exprs = Vec::new();
+            let mut captured_decorator_exprs = Vec::new();
             if let Some(ref mods) = modifiers {
                 for &mod_idx in &mods.nodes {
                     let Some(mod_node) = self.arena.get(mod_idx) else {
@@ -3200,8 +3208,21 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     if mod_node.kind == syntax_kind_ext::DECORATOR
                         && let Some(dec) = self.arena.get_decorator(mod_node)
                     {
-                        decorator_exprs
-                            .push(self.render_decorator_expression(dec.expression, receiver_state));
+                        let decorator_expr =
+                            self.render_decorator_expression(dec.expression, receiver_state);
+                        let captured_decorator_expr = if self
+                            .decorator_expression_texts
+                            .contains_key(&dec.expression)
+                        {
+                            self.render_captured_decorator_expression(
+                                dec.expression,
+                                receiver_state,
+                            )
+                        } else {
+                            decorator_expr.clone()
+                        };
+                        decorator_exprs.push(decorator_expr);
+                        captured_decorator_exprs.push(captured_decorator_expr);
                     }
                 }
             }
@@ -3219,6 +3240,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 is_static,
                 is_private,
                 decorator_exprs,
+                captured_decorator_exprs,
             });
         }
 
@@ -3274,6 +3296,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         };
         self.wrap_decorator_expression_parens(rendered, paren_depth)
+    }
+
+    fn render_captured_decorator_expression(
+        &self,
+        expr_idx: NodeIndex,
+        receiver_state: &mut DecoratorReceiverState<'_>,
+    ) -> String {
+        if let Some(text) = self.decorator_expression_texts.get(&expr_idx) {
+            if text.contains(receiver_state.outer_this_var) {
+                *receiver_state.needs_outer_this_capture = true;
+            }
+            return normalize_decorator_expr_text(text);
+        }
+        self.render_decorator_expression(expr_idx, receiver_state)
     }
 
     fn strip_parenthesized_decorator_expr(&self, mut idx: NodeIndex) -> (usize, NodeIndex) {
@@ -4192,6 +4228,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     is_static,
                     is_private,
                     decorator_exprs: Vec::new(),
+                    captured_decorator_exprs: Vec::new(),
                 },
                 storage_name,
                 getter_temp_var,

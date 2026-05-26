@@ -153,6 +153,35 @@ class D extends Base {
 }
 
 #[test]
+fn tc39_class_decorated_member_decorator_captures_outer_this() {
+    let source = "\
+declare let dec: any;
+
+@dec(this)
+class C {
+    @dec(this)
+    value = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("let _outerThis = this;")
+            && output.contains("let _classDecorators = [dec(this)];")
+            && output.contains("_value_decorators = [dec(_outerThis)];"),
+        "TC39 member decorator expressions emitted from static blocks should preserve lexical outer this.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_parenthesized_decorated_class_expression_breaks_after_open_paren() {
     let source = "\
 declare const dec: any;

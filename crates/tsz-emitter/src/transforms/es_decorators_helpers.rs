@@ -242,6 +242,8 @@ pub(super) struct DecoratedMember {
     pub(super) is_private: bool,
     /// Decorator expression texts (e.g. ["dec(1)"])
     pub(super) decorator_exprs: Vec<String>,
+    /// Decorator expression texts for generated static/IIFE application sites.
+    pub(super) captured_decorator_exprs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
