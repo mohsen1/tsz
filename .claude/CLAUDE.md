@@ -44,21 +44,28 @@
   supersedes it and links back to the preserved branch/commits and findings.
   Before closing for duplicate/superseded reasons, leave a signed comment with
   the evidence, the successor link, and what useful work was carried forward.
-- Do not enable or re-enable auto-merge unless you own the PR and the current
-  head SHA is genuinely ready to land: the PR is not draft, WIP, or blocked;
-  every required check for that exact head has completed successfully; no
-  required check is pending, queued, unexpectedly skipped, missing, or failing;
-  and you have intentionally reviewed the latest pushed changes. Old green
-  checks on a previous head are not evidence.
-- Do not use auto-merge as a CI watcher. If checks are pending, missing, or
-  failing, leave auto-merge off, keep or restore the PR's draft/WIP/blocked
-  state as appropriate, and post a signed status comment naming the blocker,
-  the affected check or rule, and the next owner/action.
-- Never re-promote a PR from draft/WIP or re-arm auto-merge after another agent
-  disabled it, converted it to draft, or marked it blocked unless you have fixed
-  the blocker on a new head and re-verified a clean, complete check picture.
-  Repeated auto-merge re-arming is stop-the-line coordination debt; link the
-  blocking issue or PR comment instead of fighting the cleanup agent.
+- TSZ's merge gate is the repo-local merge queue. Ready PRs are enqueued with
+  the `merge-queue` label; the queue then tests a synthetic latest-`main`
+  merge, posts the required `Queue Tested` status to the PR head, and lands one
+  PR at a time. Do not bypass it with direct/admin merge unless the user
+  explicitly asks for an emergency bypass.
+- Do not add or re-add `merge-queue` unless you own the PR and the current head
+  SHA is genuinely ready to land: the PR is not draft, WIP, or blocked; PR-head
+  checks such as `CI Summary` and `GitGuardian Security Checks` have completed
+  successfully for that exact head; and you have intentionally reviewed the
+  latest pushed changes. `Queue Tested` is owned by the merge queue and may be
+  missing or pending before enqueue. Old green checks on a previous head are
+  not evidence.
+- Do not use auto-merge as a queue signal or CI watcher. If PR-head checks are
+  pending, missing, or failing, leave `merge-queue` off, keep or restore the
+  PR's draft/WIP/blocked state as appropriate, and post a signed status comment
+  naming the blocker, the affected check or rule, and the next owner/action.
+- Never re-promote a PR from draft/WIP or re-add `merge-queue` after another
+  agent removed it, converted the PR to draft, or marked it blocked unless you
+  have fixed the blocker on a new head and re-verified a clean, complete
+  PR-head check picture. Repeated queue re-arming is stop-the-line coordination
+  debt; link the blocking issue or PR comment instead of fighting the cleanup
+  agent.
 - Draft PRs intentionally run only light CI: lint, dist-fast build, and unit
   tests. Marking a PR ready for review triggers the heavy suites: conformance,
   emit, fourslash, and WASM. See §19.5 for the rules around local vs. CI work.
@@ -223,6 +230,9 @@ For each change ask:
 - Open a draft PR early. Draft CI runs lint, dist-fast build, and unit tests.
   When the PR is marked ready for review, CI runs conformance, emit, fourslash,
   WASM, and snapshot gates.
+- After exact-head PR-head gates pass on a ready PR, the merge manager adds the
+  `merge-queue` label. The required `Queue Tested` status is produced by the
+  queue's synthetic latest-`main` run and is not a pre-enqueue prerequisite.
 - **Never sit waiting for CI.** Push the draft PR, note the run URL if useful,
   then switch to non-overlapping work. Come back later to inspect status.
 - **Use `cargo nextest run` instead of `cargo test`** for unit/integration runs.
@@ -304,7 +314,7 @@ matches their description:
 - `tsz-project-bench`: benchmark/project-corpus rows, fixture metadata, PGO, and
   benchmark dashboard work.
 - `tsz-pr-coordination`: PR body, AgentName, WIP/draft/ready, labels, review
-  response, and auto-merge coordination.
+  response, and merge-queue coordination.
 - `tsz-tracing`: tracing-driven debugging of checker/solver/binder behavior.
 - `tsz-worktree-intake`: safe task start, stale branch recovery, disk/cache
   preflight, dirty workspace triage, and worktree reuse.
@@ -328,8 +338,8 @@ them as TSZ repo skills.
   apply labels such as `agent:claude-sonnet-*`, `agent:dreamy-*`, other
   generated runner aliases, or typo labels such as `agnet:*`. If you inherit a
   PR with a noncanonical owner label, replace it with the correct canonical
-  lane before marking the PR ready or enabling auto-merge, and leave a signed
-  comment if the ownership handoff is not obvious from the PR body.
+  lane before marking the PR ready or adding `merge-queue`, and leave a
+  signed comment if the ownership handoff is not obvious from the PR body.
 - **Sign your work.** Every PR body and GitHub issue you create or comment on
   must include your AgentName so humans (and other agents) can tell who did it.
 - **PR bodies are mandatory coordination state, not paperwork.** Never open or
