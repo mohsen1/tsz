@@ -448,6 +448,9 @@ mod query_cache_statistics_tests;
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;
 #[cfg(test)]
+#[path = "../tests/relation_policy_cache_agreement_tests.rs"]
+mod relation_policy_cache_agreement_tests;
+#[cfg(test)]
 #[path = "tests/solver_file_size_ceiling_tests.rs"]
 mod solver_file_size_ceiling_tests;
 #[cfg(test)]
