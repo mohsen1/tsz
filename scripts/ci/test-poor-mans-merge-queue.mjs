@@ -291,6 +291,7 @@ const cleanupActiveRunFormat = formatResult({
   skippedOpen: 0,
   skippedUnrecognized: 0,
   supersededOpen: 0,
+  now: "2026-05-26T05:05:00Z",
   skips: [
     {
       branch: "automation/merge-queue/pr-9515",
@@ -317,7 +318,7 @@ assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue
 assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
 assert.match(
   cleanupActiveRunFormat,
-  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| agent:M4-A \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \|/,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| agent:M4-A \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \| 1h 29m \|/,
 );
 assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
 assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);

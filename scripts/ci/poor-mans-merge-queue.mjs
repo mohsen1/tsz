@@ -256,6 +256,25 @@ function shortDate(value) {
   return value ? String(value).slice(0, 10) : "unknown";
 }
 
+function elapsedAge(startedAt, now) {
+  const startedMs = Date.parse(startedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs)) return "unknown";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -945,11 +964,18 @@ export function formatResult(result, options) {
       }
     }
     if (options.verbose && result.activeRuns?.length) {
-      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Owner | Run | Status | Started |", "|--------|----|-------|-----|--------|---------|");
+      const now = result.now || new Date().toISOString();
+      lines.push(
+        "",
+        "### Active Queue Runs",
+        "",
+        "| Branch | PR | Owner | Run | Status | Started | Age |",
+        "|--------|----|-------|-----|--------|---------|-----|",
+      );
       for (const run of result.activeRuns.slice(0, 50)) {
         const runId = run.runId || "(unknown)";
         const runLink = run.url ? `[${runId}](${run.url})` : runId;
-        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} | ${elapsedAge(run.startedAt, now)} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
