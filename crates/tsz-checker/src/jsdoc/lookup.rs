@@ -1050,7 +1050,7 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
-            if self.is_assignable_to(type_arg, constraint) {
+            if self.diagnostic_relation_boolean_guard(type_arg, constraint) {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             }
