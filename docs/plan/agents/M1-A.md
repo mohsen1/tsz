@@ -194,6 +194,12 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue and queue-branch cleanup dry runs now include
     `Skip Owner Reason Counts`, so each lane can see whether its blockers are
     drafts, auto-merge-off PRs, active queue runs, or open queue branches.
+  - `#10227` merged on 2026-05-26 as
+    `12a2e2044a ci: summarize active queue run status by owner (#10227)`.
+    Verbose queue-branch cleanup dry runs now include
+    `Active Queue Run Owner Status Counts`, so lanes can see queued vs
+    in-progress active synthetic-run blockers and oldest ages before scanning
+    details.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -246,13 +252,16 @@ node scripts/ci/pr-ownership-report.mjs
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
     branches and group the six preserved branches as open PR branch skips or
-    active queue runs with owner labels, status, start time, and age; the exact
-    active-run subset changes as synthetic runs complete, so re-run the
-    cleanup dry-run for current owner counts, oldest-update dates, run ids, and
-    ages. `Skip Owner Reason Counts` separates open-branch blockers from
-    active-run blockers by lane, and detailed cleanup skip rows also include
-    per-row updated dates when timestamp data is available. The stale merged-PR
-    queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were deleted.
+    active queue runs with owner labels, status, start time, and age; the
+    `Active Queue Run Owner Status Counts` table summarizes queued vs
+    in-progress blockers by lane with oldest started/age before the detailed
+    run rows. The exact active-run subset changes as synthetic runs complete,
+    so re-run the cleanup dry-run for current owner counts, oldest-update
+    dates, run ids, and ages. `Skip Owner Reason Counts` separates open-branch
+    blockers from active-run blockers by lane, and detailed cleanup skip rows
+    also include per-row updated dates when timestamp data is available. The
+    stale merged-PR queue branches for `#9848`, `#9889`, `#10160`, and
+    `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
