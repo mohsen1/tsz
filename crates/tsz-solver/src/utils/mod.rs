@@ -264,11 +264,13 @@ pub fn widen_if_recursive_intersection_member(
     }
 
     if let Some(union_members) = crate::type_queries::get_union_members(db, nested_target) {
-        let non_undef: Vec<TypeId> = union_members
+        let mut non_undef = union_members
             .into_iter()
-            .filter(|&m| m != TypeId::UNDEFINED)
-            .collect();
-        if non_undef.len() == 1 && is_lazy_outer_member(non_undef[0]) {
+            .filter(|&m| m != TypeId::UNDEFINED);
+        let Some(member) = non_undef.next() else {
+            return nested_target;
+        };
+        if non_undef.next().is_none() && is_lazy_outer_member(member) {
             return db.union(vec![outer_intersection, TypeId::UNDEFINED]);
         }
     }
