@@ -943,19 +943,15 @@ impl<'a> QueryCache<'a> {
                 // contribute no properties. Properties that don't appear in
                 // every non-nullish member become optional.
                 let has_nullish = members.iter().any(|m| m.is_nullable());
-                let non_nullish: Vec<TypeId> = members
-                    .iter()
-                    .copied()
-                    .filter(|m| !m.is_nullable())
-                    .collect();
+                let non_nullish_count = members.iter().filter(|m| !m.is_nullable()).count();
 
-                if non_nullish.is_empty() {
+                if non_nullish_count == 0 {
                     return Vec::new();
                 }
 
                 // Collect properties per member
-                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish.len());
-                for &member in &non_nullish {
+                let mut all_props: Vec<Vec<PropertyInfo>> = Vec::with_capacity(non_nullish_count);
+                for &member in members.iter().filter(|m| !m.is_nullable()) {
                     all_props.push(self.collect_object_spread_properties_inner(member, visited));
                 }
 
@@ -982,7 +978,7 @@ impl<'a> QueryCache<'a> {
                 merged
                     .into_iter()
                     .map(|(name, (type_id, was_optional, count))| {
-                        let optional = was_optional || has_nullish || count < non_nullish.len();
+                        let optional = was_optional || has_nullish || count < non_nullish_count;
                         PropertyInfo {
                             name,
                             type_id,
