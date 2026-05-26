@@ -493,6 +493,9 @@ mod enum_indexed_access_tests;
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
 #[cfg(test)]
+#[path = "tests/enum_relation_routing_arch_tests.rs"]
+mod enum_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/enum_residual_narrowing_tests.rs"]
 mod enum_residual_narrowing_tests;
 #[cfg(test)]
