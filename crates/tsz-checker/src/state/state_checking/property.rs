@@ -183,11 +183,6 @@ impl<'a> CheckerState<'a> {
                 report_idx,
                 self.ctx.types.resolve_atom(prop_atom).as_ref(),
             );
-            if self.report_is_nested_object_literal_property(report_idx)
-                && self.target_has_recursive_operation_application_context(target)
-            {
-                return;
-            }
             self.error_excess_property_at(&prop_name, target, report_idx);
             self.check_excess_property_initializer_implicit_any(report_idx, target);
         }
@@ -215,41 +210,9 @@ impl<'a> CheckerState<'a> {
                 report_idx,
                 self.ctx.types.resolve_atom(prop_atom).as_ref(),
             );
-            if self.report_is_nested_object_literal_property(report_idx)
-                && self.target_has_recursive_operation_application_context(target)
-            {
-                return;
-            }
             self.error_excess_property_at(&prop_name, target, report_idx);
             self.check_excess_property_initializer_implicit_any(report_idx, target);
         }
-    }
-
-    fn report_is_nested_object_literal_property(&self, report_idx: NodeIndex) -> bool {
-        let Some(object_idx) = self.ctx.arena.parent_of(report_idx) else {
-            return false;
-        };
-        let Some(object_node) = self.ctx.arena.get(object_idx) else {
-            return false;
-        };
-        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return false;
-        }
-
-        let mut current = object_idx;
-        while let Some(parent_idx) = self.ctx.arena.parent_of(current) {
-            if parent_idx.is_none() {
-                return false;
-            }
-            let Some(parent_node) = self.ctx.arena.get(parent_idx) else {
-                return false;
-            };
-            if parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-                return true;
-            }
-            current = parent_idx;
-        }
-        false
     }
 
     fn union_member_has_type_parameter_for_excess_display(&self, member: TypeId) -> bool {
@@ -258,6 +221,36 @@ impl<'a> CheckerState<'a> {
                 self.ctx.types,
                 member,
             )
+    }
+
+    fn type_is_recursive_operation_application(&self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::type_predicates::is_recursive_operation_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+        ) {
+            return true;
+        }
+
+        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
+            && crate::query_boundaries::type_predicates::is_recursive_operation_application(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                alias,
+            )
+        {
+            return true;
+        }
+
+        false
+    }
+
+    fn type_contains_recursive_operation_application(&self, type_id: TypeId) -> bool {
+        crate::query_boundaries::type_predicates::contains_recursive_operation_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+        )
     }
 
     pub(crate) fn check_object_literal_excess_properties(
@@ -322,6 +315,8 @@ impl<'a> CheckerState<'a> {
         let effective_target = self.normalized_target_for_excess_properties(target);
         let resolved_target = self.prune_impossible_object_union_members_with_env(effective_target);
         let union_check_target = self.excess_property_union_target(target, resolved_target);
+        self.ensure_relation_input_ready(effective_target);
+        self.ensure_relation_input_ready(resolved_target);
 
         if [target, effective_target, resolved_target, evaluated_target]
             .into_iter()
@@ -761,7 +756,26 @@ impl<'a> CheckerState<'a> {
         if self.contextual_type_is_unresolved_for_argument_refresh(target)
             || self.contextual_type_is_unresolved_for_argument_refresh(evaluated_target)
         {
-            return;
+            let materialized_recursive_target =
+                [effective_target, resolved_target, evaluated_target]
+                    .into_iter()
+                    .any(|candidate| query::object_shape(self.ctx.types, candidate).is_some())
+                    && [
+                        target,
+                        effective_target,
+                        resolved_target,
+                        evaluated_target,
+                        union_check_target,
+                    ]
+                    .into_iter()
+                    .any(|candidate| {
+                        self.type_is_recursive_operation_application(candidate)
+                            || self.type_contains_recursive_operation_application(candidate)
+                            || self.target_is_or_displays_type_application(candidate)
+                    });
+            if !materialized_recursive_target {
+                return;
+            }
         }
 
         // Handle intersection targets
@@ -1241,44 +1255,6 @@ impl<'a> CheckerState<'a> {
         } else {
             resolved_target
         }
-    }
-
-    /// Detect targets produced by recursive generic aliases whose body is still
-    /// a concrete-evaluation operation (`Conditional`, `Mapped`, `KeyOf`,
-    /// `IndexAccess`, etc.). tsc suppresses nested excess-property reports for
-    /// these materialized shapes; the canonical witness is
-    /// `Schema<T> = ... { [P in keyof T]: Schema<T[P]> } ...`.
-    fn target_has_recursive_operation_application_context(&self, type_id: TypeId) -> bool {
-        self.type_is_recursive_operation_application(type_id)
-            || crate::query_boundaries::common::object_shape_for_type(self.ctx.types, type_id)
-                .is_some_and(|shape| {
-                    shape
-                        .properties
-                        .iter()
-                        .any(|prop| self.type_is_recursive_operation_application(prop.type_id))
-                })
-    }
-
-    fn type_is_recursive_operation_application(&self, type_id: TypeId) -> bool {
-        if crate::query_boundaries::type_predicates::contains_recursive_operation_application(
-            self.ctx.types,
-            &self.ctx.definition_store,
-            type_id,
-        ) {
-            return true;
-        }
-
-        if let Some(alias) = self.ctx.types.get_display_alias(type_id)
-            && crate::query_boundaries::type_predicates::contains_recursive_operation_application(
-                self.ctx.types,
-                &self.ctx.definition_store,
-                alias,
-            )
-        {
-            return true;
-        }
-
-        false
     }
 
     /// `true` when `lazy_candidate` is a `Lazy(DefId)` whose definition is one of
