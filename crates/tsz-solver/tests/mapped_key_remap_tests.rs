@@ -4,7 +4,7 @@
 
 use crate::types::*;
 use crate::{
-    evaluation::evaluate::evaluate_type,
+    evaluation::evaluate::{evaluate_index_access, evaluate_type},
     intern::TypeInterner,
     relations::subtype::SubtypeChecker,
     type_queries::{
@@ -80,6 +80,130 @@ fn test_mapped_type_as_never_skips_property() {
         matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
         "Expected mapped type (deferred due to unresolved K), got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_indexes_matching_literal() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let result = evaluate_index_access(&interner, mapped, interner.literal_string("axyz"));
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "mapped template-pattern keys should resolve matching pattern indexes"
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_preserves_per_source_value_type() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+    ]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("axyz")),
+        TypeId::NUMBER
+    );
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("bxyz")),
+        TypeId::STRING
+    );
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("cxyz")),
+        TypeId::UNDEFINED
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_matches_renamed_iteration_param_with_suffix() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::BOOLEAN,
+    )]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("pre_")),
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("_post")),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("pre_a_mid_post")),
+        TypeId::BOOLEAN
     );
 }
 
