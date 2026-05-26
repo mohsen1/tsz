@@ -13,6 +13,7 @@ import {
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
+  skipReasonCounts,
   supersededOpenQueueBranchReason,
 } from "./poor-mans-merge-queue.mjs";
 
@@ -186,6 +187,17 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.deepEqual(
+  skipReasonCounts([
+    { number: 1, reason: "draft PR" },
+    { number: 2, reason: "auto-merge is not armed" },
+    { number: 3, reason: "draft PR" },
+  ]),
+  [
+    { reason: "draft PR", count: 2 },
+    { reason: "auto-merge is not armed", count: 1 },
+  ],
+);
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
@@ -228,6 +240,14 @@ assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
 const cleanupActiveRunFormat = formatResult({
   cleanupQueueBranches: true,
+  activeRuns: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      number: 9515,
+      runId: 26423420117,
+      url: "https://github.example/runs/26423420117",
+    },
+  ],
   deletions: [],
   dryRun: true,
   skippedActiveRuns: 1,
@@ -240,7 +260,24 @@ const cleanupActiveRunFormat = formatResult({
   wouldDelete: 0,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
 assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue runs/);
+assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
+assert.match(
+  cleanupActiveRunFormat,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \|/,
+);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| active queue run 26423420117 \|/);
+
+const queueSkipFormat = formatResult({
+  selected: null,
+  skips: Array.from({ length: 27 }, (_, index) => ({
+    number: index + 1,
+    reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
+  })),
+}, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
+assert.match(queueSkipFormat, /### Skip Reason Counts/);
+assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
+assert.match(queueSkipFormat, /\| \.\.\. \| 2 more skipped PR\(s\) omitted \|/);
 
 assert.match(
   formatResult({
