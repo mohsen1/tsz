@@ -22,6 +22,9 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
+
+#[cfg(test)]
+mod tests;
 pub(crate) use key_types::{MappedKey, MappedKeys};
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
@@ -432,15 +435,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     // Tuple type: map each element. Source is mutable, so the
                     // result is readonly only if the modifier adds `+readonly`.
                     Some(TypeData::Tuple(tuple_id)) => {
-                        return self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, false);
+                        return self
+                            .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, source, false);
                     }
 
                     // `readonly [a, b]`: map each element and preserve readonly
                     // unless the modifier strips it (`-readonly`).
                     Some(TypeData::ReadonlyType(inner)) => {
                         if let Some(TypeData::Tuple(tuple_id)) = self.interner().lookup(inner) {
-                            return self
-                                .evaluate_mapped_tuple_with_readonly(mapped, tuple_id, true);
+                            return self.evaluate_mapped_tuple_with_readonly(
+                                mapped, tuple_id, source, true,
+                            );
                         }
                     }
 
@@ -1183,7 +1188,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 tracing::trace!(
                     "evaluate_mapped: tuple-constrained type parameter → producing tuple"
                 );
-                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, false))
+                // For the generic-constrained case, the template references
+                // the *type parameter* (e.g. `T[K]`), not `resolved`. The
+                // per-element source rewrite is therefore a no-op here, and
+                // the loop falls back to the K-only substitution path —
+                // preserving deferred `T[K]` element types. Passing
+                // `resolved` keeps the helper signature uniform.
+                Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, resolved, false))
             }
             // `readonly [a, b]` or `ReadonlyArray<T>` — preserve readonly wrapper
             Some(TypeData::ReadonlyType(inner)) => match self.interner().lookup(inner) {
@@ -1191,7 +1202,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     tracing::trace!(
                         "evaluate_mapped: readonly-tuple-constrained type parameter → producing readonly tuple"
                     );
-                    Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, true))
+                    Some(self.evaluate_mapped_tuple_with_readonly(mapped, tuple_id, resolved, true))
                 }
                 Some(TypeData::Array(element_type)) => {
                     tracing::trace!(
@@ -1947,7 +1958,3 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "mapped_tests.rs"]
-mod tests;

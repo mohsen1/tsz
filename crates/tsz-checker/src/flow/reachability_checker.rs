@@ -630,17 +630,12 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        let mut has_default = false;
-        let mut clause_indices = Vec::new();
-        for &clause_idx in &case_block.statements.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                continue;
-            };
-            if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
-                has_default = true;
-            }
-            clause_indices.push(clause_idx);
-        }
+        let has_default = case_block.statements.nodes.iter().any(|&clause_idx| {
+            self.ctx
+                .arena
+                .get(clause_idx)
+                .is_some_and(|clause_node| clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE)
+        });
 
         // Without a default clause, unmatched discriminants can skip the switch
         // body unless case coverage is exhaustive.
@@ -653,7 +648,7 @@ impl<'a> CheckerState<'a> {
         let mut falls_from_next = true;
         let mut any_entry_falls_through = false;
 
-        for &clause_idx in clause_indices.iter().rev() {
+        for &clause_idx in case_block.statements.nodes.iter().rev() {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
             };

@@ -4,7 +4,9 @@
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::TypeResolver;
-use crate::types::{MappedModifier, MappedType, TupleListId, TypeData, TypeId};
+use crate::types::{MappedModifier, MappedType, TupleElement, TupleListId, TypeData, TypeId};
+use rustc_hash::FxHashMap;
+use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 
@@ -88,9 +90,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &mut self,
         mapped: &MappedType,
         tuple_id: TupleListId,
+        source: TypeId,
         source_readonly: bool,
     ) -> TypeId {
-        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id);
+        let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, source);
         if mapped.resolve_readonly(source_readonly) {
             self.interner().readonly_type(mapped_tuple)
         } else {
@@ -98,103 +101,199 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Instantiate a mapped type's template with the iteration variable bound
-    /// to the tuple position `index`, then evaluate it. For a homomorphic
-    /// mapping this makes `X[I]` resolve to that position's element type.
-    fn map_template_at_index(&mut self, mapped: &MappedType, index: usize) -> TypeId {
-        let index_type = self.interner().literal_number(index as f64);
-        let subst = TypeSubstitution::single(mapped.type_param.name, index_type);
-        self.evaluate(instantiate_type(self.interner(), mapped.template, &subst))
-    }
-
     /// Evaluate a homomorphic mapped type over a Tuple type.
     ///
-    /// For example: `type Partial<T> = { [P in keyof T]?: T[P] }`
+    /// For example: `type Partial<T> = { [P in keyof T]: T[P] }`
     ///   `Partial<[number, string]>` should produce `[number?, string?]`
     ///
-    /// We instantiate the template with `K = 0, 1, 2...` for each tuple element.
-    /// This preserves tuple structure including optional and rest elements.
-    /// The result is always a mutable tuple; the `readonly` modifier is applied
-    /// by [`Self::evaluate_mapped_tuple_with_readonly`] at the tuple level.
-    fn evaluate_mapped_tuple(&mut self, mapped: &MappedType, tuple_id: TupleListId) -> TypeId {
-        use crate::types::TupleElement;
-
+    /// Mirrors tsc's `instantiateMappedTupleType`. For every tuple element we
+    /// rebind the mapped's outer source `T` to a per-element "singleton" that
+    /// captures the element's kind (Required/Optional/Rest/Variadic) and then
+    /// substitute the iteration variable `K`.
+    ///
+    /// This preserves tuple structure - including rest, variadic, and labeled
+    /// elements - even when the source tuple contains a rest element whose
+    /// `T[number]` would otherwise widen to the union of all element types.
+    ///
+    /// `source` is the outer `T` as it appears in `mapped.template` after the
+    /// mapped type was instantiated with the tuple. We replace occurrences of
+    /// `source` with the per-element singleton via `substitute_exact_type` so
+    /// `T[K]` evaluates per element.
+    fn evaluate_mapped_tuple(
+        &mut self,
+        mapped: &MappedType,
+        tuple_id: TupleListId,
+        source: TypeId,
+    ) -> TypeId {
         let tuple_elements = self.interner().tuple_list(tuple_id);
-        let mut mapped_elements = Vec::new();
-        let mut seen_rest = false;
+        let mut mapped_elements = Vec::with_capacity(tuple_elements.len());
 
-        for (i, elem) in tuple_elements.iter().enumerate() {
-            if elem.rest {
-                let is_first_rest = !seen_rest;
-                seen_rest = true;
-                let rest_type = elem.type_id;
-                let mapped_rest_type = match self.interner().lookup(rest_type) {
-                    Some(TypeData::Array(_)) if is_first_rest => {
-                        // `...E[]` as the first rest: every position before it is
-                        // fixed, so `X[i]` (this position's index) unambiguously
-                        // resolves to the rest element's own type. Binding `I` to
-                        // `X[number]` instead — as `evaluate_mapped_array` does —
-                        // would wrongly yield the union of every tuple element
-                        // (e.g. `Identity<[string, ...number[]]>` rest member
-                        // `string | number` rather than `number`). Re-wrap as an
-                        // array so the slot stays a rest element.
-                        //
-                        // A later rest cannot use this: `tuple_index_literal`
-                        // short-circuits on the first rest it meets, so positions
-                        // after an earlier rest/variadic spread are unreliable.
-                        let mapped_element = self.map_template_at_index(mapped, i);
-                        self.interner().array(mapped_element)
-                    }
-                    Some(TypeData::Array(inner_elem)) => {
-                        self.evaluate_mapped_array(mapped, inner_elem)
-                    }
-                    Some(TypeData::Tuple(inner_tuple_id)) => {
-                        // Nested tuple spread (`...[A, B]`) - recurse.
-                        self.evaluate_mapped_tuple(mapped, inner_tuple_id)
-                    }
-                    _ => {
-                        // Generic/opaque rest (e.g. `...U`): index substitution.
-                        self.map_template_at_index(mapped, i)
-                    }
-                };
-
-                let final_rest_type =
-                    if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
-                        self.interner().union2(mapped_rest_type, TypeId::UNDEFINED)
-                    } else {
-                        mapped_rest_type
-                    };
-
-                mapped_elements.push(TupleElement {
-                    type_id: final_rest_type,
-                    name: elem.name,
-                    optional: elem.optional,
-                    rest: true,
-                });
-                continue;
-            }
-
-            // Non-rest elements: bind the iteration variable to this position's
-            // index so the template's `X[I]` resolves to this element's type.
-            let mapped_type = self.map_template_at_index(mapped, i);
-
-            // Per-element readonly is not representable on a `TupleElement`; the
-            // mapped type's readonly modifier is applied at the tuple level by
-            // `evaluate_mapped_tuple_with_readonly`.
-            let optional = match mapped.optional_modifier {
-                Some(MappedModifier::Add) => true,
-                Some(MappedModifier::Remove) => false,
-                None => elem.optional, // Preserve original optional
-            };
-
-            mapped_elements.push(TupleElement {
-                type_id: mapped_type,
-                name: elem.name,
-                optional,
-                rest: elem.rest,
-            });
+        for (index, elem) in tuple_elements.iter().copied().enumerate() {
+            mapped_elements.push(self.evaluate_mapped_tuple_element(mapped, source, index, elem));
         }
 
         self.interner().tuple(mapped_elements)
+    }
+
+    /// Map a single tuple element by rebinding the mapped's outer source to a
+    /// per-element singleton, then substituting the iteration variable.
+    ///
+    /// Mirrors the per-element switch in tsc's `instantiateMappedTupleType`:
+    /// - Required/Optional fixed element `T_i`: rebind T -> `[T_i]`, K -> 0.
+    /// - Rest of `Array<E>`: rebind T -> `Array<E>`, K -> number; wrap the
+    ///   result in `Array<>` to keep the rest's "array of element type" shape.
+    /// - Variadic spread of a tuple: rebind T -> the inner tuple and recurse
+    ///   into the inner tuple's elements, returning a tuple in the rest's
+    ///   `type_id` for downstream `expand_tuple_rest` to flatten.
+    /// - Other rest types (lazy refs, type parameters): rebind T -> the rest
+    ///   type as-is, K -> number; treat as an opaque variadic.
+    fn evaluate_mapped_tuple_element(
+        &mut self,
+        mapped: &MappedType,
+        source: TypeId,
+        index: usize,
+        elem: TupleElement,
+    ) -> TupleElement {
+        let rest_inner_kind = elem.rest.then(|| self.interner().lookup(elem.type_id));
+
+        // Variadic spread of a tuple: rebind T -> the inner tuple across
+        // template/constraint/name_type and recurse so the inner tuple's
+        // elements are mapped position-by-position. The result is a tuple
+        // in the rest's `type_id`; `expand_tuple_rest` flattens it
+        // downstream.
+        if let Some(Some(TypeData::Tuple(inner_tuple_id))) = rest_inner_kind {
+            let inner_mapped = self.rebind_mapped_source(mapped, source, elem.type_id);
+            let inner_result =
+                self.evaluate_mapped_tuple(&inner_mapped, inner_tuple_id, elem.type_id);
+            return TupleElement {
+                type_id: inner_result,
+                name: elem.name,
+                optional: elem.optional,
+                rest: true,
+            };
+        }
+
+        // Opaque variadic rests (`...T`) must keep the source tuple in the
+        // indexed access. Rewriting to `T[number]` loses the relationship that
+        // reverse inference uses to infer `T` from mapped tuple rest elements.
+        if elem.rest && !matches!(rest_inner_kind, Some(Some(TypeData::Array(_)))) {
+            let key = self.interner().literal_number(index as f64);
+            let mut inner = self.evaluate_mapped_template_with_source_rebind(
+                mapped.template,
+                source,
+                source,
+                mapped.type_param.name,
+                key,
+            );
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                inner = self.interner().union2(inner, TypeId::UNDEFINED);
+            }
+            return TupleElement {
+                type_id: inner,
+                name: elem.name,
+                optional: elem.optional,
+                rest: true,
+            };
+        }
+
+        // Per-element source rebinding for concrete array rests:
+        // T -> `Array<E>`, K -> number. This makes `T[K]` evaluate to E rather
+        // than the union of every tuple element type - the bug we are fixing.
+        let (new_source, key) = if elem.rest {
+            (elem.type_id, TypeId::NUMBER)
+        } else {
+            (source, self.interner().literal_number(index as f64))
+        };
+        let mut inner = self.evaluate_mapped_template_with_source_rebind(
+            mapped.template,
+            source,
+            new_source,
+            mapped.type_param.name,
+            key,
+        );
+
+        // Optional modifier: rest elements absorb `Add` as `inner | undefined`
+        // (a rest cannot syntactically combine with `?`), while fixed
+        // elements toggle the per-element `optional` flag.
+        let optional = if elem.rest {
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                inner = self.interner().union2(inner, TypeId::UNDEFINED);
+            }
+            elem.optional
+        } else {
+            match mapped.optional_modifier {
+                Some(MappedModifier::Add) => true,
+                Some(MappedModifier::Remove) => false,
+                None => elem.optional,
+            }
+        };
+
+        // Rewrap the rest in `Array<>` when the input rest was array-shaped;
+        // opaque rests (type parameter, lazy ref) keep their evaluated form
+        // so deferred indexed-access types survive.
+        let type_id = if matches!(rest_inner_kind, Some(Some(TypeData::Array(_)))) {
+            self.interner().array(inner)
+        } else {
+            inner
+        };
+
+        TupleElement {
+            type_id,
+            name: elem.name,
+            optional,
+            rest: elem.rest,
+        }
+    }
+
+    /// Rewrite `template` so every occurrence of `old_source` becomes
+    /// `new_source`, then substitute the iteration variable `iter_var` with
+    /// `key` and evaluate.
+    fn evaluate_mapped_template_with_source_rebind(
+        &mut self,
+        template: TypeId,
+        old_source: TypeId,
+        new_source: TypeId,
+        iter_var: Atom,
+        key: TypeId,
+    ) -> TypeId {
+        let rewritten = if new_source == old_source {
+            template
+        } else {
+            let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+            self.substitute_exact_type(template, old_source, new_source, &mut memo)
+        };
+        let subst = TypeSubstitution::single(iter_var, key);
+        let instantiated = instantiate_type(self.interner(), rewritten, &subst);
+        self.evaluate(instantiated)
+    }
+
+    /// Build a new `MappedType` with `old_source` replaced by `new_source`
+    /// across `template`, `constraint`, and `name_type`. Used for the variadic
+    /// (tuple-rest) path so that the recursive `evaluate_mapped_tuple` call
+    /// iterates with the inner tuple bound as T.
+    fn rebind_mapped_source(
+        &mut self,
+        mapped: &MappedType,
+        old_source: TypeId,
+        new_source: TypeId,
+    ) -> MappedType {
+        if new_source == old_source {
+            return *mapped;
+        }
+        let rewrite = |this: &mut Self, ty: TypeId| -> TypeId {
+            let mut memo: FxHashMap<TypeId, TypeId> = FxHashMap::default();
+            this.substitute_exact_type(ty, old_source, new_source, &mut memo)
+        };
+        let template = rewrite(self, mapped.template);
+        let constraint = rewrite(self, mapped.constraint);
+        let name_type = mapped.name_type.map(|nt| rewrite(self, nt));
+        MappedType {
+            type_param: mapped.type_param,
+            constraint,
+            name_type,
+            template,
+            readonly_modifier: mapped.readonly_modifier,
+            optional_modifier: mapped.optional_modifier,
+        }
     }
 }
