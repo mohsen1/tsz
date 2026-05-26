@@ -50,6 +50,10 @@ name = "generic_multi_prop_object_literal_tests"
 path = "tests/generic_multi_prop_object_literal_tests.rs"
 
 [[test]]
+name = "issue_9757_reduce_accumulator_context_tests"
+path = "tests/issue_9757_reduce_accumulator_context_tests.rs"
+
+[[test]]
 name = "abstract_constructor_argument_tests"
 path = "tests/abstract_constructor_argument_tests.rs"
 
