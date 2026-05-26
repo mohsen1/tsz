@@ -299,6 +299,8 @@ matches their description:
 - `tsz-emit`: JavaScript/declaration emit and emit parity work.
 - `tsz-iteration-audit`: repo-health deep dives, iteration bottleneck triage,
   and focused process/tooling improvement PRs.
+- `tsz-performance-engineering`: performance/cache/residency/timing work,
+  evidence packets, and past perf mistake avoidance.
 - `tsz-project-bench`: benchmark/project-corpus rows, fixture metadata, PGO, and
   benchmark dashboard work.
 - `tsz-pr-coordination`: PR body, AgentName, WIP/draft/ready, labels, review
