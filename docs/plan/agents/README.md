@@ -44,7 +44,7 @@ Recent local/live evidence on 2026-05-26:
 | Open bug issues | 56 |
 | Open performance issues | 9 |
 | Open tech-debt issues | 64 |
-| Output-surgery audit | red: 4 unallowlisted calls, 1 stale allowlist entry |
+| Output-surgery audit | live query: `python3 scripts/emit/audit-output-surgery.py` |
 
 Do not copy these numbers into PR bodies as proof. Re-run the commands in the
 owning lane and cite the resulting artifact, issue, or CI URL.
