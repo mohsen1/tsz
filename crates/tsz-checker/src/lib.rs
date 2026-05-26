@@ -803,13 +803,13 @@ pub fn run_js_grammar_pass(
     let Some(source) = arena.get_source_file_at(source_file) else {
         return Vec::new();
     };
-    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    let statements = source.statements.nodes.as_slice();
     if statements.is_empty() {
         return Vec::new();
     }
     let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
-    checker.check_js_grammar_statements(&statements);
+    checker.check_js_grammar_statements(statements);
     checker.ctx.diagnostics
 }
 
@@ -835,14 +835,14 @@ pub fn run_isolated_declarations_pass(
     let Some(source) = arena.get_source_file_at(source_file) else {
         return Vec::new();
     };
-    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    let statements = source.statements.nodes.as_slice();
     if statements.is_empty() {
         return Vec::new();
     }
     let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
-    checker.check_isolated_declarations(&statements);
-    checker.check_isolated_decl_class_expressions(&statements);
-    checker.check_isolated_decl_augmentations(&statements);
+    checker.check_isolated_declarations(statements);
+    checker.check_isolated_decl_class_expressions(statements);
+    checker.check_isolated_decl_augmentations(statements);
     checker.ctx.diagnostics
 }
