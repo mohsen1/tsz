@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 19:53 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10160` merged.
+- 2026-05-26 01:12 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10183` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -35,6 +35,66 @@ node scripts/ci/pr-ownership-report.mjs
   - `#10160` refreshed this lane state after `#9465` landed and merged on
     2026-05-25 as `4b484e5fd6 docs(agents): refresh M1-A post-9465
     state (#10160)`. Its stale synthetic queue branch was deleted after merge.
+  - `#10163` merged on 2026-05-25 as
+    `25656f49fa ci: report stale run cancellation attempts (#10163)`. Its
+    synthetic queue branch `automation/merge-queue/pr-10163` was deleted after
+    the synthetic queue run `26422310092` completed successfully.
+  - `#10166` merged on 2026-05-25 as
+    `ceadbd07a3 ci: report active open queue branch runs (#10166)`. Queue
+    cleanup dry runs now report active workflow runs on open queue branches as
+    preserved instead of hiding them under ordinary open-PR skips.
+  - `#10168` merged on 2026-05-25 as
+    `6caa98667f ci: annotate ownership duplicate clusters (#10168)`.
+    `scripts/ci/pr-ownership-report.mjs` now annotates duplicate title and
+    issue clusters with draft/ready state, WIP marker, and AgentName so cleanup
+    agents can triage ownership without opening every PR.
+  - `#10170` merged on 2026-05-25 as
+    `24936e167a ci: report ownership AgentName mismatches (#10170)`.
+    `scripts/ci/pr-ownership-report.mjs` now reports open PRs where the body
+    `AgentName` disagrees with the single canonical `agent:*` label; the latest
+    live report now shows zero such mismatches after M1-A normalized the 15
+    mismatched PR body `AgentName` lines to their existing canonical labels.
+  - `#10173` merged on 2026-05-26 as
+    `de76a344d0 ci: annotate ownership report stack roles (#10173)`.
+    Duplicate issue clusters in `scripts/ci/pr-ownership-report.mjs` now mark
+    stacked PRs as `stack root`, `stack middle`, or `stack child`; the latest
+    live report shows 64 open PRs, 20 drafts, 44 ready PRs, 4 stacked children,
+    zero missing `AgentName` entries, and zero AgentName/label mismatches.
+  - `#10175` merged on 2026-05-26 as
+    `98a8bc656c ci: classify duplicate issue draft stacks (#10175)`.
+    The duplicate-issue section now classifies draft clusters as
+    `stacked-only drafts`, `mixed stacked/unstacked drafts`, or
+    `unstacked drafts`; the latest live report shows unstacked duplicate-draft
+    cleanup targets on `#9694`, `#9809`, and `#9886`, plus mixed clusters on
+    `#9634` and `#9904`.
+  - `#10177` merged on 2026-05-26 as
+    `3d049d81c5 ci: surface duplicate draft cleanup targets (#10177)`.
+    `scripts/ci/pr-ownership-report.mjs` now has a dedicated
+    `Duplicate Draft Cleanup Targets` section that filters out stacked-only
+    draft chains and surfaces the five current unstacked/mixed cleanup targets
+    directly.
+  - `#10179` merged on 2026-05-26 as
+    `965c5dd4d1 ci: export duplicate draft cleanup targets (#10179)`.
+    The JSON report now exposes the same cleanup list as
+    `duplicateDraftCleanupTargets`, so follow-up automation can consume the
+    unstacked/mixed duplicate-draft target list without recomputing the
+    markdown filter.
+  - `#10181` merged on 2026-05-26 as
+    `352ccabeef ci: distinguish claimed issue refs in ownership report
+    (#10181)`. `scripts/ci/pr-ownership-report.mjs` now keeps raw
+    `issueRefs` for audit context but groups duplicate issue work by
+    `claimedIssueRefs` from PR titles plus `Addresses`/`Fixes`/`Closes`/
+    `Resolves` body claims. The latest live report still shows 64 open PRs,
+    20 drafts, 44 ready PRs, 4 stacked children, zero missing `AgentName`
+    entries, and zero AgentName/label mismatches, and now reports no duplicate
+    draft cleanup targets because the previous five were incidental
+    coordination references rather than duplicate issue claims.
+  - `#10183` merged on 2026-05-26 as
+    `0495520fb1 ci: summarize merge queue skip reasons (#10183)`.
+    Verbose `scripts/ci/poor-mans-merge-queue.mjs --dry-run` output now shows
+    a full `Skip Reason Counts` table before the capped per-PR details. The
+    latest live dry run reports 44 PRs skipped because auto-merge is not armed
+    and 16 skipped as draft PRs, with no queue-ready auto-merge candidate.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue
@@ -60,13 +120,13 @@ node scripts/ci/pr-ownership-report.mjs
     either drafts, not auto-merge armed, or already handed off.
   - Priority ready main-based PRs with `mergeStateStatus=BLOCKED` but
     `mergeable=MERGEABLE` include `#9632`, `#9912`, `#10078`, `#10081`,
-    `#10084`, `#10085`, `#10087`, `#10126`, and `#10147`. These currently
+    `#10084`, `#10087`, `#10126`, and `#10147`. These currently
     belong to other lanes; do not take them over unless the owner asks or a
     stale branch needs a signed handoff.
   - Queue branch cleanup currently skips open PR branches
-    `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10085`, `pr-10147`,
+    `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. The stale merged-PR queue branches for `#9848`,
-    `#9889`, and `#10160` were deleted.
+    `#9889`, `#10160`, and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
