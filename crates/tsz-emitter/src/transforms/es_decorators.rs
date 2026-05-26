@@ -25,6 +25,7 @@ struct ClassDecoratorVars<'a> {
     instance_extra_initializers_var: &'a str,
     static_extra_initializers_var: &'a str,
     metadata_var: &'a str,
+    metadata_super_temp_var: &'a str,
 }
 
 struct DecoratorApplicationCtx<'a> {
@@ -35,7 +36,6 @@ struct DecoratorApplicationCtx<'a> {
     ctor_ref: &'a str,
     computed_key_vars: &'a [(usize, String)],
     has_extends: bool,
-    class_data: &'a tsz_parser::parser::node::ClassData,
 }
 
 struct ClassBodyCtx<'a> {
@@ -276,6 +276,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let class_super_var = hygienic_temp_name("_classSuper", class_span_text);
         let class_decorators_var = hygienic_temp_name("_classDecorators", class_span_text);
         let metadata_var = hygienic_temp_name("_metadata", class_span_text);
+        let metadata_super_temp_base = if !self.use_static_blocks && has_class_decorators {
+            "_a"
+        } else {
+            "_b"
+        };
+        let metadata_super_temp_var = hygienic_temp_name(metadata_super_temp_base, class_span_text);
         let instance_extra_initializers_var =
             hygienic_temp_name("_instanceExtraInitializers", class_span_text);
         let static_extra_initializers_var =
@@ -359,11 +365,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i1}let {class_descriptor_var};\n"));
             out.push_str(&format!("{i1}let {class_extra_initializers_var} = [];\n"));
             out.push_str(&format!("{i1}let {class_this_var};\n"));
-            // When a decorated class extends a base class, tsc captures the super class
-            // in a _classSuper variable so it can be used for metadata and super access.
-            if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!("{i1}let {class_super_var} = {extends_text};\n"));
-            }
+        }
+        // When a transformed decorated class extends a base class, tsc captures
+        // the super class so metadata inheritance and `extends` share one value.
+        if has_extends && let Some(extends_text) = self.get_extends_text(class_data) {
+            out.push_str(&format!("{i1}let {class_super_var} = {extends_text};\n"));
         }
 
         // Instance/static extra initializer arrays
@@ -456,12 +462,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             out.push_str(&format!("{i1}return {class_alias} = class {class_name}"));
         }
         if has_extends {
-            if has_class_decorators {
-                // When class decorators + extends, use the _classSuper alias
-                out.push_str(&format!(" extends {class_super_var}"));
-            } else if let Some(extends_text) = self.get_extends_text(class_data) {
-                out.push_str(&format!(" extends {extends_text}"));
-            }
+            out.push_str(&format!(" extends {class_super_var}"));
         }
         out.push_str(" {\n");
 
@@ -542,7 +543,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ctor_ref: &ctor_ref,
                     computed_key_vars: &computed_key_vars,
                     has_extends,
-                    class_data,
                 },
                 &i3,
                 &mut out,
@@ -556,6 +556,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     instance_extra_initializers_var: &instance_extra_initializers_var,
                     static_extra_initializers_var: &static_extra_initializers_var,
                     metadata_var: &metadata_var,
+                    metadata_super_temp_var: &metadata_super_temp_var,
                 },
             );
             out.push_str(&format!("{i2}}}\n"));
@@ -631,7 +632,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ctor_ref: &ctor_ref,
                     computed_key_vars: &computed_key_vars,
                     has_extends,
-                    class_data,
                 },
                 &i2,
                 &mut out,
@@ -645,6 +645,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     instance_extra_initializers_var: &instance_extra_initializers_var,
                     static_extra_initializers_var: &static_extra_initializers_var,
                     metadata_var: &metadata_var,
+                    metadata_super_temp_var: &metadata_super_temp_var,
                 },
             );
             out.push_str(&format!("{i1}}})();\n"));
@@ -679,7 +680,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ctor_ref: &ctor_ref,
                     computed_key_vars: &computed_key_vars,
                     has_extends,
-                    class_data,
                 },
                 &i3,
                 &mut out,
@@ -693,6 +693,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     instance_extra_initializers_var: &instance_extra_initializers_var,
                     static_extra_initializers_var: &static_extra_initializers_var,
                     metadata_var: &metadata_var,
+                    metadata_super_temp_var: &metadata_super_temp_var,
                 },
             );
             out.push_str(&format!("{i2}}})(),\n"));
@@ -739,7 +740,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ctor_ref,
             computed_key_vars,
             has_extends,
-            class_data,
         } = ctx;
         let ClassDecoratorVars {
             class_descriptor,
@@ -750,21 +750,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
             instance_extra_initializers_var,
             static_extra_initializers_var,
             metadata_var,
+            metadata_super_temp_var,
         } = vars;
         let has_extends = *has_extends;
         // Metadata
-        let has_class_decorators = !class_decorators.is_empty();
         if has_extends {
-            // When class decorators are present, use _classSuper alias; otherwise use extends text directly
-            let super_ref = if has_class_decorators {
-                Some(class_super_var.to_string())
+            if self.use_static_blocks {
+                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({class_super_var}[Symbol.metadata] ?? null) : void 0;\n"));
             } else {
-                self.get_extends_text(class_data)
-            };
-            if let Some(super_ref) = super_ref {
-                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create({super_ref}[Symbol.metadata] ?? null) : void 0;\n"));
-            } else {
-                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
+                out.push_str(&format!("{indent}var {metadata_super_temp_var};\n"));
+                out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(({metadata_super_temp_var} = {class_super_var}[Symbol.metadata]) !== null && {metadata_super_temp_var} !== void 0 ? {metadata_super_temp_var} : null) : void 0;\n"));
             }
         } else {
             out.push_str(&format!("{indent}const {metadata_var} = typeof Symbol === \"function\" && Symbol.metadata ? Object.create(null) : void 0;\n"));
@@ -1597,11 +1592,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
             output.push_str(&format!("{indent}}}\n"));
         } else {
-            // Synthetic constructor: derived classes need a pass-through to super.
-            // tsc always uses `...args` / `super(...args)` for the forwarding form.
+            // Synthetic constructor: derived decorated classes forward the caller's
+            // arguments without allocating a rest parameter.
             if has_extends {
-                output.push_str("...args) {\n");
-                output.push_str(&format!("{inner_indent}super(...args);\n"));
+                output.push_str(") {\n");
+                output.push_str(&format!("{inner_indent}super(...arguments);\n"));
             } else {
                 output.push_str(") {\n");
             }
