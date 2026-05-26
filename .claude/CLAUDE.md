@@ -294,6 +294,8 @@ matches their description:
 - `tsz-ci-pr`: GitHub PR status, CI triage, ready/merge handling, and landing.
 - `tsz-conformance`: conformance regressions, accepted-regression drift,
   fingerprint-only triage, and conformance issue creation.
+- `tsz-disk-cache-hygiene`: disk-space recovery, worktree reuse, and
+  cache-preserving cleanup before large builds or new worktrees.
 - `tsz-emit`: JavaScript/declaration emit and emit parity work.
 - `tsz-iteration-audit`: repo-health deep dives, iteration bottleneck triage,
   and focused process/tooling improvement PRs.

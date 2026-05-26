@@ -33,6 +33,9 @@ corpus state, and cache-destroying cleanup.
    git worktree list
    ```
 
+   If disk is low, cache state is unclear, or a new worktree might be needed,
+   use `tsz-disk-cache-hygiene` before cleaning or creating anything.
+
 5. Check coordination overlap before editing:
 
    ```bash
