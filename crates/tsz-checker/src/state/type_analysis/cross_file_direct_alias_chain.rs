@@ -554,26 +554,45 @@ impl<'a> CheckerState<'a> {
                     }
                     return true;
                 }
-                let target_param_names =
-                    Self::type_alias_type_param_names(resolved.arena, type_alias);
-                if !target_param_names.is_empty()
-                    || type_alias
-                        .type_parameters
-                        .as_ref()
-                        .is_some_and(|p| !p.nodes.is_empty())
-                {
+                let Some(target_param_names) =
+                    Self::source_file_type_alias_application_param_names_are_lowerable(
+                        resolved.arena,
+                        resolved.binder,
+                        type_alias,
+                        0,
+                        seen,
+                        &resolved_proof,
+                    )
+                else {
                     return false;
-                }
+                };
                 if !Self::source_file_alias_proof_seen_push(seen, key) {
                     return false;
                 }
-                let result = Self::source_file_type_node_is_local_alias_chain_lowerable(
+                let result = if target_param_names.is_empty() {
+                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        resolved.arena,
+                        resolved.binder,
+                        type_alias.type_node,
+                        seen,
+                        &resolved_proof,
+                    )
+                } else if Self::source_file_type_node_contains_kind(
                     resolved.arena,
-                    resolved.binder,
                     type_alias.type_node,
-                    seen,
-                    &resolved_proof,
-                );
+                    syntax_kind_ext::TYPE_QUERY,
+                ) {
+                    false
+                } else {
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        resolved.arena,
+                        resolved.binder,
+                        type_alias.type_node,
+                        &target_param_names,
+                        seen,
+                        &resolved_proof,
+                    )
+                };
                 Self::source_file_alias_proof_seen_pop(seen, key);
                 result
             }

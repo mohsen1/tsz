@@ -238,6 +238,43 @@ fn direct_source_file_type_alias_lowers_renamed_imported_alias_argument_chain() 
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_imported_defaulted_helper_chain() {
+    with_program_state_with_libs(
+        &[
+            (
+                "primitive.ts",
+                "export type Primitive = string | number | boolean | null | undefined;",
+            ),
+            (
+                "array.ts",
+                "export type AnyArray<Item = any> = Array<Item> | ReadonlyArray<Item>;",
+            ),
+            (
+                "function.ts",
+                "export type AnyFunction<Args extends any[] = any[], Result = any> = (...args: Args) => Result;",
+            ),
+            (
+                "value-of.ts",
+                "import { AnyArray } from './array';\nimport { AnyFunction } from './function';\nimport { Primitive } from './primitive';\nexport type ValueOf<Type> = Type extends Primitive ? Type : Type extends AnyArray ? Type[number] : Type extends AnyFunction ? ReturnType<Type> : Type[keyof Type];",
+            ),
+            ("requester.ts", "import { ValueOf } from './value-of';"),
+        ],
+        "requester.ts",
+        "value-of.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let value_of_sym = target_binder.file_locals.get("ValueOf").expect("ValueOf");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(value_of_sym, Some(target_idx), true)
+                .expect("imported defaulted helper aliases should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "ValueOf should expose Type");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_single_hop_local_alias_chain() {
     with_two_file_state(
         "type Leaf = string | number;\nexport type Alias = Leaf;",
