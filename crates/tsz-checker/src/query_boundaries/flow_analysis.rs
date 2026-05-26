@@ -1,5 +1,6 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -194,6 +195,25 @@ pub(crate) fn cases_exhaust_type(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+/// Apply an inferred predicate guard to a parameter type.
+///
+/// The checker owns recognizing an inferable predicate body and matching the
+/// guard target to a parameter. This boundary owns the reusable semantic guard
+/// application and wires the optional `TypeEnvironment` so `Lazy(DefId)` inputs
+/// resolve consistently during solver narrowing.
+pub(crate) fn narrow_inferred_predicate_guard(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    param_type: TypeId,
+    guard: &TypeGuard,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_type(param_type, guard, GuardSense::Positive)
 }
 
 fn resolve_assignment_reduction_type(

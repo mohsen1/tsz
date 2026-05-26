@@ -5,7 +5,7 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{CallExprData, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
-use tsz_solver::narrowing::{GuardSense, TypeGuard, TypeofKind};
+use tsz_solver::narrowing::{TypeGuard, TypeofKind};
 use tsz_solver::{ParamInfo, SymbolRef, TypeId, TypePredicate, TypePredicateTarget};
 
 use crate::state::MAX_TREE_WALK_ITERATIONS;
@@ -1740,14 +1740,13 @@ impl<'a> FlowAnalyzer<'a> {
         param_type: TypeId,
         guard: &TypeGuard,
     ) -> TypeId {
-        if let Some(env) = &self.type_environment {
-            let env_borrow = env.borrow();
-            let narrowing = self.make_narrowing_context().with_resolver(&*env_borrow);
-            narrowing.narrow_type(param_type, guard, GuardSense::Positive)
-        } else {
-            self.make_narrowing_context()
-                .narrow_type(param_type, guard, GuardSense::Positive)
-        }
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        flow_query::narrow_inferred_predicate_guard(
+            self.interner,
+            env_borrow.as_deref(),
+            param_type,
+            guard,
+        )
     }
 
     /// Check if a node is a simple reference (identifier or property access).
