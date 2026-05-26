@@ -35,6 +35,8 @@ use tsz_checker::test_utils::check_multi_file;
 
 const TS2460: u32 = 2460;
 const TS2305: u32 = 2305;
+const TS2322: u32 = 2322;
+const TS2339: u32 = 2339;
 
 fn ambient_options() -> CheckerOptions {
     CheckerOptions {
@@ -506,5 +508,55 @@ const r: Orig = { v: 1 };
     assert!(
         !diags.iter().any(|(c, _)| *c == TS2460),
         "direct + renamed exports must keep TS2460 silenced; got {diags:#?}"
+    );
+}
+
+// ───────────────────── 9. ambient star re-export ───────────────────────────
+
+/// `export * from "inner"` inside an ambient external module should expose
+/// `inner`'s exported members through the re-exporting module.
+#[test]
+fn ambient_module_export_star_reexports_interface_members() {
+    let diags = diagnostics(
+        &[
+            (
+                "inner.d.ts",
+                r#"
+declare module "inner" {
+  export interface Data { id: number; }
+}
+"#,
+            ),
+            (
+                "outer.d.ts",
+                r#"
+declare module "outer" {
+  export * from "inner";
+}
+"#,
+            ),
+            (
+                "usestar.ts",
+                r#"
+import { Data } from "outer";
+const bad: Data = { id: "x" };
+const d: Data = { id: 1 };
+d.nope;
+"#,
+            ),
+        ],
+        "usestar.ts",
+    );
+    assert!(
+        !diags.iter().any(|(c, _)| *c == TS2305),
+        "ambient star re-export must make Data visible from outer; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == TS2322),
+        "imported Data should preserve id: number and report TS2322; got {diags:#?}"
+    );
+    assert!(
+        diags.iter().any(|(c, _)| *c == TS2339),
+        "imported Data should preserve members and report TS2339; got {diags:#?}"
     );
 }
