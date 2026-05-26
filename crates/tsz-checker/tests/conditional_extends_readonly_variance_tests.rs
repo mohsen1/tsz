@@ -10,6 +10,7 @@
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::diagnostics::{Diagnostic, DiagnosticCategory};
+use tsz_checker::test_utils::{check_source_with_libs, load_lib_files};
 use tsz_common::common::{ModuleKind, ScriptTarget};
 
 fn check(source: &str) -> Vec<Diagnostic> {
@@ -93,6 +94,17 @@ fn rule_applies_with_string_element_type_too() {
 }
 
 #[test]
+fn readonly_array_interface_source_vs_mutable_array_interface_target_is_false() {
+    let libs = load_lib_files(&["es5.d.ts"]);
+    let source = format!("{COND}\nconst r: R<ReadonlyArray<number>, Array<number>> = \"N\";\n");
+    let diags = check_source_with_libs(&source, "test.ts", CheckerOptions::default(), &libs);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "ReadonlyArray<number> extends Array<number> should be false; got: {diags:#?}"
+    );
+}
+
+#[test]
 fn control_readonly_extends_readonly_is_true() {
     let source = format!("{COND}\nconst r: R<readonly number[], readonly number[]> = \"Y\";\n");
     let diags = check(&source);
@@ -147,6 +159,34 @@ const d: ROElem<readonly number[]> = 0;
     assert!(
         error_codes(&diags).is_empty(),
         "infer pattern variance for readonly source must match tsc; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn distributive_infer_pattern_filters_readonly_union_member() {
+    let source = r#"
+type Elem<T> = T extends (infer U)[] ? U : never;
+const ok: Elem<readonly number[] | string[]> = "s";
+const bad: Elem<readonly number[] | string[]> = 1;
+"#;
+    let codes = error_codes(&check(source));
+    assert_eq!(
+        codes,
+        vec![2322],
+        "readonly union member should fall to never while mutable string[] contributes string"
+    );
+}
+
+#[test]
+fn non_distributive_infer_pattern_rejects_readonly_union_member() {
+    let source = r#"
+type Elem<T> = [T] extends [(infer U)[]] ? U : never;
+const r: Elem<readonly number[] | string[]> = (null as never);
+"#;
+    let diags = check(source);
+    assert!(
+        error_codes(&diags).is_empty(),
+        "non-distributive union with readonly member should reject the mutable array target; got: {diags:#?}"
     );
 }
 
