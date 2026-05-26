@@ -293,13 +293,16 @@ const queueSkipFormat = formatResult({
   selected: null,
   skips: Array.from({ length: 27 }, (_, index) => ({
     number: index + 1,
+    owner: index % 2 === 0 ? "agent:M1-A" : "agent:M4-B",
     reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
   })),
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipFormat, /### Skip Reason Counts/);
 assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
 assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
-assert.match(queueSkipFormat, /\| \.\.\. \| 2 more skipped PR\(s\) omitted \|/);
+assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
+assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
+assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
 
 assert.match(
   formatResult({
