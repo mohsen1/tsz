@@ -317,14 +317,17 @@ impl<'a> CheckerState<'a> {
             // overload signatures, allow the normal relation to fresh-instantiate
             // the method-local type params. Keep this gated to matching generic
             // shapes so ordinary TS2430 overload mismatches still report.
-            let strict_assignable =
-                self.is_assignable_to_no_erase_generics(derived_compare_sig, base_compare_sig);
-            let assignable = strict_assignable
-                || (can_use_fresh_generic_overload_assignability(
+            let assignable =
+                crate::query_boundaries::class::interface_overload_trailing_signature_assignable(
                     self,
                     derived_compare_sig,
                     base_compare_sig,
-                ) && self.is_assignable_to(derived_compare_sig, base_compare_sig));
+                    can_use_fresh_generic_overload_assignability(
+                        self,
+                        derived_compare_sig,
+                        base_compare_sig,
+                    ),
+                );
             if !assignable
                 && !self.should_suppress_assignability_for_parse_recovery(
                     derived_trailing_idx,

@@ -88,7 +88,7 @@ pub(crate) fn types_are_assignable(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    checker.is_assignable_to(source, target)
+    checker.diagnostic_relation_boolean_guard(source, target)
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -160,6 +160,25 @@ pub(crate) fn single_arg_type_application(
         base: app.base,
         arg: app.args[0],
     })
+}
+
+/// Return true when a type is a lazy alias/reference with the requested
+/// declaration name. Presentation policy uses this to avoid asking the type
+/// printer whether an alias happened to render with a particular spelling.
+pub(crate) fn type_has_declaration_name(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    expected: &str,
+) -> bool {
+    let reference_type = crate::query_boundaries::common::type_application(db, type_id)
+        .map_or(type_id, |app| app.base);
+    let Some(def_id) = crate::query_boundaries::common::lazy_def_id(db, reference_type) else {
+        return false;
+    };
+    def_store
+        .get_name(def_id)
+        .is_some_and(|name| db.resolve_atom_ref(name).as_ref() == expected)
 }
 
 pub(crate) fn contains_anonymous_object_surface(

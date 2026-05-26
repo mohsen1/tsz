@@ -1,13 +1,14 @@
-//! Type-specific infer pattern matching helpers.
+//! Type-specific infer pattern matching helpers (signature/function/callable).
 //!
-//! Contains specialized pattern matchers for different type structures:
+//! Contains specialized pattern matchers for:
 //! - Function type patterns
 //! - Constructor type patterns
 //! - Callable type patterns
-//! - Object type patterns
-//! - Object with index patterns
-//! - Union type patterns
-//! - Template literal patterns
+//! - Signature parameter / rest matching and template-capture binding helpers
+//!
+//! Object, object-with-index, union, and template-literal pattern matchers live
+//! in `infer_pattern_object_helpers.rs` (split to stay under the file-size
+//! ceiling); both are `impl TypeEvaluator` blocks in the same module tree.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
@@ -185,9 +186,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             pattern_params.len()
         };
 
-        if source_params.len() < fixed_param_count {
-            return false;
-        }
+        // A source callable with fewer parameters is still assignable to the
+        // inference pattern (extra trailing positions are ignored at the call
+        // site); tsc takes the true branch and defaults the unmatched `infer`
+        // slots to `unknown`. Match the overlapping prefix, default the rest.
+        let matched_count = source_params.len().min(fixed_param_count);
 
         let mut local_visited = FxHashSet::default();
         // Function/callable parameters are contravariant: co-located same-name
@@ -196,11 +199,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // both the fixed-param loop and any non-infer trailing-rest fan-out
         // through the shared co-located merge helper so the rest case keeps
         // its own contravariant semantics.
-        let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(fixed_param_count);
+        let mut fixed_pairs: Vec<(TypeId, TypeId)> = Vec::with_capacity(matched_count);
         for (source_param, pattern_param) in source_params
             .iter()
-            .take(fixed_param_count)
-            .zip(pattern_params.iter().take(fixed_param_count))
+            .take(matched_count)
+            .zip(pattern_params.iter().take(matched_count))
         {
             let source_param_type = if source_param.optional {
                 crate::narrowing::remove_nullish(self.interner(), source_param.type_id)
@@ -210,8 +213,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             fixed_pairs.push((source_param_type, pattern_param.type_id));
         }
 
+        // Fixed pattern positions the source never supplies: default their
+        // infer vars to `unknown`, filled only where still unbound so a
+        // candidate from a matched position always wins.
+        for pattern_param in &pattern_params[matched_count..fixed_param_count] {
+            self.fill_unbound_infer_defaults(pattern_param.type_id, TypeId::UNKNOWN, bindings);
+        }
+
         if let Some(rest_param) = trailing_rest_param {
-            let remaining_params = &source_params[fixed_param_count..];
+            let remaining_params = source_params.get(fixed_param_count..).unwrap_or(&[]);
             if self.type_contains_infer(rest_param.type_id) {
                 if !self.match_co_located_intersect_pairs(
                     &fixed_pairs,
