@@ -1246,6 +1246,46 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let mut assignment_queue: Vec<String> = Vec::new();
         let mut injected_assignments: std::collections::HashMap<NodeIndex, Vec<String>> =
             std::collections::HashMap::new();
+        let instance_auto_accessor_storage_sink = if !self.use_static_blocks {
+            auto_accessor_infos.iter().find_map(|info| {
+                let member = &decorated_members[info.member_var_index];
+                if member.is_static || member.is_private {
+                    return None;
+                }
+                matches!(
+                    member.name,
+                    MemberName::StringLiteral(_) | MemberName::Computed(_)
+                )
+                .then_some(member.member_idx)
+            })
+        } else {
+            None
+        };
+        let instance_auto_accessor_storage_assignments: Vec<String> =
+            if instance_auto_accessor_storage_sink.is_some() {
+                auto_accessor_infos
+                    .iter()
+                    .filter_map(|info| {
+                        let member = &decorated_members[info.member_var_index];
+                        (!member.is_static && !member.is_private).then(|| {
+                            format!(
+                                "{} = new WeakMap()",
+                                self.auto_accessor_weakmap_storage_name(class_name, info)
+                            )
+                        })
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+        if let Some(member_idx) = instance_auto_accessor_storage_sink
+            && !instance_auto_accessor_storage_assignments.is_empty()
+        {
+            injected_assignments.insert(
+                member_idx,
+                instance_auto_accessor_storage_assignments.clone(),
+            );
+        }
 
         for (i, member) in decorated_members.iter().enumerate() {
             let var_info = &member_vars[i];
@@ -1501,6 +1541,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .iter()
                 .filter(|info| !decorated_members[info.member_var_index].is_static)
             {
+                let member = &decorated_members[info.member_var_index];
+                if instance_auto_accessor_storage_sink.is_some() && !member.is_private {
+                    continue;
+                }
                 external_assignments.push(format!(
                     "{} = new WeakMap()",
                     self.auto_accessor_weakmap_storage_name(class_name, info)
@@ -1919,16 +1963,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
                 }
             } else {
-                for info in auto_accessor_infos
+                let instance_auto_accessors: Vec<&DecoratedAutoAccessorInfo> = auto_accessor_infos
                     .iter()
                     .filter(|info| !decorated_members[info.member_var_index].is_static)
-                {
+                    .collect();
+                for (accessor_idx, info) in instance_auto_accessors.iter().enumerate() {
                     let var_info = &member_vars[info.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = self.auto_accessor_initializer_arg(info);
                     let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
+                    let value = if accessor_idx == 0 {
+                        format!("{run_init}(this, {init_var}{init_arg})")
+                    } else {
+                        let prev_info = instance_auto_accessors[accessor_idx - 1];
+                        let prev_extra = member_vars[prev_info.member_var_index]
+                            .extra_initializers_var
+                            .as_deref()
+                            .unwrap_or("_extra");
+                        format!(
+                            "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                        )
+                    };
                     ctor_init_calls.push(format!(
-                        "{inner_indent}{storage_name}.set(this, {run_init}(this, {init_var}{init_arg}));\n"
+                        "{inner_indent}{storage_name}.set(this, {value});\n"
                     ));
                 }
                 if let Some(info) = auto_accessor_infos
@@ -2375,7 +2432,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 }
                 format!("[{}]", info.name)
             }
-            MemberName::StringLiteral(name) => format!("[\"{name}\"]"),
+            MemberName::StringLiteral(name) => {
+                if let Some(assignments) = injected_assignments
+                    && !assignments.is_empty()
+                {
+                    return format!("[({}, \"{name}\")]", assignments.join(", "));
+                }
+                format!("[\"{name}\"]")
+            }
             _ => info.name.clone(),
         }
     }

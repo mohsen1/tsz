@@ -480,3 +480,42 @@ class C {
         "ES2015 decorated non-static private member output must not keep native private syntax.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es2015_nonstatic_auto_accessors_initialize_storage_before_computed_names() {
+    let source = "\
+declare var dec: any;
+declare var field3: any;
+
+class C {
+    @dec
+    accessor field1 = 1;
+    @dec
+    accessor [\"field2\"] = 2;
+    @dec
+    accessor [field3] = 3;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "get [(_C_field1_accessor_storage = new WeakMap(), _C__a_accessor_storage = new WeakMap(), _C__b_accessor_storage = new WeakMap(), \"field2\")]()"
+        )
+            && output.contains("_C_field1_accessor_storage.set(this, __runInitializers(this, _field1_initializers, 1));")
+            && output.contains("_C__a_accessor_storage.set(this, (__runInitializers(this, _field1_extraInitializers), __runInitializers(this, _member_initializers, 2)));")
+            && output.contains("_C__b_accessor_storage.set(this, (__runInitializers(this, _member_extraInitializers), __runInitializers(this, _member_initializers_1, 3)));")
+            && output.contains("_member_decorators = [dec]")
+            && output.contains("_member_decorators_1 = [dec]")
+            && output.contains("_b = __propKey(field3)"),
+        "ES2015 public instance auto-accessors should initialize generated storage before computed names and chain extra initializers.\nOutput:\n{output}"
+    );
+}
