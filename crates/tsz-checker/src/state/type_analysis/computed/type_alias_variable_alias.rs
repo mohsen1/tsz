@@ -133,6 +133,8 @@ impl<'a> CheckerState<'a> {
                     Vec::new()
                 };
 
+                let generic_self_circular = self.detect_and_mark_generic_self_circular(sym_id);
+
                 let (mut alias_type, params) = if has_cross_arena_metadata {
                     let mut result = self.lower_cross_arena_type_alias_declaration(
                         sym_id, decl_idx, decl_arena, type_alias,
@@ -234,20 +236,15 @@ impl<'a> CheckerState<'a> {
                 let circularity_eligible = flags & (symbol_flags::ALIAS | symbol_flags::NAMESPACE)
                     == 0
                     && !decl_has_parse_error;
-                // When the type alias has type parameters and the body is a bare
-                // self-reference (simple type reference without type arguments),
-                // TSC does NOT consider it circular.  The bare `T` in
-                // `type T<out out> = T` refers to the generic type constructor and
-                // goes through instantiation, so it is structurally wrapped.
-                let generic_self_ref =
-                    !params.is_empty() && self.is_simple_type_reference(type_alias.type_node);
                 let is_non_generic_mapped_cycle = params.is_empty()
                     && self.is_non_generic_mapped_type_circular(sym_id, type_alias.type_node);
                 let is_jsx_runtime_bridge_alias = self
                     .is_jsx_import_source_runtime_bridge_alias(decl_arena, type_alias.type_node);
                 let is_circular = circularity_eligible
-                    && !generic_self_ref
                     && !is_jsx_runtime_bridge_alias
+                    && (generic_self_circular
+                        || params.is_empty()
+                        || !self.is_simple_type_reference(type_alias.type_node))
                     && (self.is_direct_circular_reference(
                         sym_id,
                         alias_type,
@@ -287,8 +284,9 @@ impl<'a> CheckerState<'a> {
                     // space as a direct circularity and still emits TS2456.
                     // We check the local AST rather than a resolved type to
                     // avoid SymbolId/arena collisions during driver-mode runs.
-                    let body_is_deferred =
-                        self.alias_ast_is_deferred(sym_id) && !is_non_generic_mapped_cycle;
+                    let body_is_deferred = self.alias_ast_is_deferred(sym_id)
+                        && !is_non_generic_mapped_cycle
+                        && !generic_self_circular;
                     if !file_has_any_parse_diag && !has_import_partner && !body_is_deferred {
                         let name = escaped_name;
                         let message = format_message(
@@ -309,6 +307,10 @@ impl<'a> CheckerState<'a> {
                             &[],
                             sym_id,
                         );
+                    }
+                    if generic_self_circular {
+                        self.register_generic_circular_alias_error(sym_id);
+                        return (TypeId::ERROR, Vec::new());
                     }
                     let def_id = self.ctx.get_or_create_def_id(sym_id);
                     if !params.is_empty() {
