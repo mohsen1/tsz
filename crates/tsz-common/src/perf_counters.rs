@@ -955,6 +955,7 @@ pub struct DirectSourceFileTypeAliasBodyRejectionResidue {
     pub name: String,
     pub body_kind: &'static str,
     pub first_type_reference_kind: Option<&'static str>,
+    pub first_type_reference_name: Option<String>,
     pub target_file: Option<String>,
     pub count: u64,
 }
@@ -2417,6 +2418,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
     name: &str,
     body_kind: DirectSourceFileTypeAliasBodyRejectionKind,
     first_type_reference_kind: Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind>,
+    first_type_reference_name: Option<&str>,
     target_file: Option<&str>,
 ) {
     if !enabled_fast() {
@@ -2428,6 +2430,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
     let first_type_reference_kind_name = first_type_reference_kind.map(|kind| {
         DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[kind.as_index()]
     });
+    let first_type_reference_name = first_type_reference_name.map(str::to_owned);
     let target_file = target_file.map(|file| {
         std::path::Path::new(file)
             .file_name()
@@ -2442,6 +2445,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
         row.name == name
             && row.body_kind == body_kind_name
             && row.first_type_reference_kind == first_type_reference_kind_name
+            && row.first_type_reference_name == first_type_reference_name
             && row.target_file == target_file
     }) {
         row.count += 1;
@@ -2453,6 +2457,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
             name: name.to_owned(),
             body_kind: body_kind_name,
             first_type_reference_kind: first_type_reference_kind_name,
+            first_type_reference_name,
             target_file,
             count: 1,
         });
@@ -2463,6 +2468,7 @@ pub fn record_direct_source_file_type_alias_body_rejection_residue(
             name: "__truncated__".to_string(),
             body_kind: "overflow",
             first_type_reference_kind: Some("overflow"),
+            first_type_reference_name: Some("overflow".to_string()),
             target_file: None,
             count: 1,
         });
@@ -3104,10 +3110,11 @@ impl PerfCounters {
         let mut out = String::from("\ndirect source-file type-alias body rejection residues:\n");
         for row in rows {
             let type_ref_kind = row.first_type_reference_kind.unwrap_or("<none>");
+            let type_ref_name = row.first_type_reference_name.as_deref().unwrap_or("<none>");
             let file = row.target_file.as_deref().unwrap_or("<unknown>");
             out.push_str(&format!(
-                "  {:<32} {:<28} {:<36} {:>8}  {file}\n",
-                row.name, row.body_kind, type_ref_kind, row.count,
+                "  {:<32} {:<28} {:<36} {:<28} {:>8}  {file}\n",
+                row.name, row.body_kind, type_ref_kind, type_ref_name, row.count,
             ));
         }
         out
@@ -3417,8 +3424,8 @@ pub struct PerfCounterSnapshot {
     ///
     /// Captures at most
     /// `DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT` distinct
-    /// `(name, body_kind, first_type_reference_kind, target_file)` rows in
-    /// perf-counter mode. This keeps the aggregate
+    /// `(name, body_kind, first_type_reference_kind, first_type_reference_name,
+    /// target_file)` rows in perf-counter mode. This keeps the aggregate
     /// `body_not_direct_lowerable` residue targetable without using names as
     /// compiler policy.
     pub direct_source_file_type_alias_body_rejection_residues:
@@ -3948,6 +3955,10 @@ impl PerfCounters {
                     .then_with(|| {
                         a.first_type_reference_kind
                             .cmp(&b.first_type_reference_kind)
+                    })
+                    .then_with(|| {
+                        a.first_type_reference_name
+                            .cmp(&b.first_type_reference_name)
                     })
                     .then_with(|| a.target_file.cmp(&b.target_file))
             })
@@ -4513,6 +4524,7 @@ mod json_tests {
                 name: unique_name.clone(),
                 body_kind: "mapped_type",
                 first_type_reference_kind: Some("local_type_parameter"),
+                first_type_reference_name: Some("T".to_string()),
                 target_file: Some("mapped-types.ts".to_string()),
                 count: 13,
             });
@@ -4533,6 +4545,7 @@ mod json_tests {
             "name",
             "body_kind",
             "first_type_reference_kind",
+            "first_type_reference_name",
             "target_file",
             "count",
         ]
@@ -4544,6 +4557,7 @@ mod json_tests {
         );
         assert_eq!(row["body_kind"], "mapped_type");
         assert_eq!(row["first_type_reference_kind"], "local_type_parameter");
+        assert_eq!(row["first_type_reference_name"], "T");
         assert_eq!(row["target_file"], "mapped-types.ts");
         assert_eq!(row["count"], 13);
     }

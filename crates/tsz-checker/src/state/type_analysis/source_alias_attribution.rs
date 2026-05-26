@@ -37,6 +37,7 @@ pub(crate) fn record_source_alias_rejection_kinds(
             type_alias_name(arena, type_alias).unwrap_or("<unknown>"),
             body_kind,
             first_type_reference_kind,
+            first_type_reference_name_in_node(arena, node_idx),
             arena
                 .source_files
                 .first()
@@ -202,6 +203,30 @@ fn first_type_reference_rejection_kind_in_node(
         stack.extend(children.into_iter().rev());
     }
     None
+}
+
+fn first_type_reference_name_in_node(arena: &NodeArena, root_idx: NodeIndex) -> Option<&str> {
+    let mut stack = vec![root_idx];
+    while let Some(node_idx) = stack.pop() {
+        let Some(node) = arena.get(node_idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return type_reference_name(arena, node_idx);
+        }
+        let children = arena.get_children(node_idx);
+        stack.extend(children.into_iter().rev());
+    }
+    None
+}
+
+fn type_reference_name(arena: &NodeArena, node_idx: NodeIndex) -> Option<&str> {
+    let node = arena.get(node_idx)?;
+    let type_ref = arena.get_type_ref(node)?;
+    let name_node = arena.get(type_ref.type_name)?;
+    arena
+        .get_identifier(name_node)
+        .map(|identifier| identifier.escaped_text.as_str())
 }
 
 fn type_reference_rejection_kinds_in_node(
