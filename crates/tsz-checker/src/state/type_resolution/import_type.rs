@@ -535,6 +535,9 @@ impl<'a> CheckerState<'a> {
         };
 
         for source_file in &target_arena.source_files {
+            if !Self::source_file_has_jsdoc_typedef_named(source_file, member_name) {
+                continue;
+            }
             let comments = source_file.comments.clone();
             let source_text = source_file.text.to_string();
             // No cache fast-path on this delegate; every entry is a miss.

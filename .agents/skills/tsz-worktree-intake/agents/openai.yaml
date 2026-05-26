@@ -1,0 +1,4 @@
+interface:
+  display_name: "TSZ Worktree Intake"
+  short_description: "Start TSZ work safely in a crowded multi-agent checkout."
+  default_prompt: "Use $tsz-worktree-intake to prepare this TSZ checkout for a new task."

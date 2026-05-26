@@ -44,18 +44,17 @@ mod check_tests;
 mod checker_diagnostics;
 mod checker_lib_diagnostics;
 mod source_resolution_setup;
+mod wildcard_barrel_analysis;
 
 use check_file::{
     CheckFileFlags, CheckFileForParallelContext, CheckFileResult, CheckFilesReuseCtx,
     check_file_for_parallel, check_files_in_parallel_chunks_with_reuse,
     check_files_sequentially_with_reuse, collect_no_check_file_diagnostics,
 };
-#[cfg(test)]
-use checker_diagnostics::LARGE_WILDCARD_BARREL_EXPORTS;
 use checker_diagnostics::{
-    has_large_wildcard_barrel, keep_checker_diagnostic_when_program_has_real_syntax_errors,
-    post_process_checker_diagnostics, program_has_real_syntax_errors,
-    program_has_unsupported_js_root, should_skip_type_checking_for_file,
+    keep_checker_diagnostic_when_program_has_real_syntax_errors, post_process_checker_diagnostics,
+    program_has_real_syntax_errors, program_has_unsupported_js_root,
+    should_skip_type_checking_for_file,
 };
 use checker_lib_diagnostics::{
     CheckerLibFileCheckEnv, affected_lib_extension_interface_names, affected_lib_interface_names,
@@ -67,6 +66,9 @@ use checker_lib_diagnostics::{
 };
 use source_resolution_setup::{
     SourceResolutionSetup, SourceResolutionSetupInput, prepare_source_resolution_setup,
+};
+use wildcard_barrel_analysis::{
+    LARGE_WILDCARD_BARREL_EXPORTS, WildcardBarrelAnalysisInput, has_large_wildcard_barrel,
 };
 
 fn checker_lookup_resolution_mode(
@@ -1264,7 +1266,12 @@ pub(super) fn collect_diagnostics_with_source_resolutions(
             let has_parallel_order_sensitive_global_lib =
                 has_parallel_order_sensitive_global_lib(checker_libs);
             let use_sequential_checking = work_items.len() <= 32
-                || has_large_wildcard_barrel(program, &work_items)
+                || has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
+                    files: &program.files,
+                    wildcard_reexports: &program.wildcard_reexports,
+                    work_items: &work_items,
+                    large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
+                })
                 // DOM-style global declarations are order-sensitive with
                 // multiple concurrent checker contexts. Keep those projects
                 // on the deterministic single-worker path until global

@@ -272,6 +272,15 @@ impl<'a> CheckerState<'a> {
         expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
+    fn array_literal_context_forces_tuple_like(&mut self, contextual: TypeId) -> bool {
+        let contextual = self.resolve_lazy_type(contextual);
+        (crate::query_boundaries::common::array_applicable_type(self.ctx.types, contextual)
+            .is_none()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, contextual)
+                .is_some())
+            && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, contextual)
+    }
+
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
         let members = crate::query_boundaries::common::union_members(self.ctx.types, contextual)?;
         let mut applicable_shape = None;
@@ -614,13 +623,11 @@ impl<'a> CheckerState<'a> {
             && !force_tuple_for_mapped
             && !force_tuple_for_union_context
             && !force_tuple_for_constraint_hint
-            && resolved_contextual_type.is_some_and(|resolved| {
-                // Only force tuple for object types that have a "0" property but
-                // aren't already handled by get_array_applicable_type.
-                crate::query_boundaries::common::array_applicable_type(self.ctx.types, resolved)
-                    .is_none()
-                    && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, resolved)
-            });
+            && (resolved_contextual_type
+                .is_some_and(|resolved| self.array_literal_context_forces_tuple_like(resolved))
+                || original_contextual_type.is_some_and(|original| {
+                    self.array_literal_context_forces_tuple_like(original)
+                }));
 
         // Use the applicable (narrowed) type for contextual typing when available,
         // falling back to the full resolved contextual type.
