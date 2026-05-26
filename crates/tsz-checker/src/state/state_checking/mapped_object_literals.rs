@@ -212,7 +212,7 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.is_assignable_to(source_prop_type, target_prop_type) {
+        if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
             return;
         }
 
@@ -607,7 +607,7 @@ impl<'a> CheckerState<'a> {
             );
             let target_prop_type_for_check = self.evaluate_type_for_assignability(target_prop_type);
             if matches!(source_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-                || self.is_assignable_to(source_type, target_prop_type_for_check)
+                || self.diagnostic_relation_boolean_guard(source_type, target_prop_type_for_check)
             {
                 continue;
             }

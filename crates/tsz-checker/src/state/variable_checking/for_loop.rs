@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
             if var_type != TypeId::STRING
                 && var_type != TypeId::ANY
                 && var_type != TypeId::UNKNOWN
-                && !self.is_assignable_to(element_type, var_type)
+                && !self.diagnostic_relation_boolean_guard(element_type, var_type)
             {
                 self.error_at_node(
                     initializer,

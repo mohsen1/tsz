@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true
+  },
+  "files": [
+    "any-never-unknown.ts",
+    "required-optional-keys.ts",
+    "case-conversions.ts",
+    "deep-get-path.ts"
+  ]
+}

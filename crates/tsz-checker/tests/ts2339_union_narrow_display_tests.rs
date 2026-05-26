@@ -69,6 +69,35 @@ function traverse<T extends TreeNode2<any>>(node: T): T['value'][] {
 }
 
 #[test]
+fn constrained_indexed_access_annotation_context_is_quote_insensitive() {
+    for (member, value) in [("payload", "1"), ("item", "\"ok\"")] {
+        let source = format!(
+            r#"
+interface Slot<T> {{
+  {member}: T;
+}}
+
+function read<T extends Slot<any>>(node: T): T["{member}"][] {{
+  const result: T["{member}"][] = [node.{member}];
+  return result;
+}}
+
+const check = read({{ {member}: {value} }});
+"#
+        );
+        let diagnostics = diagnostic_messages(&source);
+        let ts2339: Vec<_> = diagnostics
+            .iter()
+            .filter(|(code, _)| *code == 2339)
+            .collect();
+        assert!(
+            ts2339.is_empty(),
+            "Expected double-quoted indexed access annotation for `{member}` to avoid TS2339, got: {diagnostics:#?}"
+        );
+    }
+}
+
+#[test]
 fn instanceof_narrowed_union_receiver_displays_picked_member() {
     let src = r#"
 class A { a: string = ""; }

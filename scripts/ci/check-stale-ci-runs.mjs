@@ -9,7 +9,7 @@ const ACTIVE_STATUSES = ["in_progress", "queued"];
 
 function usage() {
   return [
-    "usage: check-stale-ci-runs.mjs [--fixture path] [--repository owner/repo] [--stale-minutes n] [--max-runs n] [--now iso] [--advisory|--enforce]",
+    "usage: check-stale-ci-runs.mjs [--fixture path] [--repository owner/repo] [--stale-minutes n] [--max-runs n] [--now iso] [--advisory|--enforce] [--cancel-stale]",
     "",
     "Reports queued or in-progress workflow runs that have been active or",
     "unchanged long enough to look stale.",
@@ -19,6 +19,7 @@ function usage() {
 function parseArgs(argv) {
   const options = {
     advisory: true,
+    cancelStale: false,
     enforce: false,
     fixture: null,
     maxRuns: DEFAULT_MAX_RUNS,
@@ -72,6 +73,10 @@ function parseArgs(argv) {
       options.advisory = false;
       continue;
     }
+    if (arg === "--cancel-stale") {
+      options.cancelStale = true;
+      continue;
+    }
     if (arg === "--help" || arg === "-h") {
       console.log(usage());
       process.exit(0);
@@ -105,6 +110,30 @@ function runGhJson(args) {
     );
   }
   return JSON.parse(result.stdout);
+}
+
+function runGh(args) {
+  const result = spawnSync("gh", args, {
+    encoding: "utf8",
+    maxBuffer: DEFAULT_GH_MAX_BUFFER_BYTES,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.error) {
+    const command = `gh ${args.join(" ")}`;
+    if (result.error.code === "ENOBUFS") {
+      return {
+        status: 1,
+        stderr: `${command} exceeded ${DEFAULT_GH_MAX_BUFFER_BYTES} bytes of output`,
+        stdout: "",
+      };
+    }
+    return { status: 1, stderr: result.error.message, stdout: "" };
+  }
+  return {
+    status: result.status ?? 1,
+    stderr: result.stderr.trim(),
+    stdout: result.stdout.trim(),
+  };
 }
 
 function normalizeRuns(payload) {
@@ -229,8 +258,49 @@ function minuteLabel(value) {
   return value === null || value === undefined ? "unknown" : `${value}m`;
 }
 
+function cancelLabel(result) {
+  if (!result) return "";
+  if (result.status === "requested") return "requested";
+  if (result.status === "skipped") return `skipped: ${result.detail}`;
+  return `failed: ${result.detail}`;
+}
+
+export function cancelStaleRuns(findings, repository, runCommand = runGh) {
+  if (!repository) {
+    throw new Error("REPOSITORY or GITHUB_REPOSITORY is required to cancel stale runs");
+  }
+
+  return findings.map((finding) => {
+    if (!finding.id) {
+      return { id: "", status: "skipped", detail: "missing run id" };
+    }
+
+    const result = runCommand([
+      "api",
+      "-X",
+      "POST",
+      "-H",
+      "Accept: application/vnd.github+json",
+      `repos/${repository}/actions/runs/${finding.id}/cancel`,
+    ]);
+
+    if (result.status === 0) {
+      return { id: finding.id, status: "requested", detail: "" };
+    }
+
+    return {
+      id: finding.id,
+      status: "failed",
+      detail: result.stderr || result.stdout || `gh exited ${result.status}`,
+    };
+  });
+}
+
 export function formatReport(findings, options = {}) {
   const staleMinutes = options.staleMinutes ?? DEFAULT_STALE_MINUTES;
+  const cancelResults = options.cancelResults || [];
+  const cancelById = new Map(cancelResults.map((result) => [String(result.id), result]));
+  const includeCancelColumn = cancelResults.length > 0;
   const lines = [
     "## Stale CI Run Advisory",
     "",
@@ -243,21 +313,31 @@ export function formatReport(findings, options = {}) {
 
   lines.push(`Found ${findings.length} queued or in-progress workflow run(s) stale at ${staleMinutes} minutes.`);
   lines.push("");
-  lines.push("| Run | Status | Age | Last update | Branch | Reason | Title |");
-  lines.push("|-----|--------|-----|-------------|--------|--------|-------|");
+  lines.push(includeCancelColumn
+    ? "| Run | Status | Age | Last update | Branch | Reason | Cancel | Title |"
+    : "| Run | Status | Age | Last update | Branch | Reason | Title |");
+  lines.push(includeCancelColumn
+    ? "|-----|--------|-----|-------------|--------|--------|--------|-------|"
+    : "|-----|--------|-----|-------------|--------|--------|-------|");
   for (const finding of findings) {
     const runLabel = finding.url && finding.id
       ? `[#${finding.id}](${finding.url})`
       : escapeCell(finding.id || "unknown");
-    lines.push([
+    const cells = [
       runLabel,
       escapeCell(finding.status),
       minuteLabel(finding.ageMinutes),
       minuteLabel(finding.updatedMinutes),
       escapeCell(finding.branch),
       escapeCell(finding.reason),
+    ];
+    if (includeCancelColumn) {
+      cells.push(escapeCell(cancelLabel(cancelById.get(String(finding.id)))));
+    }
+    cells.push(
       escapeCell(finding.title),
-    ].join(" | ").replace(/^/, "| ").replace(/$/, " |"));
+    );
+    lines.push(cells.join(" | ").replace(/^/, "| ").replace(/$/, " |"));
   }
 
   return lines.join("\n");
@@ -269,7 +349,13 @@ function main() {
     ? readFixture(options.fixture)
     : readActiveRuns(options.repository, options.maxRuns);
   const findings = staleRunFindings(runs, options);
-  console.log(formatReport(findings, options));
+  const cancelResults = options.cancelStale && findings.length > 0
+    ? cancelStaleRuns(findings, options.repository)
+    : [];
+  console.log(formatReport(findings, { ...options, cancelResults }));
+  if (cancelResults.some((result) => result.status === "failed")) {
+    process.exit(1);
+  }
   if (findings.length > 0 && options.enforce) {
     process.exit(1);
   }

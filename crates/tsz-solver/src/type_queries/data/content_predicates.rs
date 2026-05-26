@@ -124,6 +124,84 @@ pub fn contains_index_access_with_variadic_tuple_object(
     })
 }
 
+/// Returns true when a type's structural or display-alias surface contains an
+/// indexed access whose object operand is `never`.
+pub fn contains_never_index_access_surface(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    max_depth: usize,
+) -> bool {
+    let mut visited = FxHashSet::default();
+    contains_never_index_access_surface_inner(
+        db,
+        def_store,
+        type_id,
+        max_depth.saturating_add(1),
+        &mut visited,
+    )
+}
+
+fn contains_never_index_access_surface_inner(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    remaining_depth: usize,
+    visited: &mut FxHashSet<TypeId>,
+) -> bool {
+    if remaining_depth == 0 || type_id.is_intrinsic() || !visited.insert(type_id) {
+        return false;
+    }
+
+    if let Some(TypeData::IndexAccess(object, _)) = db.lookup(type_id)
+        && object == TypeId::NEVER
+    {
+        return true;
+    }
+
+    if let Some(alias) = db.get_display_alias(type_id)
+        && alias != type_id
+        && contains_never_index_access_surface_inner(
+            db,
+            def_store,
+            alias,
+            remaining_depth - 1,
+            visited,
+        )
+    {
+        return true;
+    }
+
+    if let Some(def_id) = crate::type_queries::get_application_lazy_def_id(db, type_id)
+        && let Some(def) = def_store.get(def_id)
+        && def.kind == crate::def::DefKind::TypeAlias
+        && let Some(body) = def.body
+        && contains_never_index_access_surface_inner(
+            db,
+            def_store,
+            body,
+            remaining_depth - 1,
+            visited,
+        )
+    {
+        return true;
+    }
+
+    let mut found = false;
+    crate::visitors::visitor::for_each_child_by_id(db, type_id, |child| {
+        if !found {
+            found = contains_never_index_access_surface_inner(
+                db,
+                def_store,
+                child,
+                remaining_depth - 1,
+                visited,
+            );
+        }
+    });
+    found
+}
+
 fn variadic_tuple_object_contains_type_parameter(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     get_tuple_elements(db, type_id).is_some_and(|elems| {
         elems
@@ -474,6 +552,16 @@ pub fn contains_error_type_db(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     })
 }
 
+/// Check if a type contains a generic application with an `unknown` argument.
+pub fn contains_application_unknown_arg(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    contains_type_matching(db, type_id, |key| {
+        let TypeData::Application(app_id) = key else {
+            return false;
+        };
+        db.type_application(*app_id).args.contains(&TypeId::UNKNOWN)
+    })
+}
+
 /// Check if a type contains the `never` intrinsic.
 ///
 /// Delegates to `visitor_predicates::contains_type_matching` with a `Never`-only
@@ -566,6 +654,44 @@ pub fn contains_application_in_structure(db: &dyn TypeDatabase, type_id: TypeId)
         }
         Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
             contains_application_in_structure(db, inner)
+        }
+        _ => false,
+    }
+}
+
+/// Check whether a type contains an `Application` along base-constraint
+/// resolution paths.
+///
+/// This is intentionally narrower than a full structural traversal and broader
+/// than `contains_application_in_structure`: circular-constraint checking needs
+/// to know whether alias expansion may affect mapped key sources or indexed
+/// access object/index operands, while contextual inference must not treat those
+/// nested surfaces as a reason to preserve an unevaluated application shape.
+pub fn contains_application_in_constraint_resolution_path(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Application(_)) => true,
+        Some(TypeData::Union(list_id) | TypeData::Intersection(list_id)) => {
+            let members = db.type_list(list_id);
+            members
+                .iter()
+                .any(|&m| contains_application_in_constraint_resolution_path(db, m))
+        }
+        Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+            contains_application_in_constraint_resolution_path(db, inner)
+        }
+        Some(TypeData::Mapped(mapped_id)) => {
+            let mapped = db.get_mapped(mapped_id);
+            contains_application_in_constraint_resolution_path(db, mapped.constraint)
+        }
+        Some(TypeData::IndexAccess(object_type, index_type)) => {
+            contains_application_in_constraint_resolution_path(db, object_type)
+                || contains_application_in_constraint_resolution_path(db, index_type)
         }
         _ => false,
     }
