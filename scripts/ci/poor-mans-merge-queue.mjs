@@ -5,6 +5,7 @@ import { readyStateFailures } from "./check-pr-ready-state.mjs";
 const DEFAULT_BASE = "main";
 const DEFAULT_MAX_PRS = 200;
 const DEFAULT_QUEUE_BRANCH_PREFIX = "automation/merge-queue";
+const DEFAULT_QUEUE_LABEL = "merge-queue";
 const DEFAULT_STATUS_CONTEXT = "Queue Tested";
 const DEFAULT_PR_REQUIRED_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
 const DEFAULT_MERGE_REQUIRED_CHECKS = ["CI Summary"];
@@ -18,13 +19,14 @@ function usage() {
   return [
     "usage: poor-mans-merge-queue.mjs --repository owner/repo [options]",
     "",
-    "Serially tests one auto-merge PR on a synthetic latest-main merge branch,",
+    "Serially tests one labeled PR on a synthetic latest-main merge branch,",
     "posts a required status to the PR head, and merges only if main/head did not move.",
     "",
     "Options:",
     "  --base <branch>                 Base branch (default: main)",
     "  --max-prs <n>                   Max open PRs to inspect",
     "  --status-context <name>         Required status context to post",
+    "  --queue-label <name>            Label that marks a PR ready for the queue",
     "  --queue-branch-prefix <prefix>  Temporary branch namespace",
     "  --agent-name <name>             AgentName for queue failure comments",
     "  --pr-required-check <name>      PR-head check required before queueing",
@@ -61,6 +63,7 @@ export function parseArgs(argv) {
     maxPrs: DEFAULT_MAX_PRS,
     mergeRequiredChecks: [...DEFAULT_MERGE_REQUIRED_CHECKS],
     prRequiredChecks: [...DEFAULT_PR_REQUIRED_CHECKS],
+    queueLabel: process.env.QUEUE_LABEL || DEFAULT_QUEUE_LABEL,
     queueBranchPrefix: DEFAULT_QUEUE_BRANCH_PREFIX,
     repository: process.env.REPOSITORY || process.env.GITHUB_REPOSITORY || null,
     statusContext: DEFAULT_STATUS_CONTEXT,
@@ -82,6 +85,9 @@ export function parseArgs(argv) {
     } else if (arg === "--status-context") {
       options.statusContext = argv[++index];
       if (!options.statusContext) throw new Error("--status-context requires a name");
+    } else if (arg === "--queue-label") {
+      options.queueLabel = argv[++index];
+      if (!options.queueLabel) throw new Error("--queue-label requires a label name");
     } else if (arg === "--queue-branch-prefix") {
       options.queueBranchPrefix = argv[++index];
       if (!options.queueBranchPrefix) throw new Error("--queue-branch-prefix requires a branch prefix");
@@ -193,6 +199,10 @@ function labelNames(labels) {
 
 function agentLabel(labels) {
   return labelNames(labels).find((label) => label.startsWith("agent:")) || "";
+}
+
+function hasQueueLabel(labels, queueLabel = DEFAULT_QUEUE_LABEL) {
+  return labelNames(labels).includes(queueLabel);
 }
 
 function normalize(value) {
@@ -329,11 +339,10 @@ function activePendingQueueRun(repository, pr, options) {
   };
 }
 
-export function queueSkipReason(pr, requiredState, base) {
+export function queueSkipReason(pr, requiredState, base, queueLabel = DEFAULT_QUEUE_LABEL) {
   if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
   if (pr.isDraft) return "draft PR";
   if (pr.isCrossRepository) return "cross-repository PR";
-  if (!pr.autoMergeRequest) return "auto-merge is not armed";
   const readinessFailures = readyStateFailures({
     number: pr.number,
     title: pr.title,
@@ -342,6 +351,7 @@ export function queueSkipReason(pr, requiredState, base) {
     labels: labelNames(pr.labels),
   });
   if (readinessFailures.length) return `ready-state WIP marker: ${readinessFailures.join(", ")}`;
+  if (!hasQueueLabel(pr.labels, queueLabel)) return `missing ${queueLabel} label`;
   if (requiredState.kind !== "passed") return requiredState.reason;
   return null;
 }
@@ -840,11 +850,11 @@ function readQueueCandidates(repository, options) {
   return readPullRequests(repository, options.base, options.maxPrs)
     .sort((a, b) => a.number - b.number)
     .map((pr) => {
-      const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base);
+      const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base, options.queueLabel);
       if (skipReason) return { pr, skipReason };
       const detailed = readPullRequest(repository, pr.number);
       const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
-      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
+      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base, options.queueLabel);
       if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
       const activeRun = activePendingQueueRun(repository, detailed, options);
       if (activeRun) {
@@ -1032,6 +1042,7 @@ export function formatResult(result, options) {
     "",
     `Mode: ${options.dryRun ? "dry run" : "apply"}`,
     `Base: \`${options.base}\``,
+    `Queue label: \`${options.queueLabel}\``,
     `Status: \`${options.statusContext}\``,
     "",
   ];
@@ -1090,7 +1101,7 @@ export function formatResult(result, options) {
       pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
-    lines.push("No queue-ready auto-merge PR found.");
+    lines.push("No queue-ready PR found.");
   } else if (result.dryRun) {
     lines.push(`Would synthetic-test and merge #${result.selected.number} at \`${result.selected.headRefOid.slice(0, 12)}\`.`);
   } else if (result.merged) {
