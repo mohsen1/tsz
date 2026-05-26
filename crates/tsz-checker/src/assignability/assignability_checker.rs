@@ -5,9 +5,9 @@ use crate::query_boundaries::assignability::{
     AssignabilityEvalKind, AssignabilityQueryInputs, are_types_overlapping_with_env,
     assignability_cache_key, check_application_variance_assignability,
     classify_for_assignability_eval, contains_free_infer_types, get_allowed_keys, get_keyof_type,
-    get_string_literal_value, get_union_members, is_assignable_bivariant_with_resolver,
-    is_assignable_with_overrides, is_relation_cacheable, is_type_parameter_like,
-    keyof_object_properties, map_compound_members,
+    get_string_literal_value, get_union_members, intersection_source_has_target_constituent,
+    is_assignable_bivariant_with_resolver, is_assignable_with_overrides, is_relation_cacheable,
+    is_type_parameter_like, keyof_object_properties, map_compound_members,
 };
 use crate::query_boundaries::common::{
     collect_lazy_def_ids, collect_type_queries, intersection_members, object_shape_id,
@@ -2386,6 +2386,10 @@ impl<'a> CheckerState<'a> {
 
         source = self.normalize_index_access_for_assignability(source, 0);
         target = self.normalize_index_access_for_assignability(target, 0);
+
+        if intersection_source_has_target_constituent(self.ctx.types, source, target) {
+            return true;
+        }
 
         let source_eval = self.evaluate_type_for_assignability(source);
         let target_eval = self.evaluate_type_for_assignability(target);
