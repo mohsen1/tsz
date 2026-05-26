@@ -103,25 +103,14 @@ impl<'a> FlowAnalyzer<'a> {
         else {
             return false;
         };
-        let switch_type = query::enum_member_domain(self.interner, switch_type);
         let case_types = self.case_types_for_exhaustiveness(switch_data.case_block);
-        if case_types.is_empty()
-            || matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
-            || case_types
-                .iter()
-                .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
-        {
-            return false;
-        }
-
-        let env_borrow;
-        let mut narrowing = self.make_narrowing_context();
-        if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            narrowing = narrowing.with_resolver(&*env_borrow);
-        }
-
-        narrowing.narrow_excluding_types(switch_type, &case_types) == TypeId::NEVER
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        query::cases_exhaust_type(
+            self.interner,
+            env_borrow.as_deref(),
+            switch_type,
+            &case_types,
+        )
     }
 
     /// Iterative flow graph traversal for definite assignment checks.
