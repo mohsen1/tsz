@@ -203,3 +203,38 @@ class D { @dec static [\"y\"] = @dec class {}; }
         "Nested anonymous decorated class expressions should use the containing field name.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn decorated_class_static_blocks_rewrite_super_member_calls() {
+    let source = "\
+declare var dec: any;
+declare class Base { static method(...args: any[]): void; }
+const method = \"method\";
+
+@dec
+class C extends Base {
+    static {
+        super.method();
+        super[method]();
+        super.method``;
+        super[method]``;
+    }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("Reflect.get(_classSuper, \"method\", _classThis).call(_classThis);")
+            && output.contains("Reflect.get(_classSuper, method, _classThis).call(_classThis);"),
+        "Decorated class static blocks should rewrite static super calls through Reflect.get.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Reflect.get(_classSuper, \"method\", _classThis).bind(_classThis) ``;")
+            && output.contains("Reflect.get(_classSuper, method, _classThis).bind(_classThis) ``;"),
+        "Decorated class static blocks should bind static super tagged-template calls.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("super.method()") && !output.contains("super[method]()"),
+        "Decorated class static blocks should not copy raw static super member access.\nOutput:\n{output}"
+    );
+}

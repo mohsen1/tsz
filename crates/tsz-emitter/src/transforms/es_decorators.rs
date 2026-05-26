@@ -122,6 +122,9 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Field initializer text rendered by the main emitter when raw source text
     /// would miss nested transforms.
     field_initializer_texts: FxHashMap<NodeIndex, String>,
+    /// Static block text rendered by the main emitter when raw source text
+    /// would miss scoped static `super` rewrites.
+    static_block_texts: FxHashMap<NodeIndex, String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -142,6 +145,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             anonymous_class_name: None,
             function_body_texts: FxHashMap::default(),
             field_initializer_texts: FxHashMap::default(),
+            static_block_texts: FxHashMap::default(),
             use_define_for_class_fields: false,
         }
     }
@@ -192,6 +196,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_field_initializer_text(&mut self, member_idx: NodeIndex, text: String) {
         self.field_initializer_texts.insert(member_idx, text);
+    }
+
+    pub fn set_static_block_text(&mut self, member_idx: NodeIndex, text: String) {
+        self.static_block_texts.insert(member_idx, text);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
@@ -1059,7 +1067,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else {
                 class_close
             };
-            let member_text = self.emit_member_bounded(member_node, next_boundary.min(class_close));
+            let member_text = if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+            {
+                self.static_block_texts
+                    .get(&member_idx)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                    })
+            } else {
+                self.emit_member_bounded(member_node, next_boundary.min(class_close))
+            };
 
             let is_decorated_field =
                 fields_in_class_body && decorated_field_idx_set.contains(&member_idx);

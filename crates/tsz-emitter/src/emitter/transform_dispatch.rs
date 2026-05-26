@@ -5,6 +5,7 @@
 
 use super::declarations::class::class_has_self_references;
 use super::*;
+use crate::transforms::emit_utils::{get_extends_expression_index, hygienic_temp_name};
 use std::sync::Arc;
 use tracing::debug;
 
@@ -1265,10 +1266,34 @@ impl<'a> Printer<'a> {
             return;
         };
         let class_has_decorators = self.modifiers_have_decorator(&class_data.modifiers);
+        let class_span_text = self
+            .source_text_for_map()
+            .map(|src| {
+                let start = node.pos as usize;
+                let end = (node.end as usize).min(src.len());
+                if start <= end { &src[start..end] } else { "" }
+            })
+            .unwrap_or("");
+        let class_this_var =
+            class_has_decorators.then(|| hygienic_temp_name("_classThis", class_span_text));
+        let class_super_var =
+            get_extends_expression_index(self.arena, &class_data.heritage_clauses)
+                .map(|_| hygienic_temp_name("_classSuper", class_span_text));
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
+            if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                if let Some(super_alias) = class_super_var.as_deref() {
+                    self.seed_tc39_decorator_static_block(
+                        emitter,
+                        member_idx,
+                        class_this_var.as_deref(),
+                        super_alias,
+                    );
+                }
+                continue;
+            }
             if let Some(method) = self.arena.get_method_decl(member_node) {
                 let is_private = self.arena.get(method.name).is_some_and(|name| {
                     name.kind == tsz_scanner::SyntaxKind::PrivateIdentifier as u16
@@ -1328,6 +1353,36 @@ impl<'a> Printer<'a> {
             this.capture_tc39_class_expression_with_name(prop.initializer, name)
         });
         emitter.set_field_initializer_text(member_idx, initializer);
+    }
+
+    fn seed_tc39_decorator_static_block(
+        &mut self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        member_idx: NodeIndex,
+        this_alias: Option<&str>,
+        super_alias: &str,
+    ) {
+        let prev_this_alias = self.scoped_static_this_alias.clone();
+        let prev_super_direct_access = self.scoped_static_super_direct_access;
+        let prev_super_alias = self.scoped_static_super_base_alias.clone();
+        let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
+        let prev_super_index_value = self.scoped_static_super_index_value_access;
+
+        self.scoped_static_this_alias = this_alias.map(Arc::from);
+        self.scoped_static_super_direct_access = false;
+        self.scoped_static_super_base_alias = Some(Arc::from(super_alias));
+        self.scoped_static_super_index_alias = None;
+        self.scoped_static_super_index_value_access = false;
+
+        let output = self.capture_emit(member_idx);
+
+        self.scoped_static_this_alias = prev_this_alias;
+        self.scoped_static_super_direct_access = prev_super_direct_access;
+        self.scoped_static_super_base_alias = prev_super_alias;
+        self.scoped_static_super_index_alias = prev_super_index_alias;
+        self.scoped_static_super_index_value_access = prev_super_index_value;
+
+        emitter.set_static_block_text(member_idx, output);
     }
 
     fn capture_tc39_class_expression_with_name(
