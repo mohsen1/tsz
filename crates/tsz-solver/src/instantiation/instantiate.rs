@@ -250,11 +250,22 @@ pub struct TypeInstantiator<'a> {
     depth: u32,
     max_depth: u32,
     depth_exceeded: bool,
+    /// Cached: `true` when every key in `substitution.map` is a solver
+    /// inference variable (`__infer_*`). The substitution is immutable for the
+    /// lifetime of the instantiator, so this is computed once at construction.
+    substitution_is_inference_only: bool,
 }
 
 impl<'a> TypeInstantiator<'a> {
     /// Create a new instantiator.
     pub fn new(interner: &'a dyn TypeDatabase, substitution: &'a TypeSubstitution) -> Self {
+        let substitution_is_inference_only = !substitution.map.is_empty()
+            && substitution.map.keys().all(|key| {
+                interner
+                    .resolve_atom_ref(*key)
+                    .as_ref()
+                    .starts_with("__infer_")
+            });
         TypeInstantiator {
             interner,
             substitution,
@@ -270,6 +281,7 @@ impl<'a> TypeInstantiator<'a> {
             depth: 0,
             max_depth: MAX_INSTANTIATION_DEPTH,
             depth_exceeded: false,
+            substitution_is_inference_only,
         }
     }
 
@@ -277,10 +289,28 @@ impl<'a> TypeInstantiator<'a> {
         self.shadowed.contains(&name)
     }
 
+    /// Whether the unmapped-TypeParameter constraint-fallback at
+    /// `instantiate_inner` is safe to apply for `name`.
+    ///
+    /// When the substitution binds only inference variables (`__infer_*`) and
+    /// `name` is user-defined, the parameter belongs to a different generic
+    /// scope, so walking its constraint with this foreign substitution would
+    /// expand `T[K]`-style constraints into unions and collapse
+    /// `keyof (A | B)` to `never` (#8725). In that case the parameter must
+    /// stay put.
+    fn should_apply_constraint_fallback(&self, name: Atom) -> bool {
+        if !self.substitution_is_inference_only {
+            return true;
+        }
+        self.interner
+            .resolve_atom_ref(name)
+            .as_ref()
+            .starts_with("__infer_")
+    }
+
     /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
-    /// or ReadonlyArray as `ObjectWithIndex`). Returns `(element_type, source_readonly)`,
-    /// or None if not array-like. `source_readonly` reports whether the source was a
-    /// `readonly` array, which a homomorphic mapped type must copy onto its result.
+    /// or ReadonlyArray as `ObjectWithIndex`). Returns `(element_type, source_readonly)`;
+    /// `source_readonly` tells homomorphic mapped types what to copy.
     fn extract_array_element(
         interner: &dyn TypeDatabase,
         type_id: TypeId,
@@ -707,7 +737,9 @@ impl<'a> TypeInstantiator<'a> {
                     );
                     substituted
                 } else {
-                    if !self.preserve_unsubstituted_type_params {
+                    if !self.preserve_unsubstituted_type_params
+                        && self.should_apply_constraint_fallback(info.name)
+                    {
                         // No direct substitution found. If the type parameter has a constraint
                         // that references substituted type parameters, instantiate the constraint.
                         // Example: Actions extends ActionsObject<State>, with {State: number}
@@ -824,11 +856,6 @@ impl<'a> TypeInstantiator<'a> {
                 self.interner.array(instantiated_elem)
             }
 
-            // Tuple: instantiate all elements, flattening variadic spreads.
-            // When a rest element `...T` is instantiated and T resolves to a
-            // tuple type `[A, B, C]`, the spread is flattened into individual
-            // elements `A, B, C` (matching tsc's instantiateMappedTupleType
-            // behavior for variadic tuple types).
             TypeData::Tuple(elements) => {
                 use tsz_common::limits::MAX_REPRESENTABLE_TUPLE_LENGTH;
                 let elements = self.interner.tuple_list(*elements);
@@ -839,8 +866,16 @@ impl<'a> TypeInstantiator<'a> {
                 // single physical rest element by the soft gate but the total
                 // represented length still exceeds `MAX_REPRESENTABLE_TUPLE_LENGTH`.
                 let mut represented_len: usize = 0;
+                // Only normalize (merge adjacent Array rests) when substitution
+                // actually occurred. Pre-existing concrete tuples (e.g. annotation
+                // types with no free type params) must not be normalized here —
+                // tsc keeps them in their original form even after re-instantiation.
+                let mut changed = false;
                 for e in elements.iter() {
                     let inst_type = self.instantiate(e.type_id);
+                    if inst_type != e.type_id {
+                        changed = true;
+                    }
                     if e.rest {
                         // Check if the instantiated type is a tuple — if so,
                         // flatten its elements into the parent tuple.
@@ -866,6 +901,7 @@ impl<'a> TypeInstantiator<'a> {
                                     rest: true,
                                 });
                             } else {
+                                changed = true; // flattening always changes structure
                                 for ie in inner.iter() {
                                     instantiated.push(TupleElement {
                                         type_id: ie.type_id,
@@ -895,7 +931,10 @@ impl<'a> TypeInstantiator<'a> {
                         represented_len = represented_len.saturating_add(1);
                     }
                 }
-                self.interner.tuple(instantiated)
+                if !changed {
+                    return self.interner.intern(*key);
+                }
+                crate::intern::tuple_normalized(self.interner, instantiated)
             }
 
             // Object: instantiate all property types
@@ -1941,28 +1980,17 @@ impl<'a> TypeInstantiator<'a> {
             }
         }
     }
-
-    /// Propagate display properties from intersection members to the result.
-    #[allow(dead_code)]
-    fn propagate_display_properties_for_intersection(
-        &self,
-        original_members: &[TypeId],
-        result: TypeId,
-    ) {
-        let display_vec = crate::types::merge_display_properties_for_intersection(
-            self.interner,
-            original_members,
-        );
-        if !display_vec.is_empty() {
-            self.interner.store_display_properties(result, display_vec);
-        }
-    }
 }
 
-#[path = "instantiate_engine.rs"]
-mod engine;
-pub use engine::*;
+mod api;
+mod display_properties;
 
+pub use self::api::*;
+use self::api::{
+    index_access_operand_needs_resolver, mapped_constraint_needs_resolver,
+    maybe_evaluate_concrete_conditional, template_has_lazy_application_in_composite,
+    type_contains_lazy_application, type_references_param,
+};
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]
 mod tests;

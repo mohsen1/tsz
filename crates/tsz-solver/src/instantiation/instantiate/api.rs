@@ -1,49 +1,5 @@
-//! Instantiation engine internals split out of `instantiate.rs` to keep each
-//! source shard under the repository file-size limit. Contains the cached
-//! entry points, the public `instantiate_*` / `substitute_this_*` wrappers,
-//! and the lazy-application detection helpers. Behavior is unchanged; this is
-//! a pure code-organization split.
-
 use super::*;
-use crate::caches::db::QueryDatabase;
-use crate::construction::TypeDatabase;
-use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
-use crate::instantiation::result::InstantiationResult;
-use crate::types::{FunctionShape, ParamInfo, TypeData, TypeId, TypeParamInfo, TypePredicate};
-use rustc_hash::FxHashSet;
-use std::cell::RefCell;
-use tsz_common::interner::Atom;
 
-// === pool + helper ===
-// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
-// `instantiate_type_params_to_constraints`. Mirrors the pool pattern from
-// #4722 / #4790 / #4801.
-thread_local! {
-    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
-        const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
-    let mut visited = CONSTRAINT_VISITED_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_default();
-    visited.clear();
-    let r = f(&mut visited);
-    CONSTRAINT_VISITED_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some(existing) => visited.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(visited);
-        }
-    });
-    r
-}
-
-// === free functions ===
 /// Shared body for the option-only wrappers
 /// (`instantiate_type_preserving_cached`, `instantiate_type_preserving_meta_cached`,
 /// `instantiate_type_with_infer_cached`).

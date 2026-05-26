@@ -1135,8 +1135,29 @@ impl TypeInterner {
     /// since optionality already implies `| undefined`.
     pub fn tuple(&self, elements: Vec<TupleElement>) -> TypeId {
         let elements = self.normalize_optional_tuple_elements(elements);
+        // A single anonymous rest element wrapping an Array collapses to a plain array type.
+        if elements.len() == 1
+            && elements[0].rest
+            && elements[0].name.is_none()
+            && !elements[0].optional
+            && let Some(TypeData::Array(elem)) = self.lookup(elements[0].type_id)
+        {
+            return self.array(elem);
+        }
         let list_id = self.intern_tuple_list(elements);
         self.intern(TypeData::Tuple(list_id))
+    }
+
+    /// Like [`tuple`], but also merges consecutive concrete rest elements:
+    /// `[...X[], ...Y[]]` → `(X | Y)[]`.
+    ///
+    /// Use this variant in the **instantiation path** where type parameters have already been
+    /// substituted and adjacent rest arrays must be collapsed (matching tsc's normalization of
+    /// instantiated variadic tuples).  Do **not** use this from checker code that constructs
+    /// types from explicit type annotations — tsc keeps those un-normalized even when TS1265
+    /// is emitted, so using `tuple()` there is the correct matching behaviour.
+    pub fn tuple_normalized(&self, elements: Vec<TupleElement>) -> TypeId {
+        crate::intern::tuple_normalized(self, elements)
     }
 
     /// For optional tuple elements, strip `undefined` from the element type

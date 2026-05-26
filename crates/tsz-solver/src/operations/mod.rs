@@ -86,5 +86,9 @@ use crate::types::*;
 mod tests;
 
 #[cfg(test)]
+#[path = "../../tests/operations_tuple_rest_normalization_tests.rs"]
+mod operations_tuple_rest_normalization_tests;
+
+#[cfg(test)]
 #[path = "../../tests/binary_ops_comprehensive_tests.rs"]
 mod binary_ops_comprehensive_tests;

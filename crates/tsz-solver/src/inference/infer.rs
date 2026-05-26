@@ -14,7 +14,7 @@ use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
 use crate::types::{InferencePriority, TemplateSpan, TypeData, TypeId};
-use crate::visitor::{is_literal_type, is_union_of_fresh_literals};
+use crate::visitor::{array_element_union_widens_literals, is_literal_type};
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::cell::RefCell;
@@ -327,6 +327,12 @@ pub(crate) struct InferenceContext<'a> {
     pub(crate) vars_with_substituted_candidates: FxHashSet<InferenceVar>,
     /// Set during array element inference so candidates get `from_array_element = true`.
     pub(crate) in_array_element_context: bool,
+    /// Set while inference is descending through a `readonly` array/tuple source
+    /// (e.g. from an `as const` argument or a `readonly T[]` annotation). Literal
+    /// candidates collected in this context are non-fresh — tsc does not widen the
+    /// element literals of a readonly array/tuple, so `new Set([1, 2] as const)`
+    /// infers `Set<1 | 2>` rather than `Set<number>`.
+    pub(crate) in_readonly_source_context: bool,
 }
 
 impl<'a> InferenceContext<'a> {
@@ -360,6 +366,7 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+            in_readonly_source_context: false,
         }
     }
 
@@ -385,6 +392,7 @@ impl<'a> InferenceContext<'a> {
             top_level_in_return_type_unfixed: FxHashSet::default(),
             vars_with_substituted_candidates: FxHashSet::default(),
             in_array_element_context: false,
+            in_readonly_source_context: false,
         }
     }
 
@@ -1154,7 +1162,8 @@ impl<'a> InferenceContext<'a> {
         let candidate = InferenceCandidate {
             type_id: ty,
             priority,
-            is_fresh_literal: is_literal_type(self.interner, ty),
+            is_fresh_literal: is_literal_type(self.interner, ty)
+                && !self.in_readonly_source_context,
             from_object_property: false,
             from_index_signature: false,
             object_property_index: None,
@@ -1243,8 +1252,9 @@ impl<'a> InferenceContext<'a> {
             is_fresh_literal: (!context.from_object_property || context.source_is_fresh)
                 && (is_literal_type(self.interner, ty)
                     || (self.in_array_element_context
-                        && is_union_of_fresh_literals(self.interner, ty)))
-                && !self.source_is_type_annotation,
+                        && array_element_union_widens_literals(self.interner, ty)))
+                && !self.source_is_type_annotation
+                && !self.in_readonly_source_context,
             from_object_property: context.from_object_property,
             from_index_signature: context.from_index_signature,
             object_property_index: context.object_property_index,
