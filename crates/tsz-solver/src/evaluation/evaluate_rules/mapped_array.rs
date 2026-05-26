@@ -1,4 +1,14 @@
-use super::*;
+//! Homomorphic mapped-type evaluation over array and tuple sources, split out
+//! of `mapped.rs` to keep each source shard under the file-size limit. These
+//! are additional inherent methods on [`TypeEvaluator`]; behavior is unchanged.
+
+use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
+use crate::relations::subtype::TypeResolver;
+use crate::types::{MappedModifier, MappedType, TupleElement, TupleListId, TypeData, TypeId};
+use rustc_hash::FxHashMap;
+use tsz_common::interner::Atom;
+
+use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a homomorphic mapped type over an Array type.
@@ -7,7 +17,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ///   `Partial<number[]>` should produce `(number | undefined)[]`
     ///
     /// We instantiate the template with `K = number` to get the mapped element type.
-    pub(super) fn evaluate_mapped_array(
+    pub(crate) fn evaluate_mapped_array(
         &mut self,
         mapped: &MappedType,
         _element_type: TypeId,
@@ -40,7 +50,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Evaluate a homomorphic mapped type over an Array type with explicit readonly flag.
     ///
     /// Used for `ReadonlyArray`<T> to preserve readonly semantics.
-    pub(super) fn evaluate_mapped_array_with_readonly(
+    pub(crate) fn evaluate_mapped_array_with_readonly(
         &mut self,
         mapped: &MappedType,
         _element_type: TypeId,
@@ -57,14 +67,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             mapped_element = self.interner().union2(mapped_element, TypeId::UNDEFINED);
         }
 
-        // Apply readonly modifier if present
-        let final_readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => is_readonly, // Preserve original readonly status
-        };
-
-        if final_readonly {
+        // Apply readonly modifier (homomorphic: copy source readonly when absent)
+        if mapped.resolve_readonly(is_readonly) {
             // Wrap the array type in ReadonlyType to get readonly semantics
             let array_type = self.interner().array(mapped_element);
             self.interner().readonly_type(array_type)
@@ -82,7 +86,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `+readonly` => readonly, `-readonly` => mutable, none => preserve the
     /// source's readonly-ness (`source_readonly`). This mirrors
     /// [`Self::evaluate_mapped_array_with_readonly`].
-    pub(super) fn evaluate_mapped_tuple_with_readonly(
+    pub(crate) fn evaluate_mapped_tuple_with_readonly(
         &mut self,
         mapped: &MappedType,
         tuple_id: TupleListId,
@@ -90,12 +94,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source_readonly: bool,
     ) -> TypeId {
         let mapped_tuple = self.evaluate_mapped_tuple(mapped, tuple_id, source);
-        let final_readonly = match mapped.readonly_modifier {
-            Some(MappedModifier::Add) => true,
-            Some(MappedModifier::Remove) => false,
-            None => source_readonly,
-        };
-        if final_readonly {
+        if mapped.resolve_readonly(source_readonly) {
             self.interner().readonly_type(mapped_tuple)
         } else {
             mapped_tuple

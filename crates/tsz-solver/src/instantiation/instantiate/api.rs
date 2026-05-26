@@ -1,4 +1,34 @@
 use super::*;
+use crate::caches::db::QueryDatabase;
+use crate::instantiation::request::{InstantiationOptions, InstantiationRequest};
+use crate::instantiation::result::InstantiationResult;
+use rustc_hash::FxHashSet;
+use std::cell::RefCell;
+
+thread_local! {
+    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
+    let mut visited = CONSTRAINT_VISITED_POOL
+        .with(|p| p.borrow_mut().take())
+        .unwrap_or_default();
+    visited.clear();
+    let r = f(&mut visited);
+    CONSTRAINT_VISITED_POOL.with(|p| {
+        let mut slot = p.borrow_mut();
+        let keep = match &*slot {
+            None => true,
+            Some(existing) => visited.capacity() >= existing.capacity(),
+        };
+        if keep {
+            *slot = Some(visited);
+        }
+    });
+    r
+}
 
 /// Shared body for the option-only wrappers
 /// (`instantiate_type_preserving_cached`, `instantiate_type_preserving_meta_cached`,

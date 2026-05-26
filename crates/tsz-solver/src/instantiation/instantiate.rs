@@ -9,9 +9,6 @@
 //! - Deep recursive substitution through nested types
 //! - Handling of constraints and defaults
 
-use super::request::{InstantiationOptions, InstantiationRequest};
-use super::result::InstantiationResult;
-use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 #[cfg(test)]
 use crate::types::*;
@@ -20,38 +17,9 @@ use crate::types::{
     LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
     TypeData, TypeId, TypeParamInfo, TypePredicate,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::cell::RefCell;
 use tsz_common::interner::Atom;
-
-// Reusable scratch `FxHashSet<TypeId>` for the recursive DFS used by
-// `instantiate_type_params_to_constraints`. Mirrors the pool pattern from
-// #4722 / #4790 / #4801.
-thread_local! {
-    static CONSTRAINT_VISITED_POOL: RefCell<Option<FxHashSet<TypeId>>> =
-        const { RefCell::new(None) };
-}
-
-#[inline]
-fn with_constraint_visited<R>(f: impl FnOnce(&mut FxHashSet<TypeId>) -> R) -> R {
-    let mut visited = CONSTRAINT_VISITED_POOL
-        .with(|p| p.borrow_mut().take())
-        .unwrap_or_default();
-    visited.clear();
-    let r = f(&mut visited);
-    CONSTRAINT_VISITED_POOL.with(|p| {
-        let mut slot = p.borrow_mut();
-        let keep = match &*slot {
-            None => true,
-            Some(existing) => visited.capacity() >= existing.capacity(),
-        };
-        if keep {
-            *slot = Some(visited);
-        }
-    });
-    r
-}
 
 /// Maximum depth for recursive type instantiation.
 pub const MAX_INSTANTIATION_DEPTH: u32 = 50;
@@ -341,14 +309,18 @@ impl<'a> TypeInstantiator<'a> {
     }
 
     /// Extract the element type from an array-like type (Array, ReadonlyType(Array),
-    /// or ReadonlyArray as `ObjectWithIndex`). Returns None if not array-like.
-    fn extract_array_element(interner: &dyn TypeDatabase, type_id: TypeId) -> Option<TypeId> {
+    /// or ReadonlyArray as `ObjectWithIndex`). Returns `(element_type, source_readonly)`;
+    /// `source_readonly` tells homomorphic mapped types what to copy.
+    fn extract_array_element(
+        interner: &dyn TypeDatabase,
+        type_id: TypeId,
+    ) -> Option<(TypeId, bool)> {
         match interner.lookup(type_id) {
-            Some(TypeData::Array(element_type)) => Some(element_type),
+            Some(TypeData::Array(element_type)) => Some((element_type, false)),
             Some(TypeData::ReadonlyType(inner)) => {
                 let inner_resolved = crate::evaluation::evaluate::evaluate_type(interner, inner);
                 if let Some(TypeData::Array(element_type)) = interner.lookup(inner_resolved) {
-                    Some(element_type)
+                    Some((element_type, true))
                 } else {
                     None
                 }
@@ -359,7 +331,7 @@ impl<'a> TypeInstantiator<'a> {
                     .number_index
                     .as_ref()
                     .filter(|idx| idx.readonly)
-                    .map(|idx| idx.value_type)
+                    .map(|idx| (idx.value_type, true))
             }
             _ => None,
         }
@@ -1559,7 +1531,7 @@ impl<'a> TypeInstantiator<'a> {
                         None
                     } else {
                         match self.interner.lookup(resolved) {
-                            Some(TypeData::Tuple(tid)) => Some(tid),
+                            Some(TypeData::Tuple(tid)) => Some((tid, false)),
                             Some(TypeData::ReadonlyType(inner)) => {
                                 let ir = crate::evaluation::evaluate::evaluate_type(
                                     self.interner,
@@ -1569,7 +1541,7 @@ impl<'a> TypeInstantiator<'a> {
                                     None
                                 } else {
                                     match self.interner.lookup(ir) {
-                                        Some(TypeData::Tuple(tid)) => Some(tid),
+                                        Some(TypeData::Tuple(tid)) => Some((tid, true)),
                                         _ => None,
                                     }
                                 }
@@ -1577,7 +1549,7 @@ impl<'a> TypeInstantiator<'a> {
                             _ => None,
                         }
                     };
-                    if let Some(tuple_id) = tuple_source {
+                    if let Some((tuple_id, source_readonly)) = tuple_source {
                         let elements = self.interner.tuple_list(tuple_id);
                         // Instantiate template first (substitutes T, keeps K shadowed)
                         let new_template = self.instantiate(mapped.template);
@@ -1610,10 +1582,7 @@ impl<'a> TypeInstantiator<'a> {
                         }
 
                         let tuple_type = self.interner.tuple(new_elements);
-                        return if matches!(
-                            mapped.readonly_modifier,
-                            Some(crate::types::MappedModifier::Add)
-                        ) {
+                        return if mapped.resolve_readonly(source_readonly) {
                             self.interner.readonly_type(tuple_type)
                         } else {
                             tuple_type
@@ -1622,7 +1591,7 @@ impl<'a> TypeInstantiator<'a> {
 
                     // Then check for Array (tsc: instantiateMappedArrayType)
                     let array_element = Self::extract_array_element(self.interner, resolved);
-                    if let Some(_element_type) = array_element {
+                    if let Some((_element_type, source_readonly)) = array_element {
                         // Produce array result: substitute K → number in the template
                         let new_template = self.instantiate(mapped.template);
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
@@ -1648,10 +1617,7 @@ impl<'a> TypeInstantiator<'a> {
                         };
 
                         let array_type = self.interner.array(final_element);
-                        return if matches!(
-                            mapped.readonly_modifier,
-                            Some(crate::types::MappedModifier::Add)
-                        ) {
+                        return if mapped.resolve_readonly(source_readonly) {
                             self.interner.readonly_type(array_type)
                         } else {
                             array_type
@@ -2028,3 +1994,7 @@ use self::api::{
 #[cfg(test)]
 #[path = "../../tests/instantiate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/instantiate_readonly_mapped_tests.rs"]
+mod readonly_mapped_tests;
