@@ -1,4 +1,5 @@
 use crate::context::{CheckerContext, CheckerOptions, LibContext};
+use crate::module_resolution::build_module_resolution_maps;
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
 use crate::test_utils::load_lib_files;
@@ -15,6 +16,25 @@ fn parse_bound_source(
     TypeInterner,
 ) {
     let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(parser.get_arena(), root);
+    (
+        Arc::new(parser.get_arena().clone()),
+        Arc::new(binder),
+        TypeInterner::new(),
+    )
+}
+
+fn parse_bound_named_source(
+    file_name: &str,
+    source: &str,
+) -> (
+    Arc<tsz_parser::parser::node::NodeArena>,
+    Arc<BinderState>,
+    TypeInterner,
+) {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
     let mut binder = BinderState::new();
     binder.bind_source_file(parser.get_arena(), root);
@@ -48,6 +68,69 @@ where
         Arc::clone(&target_binder),
     ]));
     test(&mut state, &target_binder)
+}
+
+fn with_program_state_with_libs<F, R>(
+    files: &[(&str, &str)],
+    requester_file: &str,
+    target_file: &str,
+    libs: &[&str],
+    test: F,
+) -> R
+where
+    F: FnOnce(&mut CheckerState<'_>, &Arc<BinderState>, usize) -> R,
+{
+    let lib_files = load_lib_files(libs);
+    let mut arenas = Vec::with_capacity(files.len());
+    let mut binders = Vec::with_capacity(files.len());
+    let mut file_names = Vec::with_capacity(files.len());
+    let mut types = None;
+    for (file_name, source) in files {
+        let (arena, binder, file_types) = parse_bound_named_source(file_name, source);
+        arenas.push(arena);
+        binders.push(binder);
+        file_names.push((*file_name).to_string());
+        if types.is_none() {
+            types = Some(file_types);
+        }
+    }
+    let requester_idx = file_names
+        .iter()
+        .position(|name| name == requester_file)
+        .unwrap_or_else(|| panic!("requester_file {requester_file:?} not found"));
+    let target_idx = file_names
+        .iter()
+        .position(|name| name == target_file)
+        .unwrap_or_else(|| panic!("target_file {target_file:?} not found"));
+    let (resolved_module_paths, resolved_modules) = build_module_resolution_maps(&file_names);
+    let all_arenas = Arc::new(arenas);
+    let all_binders = Arc::new(binders);
+    let types = types.unwrap_or_else(TypeInterner::new);
+    let ctx = CheckerContext::new(
+        all_arenas[requester_idx].as_ref(),
+        all_binders[requester_idx].as_ref(),
+        &types,
+        requester_file.to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::clone(&all_arenas));
+    state.ctx.set_all_binders(Arc::clone(&all_binders));
+    state.ctx.set_current_file_idx(requester_idx);
+    state
+        .ctx
+        .set_resolved_module_paths(Arc::new(resolved_module_paths));
+    state.ctx.set_resolved_modules(resolved_modules);
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
+    test(&mut state, &all_binders[target_idx], target_idx)
 }
 
 fn with_two_file_state_with_libs<F, R>(
@@ -88,6 +171,70 @@ where
     state.ctx.set_lib_contexts(lib_contexts);
     state.ctx.set_actual_lib_file_count(lib_files.len());
     test(&mut state, &target_binder)
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_conditional_alias_argument_chain() {
+    with_program_state_with_libs(
+        &[
+            (
+                "mapped-types.ts",
+                "export type SetDifference<A, B> = A extends B ? never : A;\nexport type SetComplement<A, A1 extends A> = SetDifference<A, A1>;",
+            ),
+            (
+                "utility-types.ts",
+                "import { SetComplement } from './mapped-types';\nexport type FlowDiff<T extends U, U extends object> = Pick<T, SetComplement<keyof T, keyof U>>;",
+            ),
+            (
+                "requester.ts",
+                "import { FlowDiff } from './utility-types';",
+            ),
+        ],
+        "requester.ts",
+        "utility-types.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let flow_diff_sym = target_binder.file_locals.get("FlowDiff").expect("FlowDiff");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(flow_diff_sym, Some(target_idx), true)
+                .expect("resolved imported conditional alias arguments should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "FlowDiff should expose T and U");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_imported_alias_argument_chain() {
+    with_program_state_with_libs(
+        &[
+            (
+                "filters.ts",
+                "export type Without<All, Some> = All extends Some ? never : All;\nexport type Remainder<All, Subset extends All> = Without<All, Subset>;",
+            ),
+            (
+                "tools.ts",
+                "import { Remainder as DropKeys } from './filters';\nexport type DiffShape<Left extends Right, Right extends object> = Pick<Left, DropKeys<keyof Left, keyof Right>>;",
+            ),
+            ("requester.ts", "import { DiffShape } from './tools';"),
+        ],
+        "requester.ts",
+        "tools.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let diff_shape_sym = target_binder
+                .file_locals
+                .get("DiffShape")
+                .expect("DiffShape");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(diff_shape_sym, Some(target_idx), true)
+                .expect("renamed imported alias argument chains should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "DiffShape should expose Left and Right");
+        },
+    );
 }
 
 #[test]

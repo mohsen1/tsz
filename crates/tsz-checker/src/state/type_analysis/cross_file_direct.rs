@@ -1539,35 +1539,47 @@ impl<'a> CheckerState<'a> {
         {
             return None;
         }
-        let body_is_direct_lowerable = if type_param_names.is_empty() {
-            let global_type_is_lowerable = |type_name: &str| {
-                self.source_file_global_type_is_direct_lowerable(delegate_binder, type_name)
+        let body_is_direct_lowerable = {
+            let global_type_is_lowerable = |binder: &BinderState, type_name: &str| {
+                self.source_file_global_type_is_direct_lowerable(binder, type_name)
             };
-            Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
-                || (direct_source_file_arena
-                    && Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
-                        symbol_arena,
-                        delegate_binder,
-                        type_alias.type_node,
-                        &global_type_is_lowerable,
-                    ))
-        } else if direct_source_file_arena {
-            let global_type_is_lowerable = |type_name: &str| {
-                self.source_file_global_type_is_direct_lowerable(delegate_binder, type_name)
+            let import_alias_target = |source_file_idx: usize,
+                                       binder: &BinderState,
+                                       sym_id: SymbolId| {
+                self.source_file_import_alias_target_for_lowering(source_file_idx, binder, sym_id)
             };
-            Self::source_file_type_node_is_generic_local_alias_application_lowerable(
-                symbol_arena,
-                delegate_binder,
-                type_alias.type_node,
-                &type_param_names,
-                &global_type_is_lowerable,
-            )
-        } else {
-            Self::source_file_type_node_is_generic_scope_independent(
-                symbol_arena,
-                type_alias.type_node,
-                &type_param_names,
-            )
+            let proof = super::cross_file_direct_alias_chain::SourceFileAliasProofContext {
+                current_file_idx: Some(target_file_idx),
+                global_type_is_lowerable: &global_type_is_lowerable,
+                import_alias_target: Some(&import_alias_target),
+            };
+            let mut seen = Vec::new();
+            if type_param_names.is_empty() {
+                Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
+                    || (direct_source_file_arena
+                        && Self::source_file_type_node_is_local_alias_chain_lowerable(
+                            symbol_arena,
+                            delegate_binder,
+                            type_alias.type_node,
+                            &mut seen,
+                            &proof,
+                        ))
+            } else if direct_source_file_arena {
+                Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    symbol_arena,
+                    delegate_binder,
+                    type_alias.type_node,
+                    &type_param_names,
+                    &mut seen,
+                    &proof,
+                )
+            } else {
+                Self::source_file_type_node_is_generic_scope_independent(
+                    symbol_arena,
+                    type_alias.type_node,
+                    &type_param_names,
+                )
+            }
         };
         if !body_is_direct_lowerable {
             let global_type_is_lowerable = |type_name: &str| {
