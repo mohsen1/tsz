@@ -36,6 +36,7 @@ function normalizePr(raw) {
     number: Number(raw.number),
     title: String(raw.title ?? ""),
     isDraft: Boolean(raw.isDraft),
+    updatedAt: raw.updatedAt ? String(raw.updatedAt) : null,
     baseRefName: String(raw.baseRefName || "main"),
     headRefName: String(raw.headRefName || ""),
     mergeStateStatus: String(raw.mergeStateStatus || "UNKNOWN"),
@@ -61,7 +62,7 @@ function loadPulls(fixture) {
       "--limit",
       "500",
       "--json",
-      "number,title,isDraft,baseRefName,headRefName,labels,body,mergeStateStatus,mergeable,autoMergeRequest",
+      "number,title,isDraft,updatedAt,baseRefName,headRefName,labels,body,mergeStateStatus,mergeable,autoMergeRequest",
     ],
     { encoding: "utf8" },
   );
@@ -180,11 +181,16 @@ function wipMarkers(pr) {
   return markers;
 }
 
+function shortDate(value) {
+  return value ? value.slice(0, 10) : "unknown";
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
     title: pr.title,
     draft: pr.isDraft,
+    updatedAt: pr.updatedAt,
     base: pr.baseRefName,
     head: pr.headRefName,
     mergeStateStatus: pr.mergeStateStatus,
@@ -302,6 +308,7 @@ function makeReport(pulls) {
       agentName: pr.agentName,
       agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
       autoMergeArmed: pr.autoMergeArmed,
+      updatedAt: pr.updatedAt,
       mergeStateStatus: pr.mergeStateStatus,
       mergeable: pr.mergeable,
       title: pr.title,
@@ -517,7 +524,7 @@ function printMarkdown(report) {
       const owner = ownerOf(pr);
       const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
       console.log(
-        `- #${pr.number}: ${owner}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
+        `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
       );
     }
   }
