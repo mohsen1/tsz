@@ -320,3 +320,55 @@ class D {
         "ES2015 decorated static private field output must not keep native private-field access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es2015_static_private_methods_and_accessors_use_descriptor_temps() {
+    let source = "\
+declare var dec: any;
+
+class C {
+    @dec
+    static #method() {}
+    @dec
+    static get #value() { return 0; }
+    @dec
+    static set #value(value) {}
+}
+
+@dec
+class D {
+    static get #value() { return 0; }
+    static set #value(value) {}
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a, _C_method_get, _C_value_get, _C_value_set;")
+            && output.contains("_C_method_get = function _C_method_get() { return _static_private_method_descriptor.value; }")
+            && output.contains("get: obj => __classPrivateFieldGet(obj, _a, \"a\", _C_method_get)")
+            && output.contains("_C_value_get = function _C_value_get() { return _static_private_get_value_descriptor.get.call(this); }")
+            && output.contains("_C_value_set = function _C_value_set(value) { return _static_private_set_value_descriptor.set.call(this, value); }")
+            && output.contains("_D_value_get = function _D_value_get() { return 0; };")
+            && output.contains("_D_value_set = function _D_value_set(value) { };")
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"a\", _D_value_get);")
+            && output.contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"a\", _D_value_set);"),
+        "ES2015 decorated static private methods/accessors should use descriptor temps for decorator access and class-decorator static-block capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".#method") && !output.contains(".#value"),
+        "ES2015 decorated static private method/accessor output must not keep native private access.\nOutput:\n{output}"
+    );
+}

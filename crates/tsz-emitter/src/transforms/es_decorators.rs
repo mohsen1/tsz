@@ -335,17 +335,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let member_vars = self.compute_all_member_vars(&decorated_members);
         let decorated_auto_accessor_infos =
             self.collect_decorated_auto_accessor_info(&decorated_members, &computed_key_vars);
-        let class_decorator_static_private_methods =
-            if has_class_decorators && self.use_static_blocks {
-                self.collect_class_decorator_static_private_methods(
-                    class_data,
-                    &class_name,
-                    &decorated_members,
-                    class_span_text,
-                )
-            } else {
-                Vec::new()
-            };
+        let class_decorator_static_private_methods = if has_class_decorators {
+            self.collect_class_decorator_static_private_methods(
+                class_data,
+                &class_name,
+                &decorated_members,
+                class_span_text,
+            )
+        } else {
+            Vec::new()
+        };
         let class_decorator_auto_accessor_infos = if has_class_decorators {
             self.collect_class_decorator_auto_accessor_info(
                 class_data,
@@ -374,6 +373,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 })
                 .map(|member| {
                     self.static_private_field_storage_name(&class_name, member, class_span_text)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let decorated_static_private_method_access_decls: Vec<String> = if !self.use_static_blocks {
+            decorated_members
+                .iter()
+                .filter(|member| self.needs_es2015_static_private_descriptor(member))
+                .map(|member| {
+                    self.static_private_decorated_member_access_temp_name(&class_name, member)
                 })
                 .collect()
         } else {
@@ -426,9 +436,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     .iter()
                     .map(String::as_str),
             );
+            var_names.extend(
+                decorated_static_private_method_access_decls
+                    .iter()
+                    .map(String::as_str),
+            );
             out.push_str(&format!("{i1}var {};\n", var_names.join(", ")));
         } else if !auto_accessor_storage_decls.is_empty()
             || !decorated_static_private_field_storage_decls.is_empty()
+            || !decorated_static_private_method_access_decls.is_empty()
         {
             let mut var_names: Vec<&str> = auto_accessor_storage_decls
                 .iter()
@@ -436,6 +452,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .collect();
             var_names.extend(
                 decorated_static_private_field_storage_decls
+                    .iter()
+                    .map(String::as_str),
+            );
+            var_names.extend(
+                decorated_static_private_method_access_decls
                     .iter()
                     .map(String::as_str),
             );
@@ -720,6 +741,14 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // ES2015 + class decorators: separate statements pattern
             // Close class with semicolon (it's a var assignment, not a return)
             out.push_str(&format!("{i1}}};\n"));
+
+            for assignment in self.class_decorator_static_private_temp_assignment_list(
+                &class_decorator_static_private_methods,
+                &class_decorator_auto_accessor_infos,
+                &class_this_var,
+            ) {
+                out.push_str(&format!("{i1}{assignment};\n"));
+            }
 
             // __setFunctionName
             let set_fn_name = self.helper("__setFunctionName");
@@ -1282,11 +1311,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let private_decorated_member_index = decorated_members.iter().position(|member| {
                 member.member_idx == member_idx
                     && member.is_private
-                    && self.use_static_blocks
                     && matches!(
                         member.kind,
                         MemberKind::Method | MemberKind::Getter | MemberKind::Setter
                     )
+                    && (self.use_static_blocks
+                        || self.needs_es2015_static_private_descriptor(member))
             });
 
             if let Some(member_var_index) = private_decorated_member_index {
@@ -1296,7 +1326,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let injected = assignments.join(", ");
                     out.push_str(&format!("{indent}static {{ {injected}; }}\n"));
                 }
-                self.emit_private_decorated_member_wrapper(member, var_info, indent, out);
+                if self.use_static_blocks {
+                    self.emit_private_decorated_member_wrapper(member, var_info, indent, out);
+                }
             } else if is_decorated_auto_accessor {
                 if let Some(info) = auto_accessor_infos
                     .iter()
@@ -1428,6 +1460,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     "{} = new WeakMap()",
                     self.auto_accessor_weakmap_storage_name(class_name, info)
                 ));
+            }
+            for (member, var_info) in decorated_members.iter().zip(member_vars.iter()) {
+                if self.needs_es2015_static_private_descriptor(member) {
+                    external_assignments.push(
+                        self.es2015_static_private_access_assignment(class_name, member, var_info),
+                    );
+                }
             }
         }
         let has_computed_method_sink = computed_key_vars.iter().any(|(mi, _)| {
@@ -2043,6 +2082,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
         auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
         class_ref: &str,
     ) -> String {
+        self.class_decorator_static_private_temp_assignment_list(
+            method_infos,
+            auto_accessor_infos,
+            class_ref,
+        )
+        .join(", ")
+    }
+
+    fn class_decorator_static_private_temp_assignment_list(
+        &self,
+        method_infos: &[ClassDecoratorStaticPrivateMethodInfo],
+        auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
+        class_ref: &str,
+    ) -> Vec<String> {
         let mut assignments: Vec<String> = method_infos
             .iter()
             .map(|info| {
@@ -2075,7 +2128,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ));
         }
 
-        assignments.join(", ")
+        assignments
     }
 
     fn emit_class_decorator_static_private_wrapper(
@@ -2200,27 +2253,32 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 continue;
             }
             for (member_name, (getter, setter)) in &accessors {
-                let access = format!("{class_ref}.{member_name}");
-                if let Some(getter) = getter {
-                    let read_stmt = format!("{access};");
-                    if trimmed == read_stmt {
-                        rewritten = Some(format!(
-                            "{leading}{get_helper}({class_ref}, {class_ref}, \"a\", {getter});"
-                        ));
-                        break;
+                for receiver in [class_ref, "this"] {
+                    let access = format!("{receiver}.{member_name}");
+                    if let Some(getter) = getter {
+                        let read_stmt = format!("{access};");
+                        if trimmed == read_stmt {
+                            rewritten = Some(format!(
+                                "{leading}{get_helper}({class_ref}, {class_ref}, \"a\", {getter});"
+                            ));
+                            break;
+                        }
+                    }
+                    if let Some(setter) = setter {
+                        let assign_prefix = format!("{access} = ");
+                        if let Some(value) = trimmed.strip_prefix(&assign_prefix)
+                            && let Some(value) = value.strip_suffix(';')
+                        {
+                            rewritten = Some(format!(
+                                "{leading}{set_helper}({class_ref}, {class_ref}, {}, \"a\", {setter});",
+                                value.trim()
+                            ));
+                            break;
+                        }
                     }
                 }
-                if let Some(setter) = setter {
-                    let assign_prefix = format!("{access} = ");
-                    if let Some(value) = trimmed.strip_prefix(&assign_prefix)
-                        && let Some(value) = value.strip_suffix(';')
-                    {
-                        rewritten = Some(format!(
-                            "{leading}{set_helper}({class_ref}, {class_ref}, {}, \"a\", {setter});",
-                            value.trim()
-                        ));
-                        break;
-                    }
+                if rewritten.is_some() {
+                    break;
                 }
             }
             out.push_str(rewritten.as_deref().unwrap_or(line));
@@ -2998,11 +3056,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let decorators_var = format!("{var_base}_decorators{suffix}");
         let has_field_inits = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
         let has_descriptor = member.is_private
-            && self.use_static_blocks
             && matches!(
                 member.kind,
                 MemberKind::Method | MemberKind::Getter | MemberKind::Setter | MemberKind::Accessor
-            );
+            )
+            && (self.use_static_blocks || self.needs_es2015_static_private_descriptor(member));
 
         MemberVarInfo {
             decorators_var,
@@ -3065,7 +3123,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
 
-        let descriptor_arg = if self.use_static_blocks && member.is_private {
+        let descriptor_arg = if member.is_private
+            && (self.use_static_blocks || self.needs_es2015_static_private_descriptor(member))
+        {
             self.private_member_descriptor_arg(member, var_info, &name_str)
         } else {
             "null".to_string()
@@ -3389,6 +3449,22 @@ impl<'a> TC39DecoratorEmitter<'a> {
             return format!(
                 "has: obj => {has_helper}({class_alias}, obj), get: obj => {get_helper}(obj, {class_alias}, \"f\", {storage_name}), set: (obj, value) => {{ {set_helper}(obj, {class_alias}, value, \"f\", {storage_name}); }}"
             );
+        }
+        if self.needs_es2015_static_private_descriptor(member) {
+            let access_temp =
+                self.static_private_decorated_member_access_temp_name(class_name, member);
+            let get_helper = self.helper("__classPrivateFieldGet");
+            let set_helper = self.helper("__classPrivateFieldSet");
+            let has_helper = self.helper("__classPrivateFieldIn");
+            return match member.kind {
+                MemberKind::Method | MemberKind::Getter => format!(
+                    "has: obj => {has_helper}({class_alias}, obj), get: obj => {get_helper}(obj, {class_alias}, \"a\", {access_temp})"
+                ),
+                MemberKind::Setter => format!(
+                    "has: obj => {has_helper}({class_alias}, obj), set: (obj, value) => {{ {set_helper}(obj, {class_alias}, value, \"a\", {access_temp}); }}"
+                ),
+                MemberKind::Field | MemberKind::Accessor => unreachable!(),
+            };
         }
 
         let key_expr = match &member.name {
@@ -3722,6 +3798,67 @@ impl<'a> TC39DecoratorEmitter<'a> {
             class_name.to_string()
         };
         hygienic_temp_name(&format!("_{temp_base}_{private_name}"), class_span_text)
+    }
+
+    fn needs_es2015_static_private_descriptor(&self, member: &DecoratedMember) -> bool {
+        !self.use_static_blocks
+            && member.is_static
+            && member.is_private
+            && matches!(
+                member.kind,
+                MemberKind::Method | MemberKind::Getter | MemberKind::Setter
+            )
+    }
+
+    fn static_private_decorated_member_access_temp_name(
+        &self,
+        class_name: &str,
+        member: &DecoratedMember,
+    ) -> String {
+        let MemberName::Private(name) = &member.name else {
+            return "_class_member_get".to_string();
+        };
+        let private_name = name.trim_start_matches('#');
+        let temp_base = if class_name.is_empty() {
+            "class"
+        } else {
+            class_name
+        };
+        let temp_suffix = match member.kind {
+            MemberKind::Setter => format!("{private_name}_set"),
+            MemberKind::Method | MemberKind::Getter => format!("{private_name}_get"),
+            MemberKind::Field | MemberKind::Accessor => private_name.to_string(),
+        };
+        format!("_{temp_base}_{temp_suffix}")
+    }
+
+    fn es2015_static_private_access_assignment(
+        &self,
+        class_name: &str,
+        member: &DecoratedMember,
+        var_info: &MemberVarInfo,
+    ) -> String {
+        let temp_name = self.static_private_decorated_member_access_temp_name(class_name, member);
+        let descriptor_var = var_info.descriptor_var.as_deref().unwrap_or("_descriptor");
+        match member.kind {
+            MemberKind::Method => {
+                format!("{temp_name} = function {temp_name}() {{ return {descriptor_var}.value; }}")
+            }
+            MemberKind::Getter => {
+                format!(
+                    "{temp_name} = function {temp_name}() {{ return {descriptor_var}.get.call(this); }}"
+                )
+            }
+            MemberKind::Setter => {
+                let params = self.private_member_parameter_list(member);
+                let param = params.split(',').next().map(str::trim).unwrap_or("value");
+                let param = if param.is_empty() { "value" } else { param };
+                format!(
+                    "{temp_name} = function {temp_name}({param}) {{ return {descriptor_var}.set.call(this, {param}); }}"
+                )
+            }
+            MemberKind::Field | MemberKind::Accessor => String::new(),
+        }
     }
 
     fn collect_class_decorator_static_private_methods(
