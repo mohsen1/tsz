@@ -6,6 +6,15 @@
 
 use super::super::DeclarationEmitter;
 
+#[derive(Clone, Debug)]
+pub(in crate::declaration_emitter) struct ObjectTypePropertyEntry {
+    name: String,
+    type_text: String,
+    start_line: usize,
+    end_line: usize,
+    prefix: String,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     /// Drop function-type union arms whose only difference from another arm
     /// is that one or more parameters were marked optional. tsc's array
@@ -217,6 +226,289 @@ impl<'a> DeclarationEmitter<'a> {
                 *ty = Self::append_optional_undefined_members(ty, &missing_names);
             }
         }
+    }
+
+    pub(in crate::declaration_emitter) fn expand_nested_object_union_member_properties(
+        types: &mut [String],
+    ) {
+        if types.len() <= 1 {
+            return;
+        }
+
+        let entries_by_arm = types
+            .iter()
+            .map(|ty| Self::object_type_top_level_property_entries(ty))
+            .collect::<Vec<_>>();
+
+        let mut property_names = Vec::<String>::new();
+        for entries in entries_by_arm.iter().flatten() {
+            for entry in entries {
+                if !property_names.iter().any(|name| name == &entry.name) {
+                    property_names.push(entry.name.clone());
+                }
+            }
+        }
+
+        for property_name in property_names {
+            let mut nested_arms_by_outer =
+                Vec::<(usize, ObjectTypePropertyEntry, Vec<String>)>::new();
+            let mut all_nested_arms = Vec::<String>::new();
+
+            for (outer_idx, entries) in entries_by_arm.iter().enumerate() {
+                let Some(entries) = entries else {
+                    continue;
+                };
+                let Some(entry) = entries.iter().find(|entry| entry.name == property_name) else {
+                    continue;
+                };
+                let Some(mut nested_arms) =
+                    Self::object_type_literal_union_arms_from_text(&entry.type_text)
+                else {
+                    continue;
+                };
+                nested_arms = nested_arms
+                    .into_iter()
+                    .map(|arm| Self::widen_object_literal_member_primitive_literal_types(&arm))
+                    .collect();
+                for arm in &nested_arms {
+                    if !all_nested_arms.iter().any(|existing| existing == arm) {
+                        all_nested_arms.push(arm.clone());
+                    }
+                }
+                nested_arms_by_outer.push((outer_idx, entry.clone(), nested_arms));
+            }
+
+            if nested_arms_by_outer.len() <= 1 || all_nested_arms.len() <= 1 {
+                continue;
+            }
+            let sibling_names = Self::object_union_sibling_property_names(&all_nested_arms);
+            if sibling_names.is_empty() {
+                continue;
+            }
+
+            let mut replacements = Vec::<(usize, ObjectTypePropertyEntry, String)>::new();
+            for (outer_idx, entry, mut nested_arms) in nested_arms_by_outer {
+                Self::expand_object_arms_with_property_names(&mut nested_arms, &sibling_names);
+                replacements.push((outer_idx, entry, nested_arms.join(" | ")));
+            }
+
+            for (outer_idx, entry, nested_type_text) in replacements.into_iter().rev() {
+                if let Some(replaced) = Self::replace_object_property_type_text(
+                    &types[outer_idx],
+                    &entry,
+                    &nested_type_text,
+                ) {
+                    types[outer_idx] = replaced;
+                }
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn widen_object_literal_member_primitive_literal_types(
+        type_text: &str,
+    ) -> String {
+        let Some(entries) = Self::object_type_top_level_property_entries(type_text) else {
+            return type_text.to_string();
+        };
+        let mut widened = type_text.to_string();
+        for entry in entries.into_iter().rev() {
+            let Some(widened_type) = Self::primitive_literal_member_widened_type(&entry.type_text)
+            else {
+                continue;
+            };
+            if let Some(replaced) =
+                Self::replace_object_property_type_text(&widened, &entry, widened_type)
+            {
+                widened = replaced;
+            }
+        }
+        widened
+    }
+
+    fn primitive_literal_member_widened_type(type_text: &str) -> Option<&'static str> {
+        let trimmed = type_text.trim();
+        if matches!(trimmed, "true" | "false") {
+            return Some("boolean");
+        }
+        if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+            || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+        {
+            return Some("string");
+        }
+        if !trimmed.is_empty()
+            && trimmed
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'-' | b'.'))
+            && trimmed.parse::<f64>().is_ok()
+        {
+            return Some("number");
+        }
+        None
+    }
+
+    fn object_union_sibling_property_names(types: &[String]) -> Vec<String> {
+        let mut property_names = Vec::<String>::new();
+        for ty in types {
+            let trimmed = ty.trim();
+            if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+                continue;
+            }
+            for name in Self::object_type_top_level_member_names(ty, true) {
+                if !property_names.iter().any(|existing| existing == &name) {
+                    property_names.push(name);
+                }
+            }
+        }
+        property_names
+    }
+
+    fn expand_object_arms_with_property_names(types: &mut [String], property_names: &[String]) {
+        for ty in types {
+            let trimmed = ty.trim();
+            if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
+                continue;
+            }
+            let present_names = Self::object_type_top_level_member_names(ty, true);
+            let missing_names = property_names
+                .iter()
+                .filter(|name| !present_names.iter().any(|present| present == *name))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !missing_names.is_empty() {
+                *ty = Self::append_optional_undefined_members_before_existing_optionals(
+                    ty,
+                    &missing_names,
+                );
+            }
+        }
+    }
+
+    fn append_optional_undefined_members_before_existing_optionals(
+        type_text: &str,
+        missing_names: &[String],
+    ) -> String {
+        if type_text.trim() == "{}" {
+            return Self::append_optional_undefined_members(type_text, missing_names);
+        }
+
+        let mut lines = type_text.lines().map(str::to_string).collect::<Vec<_>>();
+        let close_at = lines
+            .iter()
+            .rposition(|line| line.trim() == "}")
+            .unwrap_or(lines.len());
+        let insert_at = lines
+            .iter()
+            .take(close_at)
+            .position(|line| line.trim_end().ends_with("?: undefined;"))
+            .unwrap_or(close_at);
+
+        let indent: String = lines[..close_at]
+            .iter()
+            .rev()
+            .find(|line| !line.trim().is_empty() && line.trim() != "{")
+            .map(|line| {
+                line.chars()
+                    .take_while(|c| *c == ' ' || *c == '\t')
+                    .collect()
+            })
+            .unwrap_or_else(|| "    ".to_string());
+
+        let missing_members = missing_names
+            .iter()
+            .map(|name| format!("{indent}{name}?: undefined;"))
+            .collect::<Vec<_>>();
+        lines.splice(insert_at..insert_at, missing_members);
+        lines.join("\n")
+    }
+
+    fn object_type_top_level_property_entries(
+        type_text: &str,
+    ) -> Option<Vec<ObjectTypePropertyEntry>> {
+        let trimmed = type_text.trim();
+        if !trimmed.starts_with('{') || !trimmed.ends_with('}') || trimmed == "{}" {
+            return None;
+        }
+
+        let lines = trimmed.lines().collect::<Vec<_>>();
+        if lines.len() < 2 {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        let mut starts = Vec::<usize>::new();
+        for (idx, line) in lines.iter().enumerate() {
+            if depth == 1 && Self::object_type_property_name_from_line(line).is_some() {
+                starts.push(idx);
+            }
+            depth = Self::update_object_text_brace_depth(depth, line);
+        }
+
+        if starts.is_empty() {
+            return None;
+        }
+
+        let root_close = lines.len().saturating_sub(1);
+        let mut entries = Vec::with_capacity(starts.len());
+        for (start_pos, start_line) in starts.iter().copied().enumerate() {
+            let end_line = starts
+                .get(start_pos + 1)
+                .copied()
+                .map(|next| next.saturating_sub(1))
+                .unwrap_or_else(|| root_close.saturating_sub(1));
+            let first_line = lines[start_line];
+            let colon = Self::top_level_property_type_colon(first_line)?;
+            let name = Self::object_type_property_name_from_line(first_line)?;
+            let prefix = first_line.get(..colon)?.to_string();
+            let mut type_lines = Vec::new();
+            let first_type = first_line.get(colon + 1..)?.trim_start();
+            if !first_type.is_empty() {
+                type_lines.push(first_type.to_string());
+            }
+            for line in &lines[start_line + 1..=end_line] {
+                type_lines.push((*line).to_string());
+            }
+            if let Some(last) = type_lines.last_mut() {
+                *last = last.trim_end().trim_end_matches(';').to_string();
+            }
+            entries.push(ObjectTypePropertyEntry {
+                name,
+                type_text: type_lines.join("\n").trim().to_string(),
+                start_line,
+                end_line,
+                prefix,
+            });
+        }
+        Some(entries)
+    }
+
+    fn replace_object_property_type_text(
+        type_text: &str,
+        entry: &ObjectTypePropertyEntry,
+        replacement_type_text: &str,
+    ) -> Option<String> {
+        let mut lines = type_text
+            .trim()
+            .lines()
+            .map(str::to_string)
+            .collect::<Vec<_>>();
+        if entry.start_line >= lines.len() || entry.end_line >= lines.len() {
+            return None;
+        }
+
+        let mut replacement_lines = Vec::new();
+        let mut type_lines = replacement_type_text.trim().lines();
+        let first_type_line = type_lines.next().unwrap_or(replacement_type_text.trim());
+        replacement_lines.push(format!("{}: {}", entry.prefix, first_type_line));
+        for line in type_lines {
+            replacement_lines.push(line.to_string());
+        }
+        if let Some(last) = replacement_lines.last_mut()
+            && !last.trim_end().ends_with(';')
+        {
+            last.push(';');
+        }
+        lines.splice(entry.start_line..=entry.end_line, replacement_lines);
+        Some(lines.join("\n"))
     }
 
     pub(in crate::declaration_emitter) fn append_optional_undefined_members(

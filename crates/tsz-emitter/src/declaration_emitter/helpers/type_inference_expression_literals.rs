@@ -24,7 +24,10 @@ impl<'a> DeclarationEmitter<'a> {
             if branch_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 return None;
             }
-            arms.push(self.infer_object_literal_type_text_at(branch_idx, depth)?);
+            let arm = self.infer_object_literal_type_text_at(branch_idx, depth)?;
+            arms.push(Self::widen_object_literal_member_primitive_literal_types(
+                &arm,
+            ));
         }
         Self::normalized_object_literal_union_text(arms)
     }
@@ -39,6 +42,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
+        Self::expand_nested_object_union_member_properties(&mut distinct);
         (!distinct.is_empty()).then(|| distinct.join(" | "))
     }
 
@@ -46,10 +50,41 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        let elem_text = self.array_literal_element_union_type_text(expr_idx)?;
+        let needs_parens =
+            elem_text.contains("=>") || elem_text.contains('|') || elem_text.contains('&');
+        if needs_parens {
+            Some(format!("({elem_text})[]"))
+        } else {
+            Some(format!("{elem_text}[]"))
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn array_literal_element_access_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let key_node = self.arena.get(access.name_or_argument)?;
+        if key_node.kind != SyntaxKind::NumericLiteral as u16 {
+            return None;
+        }
+        let array_idx = self.skip_parenthesized_expression(access.expression)?;
+        self.array_literal_element_union_type_text(array_idx)
+    }
+
+    pub(in crate::declaration_emitter) fn array_literal_element_union_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let array = self.arena.get_literal_expr(expr_node)?;
         if array.elements.nodes.is_empty() {
-            return Some("any[]".to_string());
+            return Some("any".to_string());
         }
 
         let mut element_types = Vec::with_capacity(array.elements.nodes.len());
@@ -94,7 +129,7 @@ impl<'a> DeclarationEmitter<'a> {
         // If any element type is `any`, the whole union collapses to `any`
         // (matches tsc: T | any = any for all T).
         if element_types.iter().any(|t| t == "any") {
-            return Some("any[]".to_string());
+            return Some("any".to_string());
         }
 
         let mut distinct = Vec::new();
@@ -104,6 +139,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
+        Self::expand_nested_object_union_member_properties(&mut distinct);
         Self::drop_optional_param_function_subtypes(&mut distinct);
 
         // tsc orders union members by `TypeFlags` when printing: for the
@@ -147,13 +183,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .collect::<Vec<_>>()
                 .join(" | ")
         };
-        let needs_parens =
-            elem_text.contains("=>") || elem_text.contains('|') || elem_text.contains('&');
-        if needs_parens {
-            Some(format!("({elem_text})[]"))
-        } else {
-            Some(format!("{elem_text}[]"))
-        }
+        Some(elem_text)
     }
 
     pub(in crate::declaration_emitter) fn local_variable_initializer_type_text(

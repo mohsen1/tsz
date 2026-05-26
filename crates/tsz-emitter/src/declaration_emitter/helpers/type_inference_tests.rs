@@ -433,6 +433,38 @@ fn conditional_empty_then_object_literal_union_preserves_branch_order() {
 }
 
 #[test]
+fn nested_object_union_member_properties_cross_normalize() {
+    let mut types = vec![
+        "{\n    kind: string;\n    pos: {\n        x: number;\n        y: number;\n    };\n}"
+            .to_string(),
+        "{\n    kind: string;\n    pos: {\n        a: string;\n        b?: undefined;\n    } | {\n        b: number;\n        a?: undefined;\n    };\n}"
+            .to_string(),
+    ];
+
+    DeclarationEmitter::expand_nested_object_union_member_properties(&mut types);
+
+    assert_eq!(
+        types,
+        vec![
+            "{\n    kind: string;\n    pos: {\n        x: number;\n        y: number;\n        a?: undefined;\n        b?: undefined;\n    };\n}".to_string(),
+            "{\n    kind: string;\n    pos: {\n        a: string;\n        x?: undefined;\n        y?: undefined;\n        b?: undefined;\n    } | {\n        b: number;\n        x?: undefined;\n        y?: undefined;\n        a?: undefined;\n    };\n}".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn conditional_object_literal_union_widens_member_literals() {
+    let widened = DeclarationEmitter::widen_object_literal_member_primitive_literal_types(
+        "{\n    a: \"x\";\n    b: 0;\n    c: true;\n}",
+    );
+
+    assert_eq!(
+        widened,
+        "{\n    a: string;\n    b: number;\n    c: boolean;\n}"
+    );
+}
+
+#[test]
 fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
     let own_members = vec!["z: number".to_string()];
 
