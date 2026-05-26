@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::{check_multi_file_with_libs, load_lib_files};
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
@@ -189,6 +190,61 @@ const u = {};
 }
 
 #[test]
+fn jsdoc_class_self_param_uses_instance_type_across_commonjs_file() {
+    let lib_files = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts", "es2015.iterable.d.ts"]);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "index.js",
+                r#"
+const LazySet = require("./LazySet");
+
+/** @type {LazySet} */
+const stringSet = undefined;
+stringSet.addAll(stringSet);
+"#,
+            ),
+            (
+                "LazySet.js",
+                r#"
+/**
+ * @typedef {Object} SomeObject
+ */
+class LazySet {
+    /**
+     * @param {LazySet} iterable
+     */
+    addAll(iterable) {}
+    [Symbol.iterator]() {}
+}
+
+module.exports = LazySet;
+"#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    let codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "JSDoc class self references should resolve to the instance type, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsdoc_import_type_object_typedef_checks_excess_initializer_property() {
     let diagnostics = check_js_file_with_types_diagnostics(
         "types.js",
@@ -213,6 +269,36 @@ const u = { id: 1, extra: true };
         ts2353.len(),
         1,
         "Expected imported object typedef @type to check excess initializer property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_object_typedef_checks_non_literal_initializer_source() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ id: number }} User */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+const candidate = /** @type {{ id: string }} */ ({ id: "wrong" });
+
+/** @type {import('./types.js').User} */
+const u = candidate;
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected imported object typedef @type to check non-literal initializer source, got: {diagnostics:?}"
     );
 }
 

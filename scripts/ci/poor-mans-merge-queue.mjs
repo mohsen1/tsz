@@ -183,6 +183,26 @@ function readPaginatedArray(path, { limit = Number.POSITIVE_INFINITY, perPage = 
   return items.slice(0, limit);
 }
 
+export function readPaginatedObjectArray(
+  path,
+  key,
+  { limit = Number.POSITIVE_INFINITY, perPage = 100, readJson = (url) => runGhJson(["api", url]) } = {},
+) {
+  const items = [];
+  for (let page = 1; items.length < limit; page += 1) {
+    const pageSize = Math.min(perPage, limit - items.length);
+    const separator = path.includes("?") ? "&" : "?";
+    const response = readJson(`${path}${separator}per_page=${pageSize}&page=${page}`);
+    const chunk = response?.[key];
+    if (!Array.isArray(chunk)) {
+      throw new Error(`expected GitHub API object array ${key} from ${path}`);
+    }
+    items.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return items.slice(0, limit);
+}
+
 function git(args, options = {}) {
   return run("git", args, options);
 }
@@ -209,12 +229,36 @@ function normalize(value) {
   return String(value || "").toUpperCase();
 }
 
+function checkTimestampMs(check) {
+  const timestamp = check.completedAt
+    || check.completed_at
+    || check.startedAt
+    || check.started_at
+    || check.createdAt
+    || check.created_at
+    || "";
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function shouldReplaceCheck(current, candidate) {
+  const currentMs = checkTimestampMs(current);
+  const candidateMs = checkTimestampMs(candidate);
+  if (currentMs !== null && candidateMs !== null) return candidateMs >= currentMs;
+  if (candidateMs !== null) return true;
+  if (currentMs !== null) return false;
+  return true;
+}
+
 export function requiredCheckState(checks, requiredNames) {
   const byName = new Map();
   for (const check of checks || []) {
     const name = check.name || check.context;
     if (!name) continue;
-    byName.set(name, check);
+    const current = byName.get(name);
+    if (!current || shouldReplaceCheck(current, check)) {
+      byName.set(name, check);
+    }
   }
 
   const missing = [];
@@ -886,7 +930,6 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
     git(["push", forceWithLeaseArg(branch), "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
-    runGh(["workflow", "run", "ci.yml", "--repo", repository, "--ref", branch]);
   }
   return { branch, mergeOid };
 }
@@ -898,25 +941,28 @@ function commitStatusRollup(repository, sha) {
     "--jq",
     "{statuses: .statuses}",
   ]);
-  const checks = runGhJson([
-    "api",
-    `repos/${repository}/commits/${sha}/check-runs?per_page=100`,
-    "--jq",
-    "{check_runs: .check_runs}",
-  ]);
+  const checks = readPaginatedObjectArray(
+    `repos/${repository}/commits/${sha}/check-runs`,
+    "check_runs",
+    { perPage: 100 },
+  );
   return [
     ...(status.statuses || []).map((item) => ({
       __typename: "StatusContext",
       context: item.context,
       state: item.state,
       targetUrl: item.target_url || "",
+      createdAt: item.created_at || "",
     })),
-    ...(checks.check_runs || []).map((item) => ({
+    ...checks.map((item) => ({
       __typename: "CheckRun",
       name: item.name,
       status: item.status,
       conclusion: item.conclusion,
       detailsUrl: item.html_url || item.details_url || "",
+      completedAt: item.completed_at || "",
+      startedAt: item.started_at || "",
+      createdAt: item.created_at || "",
     })),
   ];
 }

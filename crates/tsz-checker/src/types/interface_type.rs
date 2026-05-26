@@ -316,10 +316,7 @@ impl<'a> CheckerState<'a> {
             } else if member_node.kind == PROPERTY_SIGNATURE {
                 // Extract property signature
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
-                        self.get_property_name_resolved(sig.name)
-                            .map(|name| self.ctx.types.intern_string(&name))
-                    });
+                    let name_atom = self.get_member_name_atom(sig.name);
                     if let Some(name_atom) = name_atom {
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
                         let (is_string_named, single_quoted_name) =
@@ -368,10 +365,7 @@ impl<'a> CheckerState<'a> {
                 // collected and later combined into a single Callable type so
                 // that overload resolution works correctly (e.g., Object.freeze).
                 if let Some(sig) = self.ctx.arena.get_signature(member_node) {
-                    let name_atom = self.get_member_name_atom(sig.name).or_else(|| {
-                        self.get_property_name_resolved(sig.name)
-                            .map(|name| self.ctx.types.intern_string(&name))
-                    });
+                    let name_atom = self.get_member_name_atom(sig.name);
                     if let Some(name_atom) = name_atom {
                         let is_symbol_named = self.is_symbol_property_name(sig.name);
                         let (is_string_named, single_quoted_name) =
@@ -444,10 +438,7 @@ impl<'a> CheckerState<'a> {
                 || member_node.kind == syntax_kind_ext::SET_ACCESSOR
             {
                 if let Some(accessor) = self.ctx.arena.get_accessor(member_node) {
-                    let name_atom = self.get_member_name_atom(accessor.name).or_else(|| {
-                        self.get_property_name_resolved(accessor.name)
-                            .map(|name| self.ctx.types.intern_string(&name))
-                    });
+                    let name_atom = self.get_member_name_atom(accessor.name);
                     if let Some(name_atom) = name_atom {
                         let is_symbol_named = self.is_symbol_property_name(accessor.name);
                         let (is_string_named, single_quoted_name) =
@@ -1520,13 +1511,10 @@ impl<'a> CheckerState<'a> {
         merged
     }
 
-    /// Get the interned Atom for a member name node, handling identifiers,
-    /// string literals, and numeric literals (with canonical normalization).
-    fn get_member_name_atom(&self, name_idx: NodeIndex) -> Option<Atom> {
-        let name = crate::types_domain::queries::core::get_literal_property_name(
-            self.ctx.arena,
-            name_idx,
-        )?;
+    /// Get the interned Atom for a member name node, resolving computed symbol
+    /// names before falling back to syntactic literal names.
+    fn get_member_name_atom(&mut self, name_idx: NodeIndex) -> Option<Atom> {
+        let name = self.get_property_name_resolved(name_idx)?;
         Some(self.ctx.types.intern_string(&name))
     }
 }
