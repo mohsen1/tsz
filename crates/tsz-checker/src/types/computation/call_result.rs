@@ -254,6 +254,7 @@ impl<'a> CheckerState<'a> {
                 self.finite_mapped_parameter_display_type(param_type)
                     .map(|display_type| self.format_type_for_assignability_message(display_type))
             })
+            .or_else(|| self.noinfer_call_parameter_mismatch_display(param_type, arg_type))
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
         if target_display.contains("Array<") {
             target_display = Self::normalize_array_generic_to_shorthand(&target_display);

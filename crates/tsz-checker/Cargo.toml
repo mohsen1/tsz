@@ -110,6 +110,10 @@ name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 
 [[test]]
+name = "noinfer_diagnostic_display_tests"
+path = "tests/noinfer_diagnostic_display_tests.rs"
+
+[[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
