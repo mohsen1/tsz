@@ -372,3 +372,53 @@ class D {
         "ES2015 decorated static private method/accessor output must not keep native private access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es2015_static_private_auto_accessors_use_descriptor_temps() {
+    let source = "\
+declare var dec: any;
+
+class C {
+    @dec
+    static accessor #value = 0;
+}
+
+@dec
+class D {
+    static accessor #value = 0;
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a, _C_value_accessor_storage, _C_value_get, _C_value_set;")
+            && output.contains("__classPrivateFieldGet(_a, _a, \"f\", _C_value_accessor_storage)")
+            && output.contains("__classPrivateFieldSet(_a, _a, value, \"f\", _C_value_accessor_storage)")
+            && output.contains("_C_value_get = function _C_value_get() { return _static_private_value_descriptor.get.call(this); }")
+            && output.contains("_C_value_set = function _C_value_set(value) { return _static_private_value_descriptor.set.call(this, value); }")
+            && output.contains("get: obj => __classPrivateFieldGet(obj, _a, \"a\", _C_value_get)")
+            && output.contains("set: (obj, value) => { __classPrivateFieldSet(obj, _a, value, \"a\", _C_value_set); }")
+            && output.contains("_C_value_accessor_storage = { value: __runInitializers(_a, _static_private_value_initializers, 0) }")
+            && output.contains("_D_value_get = function _D_value_get() { return __classPrivateFieldGet(_classThis, _classThis, \"f\", _D_value_accessor_storage); }")
+            && output.contains("_D_value_set = function _D_value_set(value) { __classPrivateFieldSet(_classThis, _classThis, value, \"f\", _D_value_accessor_storage); };")
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"a\", _D_value_get);")
+            && output.contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"a\", _D_value_set);"),
+        "ES2015 decorated static private auto-accessors should use descriptor temps and generated storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".#value"),
+        "ES2015 decorated static private auto-accessor output must not keep native private access.\nOutput:\n{output}"
+    );
+}
