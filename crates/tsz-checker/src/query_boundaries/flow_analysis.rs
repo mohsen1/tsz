@@ -2,6 +2,8 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
+use super::assignability::RelationFlags;
+
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
     array_element_type as get_array_element_type, call_signatures_for_type,
@@ -474,7 +476,7 @@ pub(crate) fn is_assignable_strict_null(
         target,
         tsz_solver::relations::relation_queries::RelationKind::Assignable,
         tsz_solver::relations::relation_queries::RelationPolicy::from_flags(
-            tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+            RelationFlags::STRICT_NULL_CHECKS,
         ),
         tsz_solver::relations::relation_queries::RelationContext::default(),
     )
@@ -544,7 +546,7 @@ pub(crate) fn is_assignable_with_env(
 ) -> bool {
     let mut flags = 0u16;
     if strict_null_checks {
-        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= RelationFlags::STRICT_NULL_CHECKS;
     }
 
     tsz_solver::relations::relation_queries::query_relation_with_resolver(
@@ -655,7 +657,7 @@ fn types_are_subtype_with_env(
 ) -> bool {
     let mut flags = 0u16;
     if strict_null_checks {
-        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= RelationFlags::STRICT_NULL_CHECKS;
     }
 
     tsz_solver::relations::relation_queries::query_relation_with_resolver(

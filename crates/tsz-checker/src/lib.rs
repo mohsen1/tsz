@@ -571,6 +571,9 @@ mod jsdoc_enum_circular_tests;
 #[path = "../tests/jsdoc_function_return_type_anchor_tests.rs"]
 mod jsdoc_function_return_type_anchor_tests;
 #[cfg(test)]
+#[path = "tests/jsdoc_overload_call_resolution_tests.rs"]
+mod jsdoc_overload_call_resolution_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
@@ -690,6 +693,9 @@ mod recursive_generic_arrow_tests;
 #[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
+#[cfg(test)]
+#[path = "tests/relation_flags_boundary_contract_tests.rs"]
+mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;

@@ -378,6 +378,7 @@ run_lint() {
   node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
@@ -387,6 +388,7 @@ run_lint() {
   node scripts/ci/test-pr-ready-state.mjs || return $?
   node scripts/ci/test-refresh-green-prs.mjs || return $?
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
+  node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
