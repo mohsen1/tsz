@@ -255,6 +255,7 @@ const cleanupActiveRunFormat = formatResult({
     {
       branch: "automation/merge-queue/pr-9515",
       number: 9515,
+      owner: "agent:M4-A",
       runId: 26423420117,
       url: "https://github.example/runs/26423420117",
       status: "in_progress",
@@ -270,11 +271,22 @@ const cleanupActiveRunFormat = formatResult({
   skips: [
     {
       branch: "automation/merge-queue/pr-9515",
+      owner: "agent:M4-A",
       reason: "active queue run 26423420117",
       summaryReason: "active queue run",
     },
-    { branch: "automation/merge-queue/pr-9632", reason: "PR #9632 is open", summaryReason: "open PR branch" },
-    { branch: "automation/merge-queue/pr-9912", reason: "PR #9912 is open", summaryReason: "open PR branch" },
+    {
+      branch: "automation/merge-queue/pr-9632",
+      owner: "agent:M4-A",
+      reason: "PR #9632 is open",
+      summaryReason: "open PR branch",
+    },
+    {
+      branch: "automation/merge-queue/pr-9912",
+      owner: "agent:M4-C",
+      reason: "PR #9912 is open",
+      summaryReason: "open PR branch",
+    },
   ],
   wouldDelete: 0,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
@@ -282,24 +294,29 @@ assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue
 assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
 assert.match(
   cleanupActiveRunFormat,
-  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \|/,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| agent:M4-A \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \|/,
 );
 assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
 assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);
 assert.match(cleanupActiveRunFormat, /\| 1 \| active queue run \|/);
-assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| active queue run 26423420117 \|/);
+assert.match(cleanupActiveRunFormat, /\| Branch \| Owner \| Reason \|/);
+assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| agent:M4-A \| active queue run 26423420117 \|/);
+assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9912` \| agent:M4-C \| PR #9912 is open \|/);
 
 const queueSkipFormat = formatResult({
   selected: null,
   skips: Array.from({ length: 27 }, (_, index) => ({
     number: index + 1,
+    owner: index % 2 === 0 ? "agent:M1-A" : "agent:M4-B",
     reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
   })),
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipFormat, /### Skip Reason Counts/);
 assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
 assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
-assert.match(queueSkipFormat, /\| \.\.\. \| 2 more skipped PR\(s\) omitted \|/);
+assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
+assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
+assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
 
 assert.match(
   formatResult({

@@ -152,6 +152,16 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue-branch cleanup dry runs now show active queue-run status and
     start time in the `Active Queue Runs` table, so preserved active queue
     branches can be age-triaged without opening each Actions run.
+  - `#10211` merged on 2026-05-26 as
+    `c2c4259aeb ci: show owners in queue skip report (#10211)`.
+    Verbose queue dry runs now include the canonical `agent:*` owner label in
+    skipped-PR rows, so `auto-merge off` and `draft PR` blocks can be handed
+    off by lane without cross-referencing the ownership report.
+  - `#10213` merged on 2026-05-26 as
+    `93c86a9b1f ci: show owners in cleanup queue skips (#10213)`.
+    Verbose queue-branch cleanup dry runs now include owner labels in
+    preserved open-branch and active-run rows, so cleanup blockers can be
+    handed off by lane from the cleanup report alone.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -181,7 +191,9 @@ node scripts/ci/pr-ownership-report.mjs
     rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
-    either drafts, not auto-merge armed, or already handed off.
+    either drafts, not auto-merge armed, or already handed off. Use
+    `--verbose` when triaging this surface; skipped PR rows include owner
+    labels for direct lane handoff.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
@@ -199,10 +211,10 @@ node scripts/ci/pr-ownership-report.mjs
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
     branches and group the six preserved branches as open PR branch skips or
-    active queue runs with status/start time; the exact active-run subset
-    changes as synthetic runs complete, so re-run the cleanup dry-run for
-    current run ids and ages. The stale merged-PR queue branches for `#9848`,
-    `#9889`, `#10160`, and `#10163` were deleted.
+    active queue runs with owner labels and status/start time; the exact
+    active-run subset changes as synthetic runs complete, so re-run the
+    cleanup dry-run for current owners, run ids, and ages. The stale merged-PR
+    queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
