@@ -370,6 +370,10 @@ name = "ambient_module_renamed_export_ts2460_tests"
 path = "tests/ambient_module_renamed_export_ts2460_tests.rs"
 
 [[test]]
+name = "ambient_module_value_export_tests"
+path = "tests/ambient_module_value_export_tests.rs"
+
+[[test]]
 name = "cjs_object_export_module_augmentation_merge_tests"
 path = "tests/cjs_object_export_module_augmentation_merge_tests.rs"
 
