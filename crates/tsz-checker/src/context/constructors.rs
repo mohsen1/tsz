@@ -46,6 +46,7 @@ impl<'a> CheckerContext<'a> {
         file_name: String,
         compiler_options: CheckerOptions,
         capabilities: crate::query_boundaries::capabilities::EnvironmentCapabilities,
+        symbol_cache_capacity: usize,
     ) -> Self {
         let flow_graph = Some(FlowGraph::new(&binder.flow_nodes));
 
@@ -64,9 +65,9 @@ impl<'a> CheckerContext<'a> {
             no_implicit_override: false,
             types_extending_array: FxHashSet::default(),
             recovery_sites: RefCell::new(crate::recovery::RecoverySites::default()),
-            symbol_types: crate::context::SymbolTypeCache::with_capacity(binder.symbols.len()),
+            symbol_types: crate::context::SymbolTypeCache::with_capacity(symbol_cache_capacity),
             symbol_instance_types: crate::context::SymbolTypeCache::with_capacity(
-                binder.symbols.len(),
+                symbol_cache_capacity,
             ),
             enum_namespace_types: FxHashMap::default(),
             var_decl_types: FxHashMap::default(),
@@ -329,6 +330,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         // Create pre-populated DefinitionStore from binder's semantic_defs
         // using the solver-owned factory. This is the canonical identity
@@ -371,6 +373,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         ctx.definition_store = definition_store;
         // Eagerly warm local caches from the shared store so that
@@ -404,6 +407,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
             &binder.semantic_defs,
@@ -449,6 +453,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         )
     }
 
@@ -502,6 +507,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
             &binder.semantic_defs,
@@ -537,6 +543,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         ctx.definition_store = Arc::new(DefinitionStore::from_semantic_defs(
             &binder.semantic_defs,
@@ -574,6 +581,7 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            binder.symbols.len(),
         );
         ctx.definition_store = definition_store;
         ctx.warm_local_caches_from_shared_store();
@@ -607,6 +615,9 @@ impl<'a> CheckerContext<'a> {
             file_name,
             compiler_options,
             capabilities,
+            // Child contexts replace symbol caches with parent snapshots below;
+            // starting at zero avoids binder-sized preallocation per child.
+            0,
         );
 
         // Propagate parent state that is safe across arenas.

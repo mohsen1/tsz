@@ -691,3 +691,77 @@ f<{ x: number; y: string }, { x: number; y: string }>({ x: 1, y: "hello" });
         "Spurious TS2322 on valid mixed-param intersection-constrained mapped type, got: {codes_valid:?}"
     );
 }
+
+/// tsc rule: a recursive `Project<T>` mapped type must correctly reverse-infer
+/// `T` from a call argument so that accessing inferred properties does not error.
+///
+/// Structural rule: "When `Project<T> = { [K in keyof T]: { value: T[K] } }` is
+/// used in a generic function return type, reverse-mapped inference must recover
+/// `T` correctly from the concrete argument object, NOT collapse T to `unknown`."
+///
+/// This covers the `recursiveReverseMappedType.ts` conformance regression.
+#[test]
+fn recursive_project_mapped_type_infers_t_correctly() {
+    let code = r#"
+type Project<T> = { [K in keyof T]: { value: T[K] } };
+
+declare function inferIt<T>(p: Project<T>): T;
+const r = inferIt({ a: { value: 1 }, b: { value: "x" } });
+
+const numVal: number = r.a;
+const strVal: string = r.b;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Project<T> reverse inference must produce correct T (not unknown). Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "Project<T> inferred T must have properties a and b. Got: {codes:?}"
+    );
+}
+
+/// Same test with renamed type parameters (`S` instead of `T`, `J` instead of `K`)
+/// to confirm the fix is structural and not dependent on parameter names.
+#[test]
+fn recursive_project_mapped_type_infers_t_correctly_alt_names() {
+    let code = r#"
+type Wrap<S> = { [J in keyof S]: { value: S[J] } };
+
+declare function unwrap<S>(w: Wrap<S>): S;
+const out = unwrap({ x: { value: 42 }, y: { value: "hello" } });
+
+const n: number = out.x;
+const s: string = out.y;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        !codes.contains(&2322),
+        "Wrap<S> (renamed params) reverse inference must produce correct S. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2339),
+        "Wrap<S> inferred S must have properties x and y. Got: {codes:?}"
+    );
+}
+
+/// tsc rule: when a reverse-mapped type's inferred `T` has properties that
+/// don't match the expected types, TS2322 must fire. This guards against
+/// false negatives where the recursion guard collapses T to `any`.
+#[test]
+fn recursive_project_mapped_type_reports_ts2322_on_mismatch() {
+    let code = r#"
+type Project<T> = { [K in keyof T]: { value: T[K] } };
+
+declare function inferIt<T>(p: Project<T>): T;
+const r = inferIt({ a: { value: 1 } });
+
+const bad: string = r.a;
+"#;
+    let codes = check_and_get_codes(code);
+    assert!(
+        codes.contains(&2322),
+        "Project<T> with number value assigned to string must produce TS2322. Got: {codes:?}"
+    );
+}

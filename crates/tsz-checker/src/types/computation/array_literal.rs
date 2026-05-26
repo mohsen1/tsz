@@ -272,38 +272,13 @@ impl<'a> CheckerState<'a> {
         expr_ops::union_context_prefers_tuple_array_literal(self.ctx.types, contextual)
     }
 
-    fn array_intersection_context_has_literal_length(&mut self, contextual: TypeId) -> bool {
+    fn array_literal_context_forces_tuple_like(&mut self, contextual: TypeId) -> bool {
         let contextual = self.resolve_lazy_type(contextual);
-        let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, contextual)
-        else {
-            return false;
-        };
-
-        let length_atom = self.ctx.types.intern_string("length");
-        let mut has_array_like_member = false;
-        let mut has_literal_length_member = false;
-
-        for member in members {
-            let member = self.resolve_lazy_type(member);
-            if crate::query_boundaries::common::array_applicable_type(self.ctx.types, member)
-                .is_some()
-            {
-                has_array_like_member = true;
-            }
-            if crate::query_boundaries::common::raw_property_type(
-                self.ctx.types,
-                member,
-                length_atom,
-            )
-            .is_some_and(|length_type| {
-                crate::query_boundaries::common::is_number_literal(self.ctx.types, length_type)
-            }) {
-                has_literal_length_member = true;
-            }
-        }
-
-        has_array_like_member && has_literal_length_member
+        (crate::query_boundaries::common::array_applicable_type(self.ctx.types, contextual)
+            .is_none()
+            || crate::query_boundaries::common::intersection_members(self.ctx.types, contextual)
+                .is_some())
+            && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, contextual)
     }
 
     fn sole_array_applicable_union_context(&mut self, contextual: TypeId) -> Option<TypeId> {
@@ -648,25 +623,11 @@ impl<'a> CheckerState<'a> {
             && !force_tuple_for_mapped
             && !force_tuple_for_union_context
             && !force_tuple_for_constraint_hint
-            && resolved_contextual_type.is_some_and(|resolved| {
-                // Only force tuple for object types that have a "0" property but
-                // aren't already handled by get_array_applicable_type.
-                crate::query_boundaries::common::array_applicable_type(self.ctx.types, resolved)
-                    .is_none()
-                    && crate::query_boundaries::common::is_tuple_like_type(self.ctx.types, resolved)
-            });
-        let force_tuple_for_literal_length_intersection = tuple_context.is_none()
-            && !force_tuple_for_mapped
-            && !force_tuple_for_union_context
-            && !force_tuple_for_constraint_hint
-            && !force_tuple_for_tuple_like
-            && (applicable_contextual_type.is_some_and(|applicable| {
-                self.array_intersection_context_has_literal_length(applicable)
-            }) || resolved_contextual_type.is_some_and(|resolved| {
-                self.array_intersection_context_has_literal_length(resolved)
-            }) || original_contextual_type.is_some_and(|original| {
-                self.array_intersection_context_has_literal_length(original)
-            }));
+            && (resolved_contextual_type
+                .is_some_and(|resolved| self.array_literal_context_forces_tuple_like(resolved))
+                || original_contextual_type.is_some_and(|original| {
+                    self.array_literal_context_forces_tuple_like(original)
+                }));
 
         // Use the applicable (narrowed) type for contextual typing when available,
         // falling back to the full resolved contextual type.
@@ -1062,11 +1023,7 @@ impl<'a> CheckerState<'a> {
 
         // When contextual type is a homomorphic mapped type, force tuple typing.
         // This preserves per-element types for reverse mapped type inference.
-        if force_tuple_for_mapped
-            || force_tuple_for_constraint_hint
-            || force_tuple_for_tuple_like
-            || force_tuple_for_literal_length_intersection
-        {
+        if force_tuple_for_mapped || force_tuple_for_constraint_hint || force_tuple_for_tuple_like {
             let mapped_tuple_elements: Vec<tsz_solver::TupleElement> = element_types
                 .iter()
                 .map(|&type_id| tsz_solver::TupleElement {
