@@ -234,9 +234,50 @@ const value: number = ws[importedSym];
         "./b.ts",
     );
 
+    for code in [
+        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    ] {
+        assert!(
+            !codes.contains(&code),
+            "imported same-binding symbol access should preserve declared member type, got {codes:?}",
+        );
+    }
+}
+
+#[test]
+fn imported_distinct_symbol_binding_does_not_match_computed_member() {
+    let codes = diagnostic_codes_for_project(
+        &[
+            (
+                "./a.ts",
+                r#"
+export declare const memberKey: symbol;
+export declare const otherKey: symbol;
+
+export interface WithSymbol {
+    [memberKey]: number;
+}
+"#,
+            ),
+            (
+                "./b.ts",
+                r#"
+import { otherKey, type WithSymbol } from "./a";
+
+declare const ws: WithSymbol;
+const value = ws[otherKey];
+"#,
+            ),
+        ],
+        "./b.ts",
+    );
+
     assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "imported same-binding symbol access should preserve declared member type, got {codes:?}",
+        codes.contains(
+            &diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN
+        ),
+        "different exported symbol bindings must not resolve to the declared member type, got {codes:?}",
     );
 }
 
