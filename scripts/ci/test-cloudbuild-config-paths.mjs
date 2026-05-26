@@ -13,6 +13,12 @@ const workflowConfigs = new Map([
   ],
   [".github/workflows/ci.yml", ["cloudbuild-unit.yaml"]],
 ]);
+const workflowDir = path.join(ROOT, ".github", "workflows");
+const workflowFiles = fs
+  .readdirSync(workflowDir)
+  .filter((entry) => /\.ya?ml$/.test(entry))
+  .map((entry) => `.github/workflows/${entry}`)
+  .sort();
 const expectedConfigs = [...workflowConfigs.values()].flat();
 const expectedConfigSet = new Set(expectedConfigs);
 
@@ -55,7 +61,8 @@ for (const config of expectedConfigs) {
   );
 }
 
-for (const [workflow, configs] of workflowConfigs) {
+for (const workflow of workflowFiles) {
+  const configs = workflowConfigs.get(workflow) ?? [];
   const workflowText = fs.readFileSync(path.join(ROOT, workflow), "utf8");
   const allowedConfigs = new Set(configs);
 
@@ -73,6 +80,12 @@ for (const [workflow, configs] of workflowConfigs) {
   }
 
   for (const config of expectedConfigs) {
+    assert.doesNotMatch(
+      workflowText,
+      configFlagPattern(config),
+      `${workflow} should not reference ${config} from the repository root`,
+    );
+
     if (allowedConfigs.has(config)) {
       continue;
     }
