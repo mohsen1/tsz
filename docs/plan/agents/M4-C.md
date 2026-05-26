@@ -7,8 +7,9 @@ GitHub label: `agent:M4-C`
 
 ## Mission
 
-Fix generic inference, contextual typing, constructor inference, and
-instantiation-session bugs as bounded solver-owned transactions.
+Fix generic inference, contextual typing, overload inference, constructor
+inference, and instantiation-session bugs as bounded solver-owned
+transactions.
 
 ## Start Every Cycle
 
@@ -21,30 +22,27 @@ scripts/agents/list-owned-work.sh M4-C
 
 ## Current Assignment
 
-- Initial priority: land, close, or clearly hand off existing PRs in this lane
-  before claiming issue backlog.
-- Current ready queue: `#9827`, `#9814`, `#9808`, and `#9799`.
-- Current draft cluster to reconcile before new branches: `#9810`, `#9809`,
-  `#9801`, `#9797`, `#9792`, `#9508`, `#9224`, and `#9200`.
-- Issue context: `#9785`, `#9778`, `#9775`, `#9774`, `#9773`, `#9769`,
-  `#9768`, `#9766`, `#9765`, `#9762`, `#9761`, `#9760`, `#9758`,
-  `#9757`, `#9756`, `#9754`, `#9747`, `#9746`, `#9745`, `#8773`, `#8711`,
-  `#8707`, `#8703`, and `#6407`.
-- Track: roadmap Track 3.
-- Next concrete step: let green auto-merge complete on the ready queue, fix the
-  current failing CI if one remains, then group the new issues by inference
-  mode: literal widening/`satisfies`, JSDoc context, unique-symbol/keyof, and
-  nullish/operator diagnostics.
+- Primary gate: all bugs fixed for inference/session behavior and Kysely-style
+  contextual generic project blockers.
+- Bug families: literal widening and `satisfies`, JSDoc context,
+  Array/reduce/callback contextual typing, overload and constructor inference,
+  repeated generic calls, type-parameter identity, stale substitutions, and
+  contradictory `T`-to-`T` results.
+- Architecture cleanup metric: inference session state must be transactional;
+  cache keys must include substitution environment, request context,
+  compatibility mode, and `this`/flow inputs that change answers.
+- First live command: inspect owned PRs, then search open issues for
+  `inference`, `contextual`, `satisfies`, `overload`, `constructor`, `Kysely`,
+  and `JSDoc`.
+- Next concrete step: group bugs by inference mode and take one bounded
+  session/cache invariant at a time.
 
 ## Existing Work To Inspect First
 
-- `#9801` is the JSDoc enforcement branch and is draft again after a failed
-  conformance aggregate; do not start another `@implements` branch until that
-  result is resolved or handed off.
-- `#9814`, `#9799`, `#9785`, `#9773`, `#9765`, and `#9758` all touch
-  literal widening and `satisfies` or const-context state.
-- `#9808`, `#9810`, `#9766`, `#9755`, and `#9747` overlap unique-symbol,
-  `keyof`, and element-access diagnostics.
+- Recent inference and contextual typing PRs.
+- Kysely project-row reductions.
+- `docs/architecture/INSTANTIATION_CACHE.md`.
+- M4-B relation/cache work when the failure only appears during relation.
 
 ## Non-Overlap Rules
 
@@ -52,10 +50,11 @@ scripts/agents/list-owned-work.sh M4-C
   proven otherwise.
 - Do not let inference state leak between repeated generic calls.
 - If the fix is relation-policy keying, coordinate with M4-B.
+- If the fix is mapped/conditional evaluation, coordinate with M4-A.
 
 ## Verification
 
-- Add tests that cover reordered declarations or repeated calls when state
-  leakage is possible.
+- Add tests that cover reordered declarations, repeated calls, or cache-off
+  behavior when state leakage is possible.
 - Prefer project-row reductions over full project runs.
 - Do not run full benchmark or conformance suites locally.

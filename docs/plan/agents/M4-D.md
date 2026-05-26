@@ -7,8 +7,8 @@ GitHub label: `agent:M4-D`
 
 ## Mission
 
-Stabilize symbol, lib, module, and cross-file identity. Replace name-only
-allowlists with binder/solver identity facts.
+Stabilize symbol, lib, module, `DefId`, and cross-file identity. Replace
+name-only allowlists with binder/solver identity facts.
 
 ## Start Every Cycle
 
@@ -21,33 +21,39 @@ scripts/agents/list-owned-work.sh M4-D
 
 ## Current Assignment
 
-- Initial priority: land, close, or clearly hand off existing PRs in this lane
-  before claiming issue backlog.
-- Issue context: `#8476`, `#8534`, `#8719`, `#8681`, `#6565`.
-- Related PRs to inspect: `#9211`, `#9083`, `#8577`, `#8467`, `#8540`,
-  `#8970`, `#8969`, `#8967`.
-- Track: roadmap Track 7.
-- Next concrete step: identify whether imported alias/type identity or builtin
-  lib identity is the current smallest blocker, then choose one stable-identity
-  query or boundary repair.
+- Primary gate: all bugs fixed for stable semantic identity across files,
+  libs, globals, imports, declarations, and module graphs.
+- Bug families: `import()` types, namespace/enum merging, module augmentation,
+  DOM/lib globals, well-known symbols, alias owners, `DefId` mapping, class
+  static/instance identity, declaration-module exports, and display provenance
+  over stable identity.
+- Architecture cleanup metric: raw name allowlists, actual-lib alias
+  admissions, cross-arena `TypeId` comparisons, and ad hoc symbol fallbacks
+  should trend down.
+- First live command: inspect owned PRs, then search open issues for
+  `module`, `import`, `lib`, `symbol`, `unique symbol`, `DefId`, `alias`, and
+  `well-known`.
+- Next concrete step: choose one identity repair that replaces a string/name
+  shortcut with binder/global or solver identity.
 
 ## Existing Work To Inspect First
 
-- `#8577` uses `SymbolId` identity for Promise/PromiseLike detection.
-- `#9211` resolves cross-file import types in conditional extends position.
-- `#9083` resolves imported alias value annotations.
-- `#8467` touches cross-arena `NodeIndex` collisions for multi-lib built-ins.
+- `docs/architecture/WELL_KNOWN_NAME_REFERENCES.md`.
+- `docs/architecture/DEFID_RAW_SYMBOL_FALLBACK_PRODUCERS.md`.
+- Cross-file import, builtin lib identity, and module-resolution recent PRs.
+- Studio-A when fixture/module config is the real project-row blocker.
 
 ## Non-Overlap Rules
 
-- Do not special-case builtin names with raw strings. Resolve through binder or
-  stable builtin identity.
+- Do not special-case builtin names with raw strings. Resolve through binder,
+  stable builtin identity, or protocol query helpers.
 - Do not compare `TypeId`s across distinct interner universes.
-- If module resolution config parsing is the issue, coordinate with
-  Studio-A or the core tech-debt issue before changing semantics.
+- If module resolution config parsing is the issue, coordinate with Studio-A or
+  the core module-resolution tech-debt lane before changing semantics.
 
 ## Verification
 
 - Include cross-file and alias/wrapper cases.
 - Prefer targeted checker or binder tests.
+- Run architecture guards when replacing identity fallbacks.
 - Do not run full conformance locally.

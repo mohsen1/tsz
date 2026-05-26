@@ -7,8 +7,9 @@ GitHub label: `agent:Studio-F`
 
 ## Mission
 
-Own the multi-session runway: disk, worktree reuse, TypeScript submodule reuse,
-Cargo-cache-preserving cleanup, stuck CI hygiene, and launch-plan updates.
+Own launch infrastructure, architecture guardrails, output-surgery burn-down,
+disk/worktree reuse, TypeScript submodule reuse, Cargo-cache-preserving
+cleanup, and cheap evidence plumbing for the end-state push.
 
 ## Start Every Cycle
 
@@ -17,25 +18,36 @@ git fetch origin main
 scripts/agents/show-goal.sh Studio-F
 scripts/agents/disk-preflight.sh Studio-F
 scripts/agents/list-owned-work.sh Studio-F
+python3 scripts/arch/arch_guard.py --json-report /tmp/tsz-arch-guard.json
+python3 scripts/emit/audit-output-surgery.py
 ```
 
 ## Current Assignment
 
-- Initial priority: land, close, or clearly hand off existing PRs in this lane
-  before claiming issue backlog.
-- Issue context: `#8428`, `#8282`, plus this coordination PR while active.
-- Related PRs to inspect: `#9280`, `#9270`, `#9262`, `#9258`, `#9254`.
-- Track: roadmap Track 10.
-- Next concrete step: keep this launch system mergeable, then make sure every
-  computer can run `disk-preflight`, reuse a populated `TypeScript/` submodule,
-  and clean safely without losing useful Cargo caches.
+- Primary gate: architecture cleanup and launch mechanics that support
+  conformance strictness, emit 100%, bug closure, project rows, and `2x`
+  performance.
+- Bug or metric families: output-surgery audit, guardrail caps, direct solver
+  imports outside solver/checker, checker diagnostic/source-text ratchets,
+  oversized files, disk pressure, stale worktrees, TypeScript submodule reuse,
+  and scripts that make cheap evidence reliable.
+- Architecture cleanup metric: every cleanup PR must ratchet a named guard
+  down, remove an allowlist entry, split a file over a documented ceiling, or
+  make a release-gate artifact harder to misread.
+- Current known debt: `python3 scripts/emit/audit-output-surgery.py` reports
+  `4` unallowlisted calls and `1` stale allowlist entry.
+- First live command: run the start-cycle commands and inspect guard failures
+  before choosing cleanup work.
+- Next concrete step: pick one measurable guardrail or launch-script gap and
+  keep it behavior-preserving unless it directly fixes a release blocker.
 
 ## Existing Work To Inspect First
 
-- `#9270` added memory-guard pre-push tests.
-- `#9262`, `#9258`, and `#9254` updated safe-run and conformance tooling docs.
-- The local disk guard may report low disk; prefer reuse and cache-preserving
-  cleanup over new worktrees.
+- `scripts/emit/audit-output-surgery.py` and
+  `scripts/emit/output-surgery-allowlist.txt`.
+- `scripts/arch/arch_guard_shared.py` and `scripts/arch/arch_guard_policy.toml`.
+- Tech-debt issues `#8276`, `#8278`, `#9403`, `#9447`, `#10068`, and `#10079`.
+- Disk/worktree guidance in `AGENTS.md` and this directory.
 
 ## Non-Overlap Rules
 
@@ -43,9 +55,13 @@ scripts/agents/list-owned-work.sh Studio-F
 - Do not recommend `cargo clean` for ordinary cleanup.
 - Do not delete worktrees unless their owner/branch/PR status is understood.
 - Do not change roadmap direction for routine launch bookkeeping.
+- Architecture cap bumps need a signed rationale and removal condition.
 
 ## Verification
 
-- Test helper scripts directly with `--help` or harmless listing modes.
+- Test helper scripts directly with `--help`, harmless listing modes, or narrow
+  unit tests.
 - Use `scripts/setup/clean.sh --dry-run` before changing cleanup guidance.
+- Use `python3 scripts/arch/arch_guard.py` and focused arch tests for guardrail
+  edits.
 - No compiler suite is needed for docs/script launch changes.
