@@ -883,6 +883,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             // Close class with semicolon (it's a var assignment, not a return)
             out.push_str(&format!("{i1}}};\n"));
 
+            for assign in external_assignments
+                .iter()
+                .filter(|assign| self.is_es2015_storage_setup_assignment(assign))
+            {
+                out.push_str(&format!("{i1}{assign};\n"));
+            }
+
             for assignment in self.class_decorator_static_private_temp_assignment_list(
                 &class_decorator_static_private_methods,
                 &class_decorator_auto_accessor_infos,
@@ -1927,6 +1934,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 member_vars[last_fi.member_var_index]
                     .extra_initializers_var
                     .is_some()
+                    && !self.has_following_class_decorator_auto_accessor(
+                        &class_decorator_static_auto_accessors,
+                        decorated_members[last_fi.member_var_index].member_idx,
+                    )
+                    && !self.has_following_auto_accessor_info(
+                        &auto_accessor_infos,
+                        decorated_members,
+                        last_fi.member_var_index,
+                    )
             });
         let class_decorator_auto_extra_handles_class_extra = defer_class_extra_init
             && class_decorator_static_auto_accessors
@@ -1948,6 +1964,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         decorated_members,
                         last_fi.member_var_index,
                     )
+                    && !self.has_following_class_decorator_auto_accessor(
+                        &class_decorator_static_auto_accessors,
+                        decorated_members[last_fi.member_var_index].member_idx,
+                    )
+                    && !self.has_following_auto_accessor_info(
+                        &auto_accessor_infos,
+                        decorated_members,
+                        last_fi.member_var_index,
+                    )
                 {
                     let static_init_receiver = *_class_alias;
                     out.push_str(&format!(
@@ -1966,6 +1991,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
                     && !self.has_following_decorated_auto_accessor(
+                        decorated_members,
+                        last_fi.member_var_index,
+                    )
+                    && !self.has_following_class_decorator_auto_accessor(
+                        &class_decorator_static_auto_accessors,
+                        decorated_members[last_fi.member_var_index].member_idx,
+                    )
+                    && !self.has_following_auto_accessor_info(
+                        &auto_accessor_infos,
                         decorated_members,
                         last_fi.member_var_index,
                     )
@@ -2054,6 +2088,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 if let Some(last_fi) = static_fields.last()
                     && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
+                    && !self.has_following_decorated_auto_accessor(
+                        decorated_members,
+                        last_fi.member_var_index,
+                    )
+                    && !self.has_following_class_decorator_auto_accessor(
+                        &class_decorator_static_auto_accessors,
+                        decorated_members[last_fi.member_var_index].member_idx,
+                    )
+                    && !self.has_following_auto_accessor_info(
+                        &auto_accessor_infos,
+                        decorated_members,
+                        last_fi.member_var_index,
+                    )
                 {
                     let mut expr = format!("{run_init}({class_ref}, {extra_var})");
                     if defer_class_extra_init {
@@ -2329,6 +2376,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 .find(|f| !decorated_members[f.member_var_index].is_static)
                 && let Some(ref extra_var) =
                     member_vars[last_fi.member_var_index].extra_initializers_var
+                && !self.has_following_decorated_auto_accessor(
+                    decorated_members,
+                    last_fi.member_var_index,
+                )
+                && !self.has_following_auto_accessor_info(
+                    auto_accessor_infos,
+                    decorated_members,
+                    last_fi.member_var_index,
+                )
             {
                 ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
             }
@@ -2385,22 +2441,22 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     .iter()
                     .filter(|info| !decorated_members[info.member_var_index].is_static)
                     .collect();
-                for (accessor_idx, info) in instance_auto_accessors.iter().enumerate() {
+                for info in instance_auto_accessors {
                     let var_info = &member_vars[info.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = self.auto_accessor_initializer_arg(info);
                     let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
-                    let value = if accessor_idx == 0 {
-                        format!("{run_init}(this, {init_var}{init_arg})")
-                    } else {
-                        let prev_info = instance_auto_accessors[accessor_idx - 1];
-                        let prev_extra = member_vars[prev_info.member_var_index]
-                            .extra_initializers_var
-                            .as_deref()
-                            .unwrap_or("_extra");
+                    let value = if let Some(prev_extra) = self
+                        .previous_decorated_element_extra_initializers(
+                            decorated_members,
+                            member_vars,
+                            info.member_var_index,
+                        ) {
                         format!(
                             "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
                         )
+                    } else {
+                        format!("{run_init}(this, {init_var}{init_arg})")
                     };
                     ctor_init_calls.push(format!(
                         "{inner_indent}{storage_name}.set(this, {value});\n"
@@ -2509,12 +2565,54 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let Some(current_member) = decorated_members.get(member_var_index) else {
             return false;
         };
-        decorated_members
+        decorated_members.iter().any(|member| {
+            member.is_static == current_member.is_static
+                && member.kind == MemberKind::Accessor
+                && self.member_pos_after(member.member_idx, current_member.member_idx)
+        })
+    }
+
+    fn has_following_class_decorator_auto_accessor(
+        &self,
+        auto_accessors: &[&ClassDecoratorAutoAccessorInfo],
+        member_idx: NodeIndex,
+    ) -> bool {
+        auto_accessors
             .iter()
-            .skip(member_var_index + 1)
-            .any(|member| {
-                member.is_static == current_member.is_static && member.kind == MemberKind::Accessor
-            })
+            .any(|info| self.member_pos_after(info.member.member_idx, member_idx))
+    }
+
+    fn has_following_auto_accessor_info(
+        &self,
+        auto_accessors: &[DecoratedAutoAccessorInfo],
+        decorated_members: &[DecoratedMember],
+        member_var_index: usize,
+    ) -> bool {
+        let Some(current_member) = decorated_members.get(member_var_index) else {
+            return false;
+        };
+        auto_accessors.iter().any(|info| {
+            decorated_members
+                .get(info.member_var_index)
+                .is_some_and(|member| {
+                    member.is_static == current_member.is_static
+                        && self.member_pos_after(member.member_idx, current_member.member_idx)
+                })
+        })
+    }
+
+    fn member_pos_after(&self, later_idx: NodeIndex, earlier_idx: NodeIndex) -> bool {
+        let Some(later) = self.arena.get(later_idx) else {
+            return false;
+        };
+        let Some(earlier) = self.arena.get(earlier_idx) else {
+            return false;
+        };
+        later.pos > earlier.pos
+    }
+
+    fn is_es2015_storage_setup_assignment(&self, assignment: &str) -> bool {
+        assignment.ends_with(" = new WeakMap()") || assignment.ends_with(" = new WeakSet()")
     }
 
     fn decorated_member_for<'b>(

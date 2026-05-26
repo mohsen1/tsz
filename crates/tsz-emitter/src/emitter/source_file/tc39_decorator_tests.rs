@@ -880,6 +880,83 @@ class C {
 }
 
 #[test]
+fn tc39_es2015_class_decorated_auto_accessors_chain_field_extras() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    @dec
+    y = 1;
+    @dec
+    accessor z = 1;
+    @dec
+    static #y = 1;
+    @dec
+    static accessor #z = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_C_z_1_accessor_storage = new WeakMap();")
+            && output.contains("_C_z_1_accessor_storage.set(this, (__runInitializers(this, _y_extraInitializers), __runInitializers(this, _z_initializers, 1)));")
+            && output.contains("_C_z_accessor_storage = { value: (__runInitializers(_classThis, _static_private_y_extraInitializers), __runInitializers(_classThis, _static_private_z_initializers, 1)) };"),
+        "ES2015 class-decorated auto-accessors should create generated storage and chain previous field extra initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_C_y = { value: (__runInitializers(_classThis, _staticExtraInitializers), __runInitializers(_classThis, _static_private_y_initializers, 1)) };\n    (() => {\n        __runInitializers(_classThis, _static_private_y_extraInitializers);"),
+        "Static private field extra initializers should be consumed by the following static private auto-accessor.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2022_class_decorated_auto_accessors_chain_field_extras() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    @dec
+    y = 1;
+    @dec
+    accessor z = 1;
+    @dec
+    static #y = 1;
+    @dec
+    static accessor #z = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("#z_1_accessor_storage = (__runInitializers(this, _y_extraInitializers), __runInitializers(this, _z_initializers, 1));")
+            && output.contains("_C_z_accessor_storage = { value: (__runInitializers(_classThis, _static_private_y_extraInitializers), __runInitializers(_classThis, _static_private_z_initializers, 1)) };"),
+        "ES2022 class-decorated auto-accessors should chain previous field extra initializers in class body storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("constructor() {\n            __runInitializers(this, _y_extraInitializers);\n            __runInitializers(this, _z_extraInitializers);"),
+        "Instance field extra initializers should not be emitted separately when the following auto-accessor consumes them.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_es5_public_methods_schedule_computed_key_decorators() {
     let source = "\
 declare var dec: any;
