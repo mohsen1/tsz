@@ -256,11 +256,17 @@ interface Number {
     toLocaleString(): string;
 }
 declare function f4<T1 extends Number>(): { [P in keyof T1]: void };
+interface WrappedValue {
+    alpha(): string;
+    beta: number;
+}
+declare function f5<Value extends WrappedValue>(): { [Key in keyof Value]: boolean };
 
 let x1 = f1();
 let x2 = f2();
 let x3 = f3();
 let x4 = f4();
+let x5 = f5();
 "#,
     );
 
@@ -277,6 +283,10 @@ let x4 = f4();
             "declare let x4: {\n    toString: void;\n    toFixed: void;\n    toExponential: void;\n    toPrecision: void;\n    valueOf: void;\n    toLocaleString: void;\n};"
         ),
         "Expected object-wrapper mapped call result to expand public members: {output}"
+    );
+    assert!(
+        output.contains("declare let x5: {\n    alpha: boolean;\n    beta: boolean;\n};"),
+        "Expected renamed wrapper mapped call result to expand declared public members: {output}"
     );
 }
 

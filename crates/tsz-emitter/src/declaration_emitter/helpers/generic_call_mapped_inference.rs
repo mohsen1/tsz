@@ -194,18 +194,6 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return None;
         }
-        if self
-            .mapped_source_type_node_text(source_arena, source_type_idx)
-            .as_deref()
-            == Some("Number")
-            && template_text == "void"
-        {
-            return Some(
-                "{\n    toString: void;\n    toFixed: void;\n    toExponential: void;\n    toPrecision: void;\n    valueOf: void;\n    toLocaleString: void;\n}"
-                    .to_string(),
-            );
-        }
-
         self.mapped_constraint_member_object_type_text(
             source_arena,
             source_type_idx,
@@ -224,22 +212,21 @@ impl<'a> DeclarationEmitter<'a> {
         source_arena: &NodeArena,
         type_idx: NodeIndex,
     ) -> Option<String> {
-        let text = self.mapped_source_type_node_text(source_arena, type_idx)?;
-        matches!(
-            text.as_str(),
-            "string" | "number" | "boolean" | "bigint" | "symbol"
-        )
-        .then_some(text)
-    }
-
-    fn mapped_source_type_node_text(
-        &self,
-        source_arena: &NodeArena,
-        type_idx: NodeIndex,
-    ) -> Option<String> {
-        self.emit_type_node_text_from_arena(source_arena, type_idx)
-            .or_else(|| self.source_slice_from_arena(source_arena, type_idx))
-            .map(|text| text.trim().to_string())
+        let node = source_arena.get(type_idx)?;
+        let type_name_idx = if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            source_arena.get_type_ref(node)?.type_name
+        } else {
+            type_idx
+        };
+        let primitive = match identifier_text(source_arena, type_name_idx)?.as_str() {
+            "string" => "string",
+            "number" => "number",
+            "boolean" => "boolean",
+            "bigint" => "bigint",
+            "symbol" => "symbol",
+            _ => return None,
+        };
+        Some(primitive.to_string())
     }
 
     fn mapped_constraint_member_object_type_text(
@@ -252,57 +239,113 @@ impl<'a> DeclarationEmitter<'a> {
             .type_reference_symbol_from_arena(source_arena, source_type_idx)
             .or_else(|| {
                 let name = type_reference_identifier_name(source_arena, source_type_idx)?;
-                self.binder?
-                    .symbols
-                    .iter()
-                    .find(|symbol| symbol.escaped_name == name)
-                    .map(|symbol| symbol.id)
+                self.binder?.get_global_type(&name)
             })?;
-        self.with_symbol_declarations(sym_id, |decl_arena, decl_idx| {
-            let decl_node = decl_arena.get(decl_idx)?;
-            let members = decl_arena
-                .get_interface(decl_node)
-                .map(|iface| iface.members.nodes.as_slice())
+        let member_texts = self.mapped_constraint_member_type_texts(sym_id, template_text)?;
+        let member_indent = "    ".to_string();
+        let formatted_members = member_texts
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("{{\n{formatted_members}\n}}"))
+    }
+
+    fn mapped_constraint_member_type_texts(
+        &self,
+        sym_id: SymbolId,
+        template_text: &str,
+    ) -> Option<Vec<String>> {
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let mut member_texts = Vec::new();
+        for decl_idx in symbol.declarations.iter().copied() {
+            if self.arena.get(decl_idx).is_some() {
+                self.collect_mapped_constraint_members_from_decl(
+                    self.arena,
+                    decl_idx,
+                    template_text,
+                    &mut member_texts,
+                );
+            }
+            if let Some(arenas) = binder.declaration_arenas.get(&(sym_id, decl_idx)) {
+                for arena in arenas {
+                    self.collect_mapped_constraint_members_from_decl(
+                        arena.as_ref(),
+                        decl_idx,
+                        template_text,
+                        &mut member_texts,
+                    );
+                }
+            }
+            if let Some(arena) = binder.symbol_arenas.get(&sym_id) {
+                self.collect_mapped_constraint_members_from_decl(
+                    arena.as_ref(),
+                    decl_idx,
+                    template_text,
+                    &mut member_texts,
+                );
+            }
+            if let Some(arena) = self.global_symbol_arenas.get(&sym_id) {
+                self.collect_mapped_constraint_members_from_decl(
+                    arena.as_ref(),
+                    decl_idx,
+                    template_text,
+                    &mut member_texts,
+                );
+            }
+        }
+        (!member_texts.is_empty()).then_some(member_texts)
+    }
+
+    fn collect_mapped_constraint_members_from_decl(
+        &self,
+        decl_arena: &NodeArena,
+        decl_idx: NodeIndex,
+        template_text: &str,
+        member_texts: &mut Vec<String>,
+    ) {
+        let Some(decl_node) = decl_arena.get(decl_idx) else {
+            return;
+        };
+        let Some(members) = decl_arena
+            .get_interface(decl_node)
+            .map(|iface| iface.members.nodes.as_slice())
+            .or_else(|| {
+                decl_arena
+                    .get_class(decl_node)
+                    .map(|class| class.members.nodes.as_slice())
+            })
+        else {
+            return;
+        };
+        for &member_idx in members {
+            let Some(member_node) = decl_arena.get(member_idx) else {
+                continue;
+            };
+            let name_idx = decl_arena
+                .get_signature(member_node)
+                .map(|signature| signature.name)
                 .or_else(|| {
                     decl_arena
-                        .get_class(decl_node)
-                        .map(|class| class.members.nodes.as_slice())
-                })?;
-            let mut member_texts = Vec::new();
-            for &member_idx in members {
-                let Some(member_node) = decl_arena.get(member_idx) else {
-                    continue;
-                };
-                let name_idx = decl_arena
-                    .get_method_decl(member_node)
-                    .map(|method| method.name)
-                    .or_else(|| {
-                        decl_arena
-                            .get_property_decl(member_node)
-                            .map(|prop| prop.name)
-                    });
-                let Some(name) =
-                    name_idx.and_then(|idx| self.property_name_text_from_arena(decl_arena, idx))
-                else {
-                    continue;
-                };
-                member_texts.push(Self::format_object_member_type_text(
-                    &name,
-                    template_text,
-                    1,
-                ));
+                        .get_method_decl(member_node)
+                        .map(|method| method.name)
+                })
+                .or_else(|| {
+                    decl_arena
+                        .get_property_decl(member_node)
+                        .map(|prop| prop.name)
+                });
+            let Some(name) =
+                name_idx.and_then(|idx| self.property_name_text_from_arena(decl_arena, idx))
+            else {
+                continue;
+            };
+            let member_text = Self::format_object_member_type_text(&name, template_text, 1);
+            if !member_texts.contains(&member_text) {
+                member_texts.push(member_text);
             }
-            if member_texts.is_empty() {
-                return None;
-            }
-            let member_indent = "    ".to_string();
-            let formatted_members = member_texts
-                .iter()
-                .map(|member| Self::format_object_member_entry(&member_indent, member))
-                .collect::<Vec<_>>()
-                .join("\n");
-            Some(format!("{{\n{formatted_members}\n}}"))
-        })
+        }
     }
 
     fn type_parameter_argument_type_text(
@@ -531,19 +574,32 @@ impl<'a> DeclarationEmitter<'a> {
     fn type_reference_symbol_from_arena(
         &self,
         source_arena: &NodeArena,
-        type_name_idx: NodeIndex,
+        type_or_name_idx: NodeIndex,
     ) -> Option<SymbolId> {
         let binder = self.binder?;
+        let type_name_idx = source_arena.get(type_or_name_idx).and_then(|node| {
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+                source_arena
+                    .get_type_ref(node)
+                    .map(|type_ref| type_ref.type_name)
+            } else {
+                Some(type_or_name_idx)
+            }
+        })?;
         if std::ptr::eq(source_arena, self.arena)
-            && let Some(sym_id) = binder.get_node_symbol(type_name_idx)
+            && let Some(sym_id) = binder
+                .get_node_symbol(type_name_idx)
+                .or_else(|| binder.get_node_symbol(type_or_name_idx))
         {
             return Some(sym_id);
         }
         let name = identifier_text(source_arena, type_name_idx)?;
-        binder
-            .file_locals
-            .get(&name)
-            .or_else(|| self.resolve_identifier_symbol(type_name_idx, &name))
+        if std::ptr::eq(source_arena, self.arena)
+            && let Some(sym_id) = self.resolve_identifier_symbol(type_name_idx, &name)
+        {
+            return Some(sym_id);
+        }
+        binder.get_global_type(&name)
     }
 
     fn symbol_declares_pick_like_alias(&self, sym_id: SymbolId) -> bool {
