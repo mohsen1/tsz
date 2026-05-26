@@ -799,6 +799,9 @@ mod ts2590_array_literal_identity_skip_tests;
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
 #[cfg(test)]
+#[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
+mod type_param_default_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
 #[cfg(test)]
