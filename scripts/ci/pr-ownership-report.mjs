@@ -121,7 +121,7 @@ function prSummary(report, number, prefix = "#") {
     return `${prefix}${number}`;
   }
   const state = pr.draft ? "draft" : "ready";
-  const wip = pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title) ? ", WIP" : "";
+  const wip = isWipPr(pr) ? ", WIP" : "";
   const owner = pr.agentName ?? "no AgentName";
   const stack = pr.stackRole ? `, ${pr.stackRole}` : "";
   return `${prefix}${number} (${state}${wip}, ${owner}${stack})`;
@@ -163,6 +163,21 @@ function ownerOf(pr) {
     return `agent:${pr.agentLabels[0]}`;
   }
   return pr.agentName || "unowned";
+}
+
+function isWipPr(pr) {
+  return pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title);
+}
+
+function wipMarkers(pr) {
+  const markers = [];
+  if (pr.labels.includes("WIP")) {
+    markers.push("label");
+  }
+  if (/^\[wip\]/i.test(pr.title)) {
+    markers.push("title");
+  }
+  return markers;
 }
 
 function makeReport(pulls) {
@@ -293,6 +308,23 @@ function makeReport(pulls) {
     }))
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
   const conflictingMainOwnerCounts = ownerCounts(conflictingMainPrs);
+  const conflictingReadyMainPrs = conflictingMainPrs.filter((pr) => !pr.draft);
+  const conflictingReadyMainOwnerCounts = ownerCounts(conflictingReadyMainPrs);
+
+  const wipPrs = normalized
+    .filter(isWipPr)
+    .map((pr) => ({
+      number: pr.number,
+      draft: pr.draft,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      base: pr.base,
+      stackRole: pr.stackRole,
+      markers: wipMarkers(pr),
+      title: pr.title,
+    }))
+    .sort((a, b) => ownerOf(a).localeCompare(ownerOf(b)) || a.number - b.number);
+  const wipOwnerCounts = ownerCounts(wipPrs);
 
   const ownerSummaries = [...normalized
     .reduce((summaries, pr) => {
@@ -317,7 +349,7 @@ function makeReport(pulls) {
       } else {
         summary.ready += 1;
       }
-      if (pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title)) {
+      if (isWipPr(pr)) {
         summary.wip += 1;
       }
       if (pr.stackRole === "stack child" || pr.stackRole === "stack middle") {
@@ -357,8 +389,12 @@ function makeReport(pulls) {
     duplicateDraftCleanupTargets,
     blockedReadyMainPrs,
     blockedReadyMainOwnerCounts,
+    conflictingReadyMainPrs,
+    conflictingReadyMainOwnerCounts,
     conflictingMainPrs,
     conflictingMainOwnerCounts,
+    wipPrs,
+    wipOwnerCounts,
     agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
@@ -456,6 +492,26 @@ function printMarkdown(report) {
     }
   }
   console.log("");
+  console.log("## Conflicting Ready Main PRs");
+  if (report.conflictingReadyMainPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.conflictingReadyMainOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.conflictingReadyMainPrs) {
+      const owner = ownerOf(pr);
+      const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
+      console.log(
+        `- #${pr.number}: ${owner}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
+      );
+    }
+  }
+  console.log("");
   console.log("## Conflicting Main PRs");
   if (report.conflictingMainPrs.length === 0) {
     console.log("- none");
@@ -474,6 +530,25 @@ function printMarkdown(report) {
       console.log(
         `- #${pr.number}: ${owner}; ${state}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
       );
+    }
+  }
+  console.log("");
+  console.log("## WIP PRs");
+  if (report.wipPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.wipOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.wipPrs) {
+      const owner = ownerOf(pr);
+      const state = pr.draft ? "draft" : "ready";
+      const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
+      console.log(`- #${pr.number}: ${owner}; ${state}; ${pr.markers.join("+")}${stack}; ${pr.title}`);
     }
   }
   console.log("");

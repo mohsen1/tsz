@@ -119,6 +119,16 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/pr-ownership-report.mjs` now includes an `Owner Summary`
     section and `ownerSummaries` JSON with per-owner open, ready, draft, WIP,
     stacked-child, blocked-ready, conflicting-main, and auto-merge counts.
+  - `#10197` merged on 2026-05-26 as
+    `006e6e596f ci: list WIP PR ownership (#10197)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `WIP PRs` section and
+    `wipPrs`/`wipOwnerCounts` JSON so cleanup agents can inspect the exact WIP
+    rows behind owner-level WIP counts.
+  - `#10199` merged on 2026-05-26 as
+    `b82cd0be7b ci: report conflicting ready PR ownership (#10199)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Ready
+    Main PRs` section and `conflictingReadyMainPrs`/`conflictingReadyMainOwnerCounts`
+    JSON for the ready-only subset of dirty or conflicting main-based PRs.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -141,6 +151,8 @@ node scripts/ci/pr-ownership-report.mjs
   - Use the ownership report's `Owner Summary` section for the current
     owner-by-owner workload and handoff view. Counts are live GitHub state and
     should be re-run each cycle, not copied into this lane note.
+  - Use the ownership report's `WIP PRs` section for the current WIP marker
+    rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off.
@@ -153,6 +165,8 @@ node scripts/ci/pr-ownership-report.mjs
     dirty/conflicting main-based branch surface. Treat those rows as handoff
     evidence for the owning lane, not permission to take over implementation
     branches without an explicit request or stale-branch handoff comment.
+  - Use the ownership report's `Conflicting Ready Main PRs` section when
+    deciding which non-draft branch blockers need owner handoff before queueing.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
