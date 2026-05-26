@@ -436,6 +436,16 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        self.class_expression_constructor_type_text_from_ast_with_recursive_reference(
+            expr_idx, None,
+        )
+    }
+
+    pub(in crate::declaration_emitter) fn class_expression_constructor_type_text_from_ast_with_recursive_reference(
+        &self,
+        expr_idx: NodeIndex,
+        recursive_reference_text: Option<&str>,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let class = self.arena.get_class(expr_node)?;
         let extends_parameter_type_text =
@@ -463,6 +473,12 @@ impl<'a> DeclarationEmitter<'a> {
 
         let mut instance_scratch = self.scratch_object_type_body_emitter(self.indent_level + 2);
         let mut static_scratch = self.scratch_object_type_body_emitter(self.indent_level + 1);
+        if let Some(reference_text) = recursive_reference_text {
+            let reference_text = reference_text.to_string();
+            instance_scratch.object_type_recursive_constructor_reference =
+                Some(reference_text.clone());
+            static_scratch.object_type_recursive_constructor_reference = Some(reference_text);
+        }
         for member_idx in class.members.nodes.iter().copied() {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;

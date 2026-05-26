@@ -4,6 +4,7 @@
 //! `type_resolution/constructors.rs`.
 
 mod interop;
+mod reexports;
 
 use crate::module_resolution::module_specifier_candidates;
 use crate::state::CheckerState;
@@ -831,149 +832,6 @@ impl<'a> CheckerState<'a> {
         None
     }
 
-    /// Follow re-export chains across binder boundaries to find an exported symbol.
-    /// Returns the `SymbolId` if the export is found via named or wildcard re-exports.
-    /// Follow re-export chains across binder boundaries to find an exported symbol.
-    /// Returns `(SymbolId, file_idx)` where `file_idx` is the actual file that owns
-    /// the symbol, so callers can record the correct cross-file origin.
-    pub(crate) fn resolve_export_in_file(
-        &self,
-        file_idx: usize,
-        export_name: &str,
-        visited: &mut rustc_hash::FxHashSet<usize>,
-    ) -> Option<(tsz_binder::SymbolId, usize)> {
-        if !visited.insert(file_idx) {
-            return None; // Cycle detection
-        }
-
-        let target_binder = self.ctx.get_binder_for_file(file_idx)?;
-
-        let target_arena = self.ctx.get_arena_for_file(file_idx as u32);
-        let target_file_name = target_arena.source_files.first()?.file_name.clone();
-
-        // Files with an unambiguous ESM extension (.mjs/.mts/.d.mts) generally
-        // do not synthesize a `default` export from `export =`, because
-        // `export =` is a syntax error in ESM (TS1203). `module: preserve` is
-        // the exception: it permits CJS and ESM syntax side-by-side and tsc
-        // treats `export =` as the default-import target there.
-        let target_is_explicit_esm = {
-            let n = target_file_name.as_str();
-            n.ends_with(".mjs") || n.ends_with(".mts")
-        };
-        let default_skips_export_equals = export_name == "default"
-            && (target_is_explicit_esm || self.source_file_idx_is_js_with_esm_syntax(file_idx))
-            && self.ctx.compiler_options.module != tsz_common::common::ModuleKind::Preserve;
-
-        // Check direct exports (module_exports)
-        if let Some(exports) = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-        {
-            let sym_id = if default_skips_export_equals {
-                exports
-                    .get("default")
-                    .filter(|id| target_binder.get_symbol(*id).is_some())
-            } else {
-                self.resolve_export_from_table(target_binder, exports, export_name)
-            };
-            if let Some(sym_id) = sym_id {
-                return Some((sym_id, file_idx));
-            }
-        }
-
-        // Check named re-exports before file_locals so that
-        // `export { X } from './other'` is resolved through the chain.
-        if let Some(reexports) = self
-            .ctx
-            .reexports_for_file(target_binder, &target_file_name)
-            && let Some((source_module, original_name)) = reexports.get(export_name)
-        {
-            let name = original_name.as_deref().unwrap_or(export_name);
-            if let Some(source_idx) = self
-                .ctx
-                .resolve_import_target_from_file(file_idx, source_module)
-                && let Some(result) = self.resolve_export_in_file(source_idx, name, visited)
-            {
-                return Some(result);
-            }
-        }
-
-        // Check wildcard re-exports before file_locals so that
-        // `export * from './other'` is followed to the actual declaring file.
-        // file_locals may contain merged globals that shadow re-exported symbols.
-        if let Some(source_modules) = self
-            .ctx
-            .wildcard_reexports_for_file(target_binder, &target_file_name)
-        {
-            let source_modules = source_modules.clone();
-            for source_module in &source_modules {
-                if let Some(source_idx) = self
-                    .ctx
-                    .resolve_import_target_from_file(file_idx, source_module)
-                    && let Some(result) =
-                        self.resolve_export_in_file(source_idx, export_name, visited)
-                {
-                    return Some(result);
-                }
-            }
-        }
-
-        // Module augmentations should apply after direct exports and re-export chains,
-        // so an augmentation does not mask a concrete exported declaration.
-        if let Some((sym_id, augmenting_file_idx)) =
-            self.resolve_module_augmentation_export_for_file(file_idx, export_name)
-        {
-            return Some((sym_id, augmenting_file_idx));
-        }
-
-        // Last resort: check file_locals (for script files or binding edge cases
-        // where module_exports wasn't populated).
-        //
-        // IMPORTANT: Only use file_locals as a fallback when module_exports is
-        // empty or unavailable AND the target file is a script (not an external
-        // module). For real ES modules — files with `import`/`export` syntax or
-        // module file extensions like `.mts`/`.cts` — `file_locals` may hold
-        // imported aliases (`import x from "./other"`) that are NOT part of the
-        // module's public surface. Returning those here would let
-        // `import * as ns from "./self"` see the file's local imports through
-        // `ns.x`, which `tsc` rejects with TS2339 (issue #3585).
-        let has_module_exports = self
-            .ctx
-            .module_exports_for_module(target_binder, &target_file_name)
-            .is_some_and(|e| !e.is_empty());
-        if has_module_exports {
-            return None;
-        }
-        if target_binder.is_external_module {
-            return None;
-        }
-        // When looking for "default" and the module has `export =`, prefer the
-        // `export =` target over a static member named "default". ESM-extension
-        // files never synthesize this fallback (see note above).
-        if export_name == "default"
-            && !default_skips_export_equals
-            && let Some(sym_id) = target_binder.file_locals.get("export=")
-        {
-            return Some((sym_id, file_idx));
-        }
-        if let Some(sym_id) = target_binder.file_locals.get(export_name) {
-            // Symbol found in file_locals — verify it has a runtime value.
-            // Type-only imports (e.g., `import type * as X from 'mod'`) may
-            // populate file_locals with individual namespace members, but those
-            // members should not be returned as value exports.
-            let has_value = target_binder
-                .get_symbol(sym_id)
-                .is_some_and(|s| !s.is_type_only);
-            if !has_value {
-                // Don't return type-only members as value exports
-            } else {
-                return Some((sym_id, file_idx));
-            }
-        }
-
-        None
-    }
-
     /// Resolve a namespace import (import * as ns) from another file using cross-file resolution.
     ///
     /// Returns a `SymbolTable` containing all exports from the target module.
@@ -1058,7 +916,12 @@ impl<'a> CheckerState<'a> {
                 );
             }
             let mut visited = rustc_hash::FxHashSet::default();
-            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.collect_reexported_symbols(
+                target_file_idx,
+                Some(module_specifier),
+                &mut combined,
+                &mut visited,
+            );
             self.merge_module_augmentation_namespace_exports(
                 &mut combined,
                 target_file_idx,
@@ -1086,7 +949,12 @@ impl<'a> CheckerState<'a> {
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
-            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.collect_reexported_symbols(
+                target_file_idx,
+                Some(module_specifier),
+                &mut combined,
+                &mut visited,
+            );
             self.merge_module_augmentation_namespace_exports(
                 &mut combined,
                 target_file_idx,
@@ -1144,7 +1012,12 @@ impl<'a> CheckerState<'a> {
             let mut combined = exports.clone();
             self.merge_export_equals_members(target_binder, exports, &mut combined);
             let mut visited = rustc_hash::FxHashSet::default();
-            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.collect_reexported_symbols(
+                target_file_idx,
+                module_specifier,
+                &mut combined,
+                &mut visited,
+            );
             self.merge_module_augmentation_namespace_exports(
                 &mut combined,
                 target_file_idx,
@@ -1165,7 +1038,12 @@ impl<'a> CheckerState<'a> {
         if has_reexports {
             let mut combined = tsz_binder::SymbolTable::new();
             let mut visited = rustc_hash::FxHashSet::default();
-            self.collect_reexported_symbols(target_file_idx, &mut combined, &mut visited);
+            self.collect_reexported_symbols(
+                target_file_idx,
+                module_specifier,
+                &mut combined,
+                &mut visited,
+            );
             self.merge_module_augmentation_namespace_exports(
                 &mut combined,
                 target_file_idx,
@@ -1590,106 +1468,6 @@ impl<'a> CheckerState<'a> {
             return (expr_node.kind == SyntaxKind::ImportKeyword as u16).then_some(idx);
         }
         None
-    }
-
-    /// Collect all symbols reachable through re-export chains into the given `SymbolTable`.
-    fn collect_reexported_symbols(
-        &self,
-        file_idx: usize,
-        result: &mut tsz_binder::SymbolTable,
-        visited: &mut rustc_hash::FxHashSet<usize>,
-    ) {
-        if !visited.insert(file_idx) {
-            return; // Cycle detection
-        }
-
-        let Some(target_binder) = self.ctx.get_binder_for_file(file_idx) else {
-            return;
-        };
-        let Some(target_file_name) = self
-            .ctx
-            .get_arena_for_file(file_idx as u32)
-            .source_files
-            .first()
-            .map(|sf| sf.file_name.clone())
-        else {
-            return;
-        };
-
-        // Collect from wildcard re-exports (export * from './module')
-        if let Some(source_modules) = self
-            .ctx
-            .wildcard_reexports_for_file(target_binder, &target_file_name)
-        {
-            let source_modules = source_modules.clone();
-            // Get type-only flags for wildcard re-exports to skip `export type *` members
-            let type_only_flags = self
-                .ctx
-                .wildcard_reexports_type_only_for_file(target_binder, &target_file_name)
-                .cloned();
-            for (i, source_module) in source_modules.iter().enumerate() {
-                // Skip `export type * from '...'` — these exports should not appear as
-                // value properties on the namespace object. They are only accessible in
-                // type position via symbol-based resolution.
-                let is_type_only = type_only_flags
-                    .as_ref()
-                    .and_then(|flags| flags.get(i).map(|(_, is_to)| *is_to))
-                    .unwrap_or(false);
-                if is_type_only {
-                    continue;
-                }
-                if let Some(source_idx) = self
-                    .ctx
-                    .resolve_import_target_from_file(file_idx, source_module)
-                    && let Some(source_binder) = self.ctx.get_binder_for_file(source_idx)
-                {
-                    // Add all exports from the source module
-                    let source_file_name = self
-                        .ctx
-                        .get_arena_for_file(source_idx as u32)
-                        .source_files
-                        .first()
-                        .map(|sf| sf.file_name.clone());
-                    if let Some(source_file_name) = source_file_name
-                        && let Some(exports) = self
-                            .ctx
-                            .module_exports_for_module(source_binder, &source_file_name)
-                    {
-                        for (name, sym_id) in exports.iter() {
-                            if !result.has(name) {
-                                result.set(name.to_string(), *sym_id);
-                            }
-                        }
-                    }
-                    // Recursively collect from the source's re-exports
-                    self.collect_reexported_symbols(source_idx, result, visited);
-                }
-            }
-        }
-
-        // Collect from named re-exports (export { X } from './module')
-        if let Some(reexports) = self
-            .ctx
-            .reexports_for_file(target_binder, &target_file_name)
-        {
-            let reexports = reexports.clone();
-            for (exported_name, (source_module, original_name)) in &reexports {
-                if !result.has(exported_name) {
-                    let name = original_name.as_deref().unwrap_or(exported_name);
-                    if let Some(source_idx) = self
-                        .ctx
-                        .resolve_import_target_from_file(file_idx, source_module)
-                    {
-                        let mut inner_visited = visited.clone();
-                        if let Some((sym_id, _actual_file_idx)) =
-                            self.resolve_export_in_file(source_idx, name, &mut inner_visited)
-                        {
-                            result.set(exported_name.to_string(), sym_id);
-                        }
-                    }
-                }
-            }
-        }
     }
 
     /// Emit TS2307 error for a module that cannot be found.
