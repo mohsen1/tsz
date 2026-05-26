@@ -143,6 +143,18 @@ function draftStackState(draftCount, stackedDraftCount) {
   return "mixed stacked/unstacked drafts";
 }
 
+function ownerCounts(prs) {
+  return [...prs
+    .reduce((counts, pr) => {
+      const owner = pr.agentLabel || pr.agentName || "unowned";
+      counts.set(owner, (counts.get(owner) || 0) + 1);
+      return counts;
+    }, new Map())
+    .entries()]
+    .map(([owner, count]) => ({ owner, count }))
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
@@ -255,15 +267,22 @@ function makeReport(pulls) {
       title: pr.title,
     }))
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
-  const blockedReadyMainOwnerCounts = [...blockedReadyMainPrs
-    .reduce((counts, pr) => {
-      const owner = pr.agentLabel || pr.agentName || "unowned";
-      counts.set(owner, (counts.get(owner) || 0) + 1);
-      return counts;
-    }, new Map())
-    .entries()]
-    .map(([owner, count]) => ({ owner, count }))
-    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+  const blockedReadyMainOwnerCounts = ownerCounts(blockedReadyMainPrs);
+
+  const conflictingMainPrs = normalized
+    .filter((pr) => pr.base === "main" && (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY"))
+    .map((pr) => ({
+      number: pr.number,
+      draft: pr.draft,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      autoMergeArmed: pr.autoMergeArmed,
+      mergeStateStatus: pr.mergeStateStatus,
+      mergeable: pr.mergeable,
+      title: pr.title,
+    }))
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+  const conflictingMainOwnerCounts = ownerCounts(conflictingMainPrs);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -284,6 +303,8 @@ function makeReport(pulls) {
     duplicateDraftCleanupTargets,
     blockedReadyMainPrs,
     blockedReadyMainOwnerCounts,
+    conflictingMainPrs,
+    conflictingMainOwnerCounts,
     agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
@@ -362,6 +383,27 @@ function printMarkdown(report) {
       const owner = pr.agentLabel || pr.agentName || "unowned";
       const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
       console.log(`- #${pr.number}: ${owner}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
+    }
+  }
+  console.log("");
+  console.log("## Conflicting Main PRs");
+  if (report.conflictingMainPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("Owner counts:");
+    for (const entry of report.conflictingMainOwnerCounts) {
+      console.log(`- ${entry.owner}: ${entry.count}`);
+    }
+    console.log("");
+    console.log("PRs:");
+    for (const pr of report.conflictingMainPrs) {
+      const owner = pr.agentLabel || pr.agentName || "unowned";
+      const state = pr.draft ? "draft" : "ready";
+      const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
+      console.log(
+        `- #${pr.number}: ${owner}; ${state}; ${pr.mergeStateStatus}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`,
+      );
     }
   }
   console.log("");
