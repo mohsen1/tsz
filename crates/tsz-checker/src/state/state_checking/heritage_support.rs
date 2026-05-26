@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
         if type_param_names.is_empty() {
             return false;
         }
-        let mut stack: Vec<NodeIndex> = args.nodes.to_vec();
+        let mut stack: smallvec::SmallVec<[NodeIndex; 4]> = args.nodes.iter().copied().collect();
         while let Some(idx) = stack.pop() {
             let Some(node) = self.ctx.arena.get(idx) else {
                 continue;
