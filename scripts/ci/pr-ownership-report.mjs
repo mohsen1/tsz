@@ -338,6 +338,7 @@ function makeReport(pulls) {
           wip: 0,
           stackedChildren: 0,
           blockedReadyMain: 0,
+          conflictingReadyMain: 0,
           conflictingMain: 0,
           autoMergeArmed: 0,
         });
@@ -357,6 +358,13 @@ function makeReport(pulls) {
       }
       if (!pr.draft && pr.base === "main" && pr.mergeStateStatus === "BLOCKED") {
         summary.blockedReadyMain += 1;
+      }
+      if (
+        !pr.draft &&
+        pr.base === "main" &&
+        (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY")
+      ) {
+        summary.conflictingReadyMain += 1;
       }
       if (pr.base === "main" && (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY")) {
         summary.conflictingMain += 1;
@@ -413,12 +421,14 @@ function printMarkdown(report) {
   } else {
     console.log("");
     console.log(
-      "| Owner | Open | Ready | Draft | WIP | Stacked children | Blocked ready main | Conflicting main | Auto-merge armed |",
+      "| Owner | Open | Ready | Draft | WIP | Stacked children | Blocked ready main | Conflicting ready | Conflicting main | Auto-merge armed |",
     );
-    console.log("|-------|------|-------|-------|-----|------------------|--------------------|------------------|------------------|");
+    console.log(
+      "|-------|------|-------|-------|-----|------------------|--------------------|-------------------|------------------|------------------|",
+    );
     for (const owner of report.ownerSummaries) {
       console.log(
-        `| ${owner.owner} | ${owner.open} | ${owner.ready} | ${owner.draft} | ${owner.wip} | ${owner.stackedChildren} | ${owner.blockedReadyMain} | ${owner.conflictingMain} | ${owner.autoMergeArmed} |`,
+        `| ${owner.owner} | ${owner.open} | ${owner.ready} | ${owner.draft} | ${owner.wip} | ${owner.stackedChildren} | ${owner.blockedReadyMain} | ${owner.conflictingReadyMain} | ${owner.conflictingMain} | ${owner.autoMergeArmed} |`,
       );
     }
   }

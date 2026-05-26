@@ -146,7 +146,7 @@ withTempDir((dir) => {
   assert.match(result.stdout, /AgentName\/label mismatches: 1/);
   assert.match(
     result.stdout,
-    /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
+    /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
   );
   assert.match(result.stdout, /agent\/mapped-a: root #10; children #12/);
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
@@ -204,6 +204,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 0,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 1,
       autoMergeArmed: 0,
     },
@@ -215,6 +216,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 0,
       blockedReadyMain: 0,
+      conflictingReadyMain: 1,
       conflictingMain: 1,
       autoMergeArmed: 0,
     },
@@ -226,6 +228,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 1,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
@@ -237,6 +240,7 @@ withTempDir((dir) => {
       wip: 1,
       stackedChildren: 0,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
@@ -248,6 +252,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 0,
       blockedReadyMain: 1,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
@@ -259,6 +264,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 1,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
@@ -270,6 +276,7 @@ withTempDir((dir) => {
       wip: 1,
       stackedChildren: 0,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
@@ -281,6 +288,7 @@ withTempDir((dir) => {
       wip: 0,
       stackedChildren: 0,
       blockedReadyMain: 0,
+      conflictingReadyMain: 0,
       conflictingMain: 0,
       autoMergeArmed: 0,
     },
