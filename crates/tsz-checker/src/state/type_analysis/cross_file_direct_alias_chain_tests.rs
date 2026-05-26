@@ -894,6 +894,47 @@ fn direct_source_file_type_alias_lowers_unshadowed_global_generic_reference() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_delegate_visible_global_generic_reference() {
+    let (target_arena, mut target_binder, types) =
+        parse_bound_source("export type Keep<Obj> = Required<Obj>;");
+    {
+        let target_binder = Arc::get_mut(&mut target_binder).expect("unique target binder");
+        let required_sym = target_binder
+            .symbols
+            .alloc(symbol_flags::TYPE_ALIAS, "Required".to_string());
+        target_binder
+            .file_locals
+            .set("Required".to_string(), required_sym);
+    }
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Keep } from './target';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+
+    let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
+    let (ty, params) = state
+        .direct_source_file_type_alias_result(keep_sym, Some(1), true)
+        .expect("delegate-visible global generic type references should lower directly");
+    assert_ne!(ty, TypeId::UNKNOWN);
+    assert_ne!(ty, TypeId::ERROR);
+    assert_eq!(params.len(), 1, "Keep should expose Obj");
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_global_generic_reference_with_namespace_shadow() {
     with_two_file_state_with_libs(
         "namespace Pick {}\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
