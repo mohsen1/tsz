@@ -240,6 +240,14 @@ assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
 
 const cleanupActiveRunFormat = formatResult({
   cleanupQueueBranches: true,
+  activeRuns: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      number: 9515,
+      runId: 26423420117,
+      url: "https://github.example/runs/26423420117",
+    },
+  ],
   deletions: [],
   dryRun: true,
   skippedActiveRuns: 1,
@@ -252,6 +260,11 @@ const cleanupActiveRunFormat = formatResult({
   wouldDelete: 0,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
 assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue runs/);
+assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
+assert.match(
+  cleanupActiveRunFormat,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \|/,
+);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| active queue run 26423420117 \|/);
 
 const queueSkipFormat = formatResult({
