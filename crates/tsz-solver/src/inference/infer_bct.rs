@@ -313,20 +313,28 @@ impl<'a> InferenceContext<'a> {
         // (TS2345). tsc's `getCommonSupertype` never unions incompatible
         // primitives here; it keeps the leftmost candidate.
         //
-        // The check is deliberately limited to bare intrinsics: literal types
-        // and unions thereof (e.g. `"a" | "b"` produced by `keyof`/mapped/
-        // template-literal inference) must keep unioning, and structural
-        // candidates (objects, tuples, functions) keep the union fallback where
-        // `is_subtype` is unreliable. The wholesale union→supertype realignment
-        // for those is a separate, broader change.
+        // Function-typed structural candidates are another tsc first-wins
+        // case: when `T` receives incompatible function candidates, tsc fixes
+        // the inferred type from the first signature-bearing candidate and the
+        // checker reports later argument incompatibilities instead of inferring
+        // a function union that accepts both.
+        //
+        // Other structural candidates (objects, tuples) keep the union fallback
+        // where `is_subtype` is unreliable. The wholesale union→supertype
+        // realignment for those is a separate, broader change.
         let all_bare_primitive_intrinsic = primary_types.iter().all(|&ty| {
             matches!(
                 ty,
                 TypeId::STRING | TypeId::NUMBER | TypeId::BOOLEAN | TypeId::BIGINT | TypeId::SYMBOL
             )
         });
-        let first_wins_for_incompatible =
-            has_undefined || has_null || (array_element_first_wins && all_bare_primitive_intrinsic);
+        let all_signature_bearing = primary_types
+            .iter()
+            .all(|&ty| visitor::is_function_type(self.interner, ty));
+        let first_wins_for_incompatible = has_undefined
+            || has_null
+            || all_signature_bearing
+            || (array_element_first_wins && all_bare_primitive_intrinsic);
         let mut result = primary_types[0];
         for &candidate in &primary_types[1..] {
             if self.is_subtype(candidate, result) {
