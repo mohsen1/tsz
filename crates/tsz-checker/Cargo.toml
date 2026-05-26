@@ -666,6 +666,10 @@ name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
 
 [[test]]
+name = "inline_conditional_infer_return_tests"
+path = "tests/inline_conditional_infer_return_tests.rs"
+
+[[test]]
 name = "recursive_conditional_mapped_infer_tests"
 path = "tests/recursive_conditional_mapped_infer_tests.rs"
 
