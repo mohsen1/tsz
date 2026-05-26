@@ -172,6 +172,10 @@ withTempDir((dir) => {
     result.stdout,
     /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
+  assert.match(
+    result.stdout,
+    /WIP PRs[\s\S]*Owner counts:[\s\S]*agent:alpha: 1[\s\S]*agent:omega: 1[\s\S]*PRs:[\s\S]*#10: agent:alpha; draft; label; stack root; fix\(checker\): preserve mapped access \(#42\)[\s\S]*#11: agent:omega; draft; label\+title; \[WIP\] fix\(checker\): preserve mapped access \(#42\)/,
+  );
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
@@ -341,6 +345,32 @@ withTempDir((dir) => {
   assert.deepEqual(report.conflictingMainOwnerCounts, [
     { owner: "agent:delta", count: 1 },
     { owner: "agent:zeta", count: 1 },
+  ]);
+  assert.deepEqual(report.wipPrs, [
+    {
+      number: 10,
+      draft: true,
+      agentName: "alpha",
+      agentLabel: "agent:alpha",
+      base: "main",
+      stackRole: "stack root",
+      markers: ["label"],
+      title: "fix(checker): preserve mapped access (#42)",
+    },
+    {
+      number: 11,
+      draft: true,
+      agentName: "beta",
+      agentLabel: "agent:omega",
+      base: "main",
+      stackRole: null,
+      markers: ["label", "title"],
+      title: "[WIP] fix(checker): preserve mapped access (#42)",
+    },
+  ]);
+  assert.deepEqual(report.wipOwnerCounts, [
+    { owner: "agent:alpha", count: 1 },
+    { owner: "agent:omega", count: 1 },
   ]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).issueRefs, [9694, 9712, 9826]);
