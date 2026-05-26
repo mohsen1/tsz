@@ -1,6 +1,7 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
 use tsz_binder::{BinderState, SymbolId, symbol_flags};
+use tsz_parser::NodeList;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
@@ -102,10 +103,17 @@ impl<'a> CheckerState<'a> {
                 let Some(type_alias) = arena.get_type_alias(decl_node) else {
                     return false;
                 };
-                let target_param_names = Self::type_alias_type_param_names(arena, type_alias);
-                if args.nodes.len() != target_param_names.len() {
+                let Some(target_param_names) =
+                    Self::source_file_type_alias_application_param_names_are_lowerable(
+                        arena,
+                        binder,
+                        type_alias,
+                        args.nodes.len(),
+                        seen,
+                    )
+                else {
                     return false;
-                }
+                };
                 if !args.nodes.iter().copied().all(|arg| {
                     Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
@@ -332,14 +340,21 @@ impl<'a> CheckerState<'a> {
                 let Some(type_alias) = arena.get_type_alias(decl_node) else {
                     return false;
                 };
-                let target_param_names = Self::type_alias_type_param_names(arena, type_alias);
                 if has_type_arguments {
                     let Some(args) = type_ref.type_arguments.as_ref() else {
                         return false;
                     };
-                    if args.nodes.len() != target_param_names.len() {
+                    let Some(target_param_names) =
+                        Self::source_file_type_alias_application_param_names_are_lowerable(
+                            arena,
+                            binder,
+                            type_alias,
+                            args.nodes.len(),
+                            seen,
+                        )
+                    else {
                         return false;
-                    }
+                    };
                     if !args.nodes.iter().copied().all(|arg| {
                         Self::source_file_type_node_is_local_alias_chain_lowerable(
                             arena, binder, arg, seen,
@@ -369,6 +384,7 @@ impl<'a> CheckerState<'a> {
                     }
                     return true;
                 }
+                let target_param_names = Self::type_alias_type_param_names(arena, type_alias);
                 if !target_param_names.is_empty()
                     || type_alias
                         .type_parameters
@@ -503,6 +519,47 @@ impl<'a> CheckerState<'a> {
         let (target_sym_id, _) =
             binder.resolve_import_with_reexports_type_only(module_specifier, import_name)?;
         (target_sym_id != sym_id).then_some(target_sym_id)
+    }
+
+    fn source_file_type_alias_application_param_names_are_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        type_alias: &tsz_parser::parser::node::TypeAliasData,
+        arg_count: usize,
+        seen: &mut AliasCycleTracker,
+    ) -> Option<Vec<String>> {
+        let Some(params) = type_alias.type_parameters.as_ref() else {
+            return (arg_count == 0).then(Vec::new);
+        };
+        if arg_count > params.nodes.len() {
+            return None;
+        }
+        let mut target_param_names = Vec::with_capacity(params.nodes.len());
+        let mut param_nodes = Vec::with_capacity(params.nodes.len());
+        for param_idx in params.nodes.iter().copied() {
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_type_parameter(param_node)?;
+            let name_node = arena.get(param.name)?;
+            let name = arena.get_identifier(name_node)?;
+            target_param_names.push(name.escaped_text.to_string());
+            param_nodes.push(param);
+        }
+
+        for param in param_nodes.iter().skip(arg_count) {
+            if param.default.is_none()
+                || !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    param.default,
+                    &target_param_names,
+                    seen,
+                )
+            {
+                return None;
+            }
+        }
+
+        Some(target_param_names)
     }
 
     fn source_file_mapped_type_is_generic_local_alias_application_lowerable(
@@ -673,13 +730,22 @@ impl<'a> CheckerState<'a> {
         let Some(function_type) = arena.get_function_type(node) else {
             return false;
         };
-        if function_type
-            .type_parameters
-            .as_ref()
-            .is_some_and(|params| !params.nodes.is_empty())
-        {
+        let Some(function_type_param_names) =
+            Self::source_file_function_type_param_names_are_lowerable(
+                arena,
+                binder,
+                function_type.type_parameters.as_ref(),
+                type_param_names,
+                seen,
+            )
+        else {
             return false;
-        }
+        };
+        let active_type_param_names = if function_type_param_names.is_empty() {
+            type_param_names.to_vec()
+        } else {
+            function_type_param_names
+        };
         function_type.parameters.nodes.iter().copied().all(|param_idx| {
             let Some(param_node) = arena.get(param_idx) else {
                 return false;
@@ -692,7 +758,7 @@ impl<'a> CheckerState<'a> {
                     arena,
                     binder,
                     param.type_annotation,
-                    type_param_names,
+                    &active_type_param_names,
                     seen,
                 )
         }) && function_type.type_annotation.is_some()
@@ -700,9 +766,63 @@ impl<'a> CheckerState<'a> {
                 arena,
                 binder,
                 function_type.type_annotation,
-                type_param_names,
+                &active_type_param_names,
                 seen,
             )
+    }
+
+    fn source_file_function_type_param_names_are_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        params: Option<&NodeList>,
+        outer_type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> Option<Vec<String>> {
+        let Some(params) = params else {
+            return Some(Vec::new());
+        };
+        let mut active_type_param_names = outer_type_param_names.to_vec();
+        let mut param_data = Vec::with_capacity(params.nodes.len());
+        for param_idx in params.nodes.iter().copied() {
+            let param_node = arena.get(param_idx)?;
+            let param = arena.get_type_parameter(param_node)?;
+            let name_node = arena.get(param.name)?;
+            let name = arena.get_identifier(name_node)?;
+            if !active_type_param_names
+                .iter()
+                .any(|param_name| param_name == &name.escaped_text)
+            {
+                active_type_param_names.push(name.escaped_text.to_string());
+            }
+            param_data.push(param);
+        }
+
+        for param in param_data {
+            if param.constraint.is_some()
+                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    param.constraint,
+                    &active_type_param_names,
+                    seen,
+                )
+            {
+                return None;
+            }
+            if param.default.is_some()
+                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    param.default,
+                    &active_type_param_names,
+                    seen,
+                )
+            {
+                return None;
+            }
+        }
+
+        Some(active_type_param_names)
     }
 
     fn source_file_type_literal_properties_are_lowerable(

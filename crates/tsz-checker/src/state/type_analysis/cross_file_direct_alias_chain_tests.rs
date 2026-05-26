@@ -593,6 +593,27 @@ fn direct_source_file_type_alias_lowers_generic_function_type_body() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_function_type_own_type_params() {
+    with_two_file_state(
+        "type Compare<X, Y, A = X, B = never> = (<T>() => T extends X ? 1 : 2) extends (<U>() => U extends Y ? 1 : 2) ? A : B;\nexport type Result<L, R> = Compare<L, R>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("function type local type params should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(
+                params.len(),
+                2,
+                "generic alias parameters should be preserved"
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_generic_body_with_non_generic_local_alias_leaf() {
     with_two_file_state(
         "type Leaf = string;\nexport type Result<T> = T | Leaf;",
@@ -641,6 +662,43 @@ fn direct_source_file_type_alias_rejects_function_type_with_typeof_param() {
                     .direct_source_file_type_alias_result(result_sym, Some(1), true)
                     .is_none(),
                 "flow-sensitive function type aliases must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_function_type_param_typeof_constraint() {
+    with_two_file_state(
+        "const v = 1;\nexport type FromValue<T> = (<U extends typeof v>() => U) extends (() => T) ? T : never;",
+        "import { FromValue } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder
+                .file_locals
+                .get("FromValue")
+                .expect("FromValue");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                    .is_none(),
+                "flow-sensitive function type parameter constraints must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_omitted_non_default_type_arg() {
+    with_two_file_state(
+        "type Pair<L, R> = (<T>() => T extends L ? 1 : 2) extends (<U>() => U extends R ? 1 : 2) ? L : R;\nexport type Result<T> = Pair<T>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                    .is_none(),
+                "omitted non-defaulted alias type args must stay on the child-checker path",
             );
         },
     );
