@@ -666,6 +666,10 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
+        if self.generic_index_filters_current_type_param_keys(index_type, type_param) {
+            return true;
+        }
+
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
         {
@@ -765,6 +769,129 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|(l, r)| l.name == r.name)
     }
 
+    fn type_is_keyof_same_type_param_identity(&self, ty: TypeId, type_param: TypeId) -> bool {
+        if let Some(inner) = crate::query_boundaries::common::keyof_inner_type(self.ctx.types, ty) {
+            return self.same_type_param_identity(inner, type_param);
+        }
+
+        crate::query_boundaries::common::intersection_members(self.ctx.types, ty).is_some_and(
+            |members| {
+                members.iter().any(|&member| {
+                    crate::query_boundaries::common::keyof_inner_type(self.ctx.types, member)
+                        .is_some_and(|inner| self.same_type_param_identity(inner, type_param))
+                })
+            },
+        )
+    }
+
+    pub(crate) fn generic_index_filters_current_type_param_keys(
+        &mut self,
+        mut index_type: TypeId,
+        type_param: TypeId,
+    ) -> bool {
+        let mut seen = rustc_hash::FxHashSet::default();
+        for _ in 0..8 {
+            if !seen.insert(index_type) {
+                return false;
+            }
+
+            if self.type_is_keyof_same_type_param_identity(index_type, type_param) {
+                return true;
+            }
+
+            if let Some(param_info) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, index_type)
+                && let Some(constraint) = param_info.constraint
+            {
+                index_type = constraint;
+                continue;
+            }
+            if let Some(name_atom) = crate::query_boundaries::checkers::generic::type_parameter_name(
+                self.ctx.types.as_type_database(),
+                index_type,
+            ) {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                if let Some(&scoped_type_id) = self.ctx.type_parameter_scope.get(&name)
+                    && scoped_type_id != index_type
+                    && let Some(constraint) =
+                        crate::query_boundaries::common::type_parameter_constraint(
+                            self.ctx.types,
+                            scoped_type_id,
+                        )
+                {
+                    index_type = constraint;
+                    continue;
+                }
+            }
+
+            if let Some((check_type, _extends_type, true_type, false_type)) =
+                crate::query_boundaries::checkers::generic::full_conditional_type_components(
+                    self.ctx.types.as_type_database(),
+                    index_type,
+                )
+            {
+                return [check_type, true_type, false_type]
+                    .into_iter()
+                    .filter(|&candidate| candidate != TypeId::NEVER)
+                    .any(|candidate| {
+                        self.type_is_keyof_same_type_param_identity(candidate, type_param)
+                    });
+            }
+
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, index_type)
+            else {
+                let evaluated = self.evaluate_type_with_env(index_type);
+                if evaluated == index_type {
+                    return false;
+                }
+                index_type = evaluated;
+                continue;
+            };
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            else {
+                return false;
+            };
+            let body_and_params = self
+                .ctx
+                .definition_store
+                .get(def_id)
+                .and_then(|def| {
+                    (def.kind == tsz_solver::def::DefKind::TypeAlias)
+                        .then_some((def.body?, def.type_params))
+                })
+                .or_else(|| {
+                    let body = self
+                        .ctx
+                        .type_env
+                        .try_borrow()
+                        .ok()
+                        .and_then(|env| env.get_def(def_id))?;
+                    let params = self.ctx.get_def_type_params(def_id)?;
+                    Some((body, params))
+                });
+            let Some((body, params)) = body_and_params else {
+                return false;
+            };
+            if params.len() != app.args.len() {
+                return false;
+            }
+            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &params,
+                &app.args,
+            );
+            let instantiated =
+                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            if instantiated == index_type {
+                return false;
+            }
+            index_type = self.resolve_lazy_type(instantiated);
+        }
+        false
+    }
+
     fn type_contains_same_type_param_identity(&mut self, ty: TypeId, type_param: TypeId) -> bool {
         if self.same_type_param_identity(ty, type_param) {
             return true;
@@ -827,6 +954,10 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
+        if self.generic_index_filters_current_type_param_keys(index_type, type_param) {
+            return false;
+        }
+
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
         {

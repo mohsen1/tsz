@@ -95,6 +95,14 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 }
+                if self.type_reference_filters_keyof_current_object(
+                    tp.constraint,
+                    object_node_idx,
+                    object_type,
+                    object_type_for_check,
+                ) {
+                    return true;
+                }
                 // AST-based outer mapped type walk (scope-independent).
                 //
                 // When the inner mapped type `[P in K]` has a simple-name constraint like
@@ -239,6 +247,10 @@ impl<'a> CheckerState<'a> {
                         constraint_type,
                         object_type,
                         object_type_for_check,
+                    ) || self.mapped_key_constraint_filters_current_object_keys(
+                        constraint_type,
+                        object_type,
+                        object_type_for_check,
                     ) {
                         return true;
                     }
@@ -285,6 +297,58 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn type_reference_filters_keyof_current_object(
+        &mut self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(type_args) = type_ref.type_arguments.as_ref() else {
+            return false;
+        };
+        let Some(&first_arg) = type_args.nodes.first() else {
+            return false;
+        };
+        self.type_node_is_keyof_current_object(
+            first_arg,
+            object_node_idx,
+            object_type,
+            object_type_for_check,
+        )
+    }
+
+    fn type_node_is_keyof_current_object(
+        &mut self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        self.ctx
+            .arena
+            .get(node_idx)
+            .and_then(|node| self.ctx.arena.get_type_operator(node))
+            .is_some_and(|type_operator| {
+                type_operator.operator == SyntaxKind::KeyOfKeyword as u16
+                    && self.mapped_keyof_target_matches_object(
+                        type_operator.type_node,
+                        object_node_idx,
+                        object_type,
+                        object_type_for_check,
+                    )
+            })
     }
 
     /// Check if the keyof target in a mapped type constraint matches the object being indexed.
@@ -361,6 +425,122 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        false
+    }
+
+    pub(super) fn mapped_key_constraint_filters_current_object_keys(
+        &mut self,
+        mut constraint_type: TypeId,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        let mut seen = rustc_hash::FxHashSet::default();
+        for _ in 0..8 {
+            if !seen.insert(constraint_type) {
+                return false;
+            }
+
+            if let Some((check_type, _extends_type, true_type, false_type)) =
+                crate::query_boundaries::checkers::generic::full_conditional_type_components(
+                    self.ctx.types.as_type_database(),
+                    constraint_type,
+                )
+            {
+                let keyof_object = self.ctx.types.factory().keyof(object_type);
+                return [check_type, true_type, false_type]
+                    .into_iter()
+                    .filter(|&candidate| candidate != TypeId::NEVER)
+                    .any(|candidate| {
+                        let evaluated = self.evaluate_type_with_env(candidate);
+                        self.is_keyof_for_current_object(
+                            candidate,
+                            object_type,
+                            object_type_for_check,
+                        ) || self.is_keyof_for_current_object(
+                            evaluated,
+                            object_type,
+                            object_type_for_check,
+                        ) || self.diagnostic_relation_boolean_guard(evaluated, keyof_object)
+                    });
+            }
+
+            if let Some(param_info) =
+                crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
+                && let Some(constraint) = param_info.constraint
+            {
+                constraint_type = constraint;
+                continue;
+            }
+
+            if let Some(name_atom) = crate::query_boundaries::checkers::generic::type_parameter_name(
+                self.ctx.types.as_type_database(),
+                constraint_type,
+            ) {
+                let name = self.ctx.types.resolve_atom(name_atom);
+                if let Some(&scoped_type_id) = self.ctx.type_parameter_scope.get(&name)
+                    && scoped_type_id != constraint_type
+                    && let Some(constraint) =
+                        crate::query_boundaries::common::type_parameter_constraint(
+                            self.ctx.types,
+                            scoped_type_id,
+                        )
+                {
+                    constraint_type = constraint;
+                    continue;
+                }
+            }
+
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, constraint_type)
+            else {
+                let evaluated = self.evaluate_type_with_env(constraint_type);
+                if evaluated == constraint_type {
+                    return false;
+                }
+                constraint_type = evaluated;
+                continue;
+            };
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            else {
+                return false;
+            };
+            let body_and_params = self
+                .ctx
+                .definition_store
+                .get(def_id)
+                .and_then(|def| {
+                    (def.kind == tsz_solver::def::DefKind::TypeAlias)
+                        .then_some((def.body?, def.type_params))
+                })
+                .or_else(|| {
+                    let body = self
+                        .ctx
+                        .type_env
+                        .try_borrow()
+                        .ok()
+                        .and_then(|env| env.get_def(def_id))?;
+                    let params = self.ctx.get_def_type_params(def_id)?;
+                    Some((body, params))
+                });
+            let Some((body, params)) = body_and_params else {
+                return false;
+            };
+            if params.len() != app.args.len() {
+                return false;
+            };
+            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &params,
+                &app.args,
+            );
+            let instantiated =
+                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            if instantiated == constraint_type {
+                return false;
+            }
+            constraint_type = self.resolve_lazy_type(instantiated);
+        }
         false
     }
 }

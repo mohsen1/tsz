@@ -131,6 +131,59 @@ impl<'a> CheckerState<'a> {
                 .related
     }
 
+    pub(super) fn homomorphic_mapped_application_should_defer_constraint(
+        &mut self,
+        mut type_arg: TypeId,
+    ) -> bool {
+        let mut seen = FxHashSet::default();
+        for _ in 0..8 {
+            if !seen.insert(type_arg) {
+                return false;
+            }
+
+            if let Some(source) = crate::query_boundaries::common::homomorphic_mapped_source(
+                self.ctx.types.as_type_database(),
+                type_arg,
+            ) {
+                return query::contains_free_type_parameters(self.ctx.types, source);
+            }
+
+            let Some(app) =
+                crate::query_boundaries::common::type_application(self.ctx.types, type_arg)
+            else {
+                return false;
+            };
+            let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
+            else {
+                return false;
+            };
+            let Some(def) = self.ctx.definition_store.get(def_id) else {
+                return false;
+            };
+            if def.kind != tsz_solver::def::DefKind::TypeAlias
+                || def.type_params.len() != app.args.len()
+            {
+                return false;
+            }
+            let Some(body) = def.body else {
+                return false;
+            };
+            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+                self.ctx.types,
+                &def.type_params,
+                &app.args,
+            );
+            let instantiated =
+                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            if instantiated == type_arg {
+                return false;
+            }
+            type_arg = self.resolve_lazy_type(instantiated);
+        }
+        false
+    }
+
     pub(super) fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {
         let mut seen = FxHashSet::default();
         self.constraint_check_base_type_inner(type_id, &mut seen)
