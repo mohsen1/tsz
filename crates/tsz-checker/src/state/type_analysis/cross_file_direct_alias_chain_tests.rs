@@ -894,6 +894,24 @@ fn direct_source_file_type_alias_lowers_unshadowed_global_generic_reference() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_local_conditional_alias_argument_chain() {
+    with_two_file_state_with_libs(
+        "type SetDifference<A, B> = A extends B ? never : A;\ntype SetComplement<A, A1 extends A> = SetDifference<A, A1>;\nexport type FlowDiff<T extends U, U extends object> = Pick<T, SetComplement<keyof T, keyof U>>;",
+        "import { FlowDiff } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let flow_diff_sym = target_binder.file_locals.get("FlowDiff").expect("FlowDiff");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(flow_diff_sym, Some(1), true)
+                .expect("local conditional alias argument chains should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "FlowDiff should expose T and U");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_shadowed_global_function_reference() {
     with_two_file_state_with_libs(
         "interface Function { local: string }\nexport type FunctionKeys<T> = { [K in keyof T]-?: T[K] extends Function ? K : never }[keyof T];",

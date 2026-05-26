@@ -1587,6 +1587,7 @@ impl<'a> CheckerState<'a> {
             type_alias.type_node,
             &name,
         ) {
+            record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
         }
 
@@ -1609,6 +1610,7 @@ impl<'a> CheckerState<'a> {
         if alias_type == TypeId::ERROR
             || (alias_type == TypeId::UNKNOWN && !explicit_external_unknown_alias)
         {
+            record(DirectSourceFileTypeAliasLoweringOutcome::UnknownOrError);
             return None;
         }
 
@@ -1625,6 +1627,7 @@ impl<'a> CheckerState<'a> {
             .definition_store
             .register_type_to_def(alias_type, def_id);
 
+        record(DirectSourceFileTypeAliasLoweringOutcome::Success);
         Some((alias_type, params))
     }
 
