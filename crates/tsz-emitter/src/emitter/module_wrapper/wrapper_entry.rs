@@ -501,6 +501,7 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         self.register_system_import_substitutions(source, &dep_vars, &system_plan);
+        self.install_system_local_export_bindings(source);
 
         // Hoist exported function declarations to the outer module scope,
         // before the `return { setters, execute }` block.  TSC does the same:

@@ -831,7 +831,16 @@ impl<'a> Printer<'a> {
         let left_has_static_super_target = binary.operator_token == SyntaxKind::EqualsToken as u16
             && left_is_destructuring_pattern
             && self.pattern_has_scoped_static_super_assignment_target(binary.left);
-        if self.is_assignment_operator(binary.operator_token)
+        if self.emit_system_live_export_assignment_expression(
+            binary.left,
+            binary.operator_token,
+            binary.right,
+        ) {
+            self.ctx.flags.optional_chain_needs_parens = prev_optional;
+            self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+            self.ctx.flags.in_binary_operand = prev_in_binary;
+            return;
+        } else if self.is_assignment_operator(binary.operator_token)
             && self.emit_commonjs_live_export_assignment_target(binary.left)
         {
             // The live export chain emitted the left-hand side.
@@ -1101,7 +1110,7 @@ impl<'a> Printer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
     }
 
-    const fn is_assignment_operator(&self, op: u16) -> bool {
+    pub(in crate::emitter) const fn is_assignment_operator(&self, op: u16) -> bool {
         op == SyntaxKind::EqualsToken as u16
             || op == SyntaxKind::PlusEqualsToken as u16
             || op == SyntaxKind::MinusEqualsToken as u16
@@ -1146,18 +1155,9 @@ impl<'a> Printer<'a> {
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if self.in_system_execute_body {
-                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                    self.write("exports_1(\"");
-                    self.write(&export_name);
-                    self.write("\", ");
-                    self.write(get_operator_text(unary.operator));
-                    self.write(&local_name);
-                    self.write(")");
-                    return;
-                }
-            }
-            if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
+            if self.emit_system_live_export_prefix_unary(&local_name, unary.operator)
+                || self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator)
+            {
                 return;
             }
         }
@@ -1452,7 +1452,13 @@ impl<'a> Printer<'a> {
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
             let is_statement = self.ctx.flags.in_statement_expression;
-            if self.emit_cjs_live_export_postfix_unary(&local_name, unary.operator, is_statement) {
+            if self.emit_system_live_export_postfix_unary(&local_name, unary.operator, is_statement)
+                || self.emit_cjs_live_export_postfix_unary(
+                    &local_name,
+                    unary.operator,
+                    is_statement,
+                )
+            {
                 return;
             }
         }
