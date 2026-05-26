@@ -1289,32 +1289,36 @@ impl<'a> Printer<'a> {
                 continue;
             };
             if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
-                if let Some(super_alias) = class_super_var.as_deref() {
+                if class_this_var.is_some() || class_super_var.is_some() {
                     self.seed_tc39_decorator_static_block(
                         emitter,
                         member_idx,
                         class_this_var.as_deref(),
-                        super_alias,
+                        class_super_var.as_deref(),
                     );
                 }
                 continue;
             }
             if let Some(prop) = self.arena.get_property_decl(member_node) {
-                if self.arena.is_static(&prop.modifiers)
-                    && let Some(super_alias) = class_super_var.as_deref()
-                    && prop.initializer != NodeIndex::NONE
-                    && self.node_contains_super_keyword(prop.initializer)
-                    && !self
+                if self.arena.is_static(&prop.modifiers) && prop.initializer != NodeIndex::NONE {
+                    let is_auto_accessor = self
                         .arena
-                        .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::AccessorKeyword)
-                {
-                    self.seed_tc39_decorator_static_member(
-                        emitter,
-                        member_idx,
-                        prop,
-                        class_this_var.as_deref(),
-                        super_alias,
-                    );
+                        .has_modifier(&prop.modifiers, tsz_scanner::SyntaxKind::AccessorKeyword);
+                    let needs_super_alias = class_super_var.is_some()
+                        && self.node_contains_super_keyword(prop.initializer)
+                        && !is_auto_accessor;
+                    let needs_this_alias = class_this_var.is_some()
+                        && self.node_is_this_keyword(prop.initializer)
+                        && !is_auto_accessor;
+                    if needs_super_alias || needs_this_alias {
+                        self.seed_tc39_decorator_static_member(
+                            emitter,
+                            member_idx,
+                            prop,
+                            class_this_var.as_deref(),
+                            class_super_var.as_deref(),
+                        );
+                    }
                 }
                 self.seed_tc39_decorator_field_initializer(emitter, member_idx, prop);
                 continue;
@@ -1382,7 +1386,7 @@ impl<'a> Printer<'a> {
         emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
         member_idx: NodeIndex,
         this_alias: Option<&str>,
-        super_alias: &str,
+        super_alias: Option<&str>,
     ) {
         let prev_this_alias = self.scoped_static_this_alias.clone();
         let prev_super_direct_access = self.scoped_static_super_direct_access;
@@ -1393,7 +1397,7 @@ impl<'a> Printer<'a> {
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = false;
-        self.scoped_static_super_base_alias = Some(Arc::from(super_alias));
+        self.scoped_static_super_base_alias = super_alias.map(Arc::from);
         self.scoped_static_super_index_alias = None;
         self.scoped_static_super_index_value_access = false;
         self.scoped_static_super_assignment_target = false;
@@ -1418,7 +1422,7 @@ impl<'a> Printer<'a> {
         member_idx: NodeIndex,
         prop: &tsz_parser::parser::node::PropertyDeclData,
         this_alias: Option<&str>,
-        super_alias: &str,
+        super_alias: Option<&str>,
     ) {
         let start = self.writer.len();
         self.emit_class_member_modifiers_js(&prop.modifiers);
@@ -1429,7 +1433,7 @@ impl<'a> Printer<'a> {
         self.emit_expression_with_scoped_static_initializer_mode(
             prop.initializer,
             this_alias,
-            Some(super_alias),
+            super_alias,
             false,
         );
         self.ctx.flags.in_statement_expression = prev_statement_expression;
@@ -1451,6 +1455,12 @@ impl<'a> Printer<'a> {
             stack.extend(self.arena.get_children(current));
         }
         false
+    }
+
+    fn node_is_this_keyword(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == tsz_scanner::SyntaxKind::ThisKeyword as u16)
     }
 
     fn seed_tc39_decorator_extends_text(

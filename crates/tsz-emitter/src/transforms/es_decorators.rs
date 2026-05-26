@@ -999,12 +999,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .iter()
             .filter_map(|&idx| self.arena.get(idx).map(|n| (idx, n)))
             .collect();
+        let class_close = self.find_class_close_brace(class_node);
 
         let mut plain_static_field_idx_set: std::collections::HashSet<NodeIndex> =
             std::collections::HashSet::new();
         let mut plain_static_field_assignments: Vec<String> = Vec::new();
         if !self.use_static_blocks {
             for (member_idx, member_node) in &all_members {
+                if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
+                    && let Some(text) = self.static_block_texts.get(member_idx)
+                {
+                    let statement = self
+                        .lower_static_block_text_to_iife(text)
+                        .unwrap_or_else(|| text.trim().trim_end_matches(';').to_string());
+                    if !statement.is_empty() {
+                        plain_static_field_idx_set.insert(*member_idx);
+                        plain_static_field_assignments.push(statement);
+                    }
+                    continue;
+                }
                 if decorated_field_idx_set.contains(member_idx) {
                     continue;
                 }
@@ -1060,7 +1073,6 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .map(|(i, _)| i)
             .collect();
 
-        let class_close = self.find_class_close_brace(class_node);
         for &emit_i in &emittable {
             let (member_idx, member_node) = all_members[emit_i];
             if member_node.kind == syntax_kind_ext::CONSTRUCTOR {
@@ -1885,7 +1897,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         let (property_access, property_key) = self.static_field_assignment_name(prop.name)?;
         let value = if prop.initializer.is_some() {
-            self.node_text(prop.initializer)
+            if class_ref == "_classThis" && self.node_is_this_keyword(prop.initializer) {
+                class_ref.to_string()
+            } else {
+                self.node_text(prop.initializer)
+            }
         } else {
             "void 0".to_string()
         };
@@ -1935,6 +1951,36 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     Some((format!("[{key}]"), key))
                 }
             }
+        }
+    }
+
+    fn node_is_this_keyword(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::ThisKeyword as u16)
+    }
+
+    fn lower_static_block_text_to_iife(&self, text: &str) -> Option<String> {
+        let trimmed = text.trim().trim_end_matches(';').trim();
+        if !trimmed.starts_with("static") {
+            return Some(trimmed.to_string());
+        }
+        let open = trimmed.find('{')?;
+        let close = trimmed.rfind('}')?;
+        if close <= open {
+            return None;
+        }
+        let body = trimmed[open + 1..close].trim();
+        let body = body
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n        ");
+        if body.is_empty() {
+            Some("(() => {\n    })()".to_string())
+        } else {
+            Some(format!("(() => {{\n        {body}\n    }})()"))
         }
     }
 

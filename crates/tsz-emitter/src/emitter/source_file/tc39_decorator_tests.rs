@@ -94,3 +94,57 @@ class C {
         "Decorated public method/accessor emit must not copy return type annotations.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_class_decorated_static_this_members_use_class_capture() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    static { this; }
+    static x: any = this;
+    static m() { this; }
+}
+";
+
+    let es2022_output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        es2022_output.contains("static { _classThis; }")
+            && es2022_output.contains("static x = _classThis;")
+            && es2022_output.contains("static m() { this; }"),
+        "Class-decorated static blocks and fields should use the class capture without changing method `this`.\nOutput:\n{es2022_output}"
+    );
+    assert!(
+        !es2022_output.contains("static x: any = this"),
+        "Class-decorated static field emit must not copy TypeScript-only syntax.\nOutput:\n{es2022_output}"
+    );
+
+    let es2015_output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        es2015_output.contains("_classThis;\n    })();")
+            && es2015_output.contains("_classThis.x = _classThis;")
+            && es2015_output.contains("static m() { this; }"),
+        "Lowered class-decorated static blocks and fields should use the class capture.\nOutput:\n{es2015_output}"
+    );
+    assert!(
+        !es2015_output.contains("static { this; }") && !es2015_output.contains("x: any = this"),
+        "Lowered class-decorated static members must not keep raw TypeScript syntax.\nOutput:\n{es2015_output}"
+    );
+}
