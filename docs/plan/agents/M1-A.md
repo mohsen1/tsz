@@ -142,6 +142,11 @@ node scripts/ci/pr-ownership-report.mjs
     `Blocked Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
     blocked-ready JSON rows include `updatedAt` so stale blocked-ready
     handoffs have the same quick age signal as conflicting-ready handoffs.
+  - `#10207` merged on 2026-05-26 as
+    `c5108c4623 ci: show oldest updated owner counts (#10207)`.
+    Blocked-ready, conflicting-ready, and conflicting-main owner-count rows now
+    show `oldest updated YYYY-MM-DD`, and their JSON owner-count rows include
+    `oldestUpdatedAt` for owner-level stale-handoff triage.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -164,8 +169,9 @@ node scripts/ci/pr-ownership-report.mjs
   - Use the ownership report's `Owner Summary` section for the current
     owner-by-owner workload and handoff view. Counts are live GitHub state and
     should be re-run each cycle, not copied into this lane note. The
-    `Conflicting ready` column is the quick owner-level view of non-draft PRs
-    that still need conflict handoff before queueing.
+    `Conflicting ready` column is the quick owner-level count of non-draft PRs
+    that still need conflict handoff before queueing; the blocked/conflicting
+    owner-count sections now show oldest-update dates for age triage.
   - Use the ownership report's `WIP PRs` section for the current WIP marker
     rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
