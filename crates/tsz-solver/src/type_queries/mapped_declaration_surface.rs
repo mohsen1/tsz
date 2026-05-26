@@ -166,8 +166,8 @@ fn mapped_surface_with_optional_undefined_inner(
             db.object_with_index(ObjectShape {
                 flags: shape.flags,
                 properties,
-                string_index: shape.string_index.clone(),
-                number_index: shape.number_index.clone(),
+                string_index: shape.string_index,
+                number_index: shape.number_index,
                 symbol: shape.symbol,
             })
         } else {

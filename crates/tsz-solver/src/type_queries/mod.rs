@@ -95,7 +95,6 @@ pub use iterable::*;
 pub use mapped::*;
 pub use mapped_declaration_surface::*;
 pub use mapped_display_order::*;
-pub use mapped_display_order::*;
 pub use shape_queries::*;
 pub use traversal::*;
 
