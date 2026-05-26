@@ -52,7 +52,7 @@ uses exact artifact numerators and denominators.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| Accepted-regression strictness | `0` listed tests |
+| Accepted-regression strictness | `15` listed tests |
 | JavaScript emit | `13,094 / 13,530` in checked-in emit snapshot (`94.8%` / `12,820 / 13,530` still shown in README) |
 | Declaration emit | `1,606 / 1,669` in checked-in emit snapshot (`91.7%` / `1,531 / 1,669` still shown in README) |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
