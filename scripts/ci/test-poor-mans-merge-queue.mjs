@@ -5,8 +5,11 @@ import {
   activeRunOwnerStatusCounts,
   activeSyntheticQueueRun,
   failureCommentBody,
+  forceWithLeaseArgForOid,
   formatResult,
   hasPendingPlaceholderQueueStatus,
+  normalizeRestPullRequest,
+  normalizeRestWorkflowRun,
   pendingQueueRun,
   parseArgs,
   queueBranchMetadata,
@@ -38,7 +41,7 @@ function pr(overrides = {}) {
     headRefOid: "a".repeat(40),
     isCrossRepository: false,
     isDraft: false,
-    labels: [],
+    labels: ["merge-queue"],
     number: 42,
     statusCheckRollup: [check(), check({ name: "GitGuardian Security Checks" })],
     title: "fix(ci): sample",
@@ -57,6 +60,7 @@ if (originalAgentName === undefined) {
   process.env.AGENT_NAME = originalAgentName;
 }
 assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
+assert.equal(parseArgs(["--repository", "owner/repo", "--queue-label", "ready-to-merge"]).queueLabel, "ready-to-merge");
 assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.equal(
   parseArgs(["--repository", "owner/repo", "--cleanup-superseded-open-queue-branches"]).cleanupSupersededOpenQueueBranches,
@@ -77,6 +81,14 @@ assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 1
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
 assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", "a".repeat(40)),
+  `--force-with-lease=refs/heads/automation/merge-queue/pr-123:${"a".repeat(40)}`,
+);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", ""),
+  "--force-with-lease=refs/heads/automation/merge-queue/pr-123:",
+);
 assert.deepEqual(
   queueBranchMetadata("automation/merge-queue/pr-123-a56115a-m4c"),
   { number: 123, suffix: "a56115a-m4c" },
@@ -185,20 +197,79 @@ assert.equal(
 );
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
-assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");
+assert.equal(queueSkipReason(pr({ labels: [] }), { kind: "passed" }, "main"), "missing merge-queue label");
+assert.equal(queueSkipReason(pr({ labels: ["ready-to-merge"] }), { kind: "passed" }, "main", "ready-to-merge"), null);
 assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"), "ready-state WIP marker: WIP label");
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
 assert.deepEqual(
+  normalizeRestPullRequest({
+    auto_merge: { merge_method: "squash" },
+    base: { ref: "main", repo: { full_name: "owner/repo" } },
+    body: "AgentName: TestAgent",
+    draft: false,
+    head: { ref: "feature", repo: { full_name: "owner/repo" }, sha: "b".repeat(40) },
+    html_url: "https://github.example/owner/repo/pull/42",
+    labels: [{ name: "agent:M4-A" }],
+    number: 42,
+    title: "fix(ci): sample",
+    updated_at: "2026-05-26T10:00:00Z",
+  }, "owner/repo", [{ context: "CI Summary", state: "success" }]),
+  {
+    autoMergeRequest: { merge_method: "squash" },
+    baseRefName: "main",
+    body: "AgentName: TestAgent",
+    headRefName: "feature",
+    headRefOid: "b".repeat(40),
+    isCrossRepository: false,
+    isDraft: false,
+    labels: [{ name: "agent:M4-A" }],
+    number: 42,
+    statusCheckRollup: [{ context: "CI Summary", state: "success" }],
+    title: "fix(ci): sample",
+    updatedAt: "2026-05-26T10:00:00Z",
+    url: "https://github.example/owner/repo/pull/42",
+  },
+);
+assert.equal(
+  normalizeRestPullRequest({
+    base: { ref: "main", repo: { full_name: "owner/repo" } },
+    head: { ref: "feature", repo: { full_name: "fork/repo" }, sha: "b".repeat(40) },
+  }, "owner/repo").isCrossRepository,
+  true,
+);
+assert.deepEqual(
+  normalizeRestWorkflowRun({
+    id: 123,
+    status: "in_progress",
+    conclusion: null,
+    head_sha: "c".repeat(40),
+    html_url: "https://github.example/runs/123",
+    created_at: "2026-05-26T10:00:00Z",
+    run_started_at: "2026-05-26T10:01:00Z",
+    updated_at: "2026-05-26T10:02:00Z",
+  }),
+  {
+    databaseId: 123,
+    status: "in_progress",
+    conclusion: "",
+    headSha: "c".repeat(40),
+    url: "https://github.example/runs/123",
+    createdAt: "2026-05-26T10:00:00Z",
+    startedAt: "2026-05-26T10:01:00Z",
+    updatedAt: "2026-05-26T10:02:00Z",
+  },
+);
+assert.deepEqual(
   skipReasonCounts([
     { number: 1, reason: "draft PR" },
-    { number: 2, reason: "auto-merge is not armed" },
+    { number: 2, reason: "missing merge-queue label" },
     { number: 3, reason: "draft PR" },
   ]),
   [
     { reason: "draft PR", count: 2 },
-    { reason: "auto-merge is not armed", count: 1 },
+    { reason: "missing merge-queue label", count: 1 },
   ],
 );
 assert.deepEqual(
@@ -215,8 +286,8 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerCounts([
     { owner: "agent:M4-A", reason: "draft PR" },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
   ]),
   [
     { owner: "agent:M4-A", count: 2 },
@@ -226,15 +297,15 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerReasonCounts([
     { owner: "agent:M4-A", reason: "draft PR" },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
     { owner: "agent:M4-B", reason: "PR #10084 is open", summaryReason: "open PR branch" },
   ]),
   [
-    { owner: "agent:M4-A", reason: "auto-merge is not armed", count: 2 },
+    { owner: "agent:M4-A", reason: "missing merge-queue label", count: 2 },
     { owner: "agent:M4-A", reason: "draft PR", count: 1 },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed", count: 1 },
+    { owner: "agent:M4-B", reason: "missing merge-queue label", count: 1 },
     { owner: "agent:M4-B", reason: "open PR branch", count: 1 },
   ],
 );
@@ -254,8 +325,8 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerCounts([
     { owner: "agent:M4-A", updatedAt: "2026-05-25T10:00:00Z", reason: "draft PR" },
-    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "missing merge-queue label" },
   ]),
   [
     { owner: "agent:M4-A", count: 2, oldestUpdatedAt: "2026-05-23T08:00:00Z" },
@@ -425,17 +496,17 @@ const queueSkipFormat = formatResult({
   skips: Array.from({ length: 27 }, (_, index) => ({
     number: index + 1,
     owner: index % 2 === 0 ? "agent:M1-A" : "agent:M4-B",
-    reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
+    reason: index % 3 === 0 ? "draft PR" : "missing merge-queue label",
   })),
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipFormat, /### Skip Reason Counts/);
-assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 18 \| missing merge-queue label \|/);
 assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
 assert.match(queueSkipFormat, /### Skip Owner Counts/);
 assert.match(queueSkipFormat, /\| 14 \| agent:M1-A \|/);
 assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
 assert.match(queueSkipFormat, /### Skip Owner Reason Counts/);
-assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| missing merge-queue label \|/);
 assert.match(queueSkipFormat, /\| 5 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
 assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
@@ -446,15 +517,15 @@ const queueSkipOwnerDateFormat = formatResult({
   selected: null,
   skips: [
     { number: 1, owner: "agent:M1-A", reason: "draft PR", updatedAt: "2026-05-25T10:00:00Z" },
-    { number: 2, owner: "agent:M1-A", reason: "auto-merge is not armed", updatedAt: "2026-05-23T08:00:00Z" },
-    { number: 3, owner: "agent:M4-B", reason: "auto-merge is not armed", updatedAt: "2026-05-24T09:00:00Z" },
+    { number: 2, owner: "agent:M1-A", reason: "missing merge-queue label", updatedAt: "2026-05-23T08:00:00Z" },
+    { number: 3, owner: "agent:M4-B", reason: "missing merge-queue label", updatedAt: "2026-05-24T09:00:00Z" },
   ],
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \| 3d 3h \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \| 2d 2h \|/);
 assert.match(queueSkipOwnerDateFormat, /\| PR \| Owner \| Updated \| Reason \|/);
-assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| auto-merge is not armed \|/);
+assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| missing merge-queue label \|/);
 
 assert.match(
   formatResult({

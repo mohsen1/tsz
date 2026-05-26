@@ -14,6 +14,12 @@ Open a draft PR to run the light CI suite: lint, dist-fast build, and unit
 tests. Mark the PR ready for review when it should run the heavy suites:
 WASM, conformance, emit, fourslash, and snapshot gates.
 
+When a ready PR's exact head has passed the PR-head gates (`CI Summary`,
+`GitGuardian Security Checks`, and any review/body checks), the merge manager
+adds the `merge-queue` label. The queue owns the required `Queue Tested`
+status: it synthetic-tests the PR against latest `main`, posts `Queue Tested`,
+and merges one PR at a time.
+
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide.
 
 ## How tsz Works
@@ -60,6 +66,9 @@ python3 scripts/conformance/query-conformance.py --dashboard
 6. **Verify narrowly** — run only targeted local checks needed for debugging
 7. **Push updates to the draft PR** — let CI run build, lint, and unit tests; do not wait idle
 8. **Mark ready for review** — triggers conformance, emit, fourslash, WASM, and snapshot gates
+9. **Hand off to the merge queue** — after exact-head PR-head gates pass,
+   the manager adds `merge-queue`; do not treat missing `Queue Tested` as a
+   blocker before enqueue
 
 Include your stable `AgentName` in every PR body and substantive PR comment.
 Use the draft PR body for scope, invariants, findings, verification, and
