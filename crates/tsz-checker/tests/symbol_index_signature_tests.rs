@@ -246,6 +246,42 @@ const value: number = ws[importedSym];
 }
 
 #[test]
+fn imported_distinct_symbol_binding_does_not_match_computed_member() {
+    let codes = diagnostic_codes_for_project(
+        &[
+            (
+                "./a.ts",
+                r#"
+export declare const memberKey: symbol;
+export declare const otherKey: symbol;
+
+export interface WithSymbol {
+    [memberKey]: number;
+}
+"#,
+            ),
+            (
+                "./b.ts",
+                r#"
+import { otherKey, type WithSymbol } from "./a";
+
+declare const ws: WithSymbol;
+const value = ws[otherKey];
+"#,
+            ),
+        ],
+        "./b.ts",
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN
+        ),
+        "different exported symbol bindings must not resolve to the declared member type, got {codes:?}",
+    );
+}
+
+#[test]
 fn jsdoc_symbol_index_signature_reports_computed_property_value_mismatch() {
     let codes = diagnostic_codes_for_js(
         r#"
