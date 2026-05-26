@@ -15,7 +15,7 @@
 # in sync with the actual values.
 
 solver_max_loc      3474
-solver_oversized    21
+solver_oversized    20
 solver_file_generic_call_resolve 3381
 solver_file_eval_conditional 3257
 solver_file_evaluate 3474
@@ -23,7 +23,6 @@ solver_file_instantiate 2872
 solver_file_subtype_core 2862
 solver_file_type_queries_flow 2874
 solver_file_diag_format_compound 2786
-solver_file_eval_infer_pattern_helpers 2769
 solver_file_narrowing_core 2718
 solver_file_relations_compat 2950
 solver_file_constraints_walker 2348

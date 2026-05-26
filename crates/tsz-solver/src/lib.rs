@@ -336,6 +336,9 @@ mod template_expansion_tests;
 #[path = "../tests/template_literal_comprehensive_test.rs"]
 mod template_literal_comprehensive_test;
 #[cfg(test)]
+#[path = "../tests/template_literal_infer_capture_tests.rs"]
+mod template_literal_infer_capture_tests;
+#[cfg(test)]
 #[path = "../tests/template_literal_subtype_tests.rs"]
 mod template_literal_subtype_tests;
 #[cfg(test)]

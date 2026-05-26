@@ -1,13 +1,8 @@
-//! Infer pattern matching helpers for object, union, and template-literal
-//! patterns.
-//!
-//! Split out of `infer_pattern_helpers.rs` to keep both files under the
-//! file-size ceiling (section 19). These remain methods on `TypeEvaluator`
-//! in the same crate; helpers shared across the split are `pub(crate)`.
+//! Object, callable-property, and union infer-pattern matching helpers.
 
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    IntrinsicKind, LiteralValue, ObjectShapeId, PropertyInfo, TemplateSpan, TypeData, TypeId,
+    CallableShapeId, IntrinsicKind, LiteralValue, ObjectShapeId, PropertyInfo, TypeData, TypeId,
     TypeListId, TypeParamInfo,
 };
 use crate::utils;
@@ -17,6 +12,82 @@ use tsz_common::interner::Atom;
 use super::super::evaluate::TypeEvaluator;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    pub(crate) fn match_infer_callable_pattern_properties(
+        &self,
+        source: TypeId,
+        pattern_shape_id: CallableShapeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        let pattern_shape = self.interner().callable_shape(pattern_shape_id);
+        let Some(source_shape_id) = self.source_callable_shape_id(source) else {
+            return false;
+        };
+        let source_shape = self.interner().callable_shape(source_shape_id);
+        if pattern_shape.call_signatures.len() > source_shape.call_signatures.len()
+            || pattern_shape.construct_signatures.len() > source_shape.construct_signatures.len()
+        {
+            return false;
+        }
+
+        for pattern_prop in &pattern_shape.properties {
+            let source_prop = source_shape
+                .properties
+                .iter()
+                .find(|prop| prop.name == pattern_prop.name);
+            let Some(source_prop) = source_prop else {
+                if pattern_prop.optional {
+                    if self.type_contains_infer(pattern_prop.type_id) {
+                        let mut visited = FxHashSet::default();
+                        if !self.match_infer_pattern(
+                            TypeId::UNDEFINED,
+                            pattern_prop.type_id,
+                            bindings,
+                            &mut visited,
+                            checker,
+                        ) {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+                return false;
+            };
+
+            if self.type_contains_infer(pattern_prop.type_id) {
+                let mut visited = FxHashSet::default();
+                if !self.match_infer_pattern(
+                    source_prop.type_id,
+                    pattern_prop.type_id,
+                    bindings,
+                    &mut visited,
+                    checker,
+                ) {
+                    return false;
+                }
+            } else if !checker.is_subtype_of(
+                self.optional_property_type(source_prop),
+                self.optional_property_type(pattern_prop),
+            ) {
+                return false;
+            }
+        }
+        true
+    }
+
+    fn source_callable_shape_id(&self, source: TypeId) -> Option<CallableShapeId> {
+        match self.interner().lookup(source) {
+            Some(TypeData::Callable(shape_id)) => Some(shape_id),
+            Some(TypeData::ReadonlyType(inner)) => self.source_callable_shape_id(inner),
+            Some(TypeData::Intersection(members)) => self
+                .interner()
+                .type_list(members)
+                .iter()
+                .find_map(|&member| self.source_callable_shape_id(member)),
+            _ => None,
+        }
+    }
+
     /// Match each pattern property against the corresponding source property,
     /// extracting infer bindings with variance-aware merging.
     ///
@@ -705,445 +776,5 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 )
             }
         }
-    }
-
-    /// Match a template literal string against a pattern.
-    pub(crate) fn match_template_literal_string(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        self.match_template_literal_string_from(source, pattern, 0, 0, bindings, checker)
-    }
-
-    fn match_template_segment_prefix(
-        &self,
-        source: &str,
-        pos: usize,
-        type_id: TypeId,
-    ) -> Option<usize> {
-        match self.interner().lookup(type_id)? {
-            TypeData::Literal(LiteralValue::String(atom)) => {
-                let text = self.interner().resolve_atom(atom);
-                source
-                    .get(pos..)?
-                    .starts_with(&text)
-                    .then_some(pos + text.len())
-            }
-            TypeData::Union(list_id) => self
-                .interner()
-                .type_list(list_id)
-                .iter()
-                .find_map(|member| self.match_template_segment_prefix(source, pos, *member)),
-            TypeData::TemplateLiteral(template_id) => {
-                let spans = self.interner().template_list(template_id);
-                let mut text = String::new();
-                for span in spans.iter() {
-                    let TemplateSpan::Text(atom) = span else {
-                        return None;
-                    };
-                    text.push_str(&self.interner().resolve_atom(*atom));
-                }
-                source
-                    .get(pos..)?
-                    .starts_with(&text)
-                    .then_some(pos + text.len())
-            }
-            _ => None,
-        }
-    }
-
-    fn is_template_infer_span(&self, span: Option<&TemplateSpan>) -> bool {
-        span.is_some_and(|span| {
-            matches!(span, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_))))
-        })
-    }
-
-    fn next_char_end(source: &str, pos: usize) -> Option<usize> {
-        if pos >= source.len() {
-            return None;
-        }
-        Some(
-            source[pos..]
-                .char_indices()
-                .nth(1)
-                .map_or(source.len(), |(idx, _)| pos + idx),
-        )
-    }
-
-    fn candidate_template_capture_ends(
-        &self,
-        source: &str,
-        pos: usize,
-        pattern: &[TemplateSpan],
-        index: usize,
-    ) -> Vec<usize> {
-        if index + 1 >= pattern.len() {
-            return vec![source.len()];
-        }
-
-        if self.is_template_infer_span(pattern.get(index))
-            && matches!(
-                pattern.get(index + 1),
-                Some(TemplateSpan::Type(
-                    TypeId::STRING | TypeId::ANY | TypeId::UNKNOWN
-                ))
-            )
-        {
-            if self.is_template_infer_span(pattern.get(index + 2)) {
-                return Self::next_char_end(source, pos).into_iter().collect();
-            }
-
-            return Self::next_char_end(source, pos)
-                .or(Some(pos))
-                .into_iter()
-                .collect();
-        }
-
-        if pattern
-            .get(index + 1)
-            .is_some_and(|s| matches!(s, TemplateSpan::Type(type_id) if matches!(self.interner().lookup(*type_id), Some(TypeData::Infer(_)))))
-        {
-            return Self::next_char_end(source, pos).into_iter().collect();
-        }
-
-        if let Some(next_text) = pattern[index + 1..].iter().find_map(|span| match span {
-            TemplateSpan::Text(text) => Some(*text),
-            TemplateSpan::Type(_) => None,
-        }) {
-            let next_value = self.interner().resolve_atom_ref(next_text);
-            let remaining = &source[pos..];
-            return remaining
-                .match_indices(next_value.as_ref())
-                .map(|(offset, _)| pos + offset)
-                .collect();
-        }
-
-        source[pos..]
-            .char_indices()
-            .map(|(offset, _)| pos + offset)
-            .chain(std::iter::once(source.len()))
-            .collect()
-    }
-
-    /// Match an intrinsic-typed span at position `pos` in the infer-pattern path.
-    ///
-    /// Returns `Some(true/false)` when the span is a recognized intrinsic kind
-    /// (number, bigint, boolean, null, undefined) and dispatches length-aware
-    /// matching for it.  Returns `None` for wildcard intrinsics (string/any/
-    /// unknown) so the caller falls through to generic handling.
-    fn match_intrinsic_span_from(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        pos: usize,
-        index: usize,
-        type_id: TypeId,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> Option<bool> {
-        use crate::relations::subtype::rules::literals::{
-            find_integer_length, find_number_length, is_valid_number,
-        };
-
-        let remaining = &source[pos..];
-
-        match self.interner().lookup(type_id)? {
-            TypeData::Intrinsic(kind) => match kind {
-                IntrinsicKind::Number => {
-                    let num_len = find_number_length(remaining);
-                    if num_len == 0 {
-                        return Some(false);
-                    }
-                    // Try shortest valid number first — matches tsc's non-greedy
-                    // behaviour for ambiguous infer+number patterns.
-                    for len in 1..=num_len {
-                        if is_valid_number(&remaining[..len])
-                            && self.match_template_literal_string_from(
-                                source,
-                                pattern,
-                                pos + len,
-                                index + 1,
-                                bindings,
-                                checker,
-                            )
-                        {
-                            return Some(true);
-                        }
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Bigint => {
-                    let int_len = find_integer_length(remaining);
-                    if int_len == 0 {
-                        return Some(false);
-                    }
-                    // Try shortest valid integer first — consistent with tsc.
-                    for len in 1..=int_len {
-                        if self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + len,
-                            index + 1,
-                            bindings,
-                            checker,
-                        ) {
-                            return Some(true);
-                        }
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Boolean => {
-                    if remaining.starts_with("true")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 4,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return Some(true);
-                    }
-                    if remaining.starts_with("false")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 5,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return Some(true);
-                    }
-                    Some(false)
-                }
-                IntrinsicKind::Null => {
-                    if remaining.starts_with("null")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 4,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }
-                IntrinsicKind::Undefined => {
-                    if remaining.starts_with("undefined")
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            pos + 9,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        Some(true)
-                    } else {
-                        Some(false)
-                    }
-                }
-                // Wildcards and other intrinsics fall through to generic handling.
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    fn match_template_literal_string_from(
-        &self,
-        source: &str,
-        pattern: &[TemplateSpan],
-        pos: usize,
-        index: usize,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        if index == pattern.len() {
-            return pos == source.len();
-        }
-
-        match pattern[index] {
-            TemplateSpan::Text(text) => {
-                let text_value = self.interner().resolve_atom_ref(text);
-                let text_value = text_value.as_ref();
-                if !source[pos..].starts_with(text_value) {
-                    return false;
-                }
-                self.match_template_literal_string_from(
-                    source,
-                    pattern,
-                    pos + text_value.len(),
-                    index + 1,
-                    bindings,
-                    checker,
-                )
-            }
-            TemplateSpan::Type(type_id) => {
-                if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                    for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                        let mut next_bindings = bindings.clone();
-                        let captured = &source[pos..end];
-                        if !self.bind_template_infer_capture(
-                            &info,
-                            captured,
-                            &mut next_bindings,
-                            checker,
-                        ) {
-                            continue;
-                        }
-                        if self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            end,
-                            index + 1,
-                            &mut next_bindings,
-                            checker,
-                        ) {
-                            *bindings = next_bindings;
-                            return true;
-                        }
-                    }
-                    return false;
-                }
-
-                if let Some(next_pos) = self.match_template_segment_prefix(source, pos, type_id) {
-                    return self.match_template_literal_string_from(
-                        source,
-                        pattern,
-                        next_pos,
-                        index + 1,
-                        bindings,
-                        checker,
-                    );
-                }
-
-                if let Some(result) = self.match_intrinsic_span_from(
-                    source, pattern, pos, index, type_id, bindings, checker,
-                ) {
-                    return result;
-                }
-
-                for end in self.candidate_template_capture_ends(source, pos, pattern, index) {
-                    let captured = &source[pos..end];
-                    let captured_type = self.interner().literal_string(captured);
-                    if self
-                        .template_capture_for_constraint(captured, captured_type, type_id, checker)
-                        .is_some()
-                        && self.match_template_literal_string_from(
-                            source,
-                            pattern,
-                            end,
-                            index + 1,
-                            bindings,
-                            checker,
-                        )
-                    {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-    }
-
-    /// Capture value for a bare single-placeholder `` `${infer V}` `` pattern
-    /// matched against a template-literal `source`.
-    ///
-    /// tsc captures the whole source type (`getStringLikeTypeForType` of the
-    /// placeholder) rather than widening to `string`: inferring `` `${infer V}` ``
-    /// from `` `${number}` `` yields `` `${number}` ``, not `string`.
-    ///
-    /// When the infer variable carries an `extends` constraint, this mirrors
-    /// tsc's `getInferredType` fallback: if the captured template type isn't
-    /// assignable to the constraint, fall back to the constraint itself, but
-    /// only when the source is assignable to the constraint's string form
-    /// (`` `${C}` ``) — i.e. when the conditional's post-inference `extends`
-    /// re-check would still succeed. Otherwise the match fails and the
-    /// conditional takes its false branch.
-    fn single_placeholder_template_capture(
-        &self,
-        source: TypeId,
-        info: &TypeParamInfo,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> Option<TypeId> {
-        let Some(constraint) = info.constraint else {
-            return Some(source);
-        };
-        if checker.is_subtype_of(source, constraint) {
-            return Some(source);
-        }
-        let constraint_string_form = self
-            .interner()
-            .template_literal(vec![TemplateSpan::Type(constraint)]);
-        checker
-            .is_subtype_of(source, constraint_string_form)
-            .then_some(constraint)
-    }
-
-    /// Match template literal spans against a pattern.
-    pub(crate) fn match_template_literal_spans(
-        &self,
-        source: TypeId,
-        source_spans: &[TemplateSpan],
-        pattern_spans: &[TemplateSpan],
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
-    ) -> bool {
-        if pattern_spans.len() == 1
-            && let TemplateSpan::Type(type_id) = pattern_spans[0]
-        {
-            if let Some(TypeData::Infer(info)) = self.interner().lookup(type_id) {
-                let Some(inferred) =
-                    self.single_placeholder_template_capture(source, &info, checker)
-                else {
-                    return false;
-                };
-                return self.bind_infer(&info, inferred, bindings, checker);
-            }
-            return checker.is_subtype_of(source, type_id);
-        }
-
-        if source_spans.len() != pattern_spans.len() {
-            return false;
-        }
-
-        for (source_span, pattern_span) in source_spans.iter().zip(pattern_spans.iter()) {
-            match pattern_span {
-                TemplateSpan::Text(text) => match source_span {
-                    TemplateSpan::Text(source_text) if source_text == text => {}
-                    _ => return false,
-                },
-                TemplateSpan::Type(type_id) => {
-                    let inferred = match source_span {
-                        TemplateSpan::Text(text) => {
-                            let text_value = self.interner().resolve_atom_ref(*text);
-                            self.interner().literal_string(text_value.as_ref())
-                        }
-                        TemplateSpan::Type(source_type) => *source_type,
-                    };
-                    if let Some(TypeData::Infer(info)) = self.interner().lookup(*type_id) {
-                        if !self.bind_infer(&info, inferred, bindings, checker) {
-                            return false;
-                        }
-                    } else if !checker.is_subtype_of(inferred, *type_id) {
-                        return false;
-                    }
-                }
-            }
-        }
-
-        true
     }
 }
