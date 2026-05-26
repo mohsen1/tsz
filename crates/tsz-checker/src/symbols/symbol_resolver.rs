@@ -1199,6 +1199,11 @@ impl<'a> CheckerState<'a> {
                     // different binder (ambient module, cross-file export),
                     // SymbolId values can collide with the current binder's
                     // symbols, causing incorrect flag lookups.
+                    self.record_cross_file_symbol_if_needed(
+                        target_sym_id,
+                        expected_name,
+                        module_name,
+                    );
                     return Some(classify_target_resolution(target_sym_id));
                 }
             }
@@ -1284,6 +1289,11 @@ impl<'a> CheckerState<'a> {
                     accept_type_symbol(sym_id)
                 })
             && !is_private_external_module_type_symbol(local_sym_id)
+            && self
+                .ctx
+                .binder
+                .get_symbol(local_sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == name)
         {
             if let Some(symbol) = self.ctx.binder.get_symbol(local_sym_id)
                 && symbol.has_any_flags(symbol_flags::ALIAS)
