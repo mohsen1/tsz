@@ -156,6 +156,23 @@ function ownerCounts(prs) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
 }
 
+function ownerCountsWithOldestUpdated(prs) {
+  return [...prs
+    .reduce((counts, pr) => {
+      const owner = ownerOf(pr);
+      const current = counts.get(owner) || { count: 0, oldestUpdatedAt: null };
+      current.count += 1;
+      if (pr.updatedAt && (!current.oldestUpdatedAt || pr.updatedAt < current.oldestUpdatedAt)) {
+        current.oldestUpdatedAt = pr.updatedAt;
+      }
+      counts.set(owner, current);
+      return counts;
+    }, new Map())
+    .entries()]
+    .map(([owner, data]) => ({ owner, count: data.count, oldestUpdatedAt: data.oldestUpdatedAt }))
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
 function ownerOf(pr) {
   if (pr.agentLabel) {
     return pr.agentLabel;
@@ -183,6 +200,11 @@ function wipMarkers(pr) {
 
 function shortDate(value) {
   return value ? value.slice(0, 10) : "unknown";
+}
+
+function ownerCountSummary(entry) {
+  const oldest = Object.hasOwn(entry, "oldestUpdatedAt") ? ` (oldest updated ${shortDate(entry.oldestUpdatedAt)})` : "";
+  return `${entry.owner}: ${entry.count}${oldest}`;
 }
 
 function makeReport(pulls) {
@@ -294,11 +316,12 @@ function makeReport(pulls) {
       agentName: pr.agentName,
       agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
       autoMergeArmed: pr.autoMergeArmed,
+      updatedAt: pr.updatedAt,
       mergeable: pr.mergeable,
       title: pr.title,
     }))
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
-  const blockedReadyMainOwnerCounts = ownerCounts(blockedReadyMainPrs);
+  const blockedReadyMainOwnerCounts = ownerCountsWithOldestUpdated(blockedReadyMainPrs);
 
   const conflictingMainPrs = normalized
     .filter((pr) => pr.base === "main" && (pr.mergeable === "CONFLICTING" || pr.mergeStateStatus === "DIRTY"))
@@ -314,9 +337,9 @@ function makeReport(pulls) {
       title: pr.title,
     }))
     .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
-  const conflictingMainOwnerCounts = ownerCounts(conflictingMainPrs);
+  const conflictingMainOwnerCounts = ownerCountsWithOldestUpdated(conflictingMainPrs);
   const conflictingReadyMainPrs = conflictingMainPrs.filter((pr) => !pr.draft);
-  const conflictingReadyMainOwnerCounts = ownerCounts(conflictingReadyMainPrs);
+  const conflictingReadyMainOwnerCounts = ownerCountsWithOldestUpdated(conflictingReadyMainPrs);
 
   const wipPrs = normalized
     .filter(isWipPr)
@@ -498,14 +521,14 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.blockedReadyMainOwnerCounts) {
-      console.log(`- ${entry.owner}: ${entry.count}`);
+      console.log(`- ${ownerCountSummary(entry)}`);
     }
     console.log("");
     console.log("PRs:");
     for (const pr of report.blockedReadyMainPrs) {
       const owner = ownerOf(pr);
       const autoMerge = pr.autoMergeArmed ? "auto-merge armed" : "auto-merge off";
-      console.log(`- #${pr.number}: ${owner}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
+      console.log(`- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; ${pr.mergeable}; ${autoMerge}; ${pr.title}`);
     }
   }
   console.log("");
@@ -516,7 +539,7 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.conflictingReadyMainOwnerCounts) {
-      console.log(`- ${entry.owner}: ${entry.count}`);
+      console.log(`- ${ownerCountSummary(entry)}`);
     }
     console.log("");
     console.log("PRs:");
@@ -536,7 +559,7 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.conflictingMainOwnerCounts) {
-      console.log(`- ${entry.owner}: ${entry.count}`);
+      console.log(`- ${ownerCountSummary(entry)}`);
     }
     console.log("");
     console.log("PRs:");
