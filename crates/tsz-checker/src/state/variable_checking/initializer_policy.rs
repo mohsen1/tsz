@@ -4,6 +4,7 @@
 //! variable's initializer) can be read and tested independently of the
 //! outer orchestration (symbol caching, TS2403, binding-pattern checks).
 
+use crate::computation::complex::is_contextually_sensitive;
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::query_boundaries::flow as flow_boundary;
 use crate::query_boundaries::state::checking as query;
@@ -295,6 +296,8 @@ impl<'a> CheckerState<'a> {
                     } else {
                         Vec::new()
                     };
+                    let initializer_contextually_sensitive =
+                        is_contextually_sensitive(self, facts.initializer);
                     self.ctx.diagnostics.retain(|diag| {
                         diag.code
                             == crate::diagnostics::diagnostic_codes::STATIC_MEMBERS_CANNOT_REFERENCE_CLASS_TYPE_PARAMETERS
@@ -338,13 +341,14 @@ impl<'a> CheckerState<'a> {
                                     .iter()
                                     .any(|&(start, end)| diag.start >= start && diag.start < end))
                             // TS2322 diagnostics from the pre-contextual
-                            // assignment check can be stale for object
-                            // literal methods: contextual method typing may
-                            // supply the function shape that makes the final
-                            // object assignable. The contextual check below
-                            // re-emits real assignment failures.
+                            // assignment check can be stale for contextually
+                            // sensitive initializers: contextual typing may
+                            // supply tuple/object/function shape that makes the
+                            // final initializer assignable. The contextual
+                            // check below re-emits real assignment failures.
                             || (diag.code
                                 == crate::diagnostics::diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
+                                && !initializer_contextually_sensitive
                                 && object_literal_method_name_spans.is_empty())
                             // TS2538: "Type 'X' cannot be used as an index
                             // type" is a structural error about the index
