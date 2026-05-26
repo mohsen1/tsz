@@ -1,6 +1,6 @@
 use crate::state::CheckerState;
 use crate::symbols_domain::alias_cycle::AliasCycleTracker;
-use tsz_binder::{BinderState, SymbolId, symbol_flags};
+use tsz_binder::{BinderState, Symbol, SymbolId, symbol_flags};
 use tsz_parser::NodeList;
 use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -101,6 +101,21 @@ impl<'a> CheckerState<'a> {
                             )
                         });
                 };
+                if Self::source_file_local_symbol_can_fall_back_to_global_type(
+                    arena, binder, raw_sym_id,
+                ) {
+                    return global_type_is_lowerable(name)
+                        && args.nodes.iter().copied().all(|arg| {
+                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                                arena,
+                                binder,
+                                arg,
+                                type_param_names,
+                                seen,
+                                global_type_is_lowerable,
+                            )
+                        });
+                }
                 let Some(sym_id) =
                     Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
                 else {
@@ -371,6 +386,23 @@ impl<'a> CheckerState<'a> {
                                 })
                             }));
                 };
+                if Self::source_file_local_symbol_can_fall_back_to_global_type(
+                    arena, binder, raw_sym_id,
+                ) {
+                    return global_type_is_lowerable(name)
+                        && (!has_type_arguments
+                            || type_ref.type_arguments.as_ref().is_some_and(|args| {
+                                args.nodes.iter().copied().all(|arg| {
+                                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                                        arena,
+                                        binder,
+                                        arg,
+                                        seen,
+                                        global_type_is_lowerable,
+                                    )
+                                })
+                            }));
+                }
                 let Some(sym_id) =
                     Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
                 else {
@@ -579,6 +611,34 @@ impl<'a> CheckerState<'a> {
             }
             _ => false,
         }
+    }
+
+    fn source_file_local_symbol_can_fall_back_to_global_type(
+        arena: &NodeArena,
+        binder: &BinderState,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(symbol) = binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if symbol.flags & symbol_flags::ALIAS != 0 {
+            return false;
+        }
+        if symbol.flags & symbol_flags::TYPE == 0 {
+            return true;
+        }
+        !Self::source_file_symbol_has_local_type_declaration(arena, symbol)
+    }
+
+    fn source_file_symbol_has_local_type_declaration(arena: &NodeArena, symbol: &Symbol) -> bool {
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            arena.get(decl_idx).is_some_and(|decl| {
+                decl.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    || decl.kind == syntax_kind_ext::INTERFACE_DECLARATION
+                    || decl.kind == syntax_kind_ext::CLASS_DECLARATION
+                    || decl.kind == syntax_kind_ext::ENUM_DECLARATION
+            })
+        })
     }
 
     fn source_file_resolve_alias_symbol_for_lowering(

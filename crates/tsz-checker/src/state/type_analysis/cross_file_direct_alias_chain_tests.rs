@@ -894,6 +894,81 @@ fn direct_source_file_type_alias_lowers_unshadowed_global_generic_reference() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_global_generic_reference_with_namespace_shadow() {
+    with_two_file_state_with_libs(
+        "namespace Pick {}\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
+        "import { Keep } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
+                .expect("namespace-only locals should not shadow global type aliases");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_global_generic_reference_with_value_shadow() {
+    with_two_file_state_with_libs(
+        "const Pick = 1;\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
+        "import { Keep } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
+                .expect("value-only locals should not shadow global type aliases");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_pick_by_value_shape_with_namespace_shadow() {
+    with_two_file_state_with_libs(
+        "import { Primitive } from './aliases-and-guards';\nnamespace Pick {}\nexport type PickByValue<T, ValueType> = Pick<T, { [Key in keyof T]-?: T[Key] extends ValueType ? Key : never }[keyof T]>;",
+        "import { PickByValue } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let pick_by_value_sym = target_binder
+                .file_locals
+                .get("PickByValue")
+                .expect("PickByValue");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(pick_by_value_sym, Some(1), true)
+                .expect("utility-style PickByValue aliases should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "PickByValue should expose T and ValueType");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_local_type_alias_namespace_merge_shadow() {
+    with_two_file_state_with_libs(
+        "namespace Pick {}\ntype Pick<T, K> = T;\nexport type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
+        "import { Keep } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(keep_sym, Some(1), true)
+                    .is_none(),
+                "local type declarations merged with namespaces must not fall through to globals",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_local_conditional_alias_argument_chain() {
     with_two_file_state_with_libs(
         "type SetDifference<A, B> = A extends B ? never : A;\ntype SetComplement<A, A1 extends A> = SetDifference<A, A1>;\nexport type FlowDiff<T extends U, U extends object> = Pick<T, SetComplement<keyof T, keyof U>>;",

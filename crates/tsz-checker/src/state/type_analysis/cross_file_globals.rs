@@ -34,12 +34,9 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn source_file_global_type_is_direct_lowerable(
         &self,
-        delegate_binder: &BinderState,
+        _delegate_binder: &BinderState,
         type_name: &str,
     ) -> bool {
-        if delegate_binder.file_locals.get(type_name).is_some() {
-            return false;
-        }
         let lib_binders = self.get_lib_binders();
         self.ctx
             .binder
