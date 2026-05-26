@@ -366,6 +366,8 @@ const cleanupOwnerDateFormat = formatResult({
 assert.match(cleanupOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
 assert.match(cleanupOwnerDateFormat, /\| 2 \| agent:M4-A \| 2026-05-24 \|/);
 assert.match(cleanupOwnerDateFormat, /\| 1 \| agent:M4-C \| 2026-05-23 \|/);
+assert.match(cleanupOwnerDateFormat, /\| Branch \| Owner \| Updated \| Reason \|/);
+assert.match(cleanupOwnerDateFormat, /\| `automation\/merge-queue\/pr-9632` \| agent:M4-A \| 2026-05-24 \| PR #9632 is open \|/);
 
 const queueSkipFormat = formatResult({
   selected: null,
@@ -396,6 +398,8 @@ const queueSkipOwnerDateFormat = formatResult({
 assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \|/);
+assert.match(queueSkipOwnerDateFormat, /\| PR \| Owner \| Updated \| Reason \|/);
+assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| auto-merge is not armed \|/);
 
 assert.match(
   formatResult({
