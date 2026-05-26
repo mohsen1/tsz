@@ -52,7 +52,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if self.type_contains_error(prop_type)
-                || self.diagnostic_relation_boolean_guard(prop_type, string_index_value)
+                || self
+                    .assign_relation_outcome(prop_type, string_index_value)
+                    .related
             {
                 continue;
             }
