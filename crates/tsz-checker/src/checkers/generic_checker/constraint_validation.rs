@@ -151,7 +151,8 @@ impl<'a> CheckerState<'a> {
                         }
                         let concrete_arg = self.resolve_lazy_type(concrete_arg);
                         let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
-                        if self.is_assignable_to(concrete_arg, constraint_resolved) {
+                        if self.diagnostic_relation_boolean_guard(concrete_arg, constraint_resolved)
+                        {
                             continue;
                         }
                         self.error_type_constraint_not_satisfied(
@@ -275,7 +276,7 @@ impl<'a> CheckerState<'a> {
                                 evaluated_arg,
                                 TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                             )
-                            && (self.is_assignable_to_no_weak_checks(
+                            && (self.diagnostic_relation_boolean_guard_no_weak_checks(
                                 evaluated_arg,
                                 evaluated_constraint,
                             ) || self.satisfies_array_like_constraint(
@@ -547,13 +548,12 @@ impl<'a> CheckerState<'a> {
                                             // `unknown` infer bases fail constraints like `string`.
                                             let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                                 || inst_constraint == TypeId::ANY
-                                                || self
-                                                    .is_assignable_to(infer_base, inst_constraint)
+                                                || self.diagnostic_relation_boolean_guard(infer_base, inst_constraint)
                                                 || {
                                                     let evaluated =
                                                         self.evaluate_type_for_assignability(type_arg);
                                                     evaluated != type_arg
-                                                        && self.is_assignable_to(
+                                                        && self.diagnostic_relation_boolean_guard(
                                                             evaluated,
                                                             inst_constraint,
                                                         )
@@ -620,10 +620,13 @@ impl<'a> CheckerState<'a> {
                                         let ext_resolved = self.resolve_lazy_type(cond_extends);
                                         let ext_evaluated =
                                             self.evaluate_type_for_assignability(ext_resolved);
-                                        if self.is_assignable_to(ext_evaluated, constraint_resolved)
-                                            || self
-                                                .is_assignable_to(ext_resolved, constraint_resolved)
-                                        {
+                                        if self.diagnostic_relation_boolean_guard(
+                                            ext_evaluated,
+                                            constraint_resolved,
+                                        ) || self.diagnostic_relation_boolean_guard(
+                                            ext_resolved,
+                                            constraint_resolved,
+                                        ) {
                                             continue;
                                         }
                                         // Extract-like pattern (? T : never) but the
@@ -947,21 +950,20 @@ impl<'a> CheckerState<'a> {
                             let base_for_check = self.resolve_lazy_members_in_union(base);
                             let base_for_check =
                                 self.evaluate_type_for_assignability(base_for_check);
-                            let mut is_satisfied = self
-                                .is_assignable_to(base_for_check, inst_constraint)
-                                || self.base_union_members_satisfy_constraint(
+                            let mut is_satisfied =
+                                self.diagnostic_relation_boolean_guard(
                                     base_for_check,
                                     inst_constraint,
-                                )
-                                || self.satisfies_array_like_constraint(
+                                ) || self.base_union_members_satisfy_constraint(
                                     base_for_check,
                                     inst_constraint,
-                                )
-                                || self.infer_result_satisfies_via_referenced_constraints(
+                                ) || self.satisfies_array_like_constraint(
+                                    base_for_check,
+                                    inst_constraint,
+                                ) || self.infer_result_satisfies_via_referenced_constraints(
                                     type_arg,
                                     inst_constraint,
-                                )
-                                || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
+                                ) || type_args_list.nodes.get(i).copied().is_some_and(|arg_idx| {
                                     self.type_arg_satisfies_via_hidden_infer_constraints(
                                         type_arg,
                                         arg_idx,
@@ -1060,10 +1062,9 @@ impl<'a> CheckerState<'a> {
                                         .unwrap_or(TypeId::UNKNOWN);
                                 let is_satisfied = inst_constraint == TypeId::UNKNOWN
                                     || inst_constraint == TypeId::ANY
-                                    || self.is_assignable_to(infer_base, inst_constraint)
+                                    || self.diagnostic_relation_boolean_guard(infer_base, inst_constraint)
                                     || (type_arg_evaluated != type_arg
-                                        && self
-                                            .is_assignable_to(type_arg_evaluated, inst_constraint))
+                                        && self.diagnostic_relation_boolean_guard(type_arg_evaluated, inst_constraint))
                                     || self.infer_result_satisfies_via_check_constraint(
                                         type_arg,
                                         (cond_check, cond_extends, cond_true),
@@ -1115,12 +1116,13 @@ impl<'a> CheckerState<'a> {
                                 // If false branch is `never` (Extract pattern) and the
                                 // extends type satisfies the constraint, skip TS2344.
                                 if false_type == TypeId::NEVER
-                                    && (self
-                                        .is_assignable_to(extends_evaluated, constraint_resolved)
-                                        || self.is_assignable_to(
-                                            extends_resolved,
-                                            constraint_resolved,
-                                        ))
+                                    && (self.diagnostic_relation_boolean_guard(
+                                        extends_evaluated,
+                                        constraint_resolved,
+                                    ) || self.diagnostic_relation_boolean_guard(
+                                        extends_resolved,
+                                        constraint_resolved,
+                                    ))
                                 {
                                     // Skip: Extract<T, C> always produces subtype of C
                                 } else {
@@ -1228,7 +1230,10 @@ impl<'a> CheckerState<'a> {
                             );
                             if inst_constraint == TypeId::UNKNOWN
                                 || inst_constraint == TypeId::ANY
-                                || self.is_assignable_to(positional_constraint, inst_constraint)
+                                || self.diagnostic_relation_boolean_guard(
+                                    positional_constraint,
+                                    inst_constraint,
+                                )
                             {
                                 continue;
                             }
@@ -1291,7 +1296,10 @@ impl<'a> CheckerState<'a> {
                                             self.ctx.types,
                                             inst_constraint,
                                         )
-                                        && !self.is_assignable_to(hidden_base, inst_constraint)
+                                        && !self.diagnostic_relation_boolean_guard(
+                                            hidden_base,
+                                            inst_constraint,
+                                        )
                                     {
                                         self.error_type_constraint_not_satisfied(
                                             type_arg,
@@ -1334,15 +1342,16 @@ impl<'a> CheckerState<'a> {
                             });
                             if is_checkable
                                 && base_for_check.is_none_or(|base_for_check| {
-                                    !self.is_assignable_to(base_for_check, inst_constraint)
-                                        && !self.base_union_members_satisfy_constraint(
-                                            base_for_check,
-                                            inst_constraint,
-                                        )
-                                        && !self.satisfies_array_like_constraint(
-                                            base_for_check,
-                                            inst_constraint,
-                                        )
+                                    !self.diagnostic_relation_boolean_guard(
+                                        base_for_check,
+                                        inst_constraint,
+                                    ) && !self.base_union_members_satisfy_constraint(
+                                        base_for_check,
+                                        inst_constraint,
+                                    ) && !self.satisfies_array_like_constraint(
+                                        base_for_check,
+                                        inst_constraint,
+                                    )
                                 })
                                 && let Some(&arg_idx) = type_args_list.nodes.get(i)
                                 && !self.type_argument_is_narrowed_by_conditional_true_branch(
@@ -1487,8 +1496,10 @@ impl<'a> CheckerState<'a> {
                                                 .as_ref()
                                                 .is_some_and(|m| m.contains(&primitive_key));
                                         in_base
-                                            && !self
-                                                .is_assignable_to(primitive_key, inst_constraint)
+                                            && !self.diagnostic_relation_boolean_guard(
+                                                primitive_key,
+                                                inst_constraint,
+                                            )
                                     })
                             }
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
@@ -1504,7 +1515,7 @@ impl<'a> CheckerState<'a> {
                         let base_for_check = self.resolve_lazy_members_in_union(base);
                         let base_for_check = self.evaluate_type_for_assignability(base_for_check);
                         let mut is_satisfied = self
-                            .is_assignable_to(base_for_check, inst_constraint)
+                            .diagnostic_relation_boolean_guard(base_for_check, inst_constraint)
                             || self.base_union_members_satisfy_constraint(
                                 base_for_check,
                                 inst_constraint,
@@ -1682,9 +1693,15 @@ impl<'a> CheckerState<'a> {
                                 type_arg,
                             )
                         {
-                            self.is_assignable_to(type_arg, instantiated_constraint)
+                            self.diagnostic_relation_boolean_guard(
+                                type_arg,
+                                instantiated_constraint,
+                            )
                         } else {
-                            self.is_assignable_to_no_weak_checks(type_arg, instantiated_constraint)
+                            self.diagnostic_relation_boolean_guard_no_weak_checks(
+                                type_arg,
+                                instantiated_constraint,
+                            )
                         });
                 // When the constraint is all-optional and the structural check
                 // passed (because all-optional types have no required properties),
@@ -1757,7 +1774,7 @@ impl<'a> CheckerState<'a> {
                             TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
                         )
                     {
-                        is_satisfied = self.is_assignable_to_no_weak_checks(
+                        is_satisfied = self.diagnostic_relation_boolean_guard_no_weak_checks(
                             evaluated_arg,
                             instantiated_constraint,
                         ) || self.satisfies_array_like_constraint(
@@ -1776,7 +1793,8 @@ impl<'a> CheckerState<'a> {
                 {
                     let base = self.resolve_lazy_members_in_union(base);
                     let base = self.evaluate_type_for_assignability(base);
-                    is_satisfied = self.is_assignable_to(base, instantiated_constraint)
+                    is_satisfied = self
+                        .diagnostic_relation_boolean_guard(base, instantiated_constraint)
                         || self
                             .base_union_members_satisfy_constraint(base, instantiated_constraint)
                         || self.satisfies_array_like_constraint(base, instantiated_constraint);
@@ -1853,140 +1871,6 @@ impl<'a> CheckerState<'a> {
         let key_space = self.resolve_lazy_type(key_space);
         let value_type =
             self.constraint_check_indexed_access_value_type(object_type_for_check, key_space)?;
-        let value_type = self.evaluate_type_for_assignability(value_type);
-        let value_type = self.resolve_lazy_type(value_type);
-        (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)
-    }
-
-    pub(super) fn constraint_check_indexed_access_value_type(
-        &mut self,
-        object_type: TypeId,
-        index_type: TypeId,
-    ) -> Option<TypeId> {
-        let object_type = self.evaluate_type_for_assignability(object_type);
-        let mut object_type = self.resolve_lazy_type(object_type);
-        if query::get_object_shape(self.ctx.types.as_type_database(), object_type).is_none()
-            && let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(object_type)
-        {
-            object_type = self.type_reference_symbol_type(sym_id);
-            object_type = self.evaluate_type_for_assignability(object_type);
-            object_type = self.resolve_lazy_type(object_type);
-        }
-        let key_type = self.evaluate_type_for_assignability(index_type);
-        let key_type = self.resolve_lazy_type(key_type);
-        let db = self.ctx.types.as_type_database();
-        let key_kind = query::classify_index_key(db, key_type);
-
-        if let Some(shape) = query::get_object_shape(db, object_type) {
-            if let Some(index) = &shape.string_index
-                && query::key_matches_string_index(db, key_type, &key_kind)
-            {
-                return Some(index.value_type);
-            }
-            if let Some(index) = &shape.number_index
-                && query::key_matches_number_index(db, key_type, &key_kind)
-            {
-                return Some(index.value_type);
-            }
-        }
-
-        if let Some(shape) = query::callable_shape_for_type(db, object_type) {
-            if let Some(index) = &shape.string_index
-                && query::key_matches_string_index(db, key_type, &key_kind)
-            {
-                return Some(index.value_type);
-            }
-            if let Some(index) = &shape.number_index
-                && query::key_matches_number_index(db, key_type, &key_kind)
-            {
-                return Some(index.value_type);
-            }
-        }
-
-        // For mapped types `{ [K in C]: Template }`, the indexed access value
-        // type is the template type. This handles cases like
-        // `FunctionsObj<T>[keyof T]` where FunctionsObj is `{ [K in keyof T]: () => unknown }`.
-        if let Some(template) = query::mapped_type_template(db, object_type) {
-            return Some(template);
-        }
-
-        // For the built-in utility alias `Record<K, V>` and its equivalent
-        // user-facing aliases, evaluate the alias body before falling back to
-        // structural/object-shape checks. Without this, patterns like
-        // `{ [K in keyof O]: Record<O[K], K> }[keyof O]` can still retain
-        // an `Application` form and fail TS2344 checks even though
-        // `Record`'s template is provably valid for the key space.
-        if let Some(alias_object_type) =
-            self.resolve_record_alias_type_for_indexed_access_value(object_type)
-            && alias_object_type != object_type
-            && let Some(value_type) =
-                self.constraint_check_indexed_access_value_type(alias_object_type, index_type)
-        {
-            return Some(value_type);
-        }
-
-        // For concrete object maps like `HTMLElementTagNameMap`, an indexed access
-        // `Map[K]` with `K extends keyof Map` has a base constraint equal to the
-        // union of all mapped property value types. tsc eagerly uses that union for
-        // TS2344 checks on `HTMLCollectionOf<HTMLElementTagNameMap[K]>` /
-        // `NodeListOf<HTMLElementTagNameMap[K]>` instead of deferring the relation.
-        let keyed_object_type = if query::is_bare_type_parameter(db, key_type) {
-            let key_base = self.constraint_check_base_type(key_type);
-            if key_base == TypeId::UNKNOWN {
-                key_type
-            } else {
-                key_base
-            }
-        } else {
-            key_type
-        };
-
-        if let Some(shape) = query::get_object_shape(db, object_type)
-            && !shape.properties.is_empty()
-            && let Some(object_keys) =
-                crate::query_boundaries::common::keyof_object_properties(db, object_type)
-        {
-            let keyed_object_type =
-                if let Some(keyed_operand) = query::keyof_operand(db, keyed_object_type) {
-                    let keyed_operand = self.evaluate_type_for_assignability(keyed_operand);
-                    let keyed_operand = self.resolve_lazy_type(keyed_operand);
-                    if keyed_operand == object_type {
-                        object_keys
-                    } else {
-                        keyed_object_type
-                    }
-                } else {
-                    keyed_object_type
-                };
-            let keys_assignable = self.is_assignable_to(keyed_object_type, object_keys);
-            if !keys_assignable {
-                return None;
-            }
-            let mut property_types: Vec<TypeId> =
-                shape.properties.iter().map(|prop| prop.type_id).collect();
-            if let Some(index) = &shape.string_index {
-                property_types.push(index.value_type);
-            }
-            if let Some(index) = &shape.number_index {
-                property_types.push(index.value_type);
-            }
-            return match property_types.len() {
-                0 => None,
-                1 => property_types.first().copied(),
-                _ => Some(self.ctx.types.union(property_types)),
-            };
-        }
-
-        None
-    }
-
-    fn concrete_indexed_access_property_union(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let evaluated = self.evaluate_type_for_assignability(type_id);
-        let evaluated = self.resolve_lazy_type(evaluated);
-        let db = self.ctx.types.as_type_database();
-        let (object_type, index_type) = query::index_access_components(db, evaluated)?;
-        let value_type =
-            self.constraint_check_indexed_access_value_type(object_type, index_type)?;
         let value_type = self.evaluate_type_for_assignability(value_type);
         let value_type = self.resolve_lazy_type(value_type);
         (!query::contains_free_type_parameters(self.ctx.types, value_type)).then_some(value_type)

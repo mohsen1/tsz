@@ -589,15 +589,22 @@ impl<'a> CheckerState<'a> {
                             .get_generator_yield_type_argument(actual_return)
                             .zip(self.get_generator_yield_type_argument(expected_return))
                             .is_some_and(|(actual_yield, expected_yield)| {
-                                !self.is_assignable_to(actual_yield, expected_yield)
-                                    && !self.is_assignable_to(expected_yield, actual_yield)
+                                !self.diagnostic_relation_boolean_guard(
+                                    actual_yield,
+                                    expected_yield,
+                                ) && !self.diagnostic_relation_boolean_guard(
+                                    expected_yield,
+                                    actual_yield,
+                                )
                             })
                             || self
                                 .get_generator_return_type_argument(actual_return)
                                 .zip(self.get_generator_return_type_argument(expected_return))
                                 .is_some_and(|(actual_gen_return, expected_gen_return)| {
-                                    !self.is_assignable_to(actual_gen_return, expected_gen_return)
-                                        && !self.is_assignable_to(
+                                    !self.diagnostic_relation_boolean_guard(
+                                        actual_gen_return,
+                                        expected_gen_return,
+                                    ) && !self.diagnostic_relation_boolean_guard(
                                             expected_gen_return,
                                             actual_gen_return,
                                         )
@@ -606,7 +613,8 @@ impl<'a> CheckerState<'a> {
                                 .get_generator_next_type_argument(actual_return)
                                 .zip(self.get_generator_next_type_argument(expected_return))
                                 .is_some_and(|(actual_next, expected_next)| {
-                                    !self.is_assignable_to(expected_next, actual_next)
+                                    !self
+                                        .diagnostic_relation_boolean_guard(expected_next, actual_next)
                                 });
 
                         // When the expected return type is `void`, there is never
@@ -646,7 +654,10 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 generator_component_mismatch
                                     || (expected_return != TypeId::VOID
-                                        && !self.is_assignable_to(actual_return, expected_return))
+                                        && !self.diagnostic_relation_boolean_guard(
+                                            actual_return,
+                                            expected_return,
+                                        ))
                             };
                         (return_type_mismatch, generator_component_mismatch)
                     })

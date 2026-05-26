@@ -103,3 +103,16 @@ take(c);
         "Expected TS2345 (string passed where number required), got codes: {codes:?}\nDiagnostics: {diags:#?}",
     );
 }
+
+#[test]
+fn jsdoc_type_cast_reports_ts2352_for_non_overlapping_primitives() {
+    let source = "\
+const r = /** @type {number} */(\"abc\");
+";
+    let diags = diags_for_strict_js(source);
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&2352),
+        "Expected TS2352 for incompatible JSDoc type cast, got codes: {codes:?}\nDiagnostics: {diags:#?}",
+    );
+}

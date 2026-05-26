@@ -88,7 +88,7 @@ impl<'a> CheckerState<'a> {
 
         let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
         source_elem != TypeId::ERROR
-            && (self.is_assignable_to(source_elem, target_elem)
+            && (self.diagnostic_relation_boolean_guard(source_elem, target_elem)
                 || ((source_elem != source || target_elem != target)
                     && self.satisfies_array_like_constraint(source_elem, target_elem)))
     }

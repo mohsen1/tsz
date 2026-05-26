@@ -476,7 +476,7 @@ impl<'a> CheckerState<'a> {
                         .expect("expected_params should not be empty")
                 });
                 // Parameter types conflict if the actual is NOT assignable to expected.
-                !self.is_assignable_to(actual_param_type, expected_param_type)
+                !self.diagnostic_relation_boolean_guard(actual_param_type, expected_param_type)
             })
     }
 
