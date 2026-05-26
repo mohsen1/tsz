@@ -1083,24 +1083,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        if source_text.contains("declare let tgt2: number[];")
-            && source_text.contains("Exclude<K, \"length\">")
-        {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    && diag.message_text.starts_with(
-                        "Property 'length' is missing in type '{ [x: number]: number; \
-                         toString: () => string; toLocaleString: () => string;",
-                    )
-                    && diag
-                        .message_text
-                        .ends_with("but required in type 'number[]'.")
-                {
-                    diag.message_text = "Property 'length' is missing in type '{ [x: number]: number; toString: () => string; toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }; ... 30 more ...; readonly [Symbol.unscopables]: { ...; }; }' but required in type 'number[]'.".into();
-                }
-            }
-        }
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {

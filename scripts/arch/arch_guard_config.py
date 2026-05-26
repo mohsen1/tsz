@@ -395,13 +395,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        9,
+        7,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        27,
+        25,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",
