@@ -54,18 +54,18 @@ esac
 
 ROOT="$(git rev-parse --show-toplevel)"
 GOAL_PATH="docs/plan/agents/${AGENT}.md"
+REMOTE_GOAL="$(mktemp "${TMPDIR:-/tmp}/tsz-agent-goal.XXXXXX")"
+trap 'rm -f "$REMOTE_GOAL"' EXIT
 
 if [[ "$LOCAL_ONLY" == false && "$NO_FETCH" == false ]]; then
   git -C "$ROOT" fetch -q origin main || true
 fi
 
 if [[ "$LOCAL_ONLY" == false ]] \
-  && git -C "$ROOT" show "origin/main:${GOAL_PATH}" >/tmp/tsz-agent-goal.$$ 2>/dev/null; then
-  cat /tmp/tsz-agent-goal.$$
-  rm -f /tmp/tsz-agent-goal.$$
+  && git -C "$ROOT" show "origin/main:${GOAL_PATH}" >"$REMOTE_GOAL" 2>/dev/null; then
+  cat "$REMOTE_GOAL"
   exit 0
 fi
-rm -f /tmp/tsz-agent-goal.$$
 
 if [[ -f "$ROOT/$GOAL_PATH" ]]; then
   cat "$ROOT/$GOAL_PATH"
