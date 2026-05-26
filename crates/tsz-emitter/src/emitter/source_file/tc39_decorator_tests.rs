@@ -153,6 +153,35 @@ class D extends Base {
 }
 
 #[test]
+fn esnext_parenthesized_decorated_class_expression_breaks_after_open_paren() {
+    let source = "\
+declare const dec: any;
+
+(@dec class C {
+    @dec
+    y: number;
+});
+";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("(\n@dec\nclass C") && !output.contains("(@dec\nclass C"),
+        "Parenthesized native decorated class expressions should put the decorator on a fresh line after the open paren.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;

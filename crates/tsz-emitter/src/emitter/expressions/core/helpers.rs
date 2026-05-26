@@ -1,4 +1,4 @@
-use super::super::super::Printer;
+use super::super::super::{Printer, ScriptTarget};
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -309,6 +309,15 @@ impl<'a> Printer<'a> {
             // `/** ... */ (x)` with a space before the paren.
         }
         self.write("(");
+        let break_after_open_for_decorated_class = self.ctx.options.target == ScriptTarget::ESNext
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression)
+            && self
+                .arena
+                .get(paren.expression)
+                .is_none_or(|inner_node| !self.has_pending_comment_before(inner_node.pos));
+        if break_after_open_for_decorated_class {
+            self.write_line();
+        }
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
         // Preserve whether the first inner comment started on the `(` line.
@@ -390,6 +399,25 @@ impl<'a> Printer<'a> {
         let trailing_comment_end =
             self.parenthesized_same_line_trailing_comment_end(close_paren_end);
         self.emit_parenthesized_same_line_trailing_comments(close_paren_end, trailing_comment_end);
+    }
+
+    fn parenthesized_inner_is_decorated_class_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_class(node)
+            .and_then(|class| class.modifiers.as_ref())
+            .is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|mod_node| mod_node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     fn parenthesized_same_line_trailing_comment_end(&self, start: u32) -> u32 {
