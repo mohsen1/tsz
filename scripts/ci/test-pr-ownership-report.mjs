@@ -96,7 +96,10 @@ withTempDir((dir) => {
     result.stdout,
     /fix\(checker\): preserve mapped access: #10 \(draft, WIP, alpha, stack root\), #11 \(draft, WIP, beta\), #42 \(draft, delta\)/,
   );
-  assert.match(result.stdout, /#42: PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/);
+  assert.match(
+    result.stdout,
+    /#42 \(mixed stacked\/unstacked drafts\): PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/,
+  );
   assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
 
@@ -122,7 +125,14 @@ withTempDir((dir) => {
     { scope: "fix(checker): preserve mapped access", prs: [10, 11, 42] },
   ]);
   assert.deepEqual(report.duplicateIssueRefs, [
-    { issue: 42, prs: [10, 11] },
+    {
+      issue: 42,
+      prs: [10, 11],
+      draftCount: 2,
+      stackedDraftCount: 1,
+      unstackedDraftCount: 1,
+      draftStackState: "mixed stacked/unstacked drafts",
+    },
   ]);
   assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
