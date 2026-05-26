@@ -102,7 +102,8 @@ function prSummary(report, number, prefix = "#") {
   const state = pr.draft ? "draft" : "ready";
   const wip = pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title) ? ", WIP" : "";
   const owner = pr.agentName ?? "no AgentName";
-  return `${prefix}${number} (${state}${wip}, ${owner})`;
+  const stack = pr.stackRole ? `, ${pr.stackRole}` : "";
+  return `${prefix}${number} (${state}${wip}, ${owner}${stack})`;
 }
 
 function makeReport(pulls) {
@@ -150,6 +151,22 @@ function makeReport(pulls) {
       return { base, root, children: children.sort((a, b) => a - b) };
     })
     .sort((a, b) => a.base.localeCompare(b.base));
+
+  const stackRoots = new Set(stacks.map((stack) => stack.root).filter((root) => root !== null));
+  const stackChildren = new Set(stacks.flatMap((stack) => stack.children));
+  for (const pr of normalized) {
+    const root = stackRoots.has(pr.number);
+    const child = stackChildren.has(pr.number);
+    if (root && child) {
+      pr.stackRole = "stack middle";
+    } else if (root) {
+      pr.stackRole = "stack root";
+    } else if (child) {
+      pr.stackRole = "stack child";
+    } else {
+      pr.stackRole = null;
+    }
+  }
 
   const duplicateTitleScopes = [...byScope.entries()]
     .filter(([, prs]) => prs.length > 1)

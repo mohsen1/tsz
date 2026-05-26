@@ -94,9 +94,9 @@ withTempDir((dir) => {
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
   assert.match(
     result.stdout,
-    /fix\(checker\): preserve mapped access: #10 \(draft, WIP, alpha\), #11 \(draft, WIP, beta\), #42 \(draft, delta\)/,
+    /fix\(checker\): preserve mapped access: #10 \(draft, WIP, alpha, stack root\), #11 \(draft, WIP, beta\), #42 \(draft, delta\)/,
   );
-  assert.match(result.stdout, /#42: PR #10 \(draft, WIP, alpha\), PR #11 \(draft, WIP, beta\)/);
+  assert.match(result.stdout, /#42: PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/);
   assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
 
@@ -129,4 +129,7 @@ withTempDir((dir) => {
   assert.deepEqual(report.prs.find((pr) => pr.number === 10).agentLabels, ["alpha"]);
   assert.equal(report.prs.find((pr) => pr.number === 13).agentName, null);
   assert.equal(report.prs.find((pr) => pr.number === 14).agentName, null);
+  assert.equal(report.prs.find((pr) => pr.number === 10).stackRole, "stack root");
+  assert.equal(report.prs.find((pr) => pr.number === 12).stackRole, "stack child");
+  assert.equal(report.prs.find((pr) => pr.number === 11).stackRole, null);
 });
