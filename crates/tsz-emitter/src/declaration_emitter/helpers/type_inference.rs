@@ -674,6 +674,8 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.current_file_path = self.current_file_path.clone();
         scratch.current_arena = self.current_arena.clone();
         scratch.arena_to_path = self.arena_to_path.clone();
+        scratch.object_type_recursive_constructor_reference =
+            self.object_type_recursive_constructor_reference.clone();
         scratch
     }
 
