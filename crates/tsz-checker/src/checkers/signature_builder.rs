@@ -7,6 +7,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
 
+type JsdocTemplateParamScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
+type JsdocTemplateParamPushResult = (Vec<TypeParamInfo>, JsdocTemplateParamScopeUpdates);
+
 // =============================================================================
 // Signature Building Methods
 // =============================================================================
@@ -128,10 +131,7 @@ impl<'a> CheckerState<'a> {
             .collect()
     }
 
-    fn push_jsdoc_overload_template_params(
-        &mut self,
-        jsdoc: &str,
-    ) -> (Vec<TypeParamInfo>, Vec<(String, Option<TypeId>, bool)>) {
+    fn push_jsdoc_overload_template_params(&mut self, jsdoc: &str) -> JsdocTemplateParamPushResult {
         let template_names = Self::jsdoc_template_type_params(jsdoc);
         if template_names.is_empty() {
             return (Vec::new(), Vec::new());
