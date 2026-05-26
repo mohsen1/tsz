@@ -6,11 +6,14 @@ import { fileURLToPath } from "node:url";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
-const expectedConfigs = [
-  "cloudbuild-bench-prepare.yaml",
-  "cloudbuild-bench-shard.yaml",
-  "cloudbuild-unit.yaml",
-];
+const workflowConfigs = new Map([
+  [
+    ".github/workflows/bench.yml",
+    ["cloudbuild-bench-prepare.yaml", "cloudbuild-bench-shard.yaml"],
+  ],
+  [".github/workflows/ci.yml", ["cloudbuild-unit.yaml"]],
+]);
+const expectedConfigs = [...workflowConfigs.values()].flat();
 
 for (const config of expectedConfigs) {
   assert.ok(
@@ -23,22 +26,21 @@ for (const config of expectedConfigs) {
   );
 }
 
-const workflowText = [
-  fs.readFileSync(path.join(ROOT, ".github", "workflows", "bench.yml"), "utf8"),
-  fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8"),
-].join("\n");
+for (const [workflow, configs] of workflowConfigs) {
+  const workflowText = fs.readFileSync(path.join(ROOT, workflow), "utf8");
 
-for (const config of expectedConfigs) {
-  assert.match(
-    workflowText,
-    new RegExp(`--config=scripts/cloudbuild/${config}`),
-    `${config} should be referenced through scripts/cloudbuild`,
-  );
-  assert.doesNotMatch(
-    workflowText,
-    new RegExp(`--config=${config}`),
-    `${config} should not be referenced from the repository root`,
-  );
+  for (const config of configs) {
+    assert.match(
+      workflowText,
+      new RegExp(`--config=scripts/cloudbuild/${config}`),
+      `${workflow} should reference ${config} through scripts/cloudbuild`,
+    );
+    assert.doesNotMatch(
+      workflowText,
+      new RegExp(`--config=${config}`),
+      `${workflow} should not reference ${config} from the repository root`,
+    );
+  }
 }
 
 console.log("test-cloudbuild-config-paths: ok");
