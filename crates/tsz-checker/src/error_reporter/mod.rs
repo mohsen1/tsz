@@ -33,6 +33,7 @@ mod generics;
 mod literal_alias_display;
 mod literal_alias_rewrites;
 mod name_resolution;
+mod noinfer_diagnostic_display;
 mod operator_errors;
 mod primitive_intersection_display;
 mod properties;
