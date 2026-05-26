@@ -137,6 +137,53 @@ node scripts/ci/pr-ownership-report.mjs
     `f66f66cef0 ci: show conflicting ready update dates (#10203)`.
     `Conflicting Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
     conflicting-main JSON rows include `updatedAt` for stale-handoff triage.
+  - `#10205` merged on 2026-05-26 as
+    `a7acc60e67 ci: show blocked ready update dates (#10205)`.
+    `Blocked Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
+    blocked-ready JSON rows include `updatedAt` so stale blocked-ready
+    handoffs have the same quick age signal as conflicting-ready handoffs.
+  - `#10207` merged on 2026-05-26 as
+    `c5108c4623 ci: show oldest updated owner counts (#10207)`.
+    Blocked-ready, conflicting-ready, and conflicting-main owner-count rows now
+    show `oldest updated YYYY-MM-DD`, and their JSON owner-count rows include
+    `oldestUpdatedAt` for owner-level stale-handoff triage.
+  - `#10209` merged on 2026-05-26 as
+    `ecfe1e98c6 ci: show active queue run status (#10209)`.
+    Verbose queue-branch cleanup dry runs now show active queue-run status and
+    start time in the `Active Queue Runs` table, so preserved active queue
+    branches can be age-triaged without opening each Actions run.
+  - `#10211` merged on 2026-05-26 as
+    `c2c4259aeb ci: show owners in queue skip report (#10211)`.
+    Verbose queue dry runs now include the canonical `agent:*` owner label in
+    skipped-PR rows, so `auto-merge off` and `draft PR` blocks can be handed
+    off by lane without cross-referencing the ownership report.
+  - `#10213` merged on 2026-05-26 as
+    `93c86a9b1f ci: show owners in cleanup queue skips (#10213)`.
+    Verbose queue-branch cleanup dry runs now include owner labels in
+    preserved open-branch and active-run rows, so cleanup blockers can be
+    handed off by lane from the cleanup report alone.
+  - `#10215` merged on 2026-05-26 as
+    `870997a005 ci: summarize queue skip owners (#10215)`.
+    Verbose queue and queue-branch cleanup dry runs now include full
+    `Skip Owner Counts` tables before their capped detail rows, so lane-level
+    blockers remain visible even when individual skipped PR or branch rows are
+    omitted.
+  - `#10217` merged on 2026-05-26 as
+    `6c0daa7979 ci: show queue skip owner staleness (#10217)`.
+    Verbose queue dry runs now add `Oldest updated` to `Skip Owner Counts`
+    when skipped PR timestamp data is available, so owner-level handoffs show
+    both volume and stale age without opening each PR.
+  - `#10219` merged on 2026-05-26 as
+    `ff982c14b0 ci: show cleanup skip owner staleness (#10219)`.
+    Verbose queue-branch cleanup dry runs now carry open PR `updated_at` into
+    preserved branch skips, so cleanup `Skip Owner Counts` can also show
+    oldest-update dates for lane-level stale branch handoffs.
+  - `#10221` merged on 2026-05-26 as
+    `90748de316 ci: show queue skip updated dates (#10221)`.
+    Verbose queue and queue-branch cleanup dry runs now include conditional
+    `Updated` columns in capped skip detail tables when timestamp data is
+    available, so individual stale rows can be handed off without opening each
+    PR.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -159,18 +206,24 @@ node scripts/ci/pr-ownership-report.mjs
   - Use the ownership report's `Owner Summary` section for the current
     owner-by-owner workload and handoff view. Counts are live GitHub state and
     should be re-run each cycle, not copied into this lane note. The
-    `Conflicting ready` column is the quick owner-level view of non-draft PRs
-    that still need conflict handoff before queueing.
+    `Conflicting ready` column is the quick owner-level count of non-draft PRs
+    that still need conflict handoff before queueing; the blocked/conflicting
+    owner-count sections now show oldest-update dates for age triage.
   - Use the ownership report's `WIP PRs` section for the current WIP marker
     rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
-    either drafts, not auto-merge armed, or already handed off.
+    either drafts, not auto-merge armed, or already handed off. Use
+    `--verbose` when triaging this surface; `Skip Owner Counts` gives the full
+    lane summary with oldest-update dates when available, and skipped PR rows
+    include owner labels plus per-row updated dates for direct handoff when
+    timestamp data is available.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
     the report for current owner counts and rows. Do not take those PRs over
-    unless the owner asks or a stale branch needs a signed handoff.
+    unless the owner asks or a stale branch needs a signed handoff. The
+    `updated` date in each row is the quick staleness signal.
   - Use the ownership report's `Conflicting Main PRs` section for the current
     dirty/conflicting main-based branch surface. Treat those rows as handoff
     evidence for the owning lane, not permission to take over implementation
@@ -182,10 +235,12 @@ node scripts/ci/pr-ownership-report.mjs
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
     branches and group the six preserved branches as open PR branch skips or
-    active queue runs; the exact active-run subset changes as synthetic runs
-    complete, so re-run the cleanup dry-run for current run ids. The stale
-    merged-PR queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were
-    deleted.
+    active queue runs with owner labels and status/start time; the exact
+    active-run subset changes as synthetic runs complete, so re-run the
+    cleanup dry-run for current owner counts, oldest-update dates, run ids, and
+    ages. Detailed cleanup skip rows also include per-row updated dates when
+    timestamp data is available. The stale merged-PR queue branches for
+    `#9848`, `#9889`, `#10160`, and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
