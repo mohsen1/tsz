@@ -535,6 +535,9 @@ mod generic_tests;
 #[path = "tests/generic_unknown_type_arg_tests.rs"]
 mod generic_unknown_type_arg_tests;
 #[cfg(test)]
+#[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
+mod import_attributes_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
