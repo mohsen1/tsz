@@ -124,6 +124,11 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/pr-ownership-report.mjs` now includes a `WIP PRs` section and
     `wipPrs`/`wipOwnerCounts` JSON so cleanup agents can inspect the exact WIP
     rows behind owner-level WIP counts.
+  - `#10199` merged on 2026-05-26 as
+    `b82cd0be7b ci: report conflicting ready PR ownership (#10199)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Ready
+    Main PRs` section and `conflictingReadyMainPrs`/`conflictingReadyMainOwnerCounts`
+    JSON for the ready-only subset of dirty or conflicting main-based PRs.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -160,6 +165,8 @@ node scripts/ci/pr-ownership-report.mjs
     dirty/conflicting main-based branch surface. Treat those rows as handoff
     evidence for the owning lane, not permission to take over implementation
     branches without an explicit request or stale-branch handoff comment.
+  - Use the ownership report's `Conflicting Ready Main PRs` section when
+    deciding which non-draft branch blockers need owner handoff before queueing.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
