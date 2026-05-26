@@ -963,6 +963,16 @@ impl<'a> CheckerState<'a> {
                         return TypeId::ERROR;
                     }
                 }
+                // A circular generic alias collapsed to a non-generic error
+                // type: applying type arguments to it resolves to the error
+                // type (the TS2315 itself is emitted by the validation above
+                // and at the declaration), suppressing cascading assignability
+                // diagnostics on annotated values.
+                if let Some(sym_id) = sym_id
+                    && self.type_reference_alias_collapsed_to_error(sym_id)
+                {
+                    return TypeId::ERROR;
+                }
                 if matches!(
                     name,
                     "Uppercase" | "Lowercase" | "Capitalize" | "Uncapitalize"
