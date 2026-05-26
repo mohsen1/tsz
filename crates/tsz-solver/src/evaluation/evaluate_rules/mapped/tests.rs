@@ -52,7 +52,7 @@ fn build_instantiated_homomorphic_mapped(
 /// tsc's `instantiateMappedType` reduces a generic homomorphic mapped
 /// type to its source whenever the source resolves to a primitive,
 /// literal, `never`, unique symbol, or enum. This proves the rule is
-/// structural - varying the iteration-variable name must not affect
+/// structural — varying the iteration-variable name must not affect
 /// the decision.
 #[test]
 fn instantiated_homomorphic_mapped_over_non_object_source_reduces_to_source() {
@@ -95,11 +95,11 @@ fn instantiated_homomorphic_mapped_over_non_object_source_reduces_to_source() {
     }
 }
 
-/// A directly authored `{ [K in keyof string]: V }` - whose iteration
+/// A directly authored `{ [K in keyof string]: V }` — whose iteration
 /// variable's declared constraint is `keyof string`, NOT `keyof <typeparam>`
-/// - must NOT take the primitive short-circuit. tsc keeps the normal
-///   key-expansion behavior here, producing an indexed object over string's
-///   apparent members.
+/// — must NOT take the primitive short-circuit. tsc keeps the normal
+/// key-expansion behavior here, producing an indexed object over string's
+/// apparent members.
 #[test]
 fn direct_mapped_over_string_does_not_short_circuit() {
     let interner = TypeInterner::new();
@@ -126,7 +126,7 @@ fn direct_mapped_over_string_does_not_short_circuit() {
     );
 }
 
-/// Object sources must not short-circuit - they exercise the full
+/// Object sources must not short-circuit — they exercise the full
 /// homomorphic-mapping expansion. This proves the rule is keyed on the
 /// source's structure (primitive vs. object), not on iteration-variable
 /// spelling or the mere presence of a generic outer constraint.
@@ -153,7 +153,7 @@ fn instantiated_homomorphic_mapped_over_object_source_does_not_short_circuit() {
 /// Union sources are handled by `try_distribute_mapped_over_union_source`,
 /// which distributes the mapped type over each member and recursively
 /// evaluates. Primitive members must still reduce to themselves so the
-/// final result is the original union (e.g. `M<string | "foo">` -> `string | "foo"`).
+/// final result is the original union (e.g. `M<string | "foo">` → `string | "foo"`).
 #[test]
 fn instantiated_homomorphic_mapped_distributes_over_primitive_union() {
     let interner = TypeInterner::new();
@@ -182,8 +182,8 @@ fn evaluate_keyof_or_constraint_deep_flat_union_constraint() {
         .collect();
     let wide_union = interner.union(members);
 
-    // constraint is a union of 26 string literals; evaluate_keyof_or_constraint
-    // must visit each member recursively, and none should change by evaluation.
+    // constraint is a union of 26 string literals — evaluate_keyof_or_constraint
+    // must visit each member recursively; none should be changed by evaluation.
     let result = evaluator.evaluate_keyof_or_constraint(wide_union);
     assert_eq!(
         result, wide_union,
@@ -198,14 +198,16 @@ fn evaluate_keyof_or_constraint_nested_union_terminates() {
     let interner = TypeInterner::new();
     let mut evaluator = TypeEvaluator::new(&interner);
 
-    // Build Union(lit_0, Union(lit_1, Union(lit_2, ... ))).
+    // Build Union(lit_0, Union(lit_1, Union(lit_2, ... )))
     let mut nested = interner.literal_string("leaf");
     for i in 0..50u32 {
         let lit = interner.literal_string(&i.to_string());
         nested = interner.union(vec![lit, nested]);
     }
 
+    // Must not stack-overflow, must return a type (either the nested union or a simplified form)
     let result = evaluator.evaluate_keyof_or_constraint(nested);
+    // The result is a valid TypeId (non-error).
     assert_ne!(
         result,
         TypeId::ERROR,
@@ -232,12 +234,375 @@ fn evaluate_keyof_or_constraint_name_invariant() {
     );
 }
 
+/// Build the post-instantiation form of the identity homomorphic mapped
+/// `type M<T> = { [<iter_name> in keyof T]: T[<iter_name>] }` with `T`
+/// substituted by `concrete_source`. Used by the variadic-tuple tests
+/// below.
+fn build_identity_homomorphic_mapped(
+    interner: &TypeInterner,
+    iter_name: &str,
+    concrete_source: TypeId,
+) -> MappedType {
+    let iter_atom = interner.intern_string(iter_name);
+    let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let original_constraint = interner.keyof(outer_t);
+    let iter_param = interner.type_param(TypeParamInfo {
+        name: iter_atom,
+        constraint: Some(original_constraint),
+        default: None,
+        is_const: false,
+    });
+    let template = interner.index_access(concrete_source, iter_param);
+    MappedType {
+        type_param: TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(concrete_source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    }
+}
+
+/// Issue #9694: `{ [K in keyof T]: T[K] }` over a variadic tuple
+/// `[number, ...string[]]` must reproduce the same tuple structurally —
+/// not a tuple whose rest element widened to `(number | string)[]`. The
+/// pre-fix bug substituted `K = number` for the rest, evaluating
+/// `tuple[number]` to the union of all element types.
+#[test]
+fn identity_homomorphic_mapped_over_trailing_rest_variadic_tuple_preserves_shape() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.array(TypeId::STRING),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic over `[number, ...string[]]` must reproduce the same tuple"
+    );
+}
+
+/// The same shape with a renamed iteration variable (`P` instead of `K`)
+/// must produce the same structural result. The fix must be name-blind.
+#[test]
+fn identity_homomorphic_mapped_over_trailing_rest_renamed_iter_var() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.array(TypeId::NUMBER),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "P", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic with iter `P` must produce the same tuple as iter `K`"
+    );
+}
+
+/// Leading-rest variadic tuple `[...string[], number]` must round-trip
+/// through the identity homomorphic mapped. Pre-fix this produced a
+/// tuple whose tail and rest were both wrong because `tuple[1]` did not
+/// uniquely resolve to a single element's type.
+#[test]
+fn identity_homomorphic_mapped_over_leading_rest_variadic_tuple_preserves_shape() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement {
+            type_id: interner.array(TypeId::STRING),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic over `[...string[], number]` must reproduce the same tuple"
+    );
+}
+
+/// Fixed (non-variadic) tuples are the negative control: the pre-fix
+/// code path worked for them and the new structural fix must not
+/// regress this case.
+#[test]
+fn identity_homomorphic_mapped_over_fixed_tuple_preserves_shape() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic over `[number, string]` must reproduce the same tuple"
+    );
+}
+
+/// Mixed optional and rest: `[number, string?, ...boolean[]]`. Optional
+/// flags on fixed elements must be preserved, and the rest's inner type
+/// must remain `boolean` (not widened to `number | string | boolean`).
+#[test]
+fn identity_homomorphic_mapped_over_optional_and_rest_tuple_preserves_shape() {
+    let interner = TypeInterner::new();
+    let elements = vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.array(TypeId::BOOLEAN),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ];
+    let source = interner.tuple(elements.clone());
+    let mapped = build_identity_homomorphic_mapped(&interner, "K", source);
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(elements);
+    assert_eq!(
+        result, expected,
+        "identity homomorphic must preserve optional flags and the rest's inner type"
+    );
+}
+
+/// Non-identity homomorphic mapped over a variadic tuple. For
+/// `Boxified<T> = { [K in keyof T]: Box<T[K]> }` applied to
+/// `[number, ...string[]]`, the result must be
+/// `[Box<number>, ...Box<string>[]]` — the rest's inner is `Box<string>`,
+/// not `Box<number | string>` (which would be the pre-fix output).
+#[test]
+fn non_identity_homomorphic_mapped_over_trailing_rest_tuple_applies_per_element() {
+    use crate::def::DefId;
+
+    let interner = TypeInterner::new();
+    // Build a Box<T_arg> wrapper around T_arg using an Application over a
+    // Lazy(DefId) base. `substitute_exact_type` substitutes the source in
+    // the template; evaluation of the substituted index access then yields
+    // the per-element inner type, which the wrapper carries through.
+    let box_base = interner.lazy(DefId(9001));
+
+    let iter_atom = interner.intern_string("K");
+    let outer_t = interner.type_param(TypeParamInfo::simple(interner.intern_string("T")));
+    let original_constraint = interner.keyof(outer_t);
+    let iter_param = interner.type_param(TypeParamInfo {
+        name: iter_atom,
+        constraint: Some(original_constraint),
+        default: None,
+        is_const: false,
+    });
+
+    let source_elements = vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.array(TypeId::STRING),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ];
+    let source = interner.tuple(source_elements);
+
+    // Template: `Box<source[K]>` — the source is baked in by the outer
+    // M<source> instantiation.
+    let index_access = interner.index_access(source, iter_param);
+    let template = interner.application(box_base, vec![index_access]);
+
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+
+    let expected = interner.tuple(vec![
+        TupleElement {
+            type_id: interner.application(box_base, vec![TypeId::NUMBER]),
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: interner.array(interner.application(box_base, vec![TypeId::STRING])),
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+    assert_eq!(
+        result, expected,
+        "non-identity homomorphic over `[number, ...string[]]` must produce \
+             `[Box<number>, ...Box<string>[]]`, not widen the rest's inner to a union"
+    );
+}
+
+/// Opaque variadic rests like `...T` are not the same as concrete `...E[]`
+/// rests. Mapping `[string, number, ...T]` through
+/// `{ [K in keyof T]: T[K][] }` must preserve the tuple-position indexed access
+/// for the opaque rest; collapsing it to `T[number][]` loses reverse-inference
+/// provenance for `T`.
+#[test]
+fn non_identity_homomorphic_mapped_over_opaque_variadic_rest_keeps_positional_access() {
+    let interner = TypeInterner::new();
+
+    let iter_atom = interner.intern_string("K");
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(interner.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+    });
+    let original_constraint = interner.keyof(t_param);
+    let iter_param = interner.type_param(TypeParamInfo {
+        name: iter_atom,
+        constraint: Some(original_constraint),
+        default: None,
+        is_const: false,
+    });
+
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let template = interner.array(interner.index_access(source, iter_param));
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+    let Some(TypeData::Tuple(tuple_id)) = interner.lookup(result) else {
+        panic!("expected mapped tuple, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(tuple_id);
+    assert_eq!(elements.len(), 3);
+    assert!(elements[2].rest, "opaque variadic rest must stay a rest");
+
+    let collapsed = interner.array(interner.index_access(t_param, TypeId::NUMBER));
+    assert_ne!(
+        elements[2].type_id, collapsed,
+        "opaque variadic rest must not collapse to `T[number][]`"
+    );
+}
+
 /// Verifies that re-entering the same TypeId within the chain is detected and does
 /// not loop forever. The `keyof_constraint_guard` keeps all intermediate types
 /// entered until the chain terminates; if the same TypeId appears again (cycle),
 /// `enter` returns `Cycle` and terminates the loop. We exercise this by calling
 /// `evaluate_keyof_or_constraint` on a union whose members are themselves unions
-/// sharing a member - the shared type will be encountered twice across the
+/// sharing a member — the shared type will be encountered twice across the
 /// recursive union-member evaluation and must not cause unbounded iteration.
 #[test]
 fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
@@ -245,7 +610,7 @@ fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
     let mut evaluator = TypeEvaluator::new(&interner);
 
     // Build two overlapping unions that share a member so the guard is exercised
-    // across recursive member evaluation: U1 = (lit_x | U2), U2 = (lit_y | lit_z).
+    // across recursive member evaluation: U1 = (lit_x | U2), U2 = (lit_y | lit_z)
     // evaluate_keyof_or_constraint on U1 recurses into both lit_x and U2;
     // evaluating U2 recurses into lit_y and lit_z. The guard must handle all
     // levels without hanging.
@@ -262,8 +627,8 @@ fn evaluate_keyof_or_constraint_cycle_guard_prevents_infinite_loop() {
         "nested union evaluation must not produce ERROR"
     );
 
-    // A constraint that evaluates to itself must terminate immediately because
-    // the `step != current` guard short-circuits before re-entering the loop.
+    // A constraint that evaluates to itself must terminate immediately (the
+    // `step != current` guard short-circuits before re-entering the loop).
     let plain_union = interner.union(vec![lit_x, lit_y]);
     let result2 = evaluator.evaluate_keyof_or_constraint(plain_union);
     assert_ne!(

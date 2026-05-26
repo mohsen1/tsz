@@ -1739,7 +1739,13 @@ impl<'a> InferenceContext<'a> {
                         (TemplateSpan::Text(source_text), TemplateSpan::Text(target_text))
                             if source_text == target_text => {}
                         (TemplateSpan::Type(source_type), TemplateSpan::Type(target_type)) => {
-                            self.infer_from_types(*source_type, *target_type, priority)?;
+                            // Promote so a captured `${number}` segment yields
+                            // a string subtype rather than the bare `number`.
+                            let promoted = crate::type_queries::extended::string_like_type_for_type(
+                                self.interner,
+                                *source_type,
+                            );
+                            self.infer_from_types(promoted, *target_type, priority)?;
                         }
                         _ => {
                             matched = false;

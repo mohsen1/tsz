@@ -233,12 +233,8 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 arena.get_indexed_access_type(node).is_some_and(|indexed| {
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
-                        arena,
-                        binder,
-                        indexed.object_type,
-                        type_param_names,
-                        seen,
+                    Self::source_file_indexed_access_object_is_generic_local_alias_application_lowerable(
+                        arena, binder, indexed.object_type, type_param_names, seen,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
                         binder,
@@ -437,7 +433,7 @@ impl<'a> CheckerState<'a> {
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 arena.get_indexed_access_type(node).is_some_and(|indexed| {
-                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                    Self::source_file_indexed_access_object_is_local_alias_chain_lowerable(
                         arena,
                         binder,
                         indexed.object_type,
@@ -570,10 +566,89 @@ impl<'a> CheckerState<'a> {
                 ))
     }
 
+    fn source_file_indexed_access_object_is_generic_local_alias_application_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node_idx: NodeIndex,
+        type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        if let Some(node) = arena.get(node_idx)
+            && node.kind == syntax_kind_ext::TYPE_LITERAL
+        {
+            return Self::source_file_type_literal_has_lowerable_properties(
+                arena,
+                binder,
+                node,
+                type_param_names,
+                seen,
+            );
+        }
+        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            arena,
+            binder,
+            node_idx,
+            type_param_names,
+            seen,
+        )
+    }
+
+    fn source_file_indexed_access_object_is_local_alias_chain_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node_idx: NodeIndex,
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        if let Some(node) = arena.get(node_idx)
+            && node.kind == syntax_kind_ext::TYPE_LITERAL
+        {
+            return Self::source_file_type_literal_has_lowerable_properties(
+                arena,
+                binder,
+                node,
+                &[],
+                seen,
+            );
+        }
+        Self::source_file_type_node_is_local_alias_chain_lowerable(arena, binder, node_idx, seen)
+    }
+
     fn source_file_type_literal_has_generic_scope_independent_properties(
         arena: &NodeArena,
         node: &tsz_parser::parser::node::Node,
         type_param_names: &[String],
+    ) -> bool {
+        Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
+            Self::source_file_type_node_is_generic_scope_independent(
+                arena,
+                type_node,
+                type_param_names,
+            )
+        })
+    }
+
+    fn source_file_type_literal_has_lowerable_properties(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
+            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                type_node,
+                type_param_names,
+                seen,
+            )
+        })
+    }
+
+    fn source_file_type_literal_properties_are_lowerable(
+        arena: &NodeArena,
+        node: &tsz_parser::parser::node::Node,
+        mut value_is_lowerable: impl FnMut(NodeIndex) -> bool,
     ) -> bool {
         let Some(type_literal) = arena.get_type_literal(node) else {
             return false;
@@ -605,11 +680,7 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                Self::source_file_type_node_is_generic_scope_independent(
-                    arena,
-                    signature.type_annotation,
-                    type_param_names,
-                )
+                value_is_lowerable(signature.type_annotation)
             })
     }
 }
