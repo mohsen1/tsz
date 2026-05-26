@@ -308,6 +308,13 @@ pub(super) struct ClassDecoratorAutoAccessorInfo {
     pub(super) initializer_text: String,
 }
 
+pub(super) struct ClassDecoratorStaticPrivateFieldInfo {
+    pub(super) member_idx: NodeIndex,
+    pub(super) member_name: String,
+    pub(super) storage_name: String,
+    pub(super) initializer_text: String,
+}
+
 pub(super) fn indent_str(level: usize) -> String {
     "    ".repeat(level)
 }

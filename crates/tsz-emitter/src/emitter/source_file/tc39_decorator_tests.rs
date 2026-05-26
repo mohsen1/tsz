@@ -237,3 +237,41 @@ class C {
         "Class-decorated static blocks should not keep direct private auto-accessor syntax after capture.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_class_decorated_static_private_fields_use_storage_temps() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    static #value = 0;
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _C_value;")
+            && output.contains("static {\n            _C_value = { value: 0 };\n        }")
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"f\", _C_value);")
+            && output
+                .contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"f\", _C_value);"),
+        "Class-decorated static private fields should use storage temps in captured static blocks.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_classThis.#value"),
+        "Class-decorated static blocks should not keep direct static private field syntax after capture.\nOutput:\n{output}"
+    );
+}
