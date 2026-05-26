@@ -295,9 +295,15 @@ matches their description:
 - `tsz-conformance`: conformance regressions, accepted-regression drift,
   fingerprint-only triage, and conformance issue creation.
 - `tsz-emit`: JavaScript/declaration emit and emit parity work.
+- `tsz-iteration-audit`: repo-health deep dives, iteration bottleneck triage,
+  and focused process/tooling improvement PRs.
 - `tsz-project-bench`: benchmark/project-corpus rows, fixture metadata, PGO, and
   benchmark dashboard work.
+- `tsz-pr-coordination`: PR body, AgentName, WIP/draft/ready, labels, review
+  response, and auto-merge coordination.
 - `tsz-tracing`: tracing-driven debugging of checker/solver/binder behavior.
+- `tsz-worktree-intake`: safe task start, stale branch recovery, disk/cache
+  preflight, dirty workspace triage, and worktree reuse.
 
 Runtime-provided global skills may exist outside this checkout; do not document
 them as TSZ repo skills.

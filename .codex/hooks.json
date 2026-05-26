@@ -14,7 +14,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "git pull --rebase origin main 2>/dev/null; cat \"$CLAUDE_PROJECT_DIR/AGENTS.md\""
+            "command": "root=\"${CLAUDE_PROJECT_DIR:-${CODEX_PROJECT_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}}\"; git -C \"$root\" pull --rebase origin main 2>/dev/null || true; cat \"$root/AGENTS.md\""
           }
         ]
       }
