@@ -147,6 +147,11 @@ node scripts/ci/pr-ownership-report.mjs
     Blocked-ready, conflicting-ready, and conflicting-main owner-count rows now
     show `oldest updated YYYY-MM-DD`, and their JSON owner-count rows include
     `oldestUpdatedAt` for owner-level stale-handoff triage.
+  - `#10209` merged on 2026-05-26 as
+    `ecfe1e98c6 ci: show active queue run status (#10209)`.
+    Verbose queue-branch cleanup dry runs now show active queue-run status and
+    start time in the `Active Queue Runs` table, so preserved active queue
+    branches can be age-triaged without opening each Actions run.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -194,10 +199,10 @@ node scripts/ci/pr-ownership-report.mjs
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
     branches and group the six preserved branches as open PR branch skips or
-    active queue runs; the exact active-run subset changes as synthetic runs
-    complete, so re-run the cleanup dry-run for current run ids. The stale
-    merged-PR queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were
-    deleted.
+    active queue runs with status/start time; the exact active-run subset
+    changes as synthetic runs complete, so re-run the cleanup dry-run for
+    current run ids and ages. The stale merged-PR queue branches for `#9848`,
+    `#9889`, `#10160`, and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
