@@ -46,15 +46,16 @@ as campaigns instead of isolated conformance picks.
 
 Sources: checked-in conformance and emit artifacts, live GitHub orientation on
 2026-05-26, `scripts/bench/project-row-summary.mjs`, and public README
-metrics. Public README numbers may lag checked-in artifacts; release planning
-uses exact artifact numerators and denominators.
+metrics. The public README emit block was refreshed from the checked-in emit
+artifact on 2026-05-26; release planning uses exact artifact numerators and
+denominators.
 
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
 | Accepted-regression strictness | `30` listed tests |
-| JavaScript emit | `13,094 / 13,530` in checked-in emit snapshot (`94.8%` / `12,820 / 13,530` still shown in README) |
-| Declaration emit | `1,606 / 1,669` in checked-in emit snapshot (`91.7%` / `1,531 / 1,669` still shown in README) |
+| JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
+| Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
 | Open bug issues | `56` open `bug` issues in live GitHub orientation |
 | Output-surgery audit | red: `4` unallowlisted calls, `1` stale allowlist entry |
@@ -113,11 +114,11 @@ changes the picture.
    parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
    Architecture cleanup is part of that goal only when it ratchets a measured
    boundary counter down or unblocks one of those gates.
-7. Emit remains the largest numeric parity gap and a real architecture risk,
-   but the latest local snapshot is materially ahead of the README numbers:
+7. Emit remains the largest numeric parity gap and a real architecture risk:
    JavaScript emit is `13,094 / 13,530` and declaration emit is
-   `1,606 / 1,669`. DTS still needs to move away from late semantic discovery
-   during printing toward a precomputed declaration/public-API summary.
+   `1,606 / 1,669` in the checked-in snapshot and public README. DTS still
+   needs to move away from late semantic discovery during printing toward a
+   precomputed declaration/public-API summary.
 8. Output-surgery audit debt is visible rather than normalized: the current
    audit reports `4` unallowlisted calls and `1` stale allowlist entry. Treat
    that as Studio-F cleanup intake and as a guardrail for Studio-C/D emit work.
