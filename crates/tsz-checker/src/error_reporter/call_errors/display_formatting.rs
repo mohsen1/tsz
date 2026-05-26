@@ -2086,8 +2086,6 @@ impl<'a> CheckerState<'a> {
         })?;
         let expected = self.evaluate_application_type(param_type);
         let expected = self.normalize_contextual_signature_with_env(expected);
-        let contextual_signature_applies =
-            self.target_can_contextually_type_callback_params(arg_idx, expected);
 
         let mut rendered = Vec::with_capacity(func.parameters.nodes.len());
         for (index, &param_idx) in func.parameters.nodes.iter().enumerate() {
@@ -2113,14 +2111,9 @@ impl<'a> CheckerState<'a> {
 
             let optional = param.question_token || param.initializer.is_some();
             let rest = param.dot_dot_dot_token;
-            let contextual_type_id =
-                if !contextual_signature_applies && param.type_annotation.is_none() {
-                    TypeId::ANY
-                } else {
-                    self.contextual_parameter_type_with_env_from_expected(expected, index, rest)
-                        .or_else(|| shape.params.get(index).map(|param| param.type_id))
-                        .unwrap_or(TypeId::ANY)
-                };
+            let contextual_type_id = self.contextual_function_argument_parameter_display_type(
+                arg_idx, expected, index, param, &shape,
+            );
 
             let (type_display, display_type_id) = if param.type_annotation.is_some() {
                 let annotated_type = self.get_type_from_type_node(param.type_annotation);
