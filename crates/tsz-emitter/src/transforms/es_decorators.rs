@@ -102,6 +102,13 @@ struct CtorOutputCtx<'a> {
     instance_private_brand_var: Option<&'a str>,
 }
 
+struct DecoratorReceiverState<'a> {
+    temp_counter: &'a mut u32,
+    receiver_temp_vars: &'a mut Vec<String>,
+    needs_outer_this_capture: &'a mut bool,
+    outer_this_var: &'a str,
+}
+
 /// TC39 Decorator Emitter
 pub struct TC39DecoratorEmitter<'a> {
     arena: &'a NodeArena,
@@ -257,7 +264,32 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let class_name = self
             .get_identifier_text(class_data.name)
             .unwrap_or_default();
-        let class_decorators = self.collect_class_decorator_exprs(&class_data.modifiers);
+        let class_span_text = self
+            .source_text
+            .map(|src| {
+                let start = class_node.pos as usize;
+                let end = (class_node.end as usize).min(src.len());
+                if start <= end { &src[start..end] } else { "" }
+            })
+            .unwrap_or("");
+        let mut temp_counter: u32 = 0;
+        let class_alias = if self.use_static_blocks {
+            String::new()
+        } else {
+            next_temp_var(&mut temp_counter) // _a
+        };
+        let outer_this_var = hygienic_temp_name("_outerThis", class_span_text);
+        let mut decorator_receiver_temp_vars = Vec::new();
+        let mut needs_outer_this_capture = false;
+        let class_decorators = self.collect_class_decorator_exprs(
+            &class_data.modifiers,
+            &mut DecoratorReceiverState {
+                temp_counter: &mut temp_counter,
+                receiver_temp_vars: &mut decorator_receiver_temp_vars,
+                needs_outer_this_capture: &mut needs_outer_this_capture,
+                outer_this_var: &outer_this_var,
+            },
+        );
         let class_name_was_empty = class_name.is_empty();
         // For anonymous class expressions WITH class decorators, generate a temp name
         // (needed for the var assignment pattern). Without class decorators, keep anonymous.
@@ -268,7 +300,15 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             class_name
         };
-        let decorated_members = self.collect_decorated_members(&class_data.members);
+        let decorated_members = self.collect_decorated_members(
+            &class_data.members,
+            &mut DecoratorReceiverState {
+                temp_counter: &mut temp_counter,
+                receiver_temp_vars: &mut decorator_receiver_temp_vars,
+                needs_outer_this_capture: &mut needs_outer_this_capture,
+                outer_this_var: &outer_this_var,
+            },
+        );
         let has_extends = self.has_extends_clause(&class_data.heritage_clauses);
 
         let has_class_decorators = !class_decorators.is_empty();
@@ -282,30 +322,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let has_any_instance = decorated_members.iter().any(|m| !m.is_static);
         let _has_any_static = decorated_members.iter().any(|m| m.is_static);
 
-        // Compute temp var allocation.
-        // For IIFE mode (ES2015), always need a class alias (_a).
-        // For static block mode (ES2022+) with class decorators, we use `var C = class {}`
-        // and _classThis instead of a temp var.
-        let mut temp_counter: u32 = 0;
-        let class_alias = if self.use_static_blocks {
-            String::new()
-        } else {
-            next_temp_var(&mut temp_counter) // _a
-        };
-
         // tsc avoids shadowing user bindings inside the transformed class wrapper
         // by suffixing decorator temporaries that collide with identifiers used
         // anywhere in the class span (decorators, name, extends, body). Without
         // this rename, e.g. a class body referring to a user `const _classDescriptor`
         // would resolve to the generated temp instead. See issue #3091.
-        let class_span_text = self
-            .source_text
-            .map(|src| {
-                let start = class_node.pos as usize;
-                let end = (class_node.end as usize).min(src.len());
-                if start <= end { &src[start..end] } else { "" }
-            })
-            .unwrap_or("");
         let class_descriptor_var = hygienic_temp_name("_classDescriptor", class_span_text);
         let class_extra_initializers_var =
             hygienic_temp_name("_classExtraInitializers", class_span_text);
@@ -505,6 +526,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if !computed_key_vars.is_empty() {
             let key_names: Vec<&str> = computed_key_vars.iter().map(|(_, v)| v.as_str()).collect();
             out.push_str(&format!("{i1}var {};\n", key_names.join(", ")));
+        }
+        if !decorator_receiver_temp_vars.is_empty() {
+            let receiver_names: Vec<&str> = decorator_receiver_temp_vars
+                .iter()
+                .map(String::as_str)
+                .collect();
+            out.push_str(&format!("{i1}var {};\n", receiver_names.join(", ")));
+        }
+        if needs_outer_this_capture {
+            out.push_str(&format!("{i1}let {outer_this_var} = this;\n"));
         }
         if !class_decorator_static_private_methods.is_empty() {
             let method_names: Vec<&str> = class_decorator_static_private_methods
@@ -2918,7 +2949,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    fn collect_class_decorator_exprs(&self, modifiers: &Option<NodeList>) -> Vec<String> {
+    fn collect_class_decorator_exprs(
+        &self,
+        modifiers: &Option<NodeList>,
+        receiver_state: &mut DecoratorReceiverState<'_>,
+    ) -> Vec<String> {
         let Some(mods) = modifiers else {
             return Vec::new();
         };
@@ -2930,15 +2965,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if node.kind == syntax_kind_ext::DECORATOR
                 && let Some(dec) = self.arena.get_decorator(node)
             {
-                result.push(normalize_decorator_expr_text(
-                    &self.node_text(dec.expression),
-                ));
+                result.push(self.render_decorator_expression(dec.expression, receiver_state));
             }
         }
         result
     }
 
-    fn collect_decorated_members(&self, members: &NodeList) -> Vec<DecoratedMember> {
+    fn collect_decorated_members(
+        &self,
+        members: &NodeList,
+        receiver_state: &mut DecoratorReceiverState<'_>,
+    ) -> Vec<DecoratedMember> {
         let mut result = Vec::new();
 
         for &member_idx in &members.nodes {
@@ -3004,9 +3041,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     if mod_node.kind == syntax_kind_ext::DECORATOR
                         && let Some(dec) = self.arena.get_decorator(mod_node)
                     {
-                        decorator_exprs.push(normalize_decorator_expr_text(
-                            &self.node_text(dec.expression),
-                        ));
+                        decorator_exprs
+                            .push(self.render_decorator_expression(dec.expression, receiver_state));
                     }
                 }
             }
@@ -3028,6 +3064,92 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         result
+    }
+
+    fn render_decorator_expression(
+        &self,
+        expr_idx: NodeIndex,
+        receiver_state: &mut DecoratorReceiverState<'_>,
+    ) -> String {
+        let (paren_depth, inner_idx) = self.strip_parenthesized_decorator_expr(expr_idx);
+        let Some(inner_node) = self.arena.get(inner_idx) else {
+            return normalize_decorator_expr_text(&self.node_text(expr_idx));
+        };
+        let access_kind = inner_node.kind;
+        let Some(access) = self.arena.get_access_expr(inner_node) else {
+            return normalize_decorator_expr_text(&self.node_text(expr_idx));
+        };
+        if access_kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && access_kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return normalize_decorator_expr_text(&self.node_text(expr_idx));
+        }
+
+        let rendered = if self.is_super_expression(access.expression) {
+            *receiver_state.needs_outer_this_capture = true;
+            match access_kind {
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let property = self.property_access_name_text(access.name_or_argument);
+                    format!("super.{property}.bind({})", receiver_state.outer_this_var)
+                }
+                _ => {
+                    let argument = self.node_text(access.name_or_argument);
+                    format!("super[{argument}].bind({})", receiver_state.outer_this_var)
+                }
+            }
+        } else {
+            let receiver_temp = next_temp_var(receiver_state.temp_counter);
+            receiver_state
+                .receiver_temp_vars
+                .push(receiver_temp.clone());
+            let receiver = self.node_text(access.expression);
+            match access_kind {
+                k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => {
+                    let property = self.property_access_name_text(access.name_or_argument);
+                    format!("({receiver_temp} = {receiver}).{property}.bind({receiver_temp})")
+                }
+                _ => {
+                    let argument = self.node_text(access.name_or_argument);
+                    format!("({receiver_temp} = {receiver})[{argument}].bind({receiver_temp})")
+                }
+            }
+        };
+        self.wrap_decorator_expression_parens(rendered, paren_depth)
+    }
+
+    fn strip_parenthesized_decorator_expr(&self, mut idx: NodeIndex) -> (usize, NodeIndex) {
+        let mut depth = 0usize;
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return (depth, idx);
+            };
+            if node.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                return (depth, idx);
+            }
+            let Some(paren) = self.arena.get_parenthesized(node) else {
+                return (depth, idx);
+            };
+            depth += 1;
+            idx = paren.expression;
+        }
+    }
+
+    fn wrap_decorator_expression_parens(&self, mut text: String, depth: usize) -> String {
+        for _ in 0..depth {
+            text = format!("({text})");
+        }
+        normalize_decorator_expr_text(&text)
+    }
+
+    fn property_access_name_text(&self, idx: NodeIndex) -> String {
+        self.get_identifier_text(idx)
+            .unwrap_or_else(|| self.node_text(idx))
+    }
+
+    fn is_super_expression(&self, idx: NodeIndex) -> bool {
+        self.arena
+            .get(idx)
+            .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
     }
 
     fn resolve_member_name(&self, name_idx: NodeIndex) -> (MemberName, bool) {

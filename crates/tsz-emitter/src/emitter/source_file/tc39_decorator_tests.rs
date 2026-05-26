@@ -96,6 +96,63 @@ class C {
 }
 
 #[test]
+fn tc39_decorator_member_access_preserves_receiver_this() {
+    let source = "\
+declare const instance: any;
+declare class Base {
+    decorate(value: any, context: any): any;
+}
+
+class C {
+    @instance.decorate
+    method1() {}
+
+    @(instance[\"decorate\"])
+    method2() {}
+
+    @((instance.decorate))
+    method3() {}
+}
+
+class D extends Base {
+    m() {
+        class Nested {
+            @(super.decorate)
+            method1() {}
+
+            @(super[\"decorate\"])
+            method2() {}
+
+            @((super.decorate))
+            method3() {}
+        }
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a, _b, _c;")
+            && output.contains("_method1_decorators = [(_a = instance).decorate.bind(_a)];")
+            && output.contains("_method2_decorators = [((_b = instance)[\"decorate\"].bind(_b))];")
+            && output.contains("_method3_decorators = [(((_c = instance).decorate.bind(_c)))];")
+            && output.contains("let _outerThis = this;")
+            && output.contains("_method1_decorators = [(super.decorate.bind(_outerThis))];")
+            && output.contains("_method2_decorators = [(super[\"decorate\"].bind(_outerThis))];")
+            && output.contains("_method3_decorators = [((super.decorate.bind(_outerThis)))];"),
+        "TC39 decorator member-access expressions should bind evaluated receivers and capture outer this for super.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;
