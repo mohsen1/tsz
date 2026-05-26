@@ -2,6 +2,8 @@
 
 pub mod constructor;
 mod core;
+mod entry;
+mod helpers;
 mod js_class_properties;
 
-pub(super) use core::can_skip_base_instantiation;
+pub(super) use helpers::can_skip_base_instantiation;

@@ -644,10 +644,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// Compute effective parameter types for a pair of parameters being compared
     /// in signature compatibility.
     ///
-    /// TypeScript compares declared optional parameter types during signature
-    /// compatibility rather than eagerly widening them to `T | undefined`.
-    /// That keeps `(x: string) => void` assignable to `(x?: string) => void`
-    /// and vice versa, matching the solver unit tests and tsc's behavior for
+    /// TypeScript treats a source optional parameter as accepting explicit
+    /// `undefined` when it is compared against a required target parameter.
+    /// This keeps `(x?: T) => void` assignable to `(x: T | undefined) => void`
+    /// under strict function contravariance.
+    ///
+    /// A target optional parameter still compares by its declared type rather
+    /// than eagerly widening to `T | undefined`. That keeps `(x: string) =>
+    /// void` assignable to `(x?: string) => void`, matching tsc's behavior for
     /// regular function signature relation checks.
     ///
     /// When both parameters are optional, strip `undefined` from their types
@@ -655,22 +659,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     /// matches tsc's behavior where both forms are interchangeable in
     /// signature comparison.
     ///
-    /// When only one parameter is optional (or neither), returns the raw types
-    /// without stripping, preserving the stricter comparison needed to catch
-    /// legitimate undefined-related mismatches.
+    /// When only the source parameter is optional, add `undefined` to the source
+    /// type. Other one-sided optional comparisons keep their declared types,
+    /// preserving the stricter comparison needed to catch legitimate
+    /// undefined-related mismatches.
     pub(crate) fn effective_param_type_pair(
         &self,
         s_param: &ParamInfo,
         t_param: &ParamInfo,
     ) -> (TypeId, TypeId) {
-        if s_param.optional && t_param.optional {
-            (
+        match (s_param.optional, t_param.optional) {
+            (true, true) => (
                 self.strip_undefined_from_param_type(s_param.type_id),
                 self.strip_undefined_from_param_type(t_param.type_id),
-            )
-        } else {
-            (s_param.type_id, t_param.type_id)
+            ),
+            (true, false) => (
+                self.add_undefined_to_param_type(s_param.type_id),
+                t_param.type_id,
+            ),
+            _ => (s_param.type_id, t_param.type_id),
         }
+    }
+
+    /// Add `undefined` to an optional source parameter type for signature
+    /// compatibility. `union2` canonicalizes duplicate `undefined` members.
+    fn add_undefined_to_param_type(&self, type_id: TypeId) -> TypeId {
+        if type_id == TypeId::UNDEFINED {
+            return type_id;
+        }
+        self.interner.union2(type_id, TypeId::UNDEFINED)
     }
 
     /// Strip `undefined` from a type for optional parameter normalization.
