@@ -129,6 +129,10 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Ready
     Main PRs` section and `conflictingReadyMainPrs`/`conflictingReadyMainOwnerCounts`
     JSON for the ready-only subset of dirty or conflicting main-based PRs.
+  - `#10201` merged on 2026-05-26 as
+    `0b7d82391b ci: summarize conflicting ready ownership (#10201)`.
+    The ownership report's `Owner Summary` now includes a `Conflicting ready`
+    column and `ownerSummaries[].conflictingReadyMain` JSON field.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -150,7 +154,9 @@ node scripts/ci/pr-ownership-report.mjs
     Its stale synthetic branch was cleaned after merge.
   - Use the ownership report's `Owner Summary` section for the current
     owner-by-owner workload and handoff view. Counts are live GitHub state and
-    should be re-run each cycle, not copied into this lane note.
+    should be re-run each cycle, not copied into this lane note. The
+    `Conflicting ready` column is the quick owner-level view of non-draft PRs
+    that still need conflict handoff before queueing.
   - Use the ownership report's `WIP PRs` section for the current WIP marker
     rows and owner counts before adding, removing, or handing off WIP state.
   - No queue-ready auto-merge PR is currently selected by
