@@ -8,7 +8,9 @@ use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
 use crate::relations::subtype::AnyPropagationMode;
-use crate::types::{FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId};
+use crate::types::{
+    FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, RelationFlags, TypeId,
+};
 
 #[test]
 fn subtype_cache_any_propagation_mode_matches_uncached_nested_any() {
@@ -306,5 +308,72 @@ fn assignability_cache_exact_optional_matches_uncached_property_policy() {
     assert!(
         stats.assignability_misses >= 2,
         "exact and inexact optional-property policies should miss in separate cache slots",
+    );
+}
+
+#[test]
+fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let x = interner.intern_string("x");
+
+    let source = interner.object(vec![PropertyInfo::readonly(x, TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
+
+    let permissive_policy = RelationPolicy::from_flags(0);
+    let strict_policy =
+        RelationPolicy::from_flags(RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16);
+
+    let permissive_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        permissive_policy,
+        RelationContext::default(),
+    );
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_policy,
+        RelationContext::default(),
+    );
+
+    let permissive_cached = db.is_subtype_of_with_policy(source, target, permissive_policy);
+    let strict_cached = db.is_subtype_of_with_policy(source, target, strict_policy);
+    let permissive_cached_again = db.is_subtype_of_with_policy(source, target, permissive_policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        permissive_cached,
+        permissive_uncached.is_related(),
+        "cached permissive readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        strict_cached,
+        strict_uncached.is_related(),
+        "cached strict readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        permissive_cached_again, permissive_cached,
+        "second permissive readonly lookup should reuse the policy-shaped answer",
+    );
+    assert!(
+        permissive_cached,
+        "permissive readonly policy should allow a readonly property to satisfy a mutable target",
+    );
+    assert!(
+        !strict_cached,
+        "strict readonly identity should reject readonly-to-mutable property comparison",
+    );
+    assert!(
+        stats.subtype_hits >= 1,
+        "second permissive readonly lookup should hit the subtype cache",
+    );
+    assert!(
+        stats.subtype_misses >= 2,
+        "strict and permissive readonly policies should miss in separate cache slots",
     );
 }
