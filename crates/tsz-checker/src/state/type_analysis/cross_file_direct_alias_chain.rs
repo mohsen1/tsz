@@ -260,6 +260,15 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                 )
             }
+            k if k == syntax_kind_ext::FUNCTION_TYPE => {
+                Self::source_file_function_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    type_param_names,
+                    seen,
+                )
+            }
             _ => false,
         }
     }
@@ -462,6 +471,15 @@ impl<'a> CheckerState<'a> {
                     &[],
                 )
             }
+            k if k == syntax_kind_ext::FUNCTION_TYPE => {
+                Self::source_file_function_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    &[],
+                    seen,
+                )
+            }
             _ => false,
         }
     }
@@ -643,6 +661,48 @@ impl<'a> CheckerState<'a> {
                 seen,
             )
         })
+    }
+
+    fn source_file_function_type_is_generic_local_alias_application_lowerable(
+        arena: &NodeArena,
+        binder: &BinderState,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+        seen: &mut AliasCycleTracker,
+    ) -> bool {
+        let Some(function_type) = arena.get_function_type(node) else {
+            return false;
+        };
+        if function_type
+            .type_parameters
+            .as_ref()
+            .is_some_and(|params| !params.nodes.is_empty())
+        {
+            return false;
+        }
+        function_type.parameters.nodes.iter().copied().all(|param_idx| {
+            let Some(param_node) = arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = arena.get_parameter(param_node) else {
+                return false;
+            };
+            param.type_annotation.is_some()
+                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    param.type_annotation,
+                    type_param_names,
+                    seen,
+                )
+        }) && function_type.type_annotation.is_some()
+            && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                function_type.type_annotation,
+                type_param_names,
+                seen,
+            )
     }
 
     fn source_file_type_literal_properties_are_lowerable(
