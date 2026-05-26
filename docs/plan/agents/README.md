@@ -112,6 +112,11 @@ git fetch origin main
 scripts/agents/show-goal.sh M1-A
 ```
 
+When reviewing or developing a branch that edits a lane goal file, use
+`scripts/agents/show-goal.sh <AgentName> --local` to preview the branch-local
+file. The default command still prefers `origin/main` so launch sessions can be
+redirected without first merging the in-progress branch.
+
 Then run the remaining commands listed in that lane's `Start Every Cycle`
 section.
 
