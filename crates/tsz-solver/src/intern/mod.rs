@@ -24,12 +24,14 @@ mod core;
 mod intersection;
 mod normalize;
 mod template;
+mod tuple_normalization;
 pub mod type_factory;
 
 // Re-export primary public type from core implementation
 pub use self::core::TypeInterner;
 pub use self::core::clear_thread_local_cache;
 pub(crate) use self::core::{TEMPLATE_LITERAL_EXPANSION_LIMIT, TypeListBuffer};
+pub(crate) use self::tuple_normalization::tuple_normalized;
 // Used by intern_tests.rs (included via #[path] below).
 #[cfg(test)]
 pub(crate) use self::core::PROPERTY_MAP_THRESHOLD;
@@ -53,6 +55,10 @@ use crate::types::*;
 #[cfg(test)]
 #[path = "../../tests/intern_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../tests/intern_tuple_normalization_tests.rs"]
+mod intern_tuple_normalization_tests;
 
 #[cfg(test)]
 #[path = "../../tests/concurrent_tests.rs"]
