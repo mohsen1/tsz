@@ -965,6 +965,7 @@ impl<'a> ES5AsyncTransformer<'a> {
             hoisted_var_groups: Vec::new(),
             promise_constructor: None,
             multiline_callback: false,
+            directives: Vec::new(),
         }
     }
 

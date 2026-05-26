@@ -105,6 +105,26 @@ pub(super) fn emit_js_dts_with_usage_analysis(source: &str) -> String {
     emitter.emit(root)
 }
 
+pub(super) fn emit_js_dts_with_usage_analysis_and_lib(source: &str, lib_source: &str) -> String {
+    let mut parser = ParserState::new("test.js".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let lib = Arc::new(LibFile::from_source(
+        "lib.test.d.ts".to_string(),
+        lib_source.to_string(),
+    ));
+    let mut binder = BinderState::new();
+    binder.bind_source_file_with_libs(&parser.arena, root, &[lib]);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.js".to_string());
+    emitter.emit(root)
+}
+
 pub(super) fn find_class_symbol(
     parser: &ParserState,
     binder: &BinderState,
@@ -278,9 +298,11 @@ mod fix_verification;
 mod generics_and_ambient;
 mod jsdoc_template_defaults;
 mod misc_features;
+mod misc_inference_features;
 mod probes_issues;
 mod probes_systematic;
 mod probes_tsc_comparison;
 mod simple_declarations;
 mod type_formatting;
 mod type_info;
+mod type_info_constructor_objects;

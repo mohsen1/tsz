@@ -213,3 +213,31 @@ fn erased_import_alias_preserves_trailing_standalone_comment_es5() {
         "Standalone trailing comments after erased import aliases should be preserved.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn namespace_import_alias_reference_scan_stays_inside_namespace_body_es5() {
+    let source = "namespace a {\n  export class A {}\n}\nnamespace c.a.b {\n  import ma = a;\n}\nnamespace holder {\n  export function keep() {}\n  import m5 = c;\n  import m6 = c.a;\n  import m7 = c.a.b;\n}\ndeclare namespace m5 {\n  export var value: number;\n}\ndeclare namespace m6 {\n  export var value: number;\n}\nnamespace valueNs {\n  export const x = 1;\n}\nnamespace holder2 {\n  import v = valueNs;\n  export const y = v.x;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("var m5 = c;")
+            && !output.contains("var m6 = c.a;")
+            && !output.contains("var m7 = c.a.b;"),
+        "Namespace import aliases should ignore references from later sibling declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var v = valueNs;") && output.contains("holder2.y = v.x;"),
+        "Namespace import aliases used inside their own namespace body should still emit.\nOutput:\n{output}"
+    );
+}

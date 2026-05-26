@@ -369,6 +369,15 @@ impl<'a> CheckerState<'a> {
                     {
                         return ReadonlyAssignmentDiagnostic::None;
                     }
+                    // An inline mapped-type application such as
+                    // `Readonly<[number, string]>` stays an unevaluated
+                    // `Application` here, whereas a named alias is resolved
+                    // eagerly by `get_type_of_node`. When such an application
+                    // evaluates to a readonly tuple, resolve it so a fixed-element
+                    // write is recognized as a readonly named-property write
+                    // (TS2540). Other shapes (e.g. `ReadonlyArray<T>`, which is an
+                    // index signature) keep their existing unevaluated handling.
+                    let object_type = self.resolve_readonly_tuple_application(object_type);
 
                     let index_type = self.get_type_of_node(access.name_or_argument);
                     if let Some(name) = self.get_readonly_element_access_name(
@@ -1377,6 +1386,23 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// If `type_id` is an unevaluated type-alias application that evaluates to a
+    /// readonly tuple, return the evaluated readonly tuple; otherwise return
+    /// `type_id` unchanged. Used so an inline `Readonly<[a, b]>` element write is
+    /// classified the same as a named alias of the same type.
+    fn resolve_readonly_tuple_application(&mut self, type_id: TypeId) -> TypeId {
+        use crate::query_boundaries::common::{readonly_inner_type, tuple_list_id};
+        use crate::query_boundaries::type_checking_utilities::application_base;
+
+        if application_base(self.ctx.types, type_id).is_none() {
+            return type_id;
+        }
+        let resolved = self.evaluate_type_with_env(type_id);
+        let is_readonly_tuple = readonly_inner_type(self.ctx.types, resolved)
+            .is_some_and(|inner| tuple_list_id(self.ctx.types, inner).is_some());
+        if is_readonly_tuple { resolved } else { type_id }
     }
 
     fn is_readonly_mapped_type(&mut self, type_id: TypeId) -> bool {

@@ -3,7 +3,7 @@
 use crate::context::TypingRequest;
 use crate::diagnostics::diagnostic_codes;
 use crate::query_boundaries::checkers::call::{
-    array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
+    rest_array_element_type_for_type, stable_call_recovery_return_type, tuple_elements_for_type,
 };
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
@@ -120,6 +120,109 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Speculatively re-type contextually-sensitive callback arguments against
+    /// the selected overload signature's parameter types and report whether that
+    /// produces callback body errors.
+    ///
+    /// Overload selection types callbacks under a union of all candidate
+    /// signatures. A union of function-typed parameters collapses the callback's
+    /// own parameter to `any`, so body errors that tsc reports against the
+    /// resolved signature (`o?.a.b` continuation typing, accessing a property that
+    /// only exists under a different overload, an assignment whose right side has
+    /// the wrong type) never surface during selection. Detecting them here lets
+    /// the caller defer the candidate to the signature-specific pass, which
+    /// re-checks and reports them. All speculative state is rolled back.
+    pub(crate) fn selected_overload_callback_body_has_errors(
+        &mut self,
+        args: &[NodeIndex],
+        func_type: TypeId,
+    ) -> bool {
+        let helper =
+            crate::query_boundaries::common::ContextualTypeContext::with_expected_and_options(
+                self.ctx.types,
+                func_type,
+                self.ctx.compiler_options.no_implicit_any,
+            );
+        let param_types: Vec<Option<TypeId>> = (0..args.len())
+            .map(|i| {
+                self.contextual_parameter_type_for_call_with_env_from_expected(
+                    func_type,
+                    i,
+                    args.len(),
+                )
+                .or_else(|| helper.get_parameter_type_for_call(i, args.len()))
+                .map(|param_type| self.normalize_contextual_call_param_type(param_type))
+            })
+            .collect();
+
+        let candidates: Vec<(NodeIndex, TypeId)> = args
+            .iter()
+            .copied()
+            .enumerate()
+            .filter_map(|(i, arg_idx)| {
+                if !self.is_callback_like_argument(arg_idx) {
+                    return None;
+                }
+                let param_type = param_types.get(i).copied().flatten()?;
+                if param_type == TypeId::ANY
+                    || param_type == TypeId::UNKNOWN
+                    || param_type == TypeId::ERROR
+                {
+                    return None;
+                }
+                // Only concrete parameter types are meaningful here. A generic
+                // overload's parameter still mentions its type parameters (or
+                // `infer` placeholders) at this point; the two-pass instantiation
+                // machinery owns those callbacks, and re-typing against an
+                // uninstantiated parameter produces spurious body errors.
+                if crate::query_boundaries::common::contains_type_parameters(
+                    self.ctx.types,
+                    param_type,
+                ) || crate::query_boundaries::common::contains_infer_types(
+                    self.ctx.types,
+                    param_type,
+                ) {
+                    return None;
+                }
+                Some((arg_idx, param_type))
+            })
+            .collect();
+        if candidates.is_empty() {
+            return false;
+        }
+
+        // `rollback_full` restores diagnostics and caches but not `node_types`,
+        // so save the callback args' cached entries and restore them afterwards
+        // (mirroring `raw_block_body_callback_mismatch`).
+        let snap = self.ctx.snapshot_full();
+        let saved: Vec<(u32, Option<TypeId>)> = candidates
+            .iter()
+            .map(|&(arg_idx, _)| (arg_idx.0, self.ctx.node_types.get(&arg_idx.0).copied()))
+            .collect();
+        let diag_snap = self.ctx.snapshot_diagnostics();
+        for &(arg_idx, param_type) in &candidates {
+            self.invalidate_expression_for_contextual_retry(arg_idx);
+            let request = TypingRequest::with_contextual_type(param_type);
+            let _ = self.get_type_of_node_with_request(arg_idx, &request);
+        }
+        let has_errors = self.overload_candidate_has_callback_body_errors(args, &diag_snap);
+        self.ctx.rollback_full(&snap);
+        for (arg_idx, _) in &candidates {
+            self.invalidate_expression_for_contextual_retry(*arg_idx);
+        }
+        for (node_id, saved_ty) in saved {
+            match saved_ty {
+                Some(ty) => {
+                    self.ctx.node_types.insert(node_id, ty);
+                }
+                None => {
+                    self.ctx.node_types.remove(&node_id);
+                }
+            }
+        }
+        has_errors
+    }
+
     pub(super) fn type_is_or_constrained_to_top_rest_any_callable(&self, type_id: TypeId) -> bool {
         if let Some(constraint) =
             crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
@@ -136,19 +239,18 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let rest_type = shape.params[0].type_id;
-        let rest_elem = array_element_type_for_type(self.ctx.types, rest_type).or_else(|| {
-            tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
-                elems
-                    .into_iter()
-                    .find(|elem| elem.rest)
-                    .map(|elem| elem.type_id)
-            })
-        });
-        (rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
-            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN))
-            || self
-                .format_type(type_id)
-                .starts_with("(...args: Array<any>) =>")
+        let rest_elem =
+            rest_array_element_type_for_type(self.ctx.types, &self.ctx.definition_store, rest_type)
+                .or_else(|| {
+                    tuple_elements_for_type(self.ctx.types, rest_type).and_then(|elems| {
+                        elems
+                            .into_iter()
+                            .find(|elem| elem.rest)
+                            .map(|elem| elem.type_id)
+                    })
+                });
+        rest_elem.is_some_and(|elem| elem == TypeId::ANY || elem == TypeId::UNKNOWN)
+            && (shape.return_type == TypeId::ANY || shape.return_type == TypeId::UNKNOWN)
     }
 
     pub(super) fn overload_candidate_has_only_retained_generic_rest_any_callback_body_errors(
@@ -486,15 +588,22 @@ impl<'a> CheckerState<'a> {
                             .get_generator_yield_type_argument(actual_return)
                             .zip(self.get_generator_yield_type_argument(expected_return))
                             .is_some_and(|(actual_yield, expected_yield)| {
-                                !self.is_assignable_to(actual_yield, expected_yield)
-                                    && !self.is_assignable_to(expected_yield, actual_yield)
+                                !self.diagnostic_relation_boolean_guard(
+                                    actual_yield,
+                                    expected_yield,
+                                ) && !self.diagnostic_relation_boolean_guard(
+                                    expected_yield,
+                                    actual_yield,
+                                )
                             })
                             || self
                                 .get_generator_return_type_argument(actual_return)
                                 .zip(self.get_generator_return_type_argument(expected_return))
                                 .is_some_and(|(actual_gen_return, expected_gen_return)| {
-                                    !self.is_assignable_to(actual_gen_return, expected_gen_return)
-                                        && !self.is_assignable_to(
+                                    !self.diagnostic_relation_boolean_guard(
+                                        actual_gen_return,
+                                        expected_gen_return,
+                                    ) && !self.diagnostic_relation_boolean_guard(
                                             expected_gen_return,
                                             actual_gen_return,
                                         )
@@ -503,7 +612,8 @@ impl<'a> CheckerState<'a> {
                                 .get_generator_next_type_argument(actual_return)
                                 .zip(self.get_generator_next_type_argument(expected_return))
                                 .is_some_and(|(actual_next, expected_next)| {
-                                    !self.is_assignable_to(expected_next, actual_next)
+                                    !self
+                                        .diagnostic_relation_boolean_guard(expected_next, actual_next)
                                 });
 
                         // When the expected return type is `void`, there is never
@@ -543,7 +653,10 @@ impl<'a> CheckerState<'a> {
                             } else {
                                 generator_component_mismatch
                                     || (expected_return != TypeId::VOID
-                                        && !self.is_assignable_to(actual_return, expected_return))
+                                        && !self.diagnostic_relation_boolean_guard(
+                                            actual_return,
+                                            expected_return,
+                                        ))
                             };
                         (return_type_mismatch, generator_component_mismatch)
                     })
@@ -760,5 +873,85 @@ impl<'a> CheckerState<'a> {
                 dest.push(diag);
             }
         }
+    }
+
+    pub(super) fn diagnostics_for_overload_mismatch_argument_between(
+        &self,
+        args: &[NodeIndex],
+        index: usize,
+        from_snap: &crate::context::speculation::DiagnosticSnapshot,
+        to_snap: &crate::context::speculation::DiagnosticSnapshot,
+    ) -> Vec<crate::diagnostics::Diagnostic> {
+        let Some(&arg_idx) = args.get(index) else {
+            return Vec::new();
+        };
+        let Some(arg_node) = self.ctx.arena.get(arg_idx) else {
+            return Vec::new();
+        };
+
+        self.ctx
+            .diagnostics_between(from_snap, to_snap)
+            .iter()
+            .filter(|diag| diag.start >= arg_node.pos && diag.start < arg_node.end)
+            .cloned()
+            .collect()
+    }
+
+    /// Snapshot a non-generic overload that matched at the signature level but
+    /// failed only inside a callback body, so it can be committed later if no
+    /// other overload resolves cleanly. See `commit_callback_body_only_candidate`.
+    pub(super) fn build_callback_body_only_candidate(
+        &self,
+        args: &[NodeIndex],
+        overload_diag: &crate::context::speculation::DiagnosticSnapshot,
+        candidate_snap: &crate::context::speculation::DiagnosticSnapshot,
+        arg_types: Vec<TypeId>,
+        return_type: TypeId,
+        selected_type_predicate: super::SelectedTypePredicate,
+    ) -> (
+        super::OverloadResolution,
+        crate::context::NodeTypeCache,
+        Vec<crate::diagnostics::Diagnostic>,
+    ) {
+        let candidate_end = self.ctx.snapshot_diagnostics();
+        let preserved_first_pass =
+            self.collect_non_callback_diagnostics_between(args, overload_diag, candidate_snap);
+        let candidate_diags: Vec<_> = self
+            .ctx
+            .diagnostics_between(candidate_snap, &candidate_end)
+            .to_vec();
+        let mut merged = self.preserved_speculative_call_diagnostics(overload_diag);
+        self.extend_unique_diagnostics(&mut merged, preserved_first_pass);
+        self.extend_unique_diagnostics(&mut merged, candidate_diags);
+        let resolution = super::OverloadResolution {
+            arg_types,
+            result: crate::query_boundaries::common::CallResult::Success(return_type),
+            selected_type_predicate,
+        };
+        (resolution, self.ctx.node_types.clone(), merged)
+    }
+
+    /// Commit the captured callback-body-only candidate: restore diagnostics to
+    /// the candidate's merged set (which retains the callback body errors) and
+    /// install its node types. tsc reports those body diagnostics against the
+    /// selected overload rather than silently recovering.
+    pub(super) fn commit_callback_body_only_candidate(
+        &mut self,
+        candidate: (
+            super::OverloadResolution,
+            crate::context::NodeTypeCache,
+            Vec<crate::diagnostics::Diagnostic>,
+        ),
+        overload_snap: &crate::context::speculation::FullSnapshot,
+        original_node_types: &mut crate::context::NodeTypeCache,
+    ) -> super::OverloadResolution {
+        let (resolution, sig_node_types, merged_diags) = candidate;
+        self.ctx
+            .rollback_and_replace_diagnostics(&overload_snap.diag, merged_diags);
+        self.ctx
+            .restore_ts2454_state(&overload_snap.emitted_ts2454_errors);
+        self.ctx.node_types = std::mem::take(original_node_types);
+        self.ctx.node_types.merge_owned(sig_node_types);
+        resolution
     }
 }

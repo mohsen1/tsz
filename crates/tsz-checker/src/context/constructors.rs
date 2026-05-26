@@ -93,6 +93,7 @@ impl<'a> CheckerContext<'a> {
             type_resolution_visiting: FxHashSet::default(),
             pruning_union_members: false,
             jsdoc_typedef_resolving: RefCell::new(FxHashSet::default()),
+            jsdoc_generic_typedef_resolving: RefCell::new(FxHashMap::default()),
             flow_analysis_cache: RefCell::new(FxHashMap::with_capacity_and_hasher(
                 128,
                 Default::default(),
@@ -282,6 +283,7 @@ impl<'a> CheckerContext<'a> {
             in_const_assertion: false,
             in_satisfies_operand: false,
             preserve_literal_types: false,
+            preserve_logical_operand_literals: false,
             use_declared_type_for_identifier: false,
             skip_array_contextual_supertype_collapse: false,
             generic_excess_skip: None,
@@ -677,6 +679,10 @@ impl<'a> CheckerContext<'a> {
             let parent_typedefs = parent.jsdoc_typedef_resolving.borrow();
             if !parent_typedefs.is_empty() {
                 ctx.jsdoc_typedef_resolving = RefCell::new(parent_typedefs.clone());
+            }
+            let parent_generic_typedefs = parent.jsdoc_generic_typedef_resolving.borrow();
+            if !parent_generic_typedefs.is_empty() {
+                ctx.jsdoc_generic_typedef_resolving = RefCell::new(parent_generic_typedefs.clone());
             }
         }
 

@@ -1252,18 +1252,17 @@ fn anonymous_class_expr_instance_private_only_does_not_set_function_name() {
 }
 
 // ---------------------------------------------------------------------------
-// Synthesized constructor: rest params vs `arguments` object
+// Synthesized constructor: `arguments` forwarding
 //
 // When a derived class needs a synthesized constructor (because it has
 // instance field initializers or private fields but no explicit constructor),
-// tsc emits `constructor(...args) { super(...args); }` for ES2015+ targets
-// and `constructor() { super(...arguments); }` for ES5.
+// tsc emits `constructor() { super(...arguments); }` even for ES2015+ targets.
 // ---------------------------------------------------------------------------
 
-/// ES2015 target: derived class with instance field must use rest params in
-/// the synthesized constructor, not the ES5-only `arguments` object.
+/// ES2015 target: derived class with instance field forwards the ambient
+/// `arguments` object in its synthesized constructor.
 #[test]
-fn derived_class_with_field_synthesizes_rest_args_at_es2015() {
+fn derived_class_with_field_synthesizes_arguments_forwarding_at_es2015() {
     let source = r#"class Base {}
 class Child extends Base {
     x = 1;
@@ -1271,22 +1270,22 @@ class Child extends Base {
 "#;
     let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
     assert!(
-        output.contains("constructor(...args)"),
-        "ES2015 synthesized constructor must use rest params `...args`.\nOutput:\n{output}"
+        output.contains("constructor()"),
+        "ES2015 synthesized constructor should have no explicit rest parameter.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "ES2015 synthesized constructor must forward rest params via `super(...args)`.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "ES2015 synthesized constructor should forward via `super(...arguments)`.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("super(...arguments)"),
-        "ES2015 synthesized constructor must NOT use the ES5 `arguments` object.\nOutput:\n{output}"
+        !output.contains("constructor(...args)"),
+        "ES2015 synthesized constructor should match tsc and avoid a synthetic rest parameter.\nOutput:\n{output}"
     );
 }
 
-/// ES2020 target: same rule applies — rest params, not `arguments`.
+/// ES2020 target: same rule applies — `arguments`, not a synthesized rest arg.
 #[test]
-fn derived_class_with_field_synthesizes_rest_args_at_es2020() {
+fn derived_class_with_field_synthesizes_arguments_forwarding_at_es2020() {
     let source = r#"class Animal {}
 class Dog extends Animal {
     name = "fido";
@@ -1294,16 +1293,16 @@ class Dog extends Animal {
 "#;
     let output = parse_and_print_for_target(source, ScriptTarget::ES2020);
     assert!(
-        output.contains("constructor(...args)"),
-        "ES2020 synthesized constructor must use rest params `...args`.\nOutput:\n{output}"
+        output.contains("constructor()"),
+        "ES2020 synthesized constructor should have no explicit rest parameter.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "ES2020 synthesized constructor must forward via `super(...args)`.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "ES2020 synthesized constructor should forward via `super(...arguments)`.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("super(...arguments)"),
-        "ES2020 synthesized constructor must NOT use the ES5 `arguments` object.\nOutput:\n{output}"
+        !output.contains("constructor(...args)"),
+        "ES2020 synthesized constructor should match tsc and avoid a synthetic rest parameter.\nOutput:\n{output}"
     );
 }
 
@@ -1334,9 +1333,9 @@ class Child extends Base {
 }
 
 /// ES2015 target: derived class with private instance field also triggers
-/// synthesized constructor and must use rest params.
+/// synthesized constructor and uses `arguments` forwarding.
 #[test]
-fn derived_class_with_private_field_synthesizes_rest_args_at_es2015() {
+fn derived_class_with_private_field_synthesizes_arguments_forwarding_at_es2015() {
     let source = r#"class Base {}
 class Child extends Base {
     #value = 42;
@@ -1344,12 +1343,12 @@ class Child extends Base {
 "#;
     let output = parse_and_print_for_target(source, ScriptTarget::ES2015);
     assert!(
-        output.contains("constructor(...args)"),
-        "ES2015 synthesized constructor for private-field derived class must use rest params.\nOutput:\n{output}"
+        output.contains("constructor()"),
+        "ES2015 synthesized constructor for private-field derived class should have no explicit rest parameter.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("super(...args)"),
-        "ES2015 synthesized constructor for private-field derived class must use `super(...args)`.\nOutput:\n{output}"
+        output.contains("super(...arguments)"),
+        "ES2015 synthesized constructor for private-field derived class should use `super(...arguments)`.\nOutput:\n{output}"
     );
 }
 

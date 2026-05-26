@@ -747,8 +747,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                 jsdoc_type,
                             );
                         if should_check {
-                            let fwd = self.checker.is_assignable_to(expr_type, jsdoc_type);
-                            let rev = self.checker.is_assignable_to(jsdoc_type, expr_type);
+                            let fwd = self
+                                .checker
+                                .is_assignable_for_type_assertion_overlap(expr_type, jsdoc_type);
+                            let rev = self
+                                .checker
+                                .is_assignable_for_type_assertion_overlap(jsdoc_type, expr_type);
                             if !fwd && !rev {
                                 // Check union member overlap (same as `as` expressions):
                                 // if expr is a union, check if any member overlaps with target.
@@ -757,8 +761,13 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                                     query::union_members(self.checker.ctx.types, expr_type)
                                 {
                                     for member in members {
-                                        if self.checker.is_assignable_to(member, jsdoc_type)
-                                            || self.checker.is_assignable_to(jsdoc_type, member)
+                                        if self.checker.is_assignable_for_type_assertion_overlap(
+                                            member, jsdoc_type,
+                                        ) || self
+                                            .checker
+                                            .is_assignable_for_type_assertion_overlap(
+                                                jsdoc_type, member,
+                                            )
                                         {
                                             have_overlap = true;
                                             break;
@@ -1816,9 +1825,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                         && expr_node.kind == SyntaxKind::ImportKeyword as u16
                         && let Some(type_arguments) = &data.type_arguments
                     {
+                        // Bail early: the generic path would otherwise report
+                        // a spurious extra error for applying type args to VOID.
                         for &type_arg in &type_arguments.nodes {
                             let _ = self.checker.get_type_from_type_node(type_arg);
                         }
+                        return TypeId::ERROR;
                     }
                     let expr_type = self.checker.get_type_of_node(data.expression);
                     if self
@@ -1925,19 +1937,41 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                     _ => TypeId::ANY,
                 }
             }
-            // Structural statement/import/export nodes can be reached by broad
-            // expression walks in real projects. They do not have a value type,
-            // but they also should not poison checking with TypeId::ERROR.
+            // Structural declaration/statement nodes reached by broad expression
+            // walks. These produce no value; VOID is correct.
             k if k == syntax_kind_ext::BLOCK
                 || k == syntax_kind_ext::NAMED_IMPORTS
                 || k == syntax_kind_ext::NAMED_EXPORTS
-                || k == syntax_kind_ext::METHOD_SIGNATURE =>
+                || k == syntax_kind_ext::METHOD_SIGNATURE
+                || k == syntax_kind_ext::IMPORT_DECLARATION
+                || k == syntax_kind_ext::IMPORT_CLAUSE
+                || k == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                || k == syntax_kind_ext::EXTERNAL_MODULE_REFERENCE
+                || k == syntax_kind_ext::IMPORT_ATTRIBUTE
+                || k == syntax_kind_ext::IMPORT_ATTRIBUTES
+                || k == syntax_kind_ext::EXPORT_DECLARATION
+                || k == syntax_kind_ext::NAMESPACE_EXPORT_DECLARATION
+                // Type parameters are erased and produce no runtime value.
+                || k == syntax_kind_ext::TYPE_PARAMETER =>
             {
                 TypeId::VOID
             }
-            k if k == syntax_kind_ext::METHOD_SIGNATURE => {
-                self.checker.get_type_of_interface_member_simple(idx)
+            // Binding nodes that accidentally reach expression dispatch through
+            // cross-file traversal. They refer to named bindings that carry real
+            // types, so VOID would be incorrect (void participates in
+            // assignability and triggers spurious diagnostics). Return ANY as a
+            // conservative placeholder: permissive like ERROR but without
+            // triggering the uncoded-diagnostic path.
+            k if k == syntax_kind_ext::IMPORT_SPECIFIER
+                || k == syntax_kind_ext::NAMESPACE_IMPORT
+                || k == syntax_kind_ext::EXPORT_SPECIFIER
+                || k == syntax_kind_ext::NAMESPACE_EXPORT =>
+            {
+                TypeId::ANY
             }
+            // `import` keyword token in structural positions (import declarations,
+            // `ExpressionWithTypeArguments`). Not a value-producing expression.
+            k if k == SyntaxKind::ImportKeyword as u16 => TypeId::VOID,
             // Default case - unknown node kind is an error
             _ => {
                 tracing::warn!(

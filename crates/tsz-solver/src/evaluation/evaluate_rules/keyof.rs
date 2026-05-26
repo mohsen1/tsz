@@ -35,7 +35,21 @@ use super::super::evaluate::{
 /// - Number-keyed signature (only when no string-slot signature is present):
 ///   contributes `number`, except for enum namespace types where tsc excludes
 ///   the implicit `[index: number]: string` from `keyof typeof E`.
+fn index_signature_key_includes_symbol(interner: &dyn TypeDatabase, key_type: TypeId) -> bool {
+    if key_type == TypeId::SYMBOL {
+        return true;
+    }
+    match interner.lookup(key_type) {
+        Some(TypeData::Union(members)) => interner
+            .type_list(members)
+            .iter()
+            .any(|&member| index_signature_key_includes_symbol(interner, member)),
+        _ => false,
+    }
+}
+
 fn extend_keyof_with_index_signature_keys(
+    interner: &dyn TypeDatabase,
     key_types: &mut Vec<TypeId>,
     string_or_symbol_index: Option<&IndexSignature>,
     number_index: Option<&IndexSignature>,
@@ -47,6 +61,9 @@ fn extend_keyof_with_index_signature_keys(
         } else {
             key_types.push(TypeId::STRING);
             key_types.push(TypeId::NUMBER);
+            if index_signature_key_includes_symbol(interner, idx.key_type) {
+                key_types.push(TypeId::SYMBOL);
+            }
         }
     } else if number_index.is_some() && !is_enum_namespace {
         key_types.push(TypeId::NUMBER);
@@ -290,6 +307,21 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             Some(TypeData::TemplateLiteral(_)) => {
                 return self.apparent_primitive_keyof(IntrinsicKind::String);
             }
+            // Generic indexed-access operand `T[K]` where the *index* is generic
+            // must keep `keyof` deferred. Eagerly resolving `T[K]` through K's
+            // constraint expands to a union of T's value shapes (e.g. `{a1}|{b1}`),
+            // and `keyof (A | B) = keyof A & keyof B` collapses disjoint key
+            // sets to `never` — exposing user code to spurious TS2345 (#8725).
+            //
+            // tsc keeps `keyof T[K]` as a deferred IndexType whose apparent type
+            // is `string | number | symbol`. We mirror that by returning
+            // `TypeData::KeyOf(operand)` here; downstream relation/apparent-type
+            // paths already handle deferred keyofs.
+            Some(TypeData::IndexAccess(_, index))
+                if crate::type_queries::contains_type_parameters_db(self.interner(), index) =>
+            {
+                return self.interner().keyof(operand);
+            }
             Some(TypeData::Union(_members)) => {
                 let narrowed_operand = crate::type_queries::prune_impossible_object_union_members(
                     self.interner(),
@@ -475,6 +507,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .collect();
 
                     extend_keyof_with_index_signature_keys(
+                        self.interner(),
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
@@ -501,6 +534,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         .collect();
 
                     extend_keyof_with_index_signature_keys(
+                        self.interner(),
                         &mut key_types,
                         shape.string_index.as_ref(),
                         shape.number_index.as_ref(),
@@ -513,6 +547,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         self.interner().union(key_types)
                     }
                 }
+                // A bare function type (`() => T`, `(x: U) => V`,
+                // `<U>(u: U) => U`) has no own properties or index signatures,
+                // so its key space is empty.  `Callable` with only construct
+                // signatures already collapses to `never` via the arm above;
+                // `Function` must do the same for `extends never` /
+                // `Equal<keyof Fn, never>` parity with tsc.
+                TypeData::Function(_) => TypeId::NEVER,
                 TypeData::Array(_) => self.interner().union(self.array_keyof_keys()),
                 TypeData::Tuple(elements) => {
                     let elements = self.interner().tuple_list(elements);

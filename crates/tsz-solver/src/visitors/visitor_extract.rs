@@ -335,6 +335,26 @@ pub fn intrinsic_kind(types: &dyn TypeDatabase, type_id: TypeId) -> Option<Intri
     }
 }
 
+/// Returns true when a template-literal type spans the entire `string`
+/// domain — i.e. every span is a `${string}` placeholder with no literal
+/// text. Such a template is mutually assignable with `string` (e.g.
+/// `` `${string}${string}` ``). A lone `${string}` collapses to `string`
+/// at construction, so this predicate is chiefly relevant for the
+/// multi-placeholder case.
+pub fn template_literal_spans_full_string_domain(
+    types: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    let Some(list_id) = template_literal_id(types, type_id) else {
+        return false;
+    };
+    let spans = types.template_list(list_id);
+    !spans.is_empty()
+        && spans
+            .iter()
+            .all(|span| matches!(span, TemplateSpan::Type(t) if *t == TypeId::STRING))
+}
+
 /// Extract the literal value if this is a literal type.
 #[inline]
 pub fn literal_value(types: &dyn TypeDatabase, type_id: TypeId) -> Option<LiteralValue> {

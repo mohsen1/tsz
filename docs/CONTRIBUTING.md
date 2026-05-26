@@ -90,7 +90,9 @@ Key questions for every semantic PR:
 
 - Run `cargo fmt` before committing (hooks auto-fix)
 - `cargo clippy` with `-D warnings` must pass in CI
-- Checker files should stay under ~2000 LOC
+- No hand-authored code, test, script, or generated-code shard may exceed 2000
+  physical lines. Split by concern before adding more code; do not add
+  file-size ratchet exceptions or per-file ceilings.
 - Prefer dedicated files per major concern
 - Use visitor helpers for type traversal — avoid repeated `TypeKey` matching
 

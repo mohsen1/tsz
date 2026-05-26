@@ -5,7 +5,12 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { formatReport, readActiveRuns, staleRunFindings } from "./check-stale-ci-runs.mjs";
+import {
+  cancelStaleRuns,
+  formatReport,
+  readActiveRuns,
+  staleRunFindings,
+} from "./check-stale-ci-runs.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -155,6 +160,49 @@ assert.match(report, /Stale CI Run Advisory/);
 assert.match(report, /\[#12345\]\(https:\/\/github.example\/runs\/12345\)/);
 assert.match(report, /no recent update/);
 
+{
+  const findings = staleRunFindings([run()], { now: NOW, staleMinutes: 45 });
+  const cancelResults = cancelStaleRuns(findings, "owner/repo", (args) => {
+    assert.deepEqual(args, [
+      "api",
+      "-X",
+      "POST",
+      "-H",
+      "Accept: application/vnd.github+json",
+      "repos/owner/repo/actions/runs/12345/cancel",
+    ]);
+    return { status: 0, stdout: "", stderr: "" };
+  });
+  assert.deepEqual(cancelResults, [{ id: 12345, status: "requested", detail: "" }]);
+
+  const cancelReport = formatReport(findings, {
+    cancelResults,
+    staleMinutes: 45,
+  });
+  assert.match(cancelReport, /Cancel \| Title/);
+  assert.match(cancelReport, /requested/);
+}
+
+{
+  const findings = staleRunFindings([run()], { now: NOW, staleMinutes: 45 });
+  const cancelResults = cancelStaleRuns(findings, "owner/repo", () => ({
+    status: 1,
+    stdout: "",
+    stderr: "HTTP 500: Failed to cancel workflow run",
+  }));
+  assert.deepEqual(cancelResults, [{
+    id: 12345,
+    status: "failed",
+    detail: "HTTP 500: Failed to cancel workflow run",
+  }]);
+
+  const cancelReport = formatReport(findings, {
+    cancelResults,
+    staleMinutes: 45,
+  });
+  assert.match(cancelReport, /failed: HTTP 500: Failed to cancel workflow run/);
+}
+
 const advisory = runFixture([run()], ["--stale-minutes", "45"]);
 assert.equal(advisory.status, 0, advisory.stderr);
 assert.match(advisory.stdout, /Found 1 queued or in-progress workflow run/);
@@ -169,3 +217,114 @@ const clean = runFixture([run({
 })], ["--stale-minutes", "45"]);
 assert.equal(clean.status, 0, clean.stderr);
 assert.match(clean.stdout, /No queued or in-progress workflow runs are stale/);
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-cancel-"));
+  try {
+    const fakeGh = path.join(dir, "gh");
+    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
+const endpoint = process.argv.find((arg) => arg.includes("/actions/runs/"));
+if (endpoint) {
+  process.exit(0);
+}
+console.error("unexpected gh args", process.argv.slice(2).join(" "));
+process.exit(1);
+`);
+    fs.chmodSync(fakeGh, 0o755);
+
+    const result = withFixture([run()], (fixture) => spawnSync(process.execPath, [
+      SCRIPT,
+      "--fixture",
+      fixture,
+      "--repository",
+      "owner/repo",
+      "--now",
+      NOW,
+      "--cancel-stale",
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ""}` },
+    }));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /requested/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-cancel-fail-"));
+  try {
+    const fakeGh = path.join(dir, "gh");
+    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
+console.error("HTTP 500: Failed to cancel workflow run");
+process.exit(1);
+`);
+    fs.chmodSync(fakeGh, 0o755);
+
+    const result = withFixture([run()], (fixture) => spawnSync(process.execPath, [
+      SCRIPT,
+      "--fixture",
+      fixture,
+      "--repository",
+      "owner/repo",
+      "--now",
+      NOW,
+      "--cancel-stale",
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ""}` },
+    }));
+
+    assert.equal(result.status, 1);
+    assert.match(result.stdout, /failed: HTTP 500: Failed to cancel workflow run/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-gh-"));
+  try {
+    const fakeGh = path.join(dir, "gh");
+    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
+const endpoint = process.argv.find((arg) => arg.includes("/actions/runs?")) || "";
+const status = /[?&]status=([^&]+)/.exec(endpoint)?.[1] || "in_progress";
+const run = {
+  id: status === "queued" ? 22222 : 11111,
+  status,
+  display_title: "large queued payload",
+  head_branch: "codex/large-payload",
+  html_url: "https://github.example/runs/large",
+  created_at: "2026-05-20T11:00:00Z",
+  run_started_at: status === "queued" ? null : "2026-05-20T11:01:00Z",
+  updated_at: "2026-05-20T11:05:00Z",
+  padding: "x".repeat(2 * 1024 * 1024),
+};
+console.log(JSON.stringify({ workflow_runs: [run] }));
+`);
+    fs.chmodSync(fakeGh, 0o755);
+
+    const result = spawnSync(process.execPath, [
+      SCRIPT,
+      "--repository",
+      "owner/repo",
+      "--max-runs",
+      "1",
+      "--now",
+      NOW,
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ""}` },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Found 1 queued or in-progress workflow run/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}

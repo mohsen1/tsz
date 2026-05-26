@@ -902,11 +902,14 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         .file_locals
         .get("Wrapped")
         .expect("Wrapped symbol");
+    let (wrapped_type, wrapped_params) = state
+        .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
+        .expect("safe local generic alias applications lower directly");
+    assert_ne!(wrapped_type, TypeId::UNKNOWN);
+    assert_ne!(wrapped_type, TypeId::ERROR);
     assert!(
-        state
-            .direct_source_file_type_alias_result(wrapped_sym, Some(1), true)
-            .is_none(),
-        "alias-dependent source aliases stay on the child-checker path",
+        wrapped_params.is_empty(),
+        "Wrapped should preserve no type parameters",
     );
 
     let (typeof_arena, typeof_binder, types) = parse_bound_source(

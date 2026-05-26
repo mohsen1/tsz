@@ -142,6 +142,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.block_scope_reserved_names.dedup();
     }
 
+    pub fn set_outer_rename_map(&mut self, map: rustc_hash::FxHashMap<String, String>) {
+        self.transformer.set_outer_rename_map(map);
+    }
+
     pub fn set_printer_options(&mut self, options: crate::emitter::PrinterOptions) {
         self.transformer.set_module_kind(options.module);
         self.transformer
@@ -434,6 +438,7 @@ impl<'a> ClassES5Emitter<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks,
+            deferred_static_result_temp: None,
             deferred_block_class_alias,
         };
         let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
@@ -546,6 +551,7 @@ impl<'a> ClassES5Emitter<'a> {
             weakmap_inits,
             leading_comment,
             deferred_static_blocks: Vec::new(),
+            deferred_static_result_temp: None,
             deferred_block_class_alias,
         };
         let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
@@ -564,6 +570,77 @@ impl<'a> ClassES5Emitter<'a> {
         }
 
         (output, static_strings)
+    }
+
+    /// Emit an ES5 class assignment whose deferred static blocks are folded
+    /// into the assignment expression:
+    ///
+    /// ```js
+    /// C = (_t = /** @class */ (function () { ... }()), staticBlock(), _t);
+    /// ```
+    pub fn emit_class_assignment_with_deferred_static_result(
+        &mut self,
+        class_idx: NodeIndex,
+        assignment_name: &str,
+        result_temp: &str,
+    ) -> Option<String> {
+        let ir = self
+            .transformer
+            .transform_class_to_ir_with_name(class_idx, Some(assignment_name))?;
+        let IRNode::ES5ClassIIFE {
+            name,
+            binding_name: _,
+            base_class,
+            super_param,
+            body,
+            weakmap_decls,
+            computed_prop_temp_decls,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_block_class_alias,
+        } = ir
+        else {
+            return None;
+        };
+
+        if deferred_static_blocks.is_empty() {
+            return None;
+        }
+
+        let mut output = String::new();
+        for decl_name in weakmap_decls
+            .into_iter()
+            .chain(computed_prop_temp_decls)
+            .chain(deferred_block_class_alias.iter().cloned())
+        {
+            if !output.is_empty() {
+                output.push('\n');
+            }
+            output.push_str("var ");
+            output.push_str(&decl_name);
+            output.push(';');
+        }
+
+        let assignment_ir = IRNode::ES5ClassAssignment {
+            name,
+            base_class,
+            super_param,
+            body,
+            computed_prop_temp_inits,
+            weakmap_inits,
+            leading_comment,
+            deferred_static_blocks,
+            deferred_static_result_temp: Some(result_temp.to_string().into()),
+            deferred_block_class_alias,
+        };
+        let assignment = self.emit_class_ir(class_idx, Some(assignment_name), assignment_ir);
+        if !output.is_empty() && !assignment.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&assignment);
+        Some(output)
     }
 
     fn emit_class_ir(

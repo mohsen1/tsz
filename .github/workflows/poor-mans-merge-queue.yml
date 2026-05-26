@@ -1,0 +1,95 @@
+name: Poor Man's Merge Queue
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review, converted_to_draft, closed]
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Report without posting statuses, pushing temp branches, or merging.
+        type: boolean
+        default: true
+      invalidate_open:
+        description: Mark all open PR heads as waiting for a fresh queue test.
+        type: boolean
+        default: false
+      max_prs:
+        description: Maximum open PRs to inspect.
+        type: number
+        default: 200
+      verbose:
+        description: Include skip reasons in the step summary.
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  checks: read
+  statuses: write
+  actions: read
+
+concurrency:
+  group: poor-mans-merge-queue-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  queue:
+    name: queue-one-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run queue
+        env:
+          GH_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN || github.token }}
+          HAS_AUTOMATION_TOKEN: ${{ secrets.TSZ_PR_AUTOMATION_TOKEN != '' }}
+          REPOSITORY: ${{ github.repository }}
+          DRY_RUN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          INVALIDATE_OPEN_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.invalidate_open || github.event_name == 'push' }}
+          MAX_PRS_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.max_prs || 200 }}
+          VERBOSE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.verbose || false }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          PR_EVENT_ACTION: ${{ github.event.action || '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          dry_run="${DRY_RUN_INPUT}"
+          if [[ "${dry_run}" != "true" && "${HAS_AUTOMATION_TOKEN}" != "true" ]]; then
+            echo "::warning::TSZ_PR_AUTOMATION_TOKEN is not configured; forcing dry-run because GITHUB_TOKEN pushes usually do not trigger branch CI."
+            dry_run=true
+          fi
+
+          args=(
+            --repository "${REPOSITORY}"
+            --base main
+            --max-prs "${MAX_PRS_INPUT}"
+          )
+          if [[ "${dry_run}" == "true" ]]; then
+            args+=(--dry-run)
+          fi
+          if [[ "${VERBOSE_INPUT}" == "true" ]]; then
+            args+=(--verbose)
+          fi
+
+          if [[ "${PR_EVENT_ACTION}" == "closed" && -n "${PR_NUMBER}" ]]; then
+            echo "Closed PR event only wakes the queue; no status invalidation needed."
+          elif [[ -n "${PR_NUMBER}" ]]; then
+            args=(--repository "${REPOSITORY}" --base main --invalidate-pr "${PR_NUMBER}")
+            if [[ "${dry_run}" == "true" ]]; then
+              args+=(--dry-run)
+            fi
+          elif [[ "${INVALIDATE_OPEN_INPUT}" == "true" ]]; then
+            args+=(--invalidate-open)
+          fi
+
+          node scripts/ci/poor-mans-merge-queue.mjs "${args[@]}" | tee -a "${GITHUB_STEP_SUMMARY}"

@@ -4,6 +4,7 @@
 mod compound;
 mod display_simplification;
 mod intrinsic;
+mod property_names;
 // `test_tracing` exercises `debug!` / `debug_span!` / `trace_span!`. The
 // workspace `tracing` dep filters those macros out at compile time when
 // `debug_assertions` is off (via the `release_max_level_warn` feature), so
@@ -16,6 +17,9 @@ pub mod test_tracing;
 #[cfg(test)]
 mod tests;
 pub mod tracing_helpers;
+
+pub use property_names::format_excess_property_name;
+pub(crate) use property_names::needs_property_name_quotes;
 
 use crate::construction::TypeDatabase;
 use crate::def::{DefId, DefinitionStore};
@@ -34,34 +38,6 @@ use std::sync::Arc;
 use tracing::trace;
 use tsz_binder::SymbolId;
 use tsz_common::interner::Atom;
-
-/// Returns `true` if a property name needs to be quoted in type display
-/// (i.e. it is not a valid JS identifier or numeric literal).
-fn needs_property_name_quotes(name: &str) -> bool {
-    if name.is_empty() {
-        return true;
-    }
-    // Computed property names wrapped in brackets (e.g. [Symbol.asyncIterator])
-    // are displayed as-is without quotes, matching tsc behavior.
-    if name.starts_with('[') && name.ends_with(']') {
-        return false;
-    }
-    // Numeric property names don't need quotes. This includes integer-only
-    // forms (`19230`) as well as canonical JS-numeric forms with decimals
-    // (`3.14`), exponents (`5.462437423415177e+244`), or signs (`-1`), all
-    // of which match `Number.prototype.toString()` round-trip and are
-    // displayed unquoted by tsc in object type literals.
-    if crate::utils::is_numeric_literal_name(name) {
-        return false;
-    }
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(first) if first.is_ascii_alphabetic() || first == '_' || first == '$' => {
-            !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '$')
-        }
-        _ => true,
-    }
-}
 
 /// Operation-local cache accounting for `TypeFormatter`.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -1601,7 +1577,9 @@ impl<'a> TypeFormatter<'a> {
                     // Class constructor types (callables with construct signatures
                     // linked to a class symbol) should display as "typeof ClassName"
                     // to match tsc behavior. The class instance type displays as
-                    // just "ClassName".
+                    // just "ClassName". A class merged with a same-named namespace
+                    // keeps its class symbol on the rebuilt static shape, so this
+                    // branch renders the merged static side as "typeof C" too.
                     if !shape.construct_signatures.is_empty()
                         && let Some(arena) = self.symbol_arena
                         && let Some(sym) = arena.get(sym_id)

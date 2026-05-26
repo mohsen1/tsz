@@ -1,6 +1,7 @@
 //! JSX children normalization: shape validation (TS2745/TS2746), spread child
 //! normalization, children prop type resolution, and multi-child assignability.
 
+use crate::query_boundaries::checkers::jsx as jsx_query;
 use crate::query_boundaries::common::{
     PropertyAccessResult, array_element_type, tuple_elements, unwrap_readonly,
 };
@@ -979,7 +980,7 @@ impl<'a> CheckerState<'a> {
                 .any(|&type_id| self.type_allows_multiple_children(type_id))
             || !element_types
                 .iter()
-                .any(|&type_id| self.format_type(type_id) == "ReactChild")
+                .any(|&type_id| self.jsx_type_has_declaration_name(type_id, "ReactChild"))
         {
             return false;
         }
@@ -1317,6 +1318,8 @@ impl<'a> CheckerState<'a> {
             Some(k) if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION
         ) && target_is_single_callable;
+        let actual_child_is_jsx_element_type =
+            child_is_jsx_element_like && self.type_matches_jsx_element_type(actual_child_type);
         let assignable = if use_source_elaboration {
             self.check_assignable_or_report_at_exact_anchor(
                 actual_child_type,
@@ -1332,12 +1335,25 @@ impl<'a> CheckerState<'a> {
                 diag_node,
             )
         };
-        if !assignable
-            && child_is_jsx_element_like
-            && self.format_type(actual_child_type) == "Element"
-        {
+        if !assignable && actual_child_is_jsx_element_type {
             self.rewrite_recent_jsx_element_source_display(diagnostics_before);
         }
+    }
+
+    fn jsx_type_has_declaration_name(&self, type_id: TypeId, expected: &str) -> bool {
+        jsx_query::type_has_declaration_name(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+            expected,
+        )
+    }
+
+    fn type_matches_jsx_element_type(&mut self, type_id: TypeId) -> bool {
+        let Some(jsx_element_type) = self.get_jsx_element_type_for_check() else {
+            return false;
+        };
+        self.resolve_lazy_type(type_id) == self.resolve_lazy_type(jsx_element_type)
     }
 
     fn rewrite_recent_jsx_element_source_display(&mut self, diagnostics_start: usize) {
@@ -1744,5 +1760,23 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn jsx_children_display_policy_avoids_formatted_type_name_decisions() {
+        let source = include_str!("children.rs");
+        for forbidden in [
+            ["format_type(type_id)", " == ", "\"ReactChild\""].join(""),
+            ["format_type(actual_child_type)", " == ", "\"Element\""].join(""),
+        ] {
+            assert!(
+                !source.contains(&forbidden),
+                "JSX children display policy must use TypeId/query facts, \
+                 not formatted type-name comparisons: found {forbidden}"
+            );
+        }
     }
 }

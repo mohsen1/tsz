@@ -192,7 +192,7 @@ pub mod computation {
         get_contextual_signature_cached_with_compat_checker,
         get_contextual_signature_for_arity_cached_with_compat_checker,
         get_contextual_signature_for_arity_with_compat_checker,
-        get_contextual_signature_with_compat_checker,
+        get_contextual_signature_with_compat_checker, overload_failure_return_type,
     };
 }
 
@@ -253,8 +253,8 @@ pub use diagnostics::SubtypeFailureReason;
 pub use diagnostics::builders::{
     DiagnosticBuilder, DiagnosticCollector, SourceLocation, SpannedDiagnosticBuilder,
 };
-pub use diagnostics::format::TypeFormatter;
 pub use diagnostics::format::tracing_helpers::{RelationDisplay, TypeDisplay};
+pub use diagnostics::format::{TypeFormatter, format_excess_property_name};
 pub use diagnostics::reduce::deep_reduce_for_display;
 pub use diagnostics::{
     DiagnosticArg, DiagnosticSeverity, PendingDiagnostic, PendingDiagnosticBuilder, SourceSpan,
@@ -303,6 +303,9 @@ mod bidirectional_tests;
 // index_signature_tests: loaded from relations/subtype/core.rs
 // infer_tests: loaded from inference/infer.rs
 // instantiate_tests: loaded from caches/instantiation_cache.rs
+#[cfg(test)]
+#[path = "../tests/infer_pattern_variadic_residual_tests.rs"]
+mod infer_pattern_variadic_residual_tests;
 #[cfg(test)]
 #[path = "../tests/integration_tests.rs"]
 mod integration_tests;
@@ -382,6 +385,9 @@ mod computed_prop_name_tests;
 #[path = "../tests/conditional_comprehensive_tests.rs"]
 mod conditional_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_infer_callable_arity_tests.rs"]
+mod conditional_infer_callable_arity_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_variance_tests.rs"]
 mod conditional_keyof_variance_tests;
 #[cfg(test)]
@@ -408,6 +414,9 @@ mod mapped_architecture_tests;
 #[cfg(test)]
 #[path = "../tests/mapped_comprehensive_tests.rs"]
 mod mapped_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/mapped_empty_keyspace_subtype_tests.rs"]
+mod mapped_empty_keyspace_subtype_tests;
 #[cfg(test)]
 #[path = "../tests/matching_tests.rs"]
 mod matching_tests;

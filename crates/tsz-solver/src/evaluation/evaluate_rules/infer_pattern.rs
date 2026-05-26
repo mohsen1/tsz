@@ -361,64 +361,134 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Collect the names of `infer` type variables that appear in contravariant
-    /// positions (function/callable parameter types) within `pattern`.
+    /// Collect the names of `infer` type variables that appear in any
+    /// contravariant position within `pattern`.
     ///
-    /// Used when matching a union source against a pattern: infer variables in
-    /// covariant positions merge via union, contravariant via intersection.
-    fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
+    /// A position is contravariant when it is reached through an odd number of
+    /// function/callable parameter positions (parameters flip variance, return
+    /// types and object/array/tuple members preserve it). When the same `infer`
+    /// name receives candidates from structurally separate positions, names in
+    /// this set merge their candidates via intersection; all others via union.
+    /// This mirrors tsc's `inferTypes`, where a type variable with any
+    /// contravariant occurrence produces an intersection of its candidates.
+    pub(crate) fn collect_contravariant_infer_names(&self, pattern: TypeId) -> FxHashSet<Atom> {
         let mut result = FxHashSet::default();
-        self.collect_infer_names_in_params(pattern, &mut result);
+        let mut visited = FxHashSet::default();
+        self.collect_variance_infer_names(pattern, false, &mut result, &mut visited);
         result
     }
 
-    /// Recursively find `Infer` nodes inside function/callable parameter types.
-    fn collect_infer_names_in_params(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
-        match self.interner().lookup(ty) {
-            Some(TypeData::Function(fn_id)) => {
-                let shape = self.interner().function_shape(fn_id);
-                for param in &shape.params {
-                    self.collect_all_infer_names(param.type_id, out);
-                }
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                let shape = self.interner().callable_shape(callable_id);
-                for sig in &shape.call_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
-                    }
-                }
-                for sig in &shape.construct_signatures {
-                    for param in &sig.params {
-                        self.collect_all_infer_names(param.type_id, out);
-                    }
-                }
-            }
-            _ => {}
+    /// Walk `ty`, tracking whether the current position is contravariant, and
+    /// record the names of `infer` variables found in a contravariant position.
+    /// Walk `ty`, tracking whether the current position is contravariant, and
+    /// record the names of `infer` variables found in a contravariant position.
+    fn collect_variance_infer_names(
+        &self,
+        ty: TypeId,
+        contravariant: bool,
+        out: &mut FxHashSet<Atom>,
+        visited: &mut FxHashSet<(TypeId, bool)>,
+    ) {
+        if ty.is_intrinsic() || !visited.insert((ty, contravariant)) {
+            return;
         }
-    }
-
-    /// Collect all `Infer` names reachable from `ty` (any variance).
-    fn collect_all_infer_names(&self, ty: TypeId, out: &mut FxHashSet<Atom>) {
         match self.interner().lookup(ty) {
-            Some(TypeData::Infer(info)) => {
+            Some(TypeData::Infer(info)) if contravariant => {
                 out.insert(info.name);
             }
             Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
                 for &m in self.interner().type_list(members).iter() {
-                    self.collect_all_infer_names(m, out);
+                    self.collect_variance_infer_names(m, contravariant, out, visited);
                 }
             }
             Some(TypeData::Array(elem)) => {
-                self.collect_all_infer_names(elem, out);
+                self.collect_variance_infer_names(elem, contravariant, out, visited);
+            }
+            Some(TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner)) => {
+                self.collect_variance_infer_names(inner, contravariant, out, visited);
             }
             Some(TypeData::Tuple(elements)) => {
                 for elem in self.interner().tuple_list(elements).iter() {
-                    self.collect_all_infer_names(elem.type_id, out);
+                    self.collect_variance_infer_names(elem.type_id, contravariant, out, visited);
+                }
+            }
+            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+                let shape = self.interner().object_shape(shape_id);
+                for prop in &shape.properties {
+                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
+                }
+                for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+                    .into_iter()
+                    .flatten()
+                {
+                    self.collect_variance_infer_names(
+                        index.value_type,
+                        contravariant,
+                        out,
+                        visited,
+                    );
+                }
+            }
+            Some(TypeData::Function(fn_id)) => {
+                let shape = self.interner().function_shape(fn_id);
+                for param in &shape.params {
+                    self.collect_variance_infer_names(param.type_id, !contravariant, out, visited);
+                }
+                self.collect_variance_infer_names(shape.return_type, contravariant, out, visited);
+            }
+            Some(TypeData::Callable(callable_id)) => {
+                let shape = self.interner().callable_shape(callable_id);
+                for sig in shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                {
+                    for param in &sig.params {
+                        self.collect_variance_infer_names(
+                            param.type_id,
+                            !contravariant,
+                            out,
+                            visited,
+                        );
+                    }
+                    self.collect_variance_infer_names(sig.return_type, contravariant, out, visited);
+                }
+                for prop in &shape.properties {
+                    self.collect_variance_infer_names(prop.type_id, contravariant, out, visited);
                 }
             }
             _ => {}
         }
+    }
+
+    /// Fill `default_ty` for every infer parameter in `pattern` that does not
+    /// already have a candidate in `bindings`. Unlike `bind_infer_defaults`,
+    /// this only fills gaps: it never overwrites or rejects an already-bound
+    /// name. Used when a pattern position has no corresponding source position
+    /// (e.g. the source callable supplies fewer parameters than the inference
+    /// pattern requires), where tsc leaves the unmatched `infer` slots at their
+    /// default of `unknown`.
+    pub(crate) fn fill_unbound_infer_defaults(
+        &self,
+        pattern: TypeId,
+        default_ty: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+    ) {
+        // Reuse the comprehensive `for_each_infer` walk so coverage matches
+        // `bind_infer_defaults` exactly (nested object/callable/function
+        // members and deferred shells like `Application`/`Conditional`/
+        // `Mapped`/`IndexAccess`/`KeyOf`/template/string-intrinsic/enum). Gap
+        // semantics: fill `default_ty` only where a candidate is not already
+        // bound, so a matched position always wins, and never short-circuit.
+        let mut visited = FxHashSet::default();
+        self.for_each_infer(
+            pattern,
+            &mut |info| {
+                bindings.entry(info.name).or_insert(default_ty);
+                true
+            },
+            &mut visited,
+        );
     }
 
     /// Bind an inferred type to an infer parameter.
@@ -460,15 +530,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         checker: &mut SubtypeChecker<'_, R>,
     ) -> bool {
         let mut visited = FxHashSet::default();
-        self.bind_infer_defaults_inner(pattern, inferred, bindings, checker, &mut visited)
+        self.for_each_infer(
+            pattern,
+            &mut |info| self.bind_infer(info, inferred, bindings, checker),
+            &mut visited,
+        )
     }
 
-    fn bind_infer_defaults_inner(
+    /// Comprehensive, variance-agnostic walk over every `infer` position in a
+    /// pattern (object/callable/function members, deferred shells like
+    /// `Application`/`Conditional`/`Mapped`/`IndexAccess`/`KeyOf`/template/
+    /// string-intrinsic/enum, type-parameter constraints/defaults, etc.).
+    /// `f` is invoked at each `infer` leaf; returning `false` short-circuits the
+    /// walk. This is the single traversal shared by `bind_infer_defaults`
+    /// (binds each leaf with constraint checking) and `fill_unbound_infer_defaults`
+    /// (gap-fills `unknown` for leaves with no candidate yet), so their shape
+    /// coverage can never drift apart.
+    fn for_each_infer(
         &self,
         pattern: TypeId,
-        inferred: TypeId,
-        bindings: &mut FxHashMap<Atom, TypeId>,
-        checker: &mut SubtypeChecker<'_, R>,
+        f: &mut dyn FnMut(&TypeParamInfo) -> bool,
         visited: &mut FxHashSet<TypeId>,
     ) -> bool {
         if !visited.insert(pattern) {
@@ -480,20 +561,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         };
 
         match key {
-            TypeData::Infer(info) => self.bind_infer(&info, inferred, bindings, checker),
-            TypeData::Array(elem) => {
-                self.bind_infer_defaults_inner(elem, inferred, bindings, checker, visited)
-            }
+            TypeData::Infer(info) => f(&info),
+            TypeData::Array(elem) => self.for_each_infer(elem, f, visited),
             TypeData::Tuple(elements) => {
                 let elements = self.interner().tuple_list(elements);
                 for element in elements.iter() {
-                    if !self.bind_infer_defaults_inner(
-                        element.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(element.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -502,8 +575,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Union(members) | TypeData::Intersection(members) => {
                 let members = self.interner().type_list(members);
                 for &member in members.iter() {
-                    if !self.bind_infer_defaults_inner(member, inferred, bindings, checker, visited)
-                    {
+                    if !self.for_each_infer(member, f, visited) {
                         return false;
                     }
                 }
@@ -512,13 +584,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Object(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -527,47 +593,19 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::ObjectWithIndex(shape_id) => {
                 let shape = self.interner().object_shape(shape_id);
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
                 if let Some(index) = &shape.string_index
-                    && (!self.bind_infer_defaults_inner(
-                        index.key_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) || !self.bind_infer_defaults_inner(
-                        index.value_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ))
+                    && (!self.for_each_infer(index.key_type, f, visited)
+                        || !self.for_each_infer(index.value_type, f, visited))
                 {
                     return false;
                 }
                 if let Some(index) = &shape.number_index
-                    && (!self.bind_infer_defaults_inner(
-                        index.key_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) || !self.bind_infer_defaults_inner(
-                        index.value_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ))
+                    && (!self.for_each_infer(index.key_type, f, visited)
+                        || !self.for_each_infer(index.value_type, f, visited))
                 {
                     return false;
                 }
@@ -576,98 +614,51 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Function(shape_id) => {
                 let shape = self.interner().function_shape(shape_id);
                 for param in &shape.params {
-                    if !self.bind_infer_defaults_inner(
-                        param.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(param.type_id, f, visited) {
                         return false;
                     }
                 }
                 if let Some(this_type) = shape.this_type
-                    && !self
-                        .bind_infer_defaults_inner(this_type, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(this_type, f, visited)
                 {
                     return false;
                 }
-                self.bind_infer_defaults_inner(
-                    shape.return_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(shape.return_type, f, visited)
             }
             TypeData::Callable(shape_id) => {
                 let shape = self.interner().callable_shape(shape_id);
                 for sig in &shape.call_signatures {
                     for param in &sig.params {
-                        if !self.bind_infer_defaults_inner(
-                            param.type_id,
-                            inferred,
-                            bindings,
-                            checker,
-                            visited,
-                        ) {
+                        if !self.for_each_infer(param.type_id, f, visited) {
                             return false;
                         }
                     }
                     if let Some(this_type) = sig.this_type
-                        && !self.bind_infer_defaults_inner(
-                            this_type, inferred, bindings, checker, visited,
-                        )
+                        && !self.for_each_infer(this_type, f, visited)
                     {
                         return false;
                     }
-                    if !self.bind_infer_defaults_inner(
-                        sig.return_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(sig.return_type, f, visited) {
                         return false;
                     }
                 }
                 for sig in &shape.construct_signatures {
                     for param in &sig.params {
-                        if !self.bind_infer_defaults_inner(
-                            param.type_id,
-                            inferred,
-                            bindings,
-                            checker,
-                            visited,
-                        ) {
+                        if !self.for_each_infer(param.type_id, f, visited) {
                             return false;
                         }
                     }
                     if let Some(this_type) = sig.this_type
-                        && !self.bind_infer_defaults_inner(
-                            this_type, inferred, bindings, checker, visited,
-                        )
+                        && !self.for_each_infer(this_type, f, visited)
                     {
                         return false;
                     }
-                    if !self.bind_infer_defaults_inner(
-                        sig.return_type,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(sig.return_type, f, visited) {
                         return false;
                     }
                 }
                 for prop in &shape.properties {
-                    if !self.bind_infer_defaults_inner(
-                        prop.type_id,
-                        inferred,
-                        bindings,
-                        checker,
-                        visited,
-                    ) {
+                    if !self.for_each_infer(prop.type_id, f, visited) {
                         return false;
                     }
                 }
@@ -675,14 +666,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::TypeParameter(info) => {
                 if let Some(constraint) = info.constraint
-                    && !self
-                        .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(constraint, f, visited)
                 {
                     return false;
                 }
                 if let Some(default) = info.default
-                    && !self
-                        .bind_infer_defaults_inner(default, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(default, f, visited)
                 {
                     return false;
                 }
@@ -690,11 +679,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Application(app_id) => {
                 let app = self.interner().type_application(app_id);
-                if !self.bind_infer_defaults_inner(app.base, inferred, bindings, checker, visited) {
+                if !self.for_each_infer(app.base, f, visited) {
                     return false;
                 }
                 for &arg in &app.args {
-                    if !self.bind_infer_defaults_inner(arg, inferred, bindings, checker, visited) {
+                    if !self.for_each_infer(arg, f, visited) {
                         return false;
                     }
                 }
@@ -702,94 +691,52 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             TypeData::Conditional(cond_id) => {
                 let cond = self.interner().get_conditional(cond_id);
-                self.bind_infer_defaults_inner(
-                    cond.check_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.extends_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.true_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) && self.bind_infer_defaults_inner(
-                    cond.false_type,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(cond.check_type, f, visited)
+                    && self.for_each_infer(cond.extends_type, f, visited)
+                    && self.for_each_infer(cond.true_type, f, visited)
+                    && self.for_each_infer(cond.false_type, f, visited)
             }
             TypeData::Mapped(mapped_id) => {
                 let mapped = self.interner().get_mapped(mapped_id);
                 if let Some(constraint) = mapped.type_param.constraint
-                    && !self
-                        .bind_infer_defaults_inner(constraint, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(constraint, f, visited)
                 {
                     return false;
                 }
                 if let Some(default) = mapped.type_param.default
-                    && !self
-                        .bind_infer_defaults_inner(default, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(default, f, visited)
                 {
                     return false;
                 }
-                if !self.bind_infer_defaults_inner(
-                    mapped.constraint,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                ) {
+                if !self.for_each_infer(mapped.constraint, f, visited) {
                     return false;
                 }
                 if let Some(name_type) = mapped.name_type
-                    && !self
-                        .bind_infer_defaults_inner(name_type, inferred, bindings, checker, visited)
+                    && !self.for_each_infer(name_type, f, visited)
                 {
                     return false;
                 }
-                self.bind_infer_defaults_inner(
-                    mapped.template,
-                    inferred,
-                    bindings,
-                    checker,
-                    visited,
-                )
+                self.for_each_infer(mapped.template, f, visited)
             }
             TypeData::IndexAccess(obj, idx) => {
-                self.bind_infer_defaults_inner(obj, inferred, bindings, checker, visited)
-                    && self.bind_infer_defaults_inner(idx, inferred, bindings, checker, visited)
+                self.for_each_infer(obj, f, visited) && self.for_each_infer(idx, f, visited)
             }
             TypeData::KeyOf(inner) | TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
-                self.bind_infer_defaults_inner(inner, inferred, bindings, checker, visited)
+                self.for_each_infer(inner, f, visited)
             }
             TypeData::TemplateLiteral(spans) => {
                 let spans = self.interner().template_list(spans);
                 for span in spans.iter() {
                     if let TemplateSpan::Type(inner) = span
-                        && !self
-                            .bind_infer_defaults_inner(*inner, inferred, bindings, checker, visited)
+                        && !self.for_each_infer(*inner, f, visited)
                     {
                         return false;
                     }
                 }
                 true
             }
-            TypeData::StringIntrinsic { type_arg, .. } => {
-                self.bind_infer_defaults_inner(type_arg, inferred, bindings, checker, visited)
-            }
-            TypeData::Enum(_def_id, member_type) => {
-                self.bind_infer_defaults_inner(member_type, inferred, bindings, checker, visited)
-            }
+            TypeData::StringIntrinsic { type_arg, .. } => self.for_each_infer(type_arg, f, visited),
+            TypeData::Enum(_def_id, member_type) => self.for_each_infer(member_type, f, visited),
             TypeData::Intrinsic(_)
             | TypeData::Literal(_)
             | TypeData::Lazy(_)
@@ -869,6 +816,163 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         true
     }
 
+    /// Match the residual source slice of a tuple pattern against the pattern's
+    /// rest slot. The residual is what remains after positional prefix/suffix
+    /// matching, and may include source rest elements (variadic tuple tails).
+    ///
+    /// Dispatches on the pattern rest's shape:
+    /// - `Array(P)` (and `ReadonlyType(Array(P))`): each residual element's
+    ///   value type must satisfy `P`. Source spread elements contribute their
+    ///   inner element type (e.g., `...number[]` contributes `number` against
+    ///   `any`).
+    /// - Anything else (typically `infer R`, a type-parameter spread, or a
+    ///   structural tuple pattern): reify the residual as a tuple-or-array type
+    ///   preserving `rest`/`optional` flags, then recurse via
+    ///   `match_infer_pattern`.
+    fn match_residual_against_pattern_rest(
+        &self,
+        residual: &[TupleElement],
+        pattern_rest_type: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        if let Some(array_elem_type) = self.unwrap_array_element_for_residual(pattern_rest_type) {
+            return self.match_residual_against_array_element(
+                residual,
+                array_elem_type,
+                bindings,
+                visited,
+                checker,
+            );
+        }
+
+        // A residual of exactly one non-optional rest element is structurally
+        // identical to its inner spread type: tsc treats `[...T[]]` as `T[]`,
+        // `[...[A, B]]` as `[A, B]`, and `[...T]` (T extending an array) as
+        // `T`. Returning the inner type directly keeps `infer R` bindings in
+        // the canonical form tsc would produce, so identity probes such as
+        // `Equal<RestOf<...>, T[]>` resolve to `true`.
+        let residual_type = if residual.len() == 1 && residual[0].rest && !residual[0].optional {
+            residual[0].type_id
+        } else {
+            self.interner().tuple(residual.to_vec())
+        };
+        self.match_infer_pattern(residual_type, pattern_rest_type, bindings, visited, checker)
+    }
+
+    /// Unwrap `Array(E)` (possibly under one `ReadonlyType` layer) and return
+    /// the element type `E`. Returns `None` for non-array shapes such as
+    /// `infer R` or a structural tuple pattern.
+    fn unwrap_array_element_for_residual(&self, ty: TypeId) -> Option<TypeId> {
+        match self.interner().lookup(ty)? {
+            TypeData::Array(elem) => Some(elem),
+            TypeData::ReadonlyType(inner) => {
+                if let Some(TypeData::Array(elem)) = self.interner().lookup(inner) {
+                    Some(elem)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Match each residual source element's value type against `target_elem`.
+    ///
+    /// Source spread elements (`rest: true`) contribute their inner element
+    /// type — `Array(SE)` contributes `SE`; nested tuple spreads recurse so
+    /// every flattened inner element is checked; other spread types
+    /// (e.g., a type-parameter spread `...T`) fall back to matching the spread
+    /// type itself against the array element pattern.
+    fn match_residual_against_array_element(
+        &self,
+        residual: &[TupleElement],
+        target_elem: TypeId,
+        bindings: &mut FxHashMap<Atom, TypeId>,
+        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        checker: &mut SubtypeChecker<'_, R>,
+    ) -> bool {
+        for source_elem in residual {
+            if source_elem.rest {
+                // Flatten nested tuple spreads (`...[A, B]`) so each inner slot
+                // is checked individually against `target_elem`.
+                if let Some(TypeData::Tuple(inner_id)) = self.interner().lookup(source_elem.type_id)
+                {
+                    let inner = self.interner().tuple_list(inner_id);
+                    if !self.match_residual_against_array_element(
+                        &inner,
+                        target_elem,
+                        bindings,
+                        visited,
+                        checker,
+                    ) {
+                        return false;
+                    }
+                    continue;
+                }
+                // Array-shaped spread (`...E[]` / `...readonly E[]`): match
+                // the element type `E` against `target_elem`. Other shapes
+                // (e.g., a type-parameter spread `...T`) fall through and
+                // match the spread type itself.
+                let spread_inner = self
+                    .unwrap_array_element_for_residual(source_elem.type_id)
+                    .unwrap_or(source_elem.type_id);
+                if !self.match_infer_pattern(spread_inner, target_elem, bindings, visited, checker)
+                {
+                    return false;
+                }
+            } else {
+                let source_type = if source_elem.optional {
+                    self.interner()
+                        .union2(source_elem.type_id, TypeId::UNDEFINED)
+                } else {
+                    source_elem.type_id
+                };
+                if !self.match_infer_pattern(source_type, target_elem, bindings, visited, checker) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    /// Merge the candidate bindings produced by one structural position
+    /// (`local`) into the accumulator (`merged`), relative to the pre-existing
+    /// bindings (`base`).
+    ///
+    /// Names already present in `base` are left untouched (they were resolved by
+    /// an outer context). For a name that gains a second, distinct candidate, the
+    /// merge intersects when the name occurs in any contravariant position of the
+    /// surrounding pattern (`contravariant_infers`) and unions otherwise.
+    pub(crate) fn merge_infer_candidates(
+        &self,
+        base: &FxHashMap<Atom, TypeId>,
+        merged: &mut FxHashMap<Atom, TypeId>,
+        local: FxHashMap<Atom, TypeId>,
+        contravariant_infers: &FxHashSet<Atom>,
+    ) {
+        for (name, ty) in local {
+            if base.contains_key(&name) {
+                continue;
+            }
+            match merged.get_mut(&name) {
+                Some(existing) => {
+                    if *existing != ty {
+                        *existing = if contravariant_infers.contains(&name) {
+                            self.interner().intersection2(*existing, ty)
+                        } else {
+                            self.interner().union2(*existing, ty)
+                        };
+                    }
+                }
+                None => {
+                    merged.insert(name, ty);
+                }
+            }
+        }
+    }
+
     /// Match tuple elements against a pattern, extracting infer bindings.
     pub(crate) fn match_tuple_elements(
         &self,
@@ -912,6 +1016,10 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if source_elem.rest || pattern_elem.rest {
                     return false;
                 }
+                // Optional source cannot fill a required pattern slot.
+                if source_elem.optional && !pattern_elem.optional {
+                    return false;
+                }
                 let source_type = if source_elem.optional {
                     self.interner()
                         .union2(source_elem.type_id, TypeId::UNDEFINED)
@@ -937,6 +1045,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if source_elem.rest || pattern_elem.rest {
                     return false;
                 }
+                if source_elem.optional && !pattern_elem.optional {
+                    return false;
+                }
                 let source_type = if source_elem.optional {
                     self.interner()
                         .union2(source_elem.type_id, TypeId::UNDEFINED)
@@ -954,50 +1065,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
             }
 
-            if let Some(TypeData::Array(rest_elem_type)) =
-                self.interner().lookup(pattern_elems[rest_index].type_id)
-            {
-                for source_elem in &source_elems[prefix_len..rest_source_end] {
-                    if source_elem.rest {
-                        return false;
-                    }
-                    let source_type = if source_elem.optional {
-                        self.interner()
-                            .union2(source_elem.type_id, TypeId::UNDEFINED)
-                    } else {
-                        source_elem.type_id
-                    };
-                    if !self.match_infer_pattern(
-                        source_type,
-                        rest_elem_type,
-                        bindings,
-                        visited,
-                        checker,
-                    ) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-
-            // Collect middle elements (between prefix and suffix) into the rest tuple
-            let mut rest_elems = Vec::new();
-            for source_elem in &source_elems[prefix_len..rest_source_end] {
-                if source_elem.rest {
-                    return false;
-                }
-                rest_elems.push(TupleElement {
-                    type_id: source_elem.type_id,
-                    name: source_elem.name,
-                    optional: source_elem.optional,
-                    rest: false,
-                });
-            }
-
-            let rest_tuple = self.interner().tuple(rest_elems);
-            return self.match_infer_pattern(
-                rest_tuple,
-                pattern_elems[rest_index].type_id,
+            // Match the residual source slice against the pattern's rest slot.
+            // The residual may itself contain rest elements (when the source is
+            // a variadic tuple like `[a, ...b[]]`), so the helpers preserve
+            // each source element's `rest`/`optional` flags and structurally
+            // simplify a single-rest-non-optional residual (`[...X[]]` -> `X[]`)
+            // so that `infer R` binds to the array form tsc treats as identical.
+            let residual = &source_elems[prefix_len..rest_source_end];
+            let pattern_rest_type = pattern_elems[rest_index].type_id;
+            return self.match_residual_against_pattern_rest(
+                residual,
+                pattern_rest_type,
                 bindings,
                 visited,
                 checker,
@@ -1019,6 +1097,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let source_elem = &source_elems[i];
             let pattern_elem = &pattern_elems[i];
             if source_elem.rest || pattern_elem.rest {
+                return false;
+            }
+            if source_elem.optional && !pattern_elem.optional {
                 return false;
             }
             let source_type = if source_elem.optional {
@@ -1245,24 +1326,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !self.match_infer_pattern(member, pattern, &mut local, visited, checker) {
                     return false;
                 }
-
-                for (name, ty) in local {
-                    if base.contains_key(&name) {
-                        continue;
-                    }
-
-                    if let Some(existing) = merged.get_mut(&name) {
-                        if *existing != ty {
-                            if contravariant_infers.contains(&name) {
-                                *existing = self.interner().intersection2(*existing, ty);
-                            } else {
-                                *existing = self.interner().union2(*existing, ty);
-                            }
-                        }
-                    } else {
-                        merged.insert(name, ty);
-                    }
-                }
+                self.merge_infer_candidates(&base, &mut merged, local, &contravariant_infers);
             }
 
             *bindings = merged;
@@ -1294,6 +1358,23 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             TypeData::Array(pattern_elem) => match self.interner().lookup(source) {
                 Some(TypeData::Array(source_elem)) => {
                     self.match_infer_pattern(source_elem, pattern_elem, bindings, visited, checker)
+                }
+                Some(TypeData::Tuple(source_elems)) => {
+                    // A tuple source matched against an array pattern `X[]` is
+                    // a structural projection: every fixed element's type and
+                    // every spread element's inner element type must satisfy
+                    // `X`. Mirrors the residual matcher used by
+                    // `match_tuple_elements`, so a tuple like
+                    // `[boolean, ...number[]]` produced by residual reification
+                    // can still pattern-match against `any[]`.
+                    let source_elems = self.interner().tuple_list(source_elems);
+                    self.match_residual_against_array_element(
+                        &source_elems,
+                        pattern_elem,
+                        bindings,
+                        visited,
+                        checker,
+                    )
                 }
                 Some(TypeData::Union(members)) => {
                     let members = self.interner().type_list(members);

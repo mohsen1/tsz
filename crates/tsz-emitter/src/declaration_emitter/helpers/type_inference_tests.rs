@@ -152,6 +152,60 @@ fn types_versions_self_back_reference_detection_requires_package_root_reexport()
 }
 
 #[test]
+fn types_versions_mapped_index_path_prints_package_root_specifier() {
+    let temp_id = NEXT_TEMP_DIR.fetch_add(1, Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!(
+        "tsz-types-versions-public-specifier-{}-{}",
+        std::process::id(),
+        temp_id
+    ));
+    let package_root = root.join("node_modules").join("ext");
+    let types_dir = package_root.join("ts3.1");
+    std::fs::create_dir_all(&types_dir).expect("create typesVersions dir");
+    std::fs::write(
+        package_root.join("package.json"),
+        r#"{
+            "name": "ext",
+            "version": "1.0.0",
+            "types": "index",
+            "typesVersions": {
+                ">=3.1.0-0": { "index": ["ts3.1/index"] }
+            }
+        }"#,
+    )
+    .expect("write package json");
+    std::fs::write(types_dir.join("index.d.ts"), r#"export * from "../other";"#)
+        .expect("write mapped declaration");
+    std::fs::write(package_root.join("other.d.ts"), r#"export interface A2 {}"#)
+        .expect("write reexport target declaration");
+
+    let parser = ParserState::new("main.ts".to_string(), String::new());
+    let emitter = DeclarationEmitter::new(&parser.arena);
+    let current_path = root.join("main.ts");
+    let mapped_path = types_dir.join("index.d.ts");
+
+    assert_eq!(
+        emitter.package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf-8"),
+            mapped_path.to_str().expect("mapped path utf-8"),
+        ),
+        Some("ext".to_string())
+    );
+    assert_eq!(
+        emitter.package_specifier_for_node_modules_path(
+            current_path.to_str().expect("current path utf-8"),
+            package_root
+                .join("other.d.ts")
+                .to_str()
+                .expect("other path utf-8"),
+        ),
+        Some("ext".to_string())
+    );
+
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn empty_object_union_arm_expands_missing_quoted_property() {
     let mut types = vec!["{\n    \"a-b\": string;\n}".to_string(), "{}".to_string()];
 
@@ -225,7 +279,10 @@ fn optional_method_triggers_object_union_sibling_expansion() {
 }
 
 #[test]
-fn object_union_arms_without_methods_are_not_expanded() {
+fn object_union_arms_without_methods_are_expanded() {
+    // tsc normalizes object literals in a union upon widening regardless of
+    // whether any arm contains a method: the property-only arm gains
+    // `b?: undefined`.
     let mut types = vec![
         "{\n    a: number;\n}".to_string(),
         "{\n    a: number;\n    b: string;\n}".to_string(),
@@ -236,8 +293,53 @@ fn object_union_arms_without_methods_are_not_expanded() {
     assert_eq!(
         types,
         vec![
-            "{\n    a: number;\n}".to_string(),
+            "{\n    a: number;\n    b?: undefined;\n}".to_string(),
             "{\n    a: number;\n    b: string;\n}".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn object_union_three_property_only_arms_cross_normalize() {
+    // Three property-only arms with differing keys each gain `?: undefined`
+    // for every sibling key they omit (the widened source-array union shape).
+    let mut types = vec![
+        "{\n    x: number;\n}".to_string(),
+        "{\n    x: number;\n    y: number;\n}".to_string(),
+        "{\n    x: number;\n    err: boolean;\n}".to_string(),
+    ];
+
+    DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+    assert_eq!(
+        types,
+        vec![
+            "{\n    x: number;\n    y?: undefined;\n    err?: undefined;\n}".to_string(),
+            "{\n    x: number;\n    y: number;\n    err?: undefined;\n}".to_string(),
+            "{\n    x: number;\n    err: boolean;\n    y?: undefined;\n}".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
+    // `[{ a: 1, b: 2 }, { a: "abc" }, {}]`-shaped union: the empty arm gains
+    // every key as optional-undefined, and the partial arms gain the keys
+    // they omit. Verifies the empty-arm path no longer skips the other arms.
+    let mut types = vec![
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+        "{\n    a: string;\n}".to_string(),
+        "{}".to_string(),
+    ];
+
+    DeclarationEmitter::expand_object_union_arms_from_sibling_properties(&mut types);
+
+    assert_eq!(
+        types,
+        vec![
+            "{\n    a: number;\n    b: number;\n}".to_string(),
+            "{\n    a: string;\n    b?: undefined;\n}".to_string(),
+            "{\n    a?: undefined;\n    b?: undefined;\n}".to_string(),
         ]
     );
 }

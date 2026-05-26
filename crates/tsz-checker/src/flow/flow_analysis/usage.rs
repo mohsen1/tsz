@@ -253,8 +253,22 @@ impl<'a> CheckerState<'a> {
         let Some(init_node) = self.ctx.arena.get(var_decl.initializer) else {
             return false;
         };
-        init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            || init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+        match init_node.kind {
+            k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => self
+                .ctx
+                .arena
+                .get_literal_expr(init_node)
+                .is_none_or(|literal| {
+                    literal.elements.nodes.iter().all(|element| {
+                        self.ctx
+                            .arena
+                            .get(*element)
+                            .is_none_or(|node| self.ctx.arena.get_spread(node).is_none())
+                    })
+                }),
+            k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => true,
+            _ => false,
+        }
     }
 
     fn is_control_flow_typed_any_symbol(&self, sym_id: SymbolId) -> bool {

@@ -304,6 +304,7 @@ fn test_ir_awaiter_call() {
         hoisted_var_groups: vec![],
         promise_constructor: None,
         multiline_callback: false,
+        directives: vec![],
         generator_body: Box::new(IRNode::GeneratorBody {
             has_await: false,
             cases: vec![IRGeneratorCase {
@@ -498,9 +499,11 @@ fn test_ir_object_literal_builder_default_source_range() {
         IRNode::ObjectLiteral {
             properties,
             source_range,
+            extra_indent,
         } => {
             assert_eq!(properties.len(), 1);
             assert!(source_range.is_none());
+            assert_eq!(extra_indent, 0);
         }
         _ => panic!("Expected ObjectLiteral"),
     }
@@ -514,9 +517,11 @@ fn test_ir_empty_object_is_empty() {
         IRNode::ObjectLiteral {
             properties,
             source_range,
+            extra_indent,
         } => {
             assert!(properties.is_empty());
             assert!(source_range.is_none());
+            assert_eq!(extra_indent, 0);
         }
         _ => panic!("Expected empty ObjectLiteral"),
     }

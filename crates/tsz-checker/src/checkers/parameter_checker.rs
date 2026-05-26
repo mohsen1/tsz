@@ -775,13 +775,22 @@ impl<'a> CheckerState<'a> {
 
             // If parameter has an initializer in an ambient function, emit TS2371
             // TSC anchors the error at the parameter name, not the initializer.
+            let name = param.name;
             if param.initializer.is_some() {
                 self.error_at_node(
-                    param.name,
+                    name,
                     "A parameter initializer is only allowed in a function or constructor implementation.",
                     2371, // TS2371
                 );
             }
+
+            // Defaults nested inside a destructuring binding pattern
+            // (`{ mult = 1 }`, `[a = 1]`, nested) are equally illegal in a
+            // body-less signature; recurse so they are reported too.
+            crate::types_domain::type_node_helpers::check_binding_pattern_initializers(
+                &mut self.ctx,
+                name,
+            );
         }
     }
 
@@ -1291,8 +1300,9 @@ impl<'a> CheckerState<'a> {
                     let any_array = factory.array(TypeId::ANY);
                     let readonly_any_array = factory.readonly_type(any_array);
 
-                    if !self.is_assignable_to(declared_type, readonly_any_array)
-                        && !self.is_assignable_to(array_check_type, readonly_any_array)
+                    if !self.diagnostic_relation_boolean_guard(declared_type, readonly_any_array)
+                        && !self
+                            .diagnostic_relation_boolean_guard(array_check_type, readonly_any_array)
                     {
                         // tsc anchors TS2370 at the parameter (including the
                         // `...` token) rather than at its type annotation or
@@ -1323,7 +1333,7 @@ impl<'a> CheckerState<'a> {
                     let factory = self.ctx.types.factory();
                     let any_array = factory.array(TypeId::ANY);
                     let readonly_any_array = factory.readonly_type(any_array);
-                    if !self.is_assignable_to(init_type, readonly_any_array) {
+                    if !self.diagnostic_relation_boolean_guard(init_type, readonly_any_array) {
                         self.error_at_node(
                             param_idx,
                             "A rest parameter must be of an array type.",

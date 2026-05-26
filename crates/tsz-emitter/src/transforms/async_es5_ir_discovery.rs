@@ -57,6 +57,19 @@ impl AsyncES5Transformer<'_> {
             return true;
         }
 
+        if node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            let spread_expr = self
+                .arena
+                .get_spread(node)
+                .map(|spread| spread.expression)
+                .or_else(|| {
+                    self.arena
+                        .get_unary_expr_ex(node)
+                        .map(|spread| spread.expression)
+                });
+            return spread_expr.is_some_and(|expr| self.contains_await_recursive(expr));
+        }
+
         if node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
             && (node.flags as u32 & node_flags::USING) != 0
         {
@@ -222,9 +235,16 @@ impl AsyncES5Transformer<'_> {
                             }
                         }
                         syntax_kind_ext::SPREAD_ELEMENT => {
-                            if let Some(spread) = self.arena.get_unary_expr_ex(elem_node)
-                                && self.contains_await_recursive(spread.expression)
-                            {
+                            let spread_expr = self
+                                .arena
+                                .get_spread(elem_node)
+                                .map(|spread| spread.expression)
+                                .or_else(|| {
+                                    self.arena
+                                        .get_unary_expr_ex(elem_node)
+                                        .map(|spread| spread.expression)
+                                });
+                            if spread_expr.is_some_and(|expr| self.contains_await_recursive(expr)) {
                                 return true;
                             }
                         }
@@ -508,6 +528,18 @@ impl AsyncES5Transformer<'_> {
             || (self.async_generator_mode && node.kind == syntax_kind_ext::AWAIT_EXPRESSION)
         {
             return Some(idx);
+        }
+        if node.kind == syntax_kind_ext::SPREAD_ELEMENT {
+            let spread_expr = self
+                .arena
+                .get_spread(node)
+                .map(|spread| spread.expression)
+                .or_else(|| {
+                    self.arena
+                        .get_unary_expr_ex(node)
+                        .map(|spread| spread.expression)
+                });
+            return spread_expr.and_then(|expr| self.find_suspension_expression(expr));
         }
         if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
             || node.is_function_expression_or_arrow()

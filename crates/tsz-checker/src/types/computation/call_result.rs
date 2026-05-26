@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let param_union = self.ctx.types.factory().union(param_types);
-        if !self.is_assignable_to(actual, param_union) {
+        if !self.diagnostic_relation_boolean_guard(actual, param_union) {
             return None;
         }
 
@@ -76,7 +76,15 @@ impl<'a> CheckerState<'a> {
         return_type: TypeId,
         is_optional_chain: bool,
     ) -> TypeId {
-        let return_type = self.apply_this_substitution_to_call_return(return_type, callee_expr);
+        let declared_return_has_this =
+            assign_query::get_function_return_type(self.ctx.types, callee_type).is_some_and(
+                |declared_return| common::contains_this_type(self.ctx.types, declared_return),
+            );
+        let return_type = if declared_return_has_this {
+            self.apply_this_substitution_to_call_return(return_type, callee_expr)
+        } else {
+            return_type
+        };
         let return_type =
             self.apply_direct_callable_this_substitution(return_type, callee_expr, callee_type);
         let return_type =
@@ -210,7 +218,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.is_assignable_to(arg_types[2], target) {
+        if self.diagnostic_relation_boolean_guard(arg_types[2], target) {
             return false;
         }
         self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);
@@ -956,7 +964,10 @@ impl<'a> CheckerState<'a> {
                     let normalized_rest_expected =
                         self.rest_argument_element_type_with_env(expected);
                     if normalized_rest_expected != expected
-                        && self.is_assignable_to_with_env(actual, normalized_rest_expected)
+                        && self.diagnostic_relation_boolean_guard_with_env(
+                            actual,
+                            normalized_rest_expected,
+                        )
                     {
                         return if fallback_return != TypeId::ERROR {
                             fallback_return
@@ -965,10 +976,10 @@ impl<'a> CheckerState<'a> {
                         };
                     }
                 }
-                let aggregate_literal_actual = if self
-                    .format_type_diagnostic(expected)
-                    .contains("<unknown>")
-                {
+                let aggregate_literal_actual = if expr_ops::contains_application_unknown_arg(
+                    self.ctx.types.as_type_database(),
+                    expected,
+                ) {
                     None
                 } else {
                     self.literalized_aggregate_actual_for_call_args(args, index, actual, expected)
@@ -1391,11 +1402,6 @@ impl<'a> CheckerState<'a> {
                 ..
             } => {
                 self.ctx.no_overload_call_nodes.insert(call_idx.0);
-                let overload_failures_disagree = failures.len() > 1
-                    && failures.windows(2).any(|pair| {
-                        pair[0].code != pair[1].code
-                            || format!("{:?}", pair[0].args) != format!("{:?}", pair[1].args)
-                    });
                 let has_error_surface = callee_type == TypeId::ERROR
                     || args
                         .iter()
@@ -1418,56 +1424,11 @@ impl<'a> CheckerState<'a> {
                 if should_emit_no_overload_error {
                     self.error_no_overload_matches_at(call_idx, &failures);
                 }
-                let overloaded_callee_has_type_params =
-                    common::callable_shape_for_type(self.ctx.types, callee_type).is_some_and(
-                        |shape| {
-                            shape
-                                .call_signatures
-                                .iter()
-                                .any(|sig| !sig.type_params.is_empty())
-                        },
-                    );
-                let call_is_typed_variable_initializer =
-                    self.ctx
-                        .arena
-                        .get_extended(call_idx)
-                        .map(|info| info.parent)
-                        .and_then(|parent_idx| {
-                            self.ctx
-                                .arena
-                                .get(parent_idx)
-                                .map(|node| (parent_idx, node))
-                        })
-                        .is_some_and(|(_parent_idx, parent)| {
-                            parent.kind == syntax_kind_ext::VARIABLE_DECLARATION
-                                && self.ctx.arena.get_variable_declaration(parent).is_some_and(
-                                    |decl| {
-                                        decl.initializer == call_idx
-                                            && decl.type_annotation.is_some()
-                                    },
-                                )
-                        });
-                let callee_is_object_assign = self
-                    .ctx
-                    .arena
-                    .get(callee_expr)
-                    .and_then(|node| self.ctx.arena.get_access_expr(node))
-                    .is_some_and(|access| {
-                        self.ctx.arena.get_identifier_text(access.expression) == Some("Object")
-                            && self.ctx.arena.get_identifier_text(access.name_or_argument)
-                                == Some("assign")
-                    });
-                if overload_failures_disagree
-                    && should_emit_no_overload_error
-                    && !overloaded_callee_has_type_params
-                    && !call_is_typed_variable_initializer
-                    && !callee_is_object_assign
-                    && !common::contains_type_parameters(self.ctx.types, fallback_return)
-                {
-                    TypeId::NEVER
-                } else {
-                    fallback_return
-                }
+                // `fallback_return` is the intersection of the candidate
+                // signatures' return types (see `overload_failure_return_type`):
+                // it suppresses spurious cascades after TS2769 yet keeps real
+                // downstream errors, matching tsc.
+                fallback_return
             }
             CallResult::ThisTypeMismatch {
                 expected_this,

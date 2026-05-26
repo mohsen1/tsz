@@ -2790,3 +2790,279 @@ function process(): string {
         "Array<any>.reduce with contextual string return should not emit TS2322; got: {diags:#?}"
     );
 }
+
+// ============================================================================
+// Overloaded callee: callback parameters contextually typed from the resolved
+// signature (issue #9663). Selecting an overload via a discriminating argument
+// must contextually type the callback parameter from that signature, so body
+// errors (TS2339 / TS2322) surface — matching tsc — instead of being hidden by
+// the lossy union contextual type used during overload selection.
+// ============================================================================
+
+#[test]
+fn overloaded_callback_first_overload_bad_property_ts2339() {
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.code);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, msg)| *code == 2339
+            && msg.contains("code")
+            && msg.contains("{ x: number; }")),
+        "Selecting the click overload should type `e` as {{ x: number }} and emit TS2339 on `e.code`; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_second_overload_bad_property_ts2339() {
+    // Not order-specific: selecting the second overload must also contextually
+    // type the callback from that signature.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("key", e => e.x);
+"#;
+    let diags = get_diagnostics(source);
+    assert!(
+        diags.iter().any(|(code, msg)| *code == 2339
+            && msg.contains('x')
+            && msg.contains("{ code: string; }")),
+        "Selecting the key overload should type `e` as {{ code: string }} and emit TS2339 on `e.x`; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_body_assignment_mismatch_ts2322() {
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", (e) => { const z: string = e.x; });
+"#;
+    assert!(
+        has_error(source, 2322),
+        "Assignment inside an overloaded callback body must be checked against the resolved signature (TS2322)"
+    );
+}
+
+#[test]
+fn overloaded_callback_rule_is_structural_not_name_bound() {
+    // Different event literals and property names prove the fix is structural.
+    let source = r#"
+declare function reg(kind: "a", cb: (p: { alpha: number }) => void): void;
+declare function reg(kind: "b", cb: (p: { beta: string }) => void): void;
+reg("a", p => p.beta);
+reg("b", p => p.alpha);
+"#;
+    let diags = get_diagnostics(source);
+    let alpha_target = diags.iter().any(|(code, msg)| {
+        *code == 2339 && msg.contains("beta") && msg.contains("{ alpha: number; }")
+    });
+    let beta_target = diags.iter().any(|(code, msg)| {
+        *code == 2339 && msg.contains("alpha") && msg.contains("{ beta: string; }")
+    });
+    assert!(
+        alpha_target && beta_target,
+        "Both overloaded callbacks should report property errors against their own resolved parameter type; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn overloaded_callback_valid_property_no_error() {
+    // Negative case: accessing the property that exists on the resolved
+    // signature's parameter must not error.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: number }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.x);
+on("key", e => e.code);
+"#;
+    assert!(
+        no_errors(source),
+        "Accessing the property valid for the selected overload must not error"
+    );
+}
+
+#[test]
+fn overloaded_callback_continuation_access_no_false_positive() {
+    // A deeper-but-valid continuation access through the resolved parameter
+    // type must remain error-free.
+    let source = r#"
+declare function on(event: "click", cb: (e: { x: { v(): number } }) => void): void;
+declare function on(event: "key", cb: (e: { code: string }) => void): void;
+on("click", e => e.x.v());
+"#;
+    assert!(
+        no_errors(source),
+        "Valid continuation access on the resolved parameter type must not error"
+    );
+}
+
+#[test]
+fn non_callback_overload_selection_still_works() {
+    // Guard: overload selection without callbacks is unaffected.
+    let source = r#"
+declare function f(x: string): string;
+declare function f(x: number): number;
+const a: string = f("hi");
+const b: number = f(42);
+"#;
+    assert!(
+        no_errors(source),
+        "Plain overload selection must remain unaffected by the callback fix"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// No-overload-match recovery result type (issue #9669).
+//
+// Structural rule: when a call matches no overload signature, the call
+// expression's result type is the intersection of every candidate signature's
+// return type (tsc's `createUnionOfSignaturesForOverloadFailure`). Disjoint
+// primitive returns (`string` & `number`) collapse to `never`, which is
+// assignable to any annotation and so suppresses spurious downstream cascades
+// (the call already reported TS2769); structurally compatible object returns
+// merge (`{ a }` & `{ b }`) so member access still resolves; uniform returns
+// survive intact. Only TS2769 should fire for a hard no-match — no cascade.
+// ---------------------------------------------------------------------------
+
+/// Reported repro: failed overloaded call assigned to an incompatible type
+/// must emit only TS2769, not a spurious TS2322 cascade.
+#[test]
+fn no_overload_match_assignment_no_cascade_ts2322() {
+    let source = r#"
+declare function f(x: number): string;
+declare function f(x: string): number;
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "no spurious TS2322 cascade on failed overload assignment; got {codes:?}"
+    );
+}
+
+/// Same rule via a function-type intersection (different surface, same
+/// overload mechanism).
+#[test]
+fn no_overload_match_intersection_callable_no_cascade_ts2322() {
+    let source = r#"
+type F = ((x: number) => string) & ((x: string) => number);
+declare const f: F;
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "no spurious TS2322 on failed intersection-callable assignment; got {codes:?}"
+    );
+}
+
+/// Failed overload result used as an argument: no TS2345 cascade either.
+#[test]
+fn no_overload_match_argument_position_no_cascade_ts2345() {
+    let source = r#"
+declare function f(x: number): string;
+declare function f(x: string): number;
+declare function sink(x: 99): void;
+sink(f(true));
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2345),
+        "no spurious TS2345 cascade on failed overload used as argument; got {codes:?}"
+    );
+}
+
+/// Renamed function/parameters — the rule is structural, not keyed on spelling.
+#[test]
+fn no_overload_match_renamed_no_cascade_ts2322() {
+    let source = r#"
+declare function ZZ(qqq: number): string;
+declare function ZZ(qqq: string): number;
+const result: string = ZZ(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2322),
+        "renamed overload should behave identically; got {codes:?}"
+    );
+}
+
+/// Compatible object returns merge into `{ a } & { b }`: both members exist on
+/// the recovery type, so member access must NOT report TS2339.
+#[test]
+fn no_overload_match_object_returns_merge_members_resolve() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { b: string };
+f(true).a;
+f(true).b;
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        !codes.contains(&2339),
+        "members of intersected object returns must resolve; got {codes:?}"
+    );
+}
+
+/// A property that is absent from the intersection still reports TS2339 — the
+/// recovery type is not blanket-`any`/error that silences everything.
+#[test]
+fn no_overload_match_object_returns_missing_member_reports_ts2339() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { b: string };
+f(true).nope;
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        codes.contains(&2339),
+        "absent property on intersected returns must still report TS2339; got {codes:?}"
+    );
+}
+
+/// Uniform candidate returns survive: `{ a: number }` & `{ a: number }`
+/// dedups to `{ a: number }`, so assigning to an incompatible type still
+/// reports TS2322 (matching tsc — the suppression is intersection-driven, not
+/// a blanket no-match suppression).
+#[test]
+fn no_overload_match_uniform_returns_preserve_shape_and_cascade() {
+    let source = r#"
+declare function f(x: number): { a: number };
+declare function f(x: string): { a: number };
+const c: string = f(true);
+"#;
+    let codes = get_codes(source);
+    assert!(codes.contains(&2769), "expected TS2769; got {codes:?}");
+    assert!(
+        codes.contains(&2322),
+        "uniform object recovery type must still cascade TS2322; got {codes:?}"
+    );
+}
+
+/// Negative control: a SUCCESSFUL overloaded call assigned to an incompatible
+/// type must still emit TS2322 — the suppression is only for hard no-matches.
+#[test]
+fn successful_overload_call_still_cascades_ts2322() {
+    let source = r#"
+declare function g(x: number): string;
+const c: number = g(1);
+"#;
+    let codes = get_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "successful overload assigned to incompatible type must still emit TS2322; got {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2769),
+        "successful call must not report TS2769; got {codes:?}"
+    );
+}

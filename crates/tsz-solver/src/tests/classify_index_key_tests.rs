@@ -59,15 +59,29 @@ fn classify_template_literal_number_is_numeric_string() {
 
 #[test]
 fn classify_template_literal_string_is_template_string() {
-    // `${string}` should be classified as TemplateLiteralString
     let interner = TypeInterner::new();
-    let tl = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+
+    // A lone `${string}` spans the full string domain and collapses to
+    // `string` at construction, so it classifies as a plain string key.
+    let bare = interner.template_literal(vec![TemplateSpan::Type(TypeId::STRING)]);
+    assert_eq!(bare, TypeId::STRING);
+    assert!(
+        matches!(classify_index_key(&interner, bare), IndexKeyKind::String),
+        "`${{string}}` collapses to `string` and classifies as String"
+    );
+
+    // A template with literal text stays a template literal and classifies
+    // as TemplateLiteralString.
+    let tl = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("a")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
     assert!(
         matches!(
             classify_index_key(&interner, tl),
             IndexKeyKind::TemplateLiteralString
         ),
-        "Template literal `${{string}}` should be TemplateLiteralString"
+        "Template literal `a${{string}}` should be TemplateLiteralString"
     );
 }
 

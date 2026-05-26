@@ -969,7 +969,11 @@ pub(crate) fn check_parameter_initializers_in_type(
     }
 }
 
-fn check_binding_pattern_initializers(
+/// Emit TS2371 for every parameter-default nested in a destructuring binding
+/// pattern (`{ mult = 1 }`, `[a = 1]`, arbitrarily nested). The caller checks
+/// the top-level parameter initializer; this walks the pattern tree and, like
+/// tsc, anchors each diagnostic at the offending binding element's name.
+pub(crate) fn check_binding_pattern_initializers(
     ctx: &mut crate::CheckerContext,
     name_idx: tsz_parser::parser::NodeIndex,
 ) {
