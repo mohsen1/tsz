@@ -325,6 +325,14 @@ impl<'a> DeclarationEmitter<'a> {
                                 &self.inferred_method_return_type_text(method, return_type_id),
                             );
                         }
+                    } else if method_body.is_some()
+                        && let Some(type_text) =
+                            self.function_body_source_indexed_access_return_type_text(method_body)
+                        && self.print_type_id(return_type_id) != type_text
+                    {
+                        self.write(": ");
+                        let type_text = self.wrap_async_method_return_type_text(method, type_text);
+                        self.write(&type_text);
                     } else if self
                         .type_mentions_scoped_type_param_nodes(return_type_id, &all_param_nodes)
                     {
@@ -351,6 +359,14 @@ impl<'a> DeclarationEmitter<'a> {
                         self.write(": ");
                         self.write(&self.inferred_method_return_type_text(method, return_type_id));
                     }
+                } else if method_body.is_some()
+                    && let Some(type_text) =
+                        self.function_body_source_indexed_access_return_type_text(method_body)
+                    && self.print_type_id(method_type_id) != type_text
+                {
+                    self.write(": ");
+                    let type_text = self.wrap_async_method_return_type_text(method, type_text);
+                    self.write(&type_text);
                 } else if self
                     .type_mentions_scoped_type_param_nodes(method_type_id, &all_param_nodes)
                     && method_type_id != tsz_solver::types::TypeId::ANY

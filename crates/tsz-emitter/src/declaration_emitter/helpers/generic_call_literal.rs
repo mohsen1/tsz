@@ -22,6 +22,9 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
                     .or_else(|| self.generic_rest_identity_parameters_tuple_type_text(expr_idx))
                     .or_else(|| self.call_expression_parameters_return_tuple_type_text(expr_idx))
+                    .or_else(|| {
+                        self.explicit_type_argument_indexed_member_return_type_text(expr_idx)
+                    })
                     .or_else(|| self.call_expression_source_return_type_text(expr_idx))
                     .or_else(|| self.bind_call_remaining_function_type_text(expr_idx))
                     .or_else(|| self.call_expression_declared_return_type_text(expr_idx))
@@ -59,6 +62,96 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(inner.to_string());
         }
         None
+    }
+
+    fn explicit_type_argument_indexed_member_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let type_args = call.type_arguments.as_ref()?;
+        let binder = self.binder?;
+        let raw_sym_id = self.value_reference_symbol(call.expression)?;
+        let sym_id = self
+            .resolve_portability_import_alias(raw_sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
+
+        let mut candidate = None;
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let decl_node = source_arena.get(decl_idx)?;
+            let callable = Self::callable_decl_parts_from_node(source_arena, decl_node)?;
+            if !callable.type_annotation.is_some()
+                || !self.function_signature_accepts_call_arguments(
+                    source_arena,
+                    callable.parameters,
+                    call,
+                )
+            {
+                return None;
+            }
+
+            let annotation_node = source_arena.get(callable.type_annotation)?;
+            let indexed = source_arena.get_indexed_access_type(annotation_node)?;
+            let object_type_param =
+                self.simple_type_reference_name_from_arena(source_arena, indexed.object_type)?;
+            let member_name =
+                self.indexed_access_literal_member_name(source_arena, indexed.index_type)?;
+
+            let type_params = callable.type_parameters?;
+            let type_arg_position = type_params.nodes.iter().position(|param_idx| {
+                source_arena
+                    .get(*param_idx)
+                    .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                    .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+                    .is_some_and(|name| name == object_type_param)
+            })?;
+            let explicit_arg_idx = *type_args.nodes.get(type_arg_position)?;
+            let type_sym_id =
+                self.declaration_type_symbol_from_type_node(self.arena, explicit_arg_idx)?;
+            let type_text =
+                self.type_member_declared_type_annotation_text(type_sym_id, &member_name)?;
+            Some(type_text)
+        })
+        .and_then(|type_text| {
+            if candidate.replace(type_text.clone()).is_some() {
+                None
+            } else {
+                Some(type_text)
+            }
+        })
+    }
+
+    fn simple_type_reference_name_from_arena(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_node = arena.get(type_idx)?;
+        if type_node.kind == SyntaxKind::Identifier as u16 {
+            return self.identifier_text_from_arena(arena, type_idx);
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let type_ref = arena.get_type_ref(type_node)?;
+            return self.identifier_text_from_arena(arena, type_ref.type_name);
+        }
+        None
+    }
+
+    fn indexed_access_literal_member_name(
+        &self,
+        arena: &NodeArena,
+        index_type_idx: NodeIndex,
+    ) -> Option<String> {
+        let index_type_node = arena.get(index_type_idx)?;
+        if index_type_node.kind == syntax_kind_ext::LITERAL_TYPE {
+            let literal_type = arena.get_literal_type(index_type_node)?;
+            return self.property_name_text_from_arena(arena, literal_type.literal);
+        }
+        self.property_name_text_from_arena(arena, index_type_idx)
     }
 
     fn generic_rest_identity_parameters_tuple_type_text(
