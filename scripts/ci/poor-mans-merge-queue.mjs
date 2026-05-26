@@ -421,6 +421,24 @@ function readRemoteQueueBranches(options) {
   });
 }
 
+function readRemoteBranchOid(branch) {
+  const output = git(["ls-remote", "--heads", "origin", branch]);
+  const trimmed = output.trim();
+  if (!trimmed) return "";
+  const [oid] = trimmed.split(/\s+/);
+  return oid || "";
+}
+
+export function forceWithLeaseArgForOid(branch, remoteOid) {
+  return remoteOid
+    ? `--force-with-lease=refs/heads/${branch}:${remoteOid}`
+    : `--force-with-lease=refs/heads/${branch}:`;
+}
+
+function forceWithLeaseArg(branch) {
+  return forceWithLeaseArgForOid(branch, readRemoteBranchOid(branch));
+}
+
 export function queueBranchPrNumber(branch, queueBranchPrefix = DEFAULT_QUEUE_BRANCH_PREFIX) {
   return queueBranchMetadata(branch, queueBranchPrefix)?.number ?? null;
 }
@@ -857,7 +875,7 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   ], { stdio: "inherit" });
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
-    git(["push", "--force-with-lease", "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
+    git(["push", forceWithLeaseArg(branch), "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
     runGh(["workflow", "run", "ci.yml", "--repo", repository, "--ref", branch]);
   }
   return { branch, mergeOid };
