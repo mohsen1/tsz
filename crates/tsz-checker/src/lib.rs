@@ -685,6 +685,9 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
+mod nullish_target_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
