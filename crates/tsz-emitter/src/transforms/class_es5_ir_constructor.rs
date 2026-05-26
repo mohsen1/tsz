@@ -1019,41 +1019,72 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Check if a statement is a `super()` call
     fn is_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
+        self.root_super_call_from_statement(stmt_idx).is_some()
+    }
+
+    fn root_super_call_from_statement(&self, stmt_idx: NodeIndex) -> Option<NodeIndex> {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return false;
+            return None;
         };
 
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
+            return None;
         }
 
         let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
-            return false;
+            return None;
         };
-        let Some(call_node) = self.arena.get(expr_stmt.expression) else {
-            return false;
-        };
+        self.root_super_call_expression(expr_stmt.expression)
+    }
 
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
+    fn root_super_call_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+        while let Some(node) = self.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return None;
+                };
+                current = paren.expression;
+                continue;
+            }
+
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+
+            let call = self.arena.get_call_expr(node)?;
+            let callee = self.arena.get(call.expression)?;
+            return (callee.kind == SyntaxKind::SuperKeyword as u16).then_some(current);
         }
+        None
+    }
 
-        let Some(call) = self.arena.get_call_expr(call_node) else {
+    fn is_parenthesized_root_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
         };
-        let Some(callee) = self.arena.get(call.expression) else {
+        let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
             return false;
         };
-
-        callee.kind == SyntaxKind::SuperKeyword as u16
+        self.arena
+            .get(expr_stmt.expression)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+            && self
+                .root_super_call_expression(expr_stmt.expression)
+                .is_some()
     }
 
     /// Emit super(args) as var _this = _super.call(this, args) || this;
     fn emit_super_call_ir(&self, stmt_idx: NodeIndex) -> IRNode {
-        IRNode::var_decl(
-            "_this",
-            Some(self.emit_super_call_assignment_value_ir(stmt_idx)),
-        )
+        let value = if self.is_parenthesized_root_super_call_statement(stmt_idx) {
+            IRNode::Parenthesized(Box::new(IRNode::assign(
+                IRNode::id("_this"),
+                self.emit_super_call_assignment_value_ir(stmt_idx),
+            )))
+        } else {
+            self.emit_super_call_assignment_value_ir(stmt_idx)
+        };
+        IRNode::var_decl("_this", Some(value))
     }
 
     fn emit_super_call_assignment_ir(&self, stmt_idx: NodeIndex) -> IRNode {
@@ -1065,10 +1096,15 @@ impl<'a> ES5ClassTransformer<'a> {
         stmt_idx: NodeIndex,
         capture_args_this: bool,
     ) -> IRNode {
-        IRNode::assign(
+        let assignment = IRNode::assign(
             IRNode::id("_this"),
             self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, capture_args_this),
-        )
+        );
+        if self.is_parenthesized_root_super_call_statement(stmt_idx) {
+            IRNode::Parenthesized(Box::new(assignment))
+        } else {
+            assignment
+        }
     }
 
     fn emit_super_call_assignment_value_ir(&self, stmt_idx: NodeIndex) -> IRNode {
@@ -1082,9 +1118,8 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> IRNode {
         let mut args = vec![IRNode::this()];
 
-        if let Some(stmt_node) = self.arena.get(stmt_idx)
-            && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-            && let Some(call_node) = self.arena.get(expr_stmt.expression)
+        if let Some(call_idx) = self.root_super_call_from_statement(stmt_idx)
+            && let Some(call_node) = self.arena.get(call_idx)
             && let Some(call) = self.arena.get_call_expr(call_node)
             && let Some(ref call_args) = call.arguments
         {
@@ -1134,9 +1169,8 @@ impl<'a> ES5ClassTransformer<'a> {
     fn emit_super_call_return_ir(&self, stmt_idx: NodeIndex) -> IRNode {
         let mut args = vec![IRNode::this()];
 
-        if let Some(stmt_node) = self.arena.get(stmt_idx)
-            && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-            && let Some(call_node) = self.arena.get(expr_stmt.expression)
+        if let Some(call_idx) = self.root_super_call_from_statement(stmt_idx)
+            && let Some(call_node) = self.arena.get(call_idx)
             && let Some(call) = self.arena.get_call_expr(call_node)
             && let Some(ref call_args) = call.arguments
         {

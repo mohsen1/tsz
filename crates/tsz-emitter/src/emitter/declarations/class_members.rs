@@ -1297,21 +1297,7 @@ impl<'a> Printer<'a> {
                             .arena
                             .get_expression_statement(stmt_node)
                             .is_some_and(|expr_stmt| {
-                                self.arena
-                                    .get(expr_stmt.expression)
-                                    .is_some_and(|expr_node| {
-                                        expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                            && self.arena.get_call_expr(expr_node).is_some_and(
-                                                |call| {
-                                                    self.arena.get(call.expression).is_some_and(
-                                                        |callee| {
-                                                            callee.kind
-                                                == tsz_scanner::SyntaxKind::SuperKeyword as u16
-                                                        },
-                                                    )
-                                                },
-                                            )
-                                    })
+                                self.is_constructor_root_super_call(expr_stmt.expression)
                             })
                 })
             })
@@ -1395,6 +1381,27 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn is_constructor_root_super_call(&self, expression: NodeIndex) -> bool {
+        let mut current = expression;
+        while let Some(node) = self.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return false;
+                };
+                current = paren.expression;
+                continue;
+            }
+
+            return node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && self.arena.get_call_expr(node).is_some_and(|call| {
+                    self.arena
+                        .get(call.expression)
+                        .is_some_and(|callee| callee.kind == SyntaxKind::SuperKeyword as u16)
+                });
+        }
+        false
     }
 
     /// Emit parameter property and field initializer assignments (constructor prologue).
