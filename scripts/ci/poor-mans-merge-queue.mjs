@@ -438,6 +438,17 @@ export function failureCommentBody(agentName, reason) {
   ].join("\n");
 }
 
+export function skipReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const reason = String(skip.reason || "(unknown)");
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -800,9 +811,17 @@ export function formatResult(result, options) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }
   if (!result.cleanupQueueBranches && options.verbose && result.skips?.length) {
+    const summary = skipReasonCounts(result.skips);
+    lines.push("", "### Skip Reason Counts", "", "| Count | Reason |", "|-------|--------|");
+    for (const entry of summary) {
+      lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
+    }
     lines.push("", "### Skips", "", "| PR | Reason |", "|----|--------|");
     for (const skip of result.skips.slice(0, 25)) {
       lines.push(`| #${skip.number} | ${skip.reason.replace(/\|/g, "\\|")} |`);
+    }
+    if (result.skips.length > 25) {
+      lines.push(`| ... | ${result.skips.length - 25} more skipped PR(s) omitted |`);
     }
   }
   return `${lines.join("\n")}\n`;
