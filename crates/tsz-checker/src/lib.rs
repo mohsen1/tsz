@@ -499,6 +499,9 @@ mod dispatch_tests;
 #[path = "tests/do_while_exit_narrowing_tests.rs"]
 mod do_while_exit_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/dynamic_import_relation_routing_arch_tests.rs"]
+mod dynamic_import_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
@@ -552,6 +555,9 @@ mod generic_tests;
 #[cfg(test)]
 #[path = "tests/generic_unknown_type_arg_tests.rs"]
 mod generic_unknown_type_arg_tests;
+#[cfg(test)]
+#[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
+mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
