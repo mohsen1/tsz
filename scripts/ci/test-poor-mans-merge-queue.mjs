@@ -329,6 +329,44 @@ assert.match(cleanupActiveRunFormat, /\| Branch \| Owner \| Reason \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| agent:M4-A \| active queue run 26423420117 \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9912` \| agent:M4-C \| PR #9912 is open \|/);
 
+const cleanupOwnerDateFormat = formatResult({
+  cleanupQueueBranches: true,
+  activeRuns: [],
+  deletions: [],
+  dryRun: true,
+  skippedActiveRuns: 0,
+  skippedOpen: 3,
+  skippedUnrecognized: 0,
+  supersededOpen: 0,
+  skips: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      owner: "agent:M4-A",
+      reason: "PR #9515 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-25T10:00:00Z",
+    },
+    {
+      branch: "automation/merge-queue/pr-9632",
+      owner: "agent:M4-A",
+      reason: "PR #9632 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-24T09:00:00Z",
+    },
+    {
+      branch: "automation/merge-queue/pr-9912",
+      owner: "agent:M4-C",
+      reason: "PR #9912 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-23T08:00:00Z",
+    },
+  ],
+  wouldDelete: 0,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupOwnerDateFormat, /\| Count \| Owner \| Oldest updated \|/);
+assert.match(cleanupOwnerDateFormat, /\| 2 \| agent:M4-A \| 2026-05-24 \|/);
+assert.match(cleanupOwnerDateFormat, /\| 1 \| agent:M4-C \| 2026-05-23 \|/);
+
 const queueSkipFormat = formatResult({
   selected: null,
   skips: Array.from({ length: 27 }, (_, index) => ({
