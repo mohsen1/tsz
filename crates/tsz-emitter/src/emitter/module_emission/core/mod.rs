@@ -1311,6 +1311,12 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(class_node) else {
             return false;
         };
+        if matches!(
+            self.transforms.get(class_idx),
+            Some(crate::context::transform::TransformDirective::TC39Decorators { .. })
+        ) {
+            return true;
+        }
 
         let needs_private_lowering = !self.ctx.options.target.supports_es2022();
         let target_needs_field_lowering = (self.ctx.options.target as u32)
