@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 01:12 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10183` merged.
+- 2026-05-26 01:24 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10185` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -95,6 +95,12 @@ node scripts/ci/pr-ownership-report.mjs
     a full `Skip Reason Counts` table before the capped per-PR details. The
     latest live dry run reports 44 PRs skipped because auto-merge is not armed
     and 16 skipped as draft PRs, with no queue-ready auto-merge candidate.
+  - `#10185` merged on 2026-05-26 as
+    `41fdc94314 ci: show active queue runs in cleanup report (#10185)`.
+    Verbose queue-branch cleanup dry runs now include an `Active Queue Runs`
+    table with branch, PR, run id, and run URL for preserved active runs.
+    The latest live cleanup dry run preserved active run `26426750402` on
+    `automation/merge-queue/pr-10084`.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue
