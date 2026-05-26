@@ -16,6 +16,14 @@ const workflowConfigs = new Map([
 const expectedConfigs = [...workflowConfigs.values()].flat();
 const expectedConfigSet = new Set(expectedConfigs);
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function configFlagPattern(configPath) {
+  return new RegExp(`--config(?:=|\\s+)${escapeRegExp(configPath)}`);
+}
+
 const rootCloudbuildConfigs = fs
   .readdirSync(ROOT)
   .filter((entry) => /^cloudbuild.*\.ya?ml$/.test(entry))
@@ -54,12 +62,12 @@ for (const [workflow, configs] of workflowConfigs) {
   for (const config of configs) {
     assert.match(
       workflowText,
-      new RegExp(`--config=scripts/cloudbuild/${config}`),
+      configFlagPattern(`scripts/cloudbuild/${config}`),
       `${workflow} should reference ${config} through scripts/cloudbuild`,
     );
     assert.doesNotMatch(
       workflowText,
-      new RegExp(`--config=${config}`),
+      configFlagPattern(config),
       `${workflow} should not reference ${config} from the repository root`,
     );
   }
@@ -71,7 +79,7 @@ for (const [workflow, configs] of workflowConfigs) {
 
     assert.doesNotMatch(
       workflowText,
-      new RegExp(`--config=scripts/cloudbuild/${config}`),
+      configFlagPattern(`scripts/cloudbuild/${config}`),
       `${workflow} should not reference ${config}`,
     );
   }
