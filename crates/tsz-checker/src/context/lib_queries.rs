@@ -454,4 +454,26 @@ impl<'a> CheckerContext<'a> {
 
         self.get_file_idx_for_arena(symbol_arena.as_ref()).is_none()
     }
+
+    /// True when `sym_id` is the actual or cloned standard-library global type
+    /// symbol for `name`.
+    pub fn sym_id_is_actual_or_cloned_lib_global_type_named(
+        &self,
+        sym_id: SymbolId,
+        name: &str,
+    ) -> bool {
+        if name.contains('.') {
+            return false;
+        }
+
+        if self.actual_lib_global_type_symbol_id(name) == Some(sym_id) {
+            return true;
+        }
+
+        self.binder.lib_symbol_ids.contains(&sym_id)
+            && self
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name.as_str() == name)
+    }
 }
