@@ -127,6 +127,9 @@ mod definite_assignment_tests;
 #[path = "../tests/dynamic_import_defer_tests.rs"]
 mod dynamic_import_defer_tests;
 #[cfg(test)]
+#[path = "tests/enum_computed_relation_routing_arch_tests.rs"]
+mod enum_computed_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
 #[cfg(test)]

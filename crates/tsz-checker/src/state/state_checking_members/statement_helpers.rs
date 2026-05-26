@@ -220,7 +220,10 @@ impl<'a> CheckerState<'a> {
 
             // Evaluation would fail (or unknown with non-number/string type).
             // Emit TS18033 if the type is not assignable to number.
-            if !self.diagnostic_relation_boolean_guard(init_type, TypeId::NUMBER) {
+            if !self
+                .assign_relation_outcome(init_type, TypeId::NUMBER)
+                .related
+            {
                 // tsc displays widened types in TS18033: 'string' not '"bar"'
                 let widened =
                     crate::query_boundaries::common::widen_literal_type(self.ctx.types, init_type);
