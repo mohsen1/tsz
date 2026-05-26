@@ -73,6 +73,13 @@ function agentNameFrom(body) {
   return match?.[1] ?? null;
 }
 
+function agentLabelsFrom(labels) {
+  return labels
+    .filter((label) => label.startsWith("agent:"))
+    .map((label) => label.slice("agent:".length))
+    .sort();
+}
+
 function issueRefsFrom(text) {
   return [...String(text).matchAll(/#(\d+)/g)].map((match) => Number(match[1]));
 }
@@ -87,6 +94,34 @@ function titleScope(title) {
     .trim();
 }
 
+function prSummary(report, number, prefix = "#") {
+  const pr = report.prs.find((candidate) => candidate.number === number);
+  if (!pr) {
+    return `${prefix}${number}`;
+  }
+  const state = pr.draft ? "draft" : "ready";
+  const wip = pr.labels.includes("WIP") || /^\[wip\]/i.test(pr.title) ? ", WIP" : "";
+  const owner = pr.agentName ?? "no AgentName";
+  const stack = pr.stackRole ? `, ${pr.stackRole}` : "";
+  return `${prefix}${number} (${state}${wip}, ${owner}${stack})`;
+}
+
+function draftStackState(draftCount, stackedDraftCount) {
+  if (draftCount === 0) {
+    return "no draft PRs";
+  }
+  if (draftCount === 1) {
+    return stackedDraftCount === 1 ? "single stacked draft" : "single unstacked draft";
+  }
+  if (stackedDraftCount === 0) {
+    return "unstacked drafts";
+  }
+  if (stackedDraftCount === draftCount) {
+    return "stacked-only drafts";
+  }
+  return "mixed stacked/unstacked drafts";
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
@@ -96,6 +131,7 @@ function makeReport(pulls) {
     head: pr.headRefName,
     labels: pr.labels.sort(),
     agentName: agentNameFrom(pr.body),
+    agentLabels: agentLabelsFrom(pr.labels),
     issueRefs: [...new Set(issueRefsFrom(`${pr.title}\n${pr.body}`).filter((issue) => issue !== pr.number))].sort(
       (a, b) => a - b,
     ),
@@ -132,15 +168,58 @@ function makeReport(pulls) {
     })
     .sort((a, b) => a.base.localeCompare(b.base));
 
+  const stackRoots = new Set(stacks.map((stack) => stack.root).filter((root) => root !== null));
+  const stackChildren = new Set(stacks.flatMap((stack) => stack.children));
+  for (const pr of normalized) {
+    const root = stackRoots.has(pr.number);
+    const child = stackChildren.has(pr.number);
+    if (root && child) {
+      pr.stackRole = "stack middle";
+    } else if (root) {
+      pr.stackRole = "stack root";
+    } else if (child) {
+      pr.stackRole = "stack child";
+    } else {
+      pr.stackRole = null;
+    }
+  }
+
   const duplicateTitleScopes = [...byScope.entries()]
     .filter(([, prs]) => prs.length > 1)
     .map(([scope, prs]) => ({ scope, prs: prs.sort((a, b) => a - b) }))
     .sort((a, b) => a.scope.localeCompare(b.scope));
 
+  const prByNumber = new Map(normalized.map((pr) => [pr.number, pr]));
+
   const duplicateIssueRefs = [...byIssue.entries()]
     .filter(([, prs]) => prs.length > 1)
-    .map(([issue, prs]) => ({ issue, prs: prs.sort((a, b) => a - b) }))
+    .map(([issue, prs]) => {
+      const sortedPrs = prs.sort((a, b) => a - b);
+      const draftPrs = sortedPrs.map((number) => prByNumber.get(number)).filter((pr) => pr?.draft);
+      const stackedDraftCount = draftPrs.filter((pr) => pr.stackRole !== null).length;
+      return {
+        issue,
+        prs: sortedPrs,
+        draftCount: draftPrs.length,
+        stackedDraftCount,
+        unstackedDraftCount: draftPrs.length - stackedDraftCount,
+        draftStackState: draftStackState(draftPrs.length, stackedDraftCount),
+      };
+    })
     .sort((a, b) => a.issue - b.issue);
+
+  const duplicateDraftCleanupTargets = duplicateIssueRefs.filter(
+    (entry) => entry.draftCount > 1 && entry.unstackedDraftCount > 0,
+  );
+
+  const agentLabelMismatches = normalized
+    .filter((pr) => pr.agentLabels.length === 1 && pr.agentName !== null && pr.agentName !== pr.agentLabels[0])
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      label: `agent:${pr.agentLabels[0]}`,
+    }))
+    .sort((a, b) => a.number - b.number);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -150,6 +229,7 @@ function makeReport(pulls) {
       ready: normalized.filter((pr) => !pr.draft).length,
       stacked: stacks.reduce((sum, stack) => sum + stack.children.length, 0),
       missingAgentName: normalized.filter((pr) => pr.agentName === null).length,
+      agentLabelMismatches: agentLabelMismatches.length,
     },
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
@@ -157,6 +237,8 @@ function makeReport(pulls) {
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
+    duplicateDraftCleanupTargets,
+    agentLabelMismatches,
     prs: normalized.sort((a, b) => a.number - b.number),
   };
 }
@@ -165,7 +247,7 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
   console.log("");
   console.log("## Base Branches");
@@ -188,22 +270,43 @@ function printMarkdown(report) {
     console.log("- none");
   } else {
     for (const duplicate of report.duplicateTitleScopes) {
-      console.log(`- ${duplicate.scope}: ${duplicate.prs.map((pr) => `#${pr}`).join(", ")}`);
+      console.log(`- ${duplicate.scope}: ${duplicate.prs.map((pr) => prSummary(report, pr)).join(", ")}`);
     }
   }
   console.log("");
   console.log("## Multiple Drafts Against Same Issue");
-  const issueDuplicates = report.duplicateIssueRefs.filter((entry) => {
-    const prs = entry.prs
-      .map((number) => report.prs.find((pr) => pr.number === number))
-      .filter(Boolean);
-    return prs.filter((pr) => pr.draft).length > 1;
-  });
+  const issueDuplicates = report.duplicateIssueRefs.filter((entry) => entry.draftCount > 1);
   if (issueDuplicates.length === 0) {
     console.log("- none");
   } else {
     for (const duplicate of issueDuplicates) {
-      console.log(`- #${duplicate.issue}: ${duplicate.prs.map((pr) => `PR #${pr}`).join(", ")}`);
+      console.log(
+        `- #${duplicate.issue} (${duplicate.draftStackState}): ${duplicate.prs
+          .map((pr) => prSummary(report, pr, "PR #"))
+          .join(", ")}`,
+      );
+    }
+  }
+  console.log("");
+  console.log("## Duplicate Draft Cleanup Targets");
+  if (report.duplicateDraftCleanupTargets.length === 0) {
+    console.log("- none");
+  } else {
+    for (const duplicate of report.duplicateDraftCleanupTargets) {
+      console.log(
+        `- #${duplicate.issue} (${duplicate.draftStackState}; unstacked drafts: ${
+          duplicate.unstackedDraftCount
+        }): ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`,
+      );
+    }
+  }
+  console.log("");
+  console.log("## AgentName / Label Mismatches");
+  if (report.agentLabelMismatches.length === 0) {
+    console.log("- none");
+  } else {
+    for (const mismatch of report.agentLabelMismatches) {
+      console.log(`- #${mismatch.number}: AgentName ${mismatch.agentName}; label ${mismatch.label}`);
     }
   }
 }

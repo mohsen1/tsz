@@ -33,7 +33,7 @@ withTempDir((dir) => {
       isDraft: true,
       baseRefName: "main",
       headRefName: "agent/mapped-a",
-      labels: [{ name: "WIP" }, { name: "checker" }],
+      labels: [{ name: "WIP" }, { name: "checker" }, { name: "agent:alpha" }],
       body: "AgentName: alpha\n\nRefs #42\n",
     },
     {
@@ -42,7 +42,7 @@ withTempDir((dir) => {
       isDraft: true,
       baseRefName: "main",
       headRefName: "agent/mapped-b",
-      labels: ["WIP"],
+      labels: ["WIP", "agent:omega"],
       body: "AgentName: beta\n",
     },
     {
@@ -51,7 +51,7 @@ withTempDir((dir) => {
       isDraft: false,
       baseRefName: "agent/mapped-a",
       headRefName: "agent/relation-child",
-      labels: [],
+      labels: ["agent:gamma"],
       body: "AgentName: gamma\nDepends on #10\n",
     },
     {
@@ -89,11 +89,23 @@ withTempDir((dir) => {
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
+  assert.match(result.stdout, /AgentName\/label mismatches: 1/);
   assert.match(result.stdout, /agent\/mapped-a: root #10; children #12/);
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
-  assert.match(result.stdout, /fix\(checker\): preserve mapped access: #10, #11/);
-  assert.match(result.stdout, /#42: PR #10, PR #11/);
-  assert.doesNotMatch(result.stdout, /#42: PR #10, PR #11, PR #42/);
+  assert.match(
+    result.stdout,
+    /fix\(checker\): preserve mapped access: #10 \(draft, WIP, alpha, stack root\), #11 \(draft, WIP, beta\), #42 \(draft, delta\)/,
+  );
+  assert.match(
+    result.stdout,
+    /#42 \(mixed stacked\/unstacked drafts\): PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/,
+  );
+  assert.match(
+    result.stdout,
+    /Duplicate Draft Cleanup Targets[\s\S]*#42 \(mixed stacked\/unstacked drafts; unstacked drafts: 1\): PR #10 \(draft, WIP, alpha, stack root\), PR #11 \(draft, WIP, beta\)/,
+  );
+  assert.doesNotMatch(result.stdout, /#42: PR #10 .*PR #11 .*PR #42/);
+  assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
@@ -102,6 +114,7 @@ withTempDir((dir) => {
     ready: 1,
     stacked: 2,
     missingAgentName: 2,
+    agentLabelMismatches: 1,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
@@ -116,9 +129,31 @@ withTempDir((dir) => {
     { scope: "fix(checker): preserve mapped access", prs: [10, 11, 42] },
   ]);
   assert.deepEqual(report.duplicateIssueRefs, [
-    { issue: 42, prs: [10, 11] },
+    {
+      issue: 42,
+      prs: [10, 11],
+      draftCount: 2,
+      stackedDraftCount: 1,
+      unstackedDraftCount: 1,
+      draftStackState: "mixed stacked/unstacked drafts",
+    },
   ]);
+  assert.deepEqual(report.duplicateDraftCleanupTargets, [
+    {
+      issue: 42,
+      prs: [10, 11],
+      draftCount: 2,
+      stackedDraftCount: 1,
+      unstackedDraftCount: 1,
+      draftStackState: "mixed stacked/unstacked drafts",
+    },
+  ]);
+  assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 10).agentLabels, ["alpha"]);
   assert.equal(report.prs.find((pr) => pr.number === 13).agentName, null);
   assert.equal(report.prs.find((pr) => pr.number === 14).agentName, null);
+  assert.equal(report.prs.find((pr) => pr.number === 10).stackRole, "stack root");
+  assert.equal(report.prs.find((pr) => pr.number === 12).stackRole, "stack child");
+  assert.equal(report.prs.find((pr) => pr.number === 11).stackRole, null);
 });
