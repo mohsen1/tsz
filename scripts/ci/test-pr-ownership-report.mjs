@@ -111,6 +111,30 @@ withTempDir((dir) => {
       labels: ["agent:epsilon"],
       body: "AgentName: epsilon\n",
     },
+    {
+      number: 18,
+      title: "fix(solver): conflicting ready branch",
+      isDraft: false,
+      baseRefName: "main",
+      headRefName: "agent/conflicting-ready",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      autoMergeRequest: null,
+      labels: ["agent:zeta"],
+      body: "AgentName: zeta\n",
+    },
+    {
+      number: 19,
+      title: "fix(checker): conflicting draft branch",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/conflicting-draft",
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      autoMergeRequest: null,
+      labels: ["agent:delta"],
+      body: "AgentName: delta\n",
+    },
   ]);
 
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
@@ -140,19 +164,23 @@ withTempDir((dir) => {
     result.stdout,
     /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
   );
+  assert.match(
+    result.stdout,
+    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+  );
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 9,
-    draft: 7,
-    ready: 2,
+    open: 11,
+    draft: 8,
+    ready: 3,
     stacked: 2,
     missingAgentName: 2,
     agentLabelMismatches: 1,
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11, 14, 15, 16, 17, 42] },
+    { base: "main", prs: [10, 11, 14, 15, 16, 17, 18, 19, 42] },
     { base: "unknown-base", prs: [13] },
   ]);
   assert.deepEqual(report.stacks, [
@@ -194,6 +222,32 @@ withTempDir((dir) => {
     },
   ]);
   assert.deepEqual(report.blockedReadyMainOwnerCounts, [{ owner: "agent:epsilon", count: 1 }]);
+  assert.deepEqual(report.conflictingMainPrs, [
+    {
+      number: 19,
+      draft: true,
+      agentName: "delta",
+      agentLabel: "agent:delta",
+      autoMergeArmed: false,
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(checker): conflicting draft branch",
+    },
+    {
+      number: 18,
+      draft: false,
+      agentName: "zeta",
+      agentLabel: "agent:zeta",
+      autoMergeArmed: false,
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(solver): conflicting ready branch",
+    },
+  ]);
+  assert.deepEqual(report.conflictingMainOwnerCounts, [
+    { owner: "agent:delta", count: 1 },
+    { owner: "agent:zeta", count: 1 },
+  ]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).issueRefs, [9694, 9712, 9826]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 15).claimedIssueRefs, [9712]);
