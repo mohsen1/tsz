@@ -106,6 +106,22 @@ function prSummary(report, number, prefix = "#") {
   return `${prefix}${number} (${state}${wip}, ${owner}${stack})`;
 }
 
+function draftStackState(draftCount, stackedDraftCount) {
+  if (draftCount === 0) {
+    return "no draft PRs";
+  }
+  if (draftCount === 1) {
+    return stackedDraftCount === 1 ? "single stacked draft" : "single unstacked draft";
+  }
+  if (stackedDraftCount === 0) {
+    return "unstacked drafts";
+  }
+  if (stackedDraftCount === draftCount) {
+    return "stacked-only drafts";
+  }
+  return "mixed stacked/unstacked drafts";
+}
+
 function makeReport(pulls) {
   const normalized = pulls.map((pr) => ({
     number: pr.number,
@@ -173,9 +189,23 @@ function makeReport(pulls) {
     .map(([scope, prs]) => ({ scope, prs: prs.sort((a, b) => a - b) }))
     .sort((a, b) => a.scope.localeCompare(b.scope));
 
+  const prByNumber = new Map(normalized.map((pr) => [pr.number, pr]));
+
   const duplicateIssueRefs = [...byIssue.entries()]
     .filter(([, prs]) => prs.length > 1)
-    .map(([issue, prs]) => ({ issue, prs: prs.sort((a, b) => a - b) }))
+    .map(([issue, prs]) => {
+      const sortedPrs = prs.sort((a, b) => a - b);
+      const draftPrs = sortedPrs.map((number) => prByNumber.get(number)).filter((pr) => pr?.draft);
+      const stackedDraftCount = draftPrs.filter((pr) => pr.stackRole !== null).length;
+      return {
+        issue,
+        prs: sortedPrs,
+        draftCount: draftPrs.length,
+        stackedDraftCount,
+        unstackedDraftCount: draftPrs.length - stackedDraftCount,
+        draftStackState: draftStackState(draftPrs.length, stackedDraftCount),
+      };
+    })
     .sort((a, b) => a.issue - b.issue);
 
   const agentLabelMismatches = normalized
@@ -240,17 +270,16 @@ function printMarkdown(report) {
   }
   console.log("");
   console.log("## Multiple Drafts Against Same Issue");
-  const issueDuplicates = report.duplicateIssueRefs.filter((entry) => {
-    const prs = entry.prs
-      .map((number) => report.prs.find((pr) => pr.number === number))
-      .filter(Boolean);
-    return prs.filter((pr) => pr.draft).length > 1;
-  });
+  const issueDuplicates = report.duplicateIssueRefs.filter((entry) => entry.draftCount > 1);
   if (issueDuplicates.length === 0) {
     console.log("- none");
   } else {
     for (const duplicate of issueDuplicates) {
-      console.log(`- #${duplicate.issue}: ${duplicate.prs.map((pr) => prSummary(report, pr, "PR #")).join(", ")}`);
+      console.log(
+        `- #${duplicate.issue} (${duplicate.draftStackState}): ${duplicate.prs
+          .map((pr) => prSummary(report, pr, "PR #"))
+          .join(", ")}`,
+      );
     }
   }
   console.log("");
