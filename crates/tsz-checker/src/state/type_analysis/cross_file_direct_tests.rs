@@ -865,7 +865,7 @@ fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
 }
 
 #[test]
-fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_references() {
+fn direct_source_file_type_alias_lowers_generic_local_alias_applications() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"
                 type Maybe<X> = X | null;
@@ -892,11 +892,15 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         Arc::clone(&generic_binder),
     ]));
     let box_sym = generic_binder.file_locals.get("Box").expect("Box symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(box_sym, Some(1), true)
-            .is_none(),
-        "generic/alias-dependent source aliases stay on the child-checker path",
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("generic source aliases may apply lowerable local aliases");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(
+        box_params.len(),
+        1,
+        "Box should preserve its type parameter"
     );
     let wrapped_sym = generic_binder
         .file_locals
