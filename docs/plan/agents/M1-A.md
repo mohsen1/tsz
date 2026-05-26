@@ -24,7 +24,7 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-25 23:53 UTC lane refresh:
+- 2026-05-25 23:58 UTC lane refresh:
   - Direct `agent:M1-A` PR queue is empty after `#10170` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
@@ -52,7 +52,8 @@ node scripts/ci/pr-ownership-report.mjs
     `24936e167a ci: report ownership AgentName mismatches (#10170)`.
     `scripts/ci/pr-ownership-report.mjs` now reports open PRs where the body
     `AgentName` disagrees with the single canonical `agent:*` label; the latest
-    live report surfaced 15 such mismatches.
+    live report now shows zero such mismatches after M1-A normalized the 15
+    mismatched PR body `AgentName` lines to their existing canonical labels.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue
