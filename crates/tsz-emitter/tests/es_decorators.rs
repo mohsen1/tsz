@@ -1004,3 +1004,49 @@ fn synthetic_constructor_appears_after_instance_fields() {
         "Synthetic constructor must appear after the instance field.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn esnext_use_define_false_fields_order_auto_accessor_storage_initializers() {
+    let source = "\
+class Foo {
+    @dec(1, 3, 3, 1) field: undefined
+    @dec(2, 2, 0, 0) static field: undefined
+    @dec(3, 1, 4, 1) accessor accessor: undefined
+    @dec(4, 0, 1, 0) static accessor accessor: undefined
+}
+";
+    let output = emit_decorator_with(source, true, false);
+
+    let static_field_pos = output
+        .find(
+            "static { this.field = __runInitializers(this, _static_field_initializers, void 0); }",
+        )
+        .expect("expected static field initializer block");
+    let instance_storage_pos = output
+        .find("#accessor_accessor_storage;")
+        .expect("expected uninitialized instance accessor storage declaration");
+    let constructor_storage_pos = output
+        .find("this.#accessor_accessor_storage = (__runInitializers(this, _field_extraInitializers), __runInitializers(this, _accessor_initializers, void 0));")
+        .expect("expected constructor accessor storage initializer after field extra initializers");
+    let static_storage_pos = output
+        .find("static #accessor_1_accessor_storage = (__runInitializers(this, _static_field_extraInitializers), __runInitializers(this, _static_accessor_initializers, void 0));")
+        .expect("expected static accessor storage initializer after static field extra initializers");
+    let accessor_extra_pos = output
+        .find("__runInitializers(this, _accessor_extraInitializers);")
+        .expect("expected accessor extra initializer call");
+
+    assert!(
+        static_field_pos < instance_storage_pos && constructor_storage_pos < accessor_extra_pos,
+        "Decorated static fields and instance accessor storage should follow tsc initializer order.\nOutput:\n{output}"
+    );
+    assert!(
+        instance_storage_pos < static_storage_pos,
+        "Static and instance accessors with the same property name should use distinct storage names in class-body order.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(
+            "__runInitializers(this, _field_extraInitializers);\n        this.#accessor_accessor_storage"
+        ),
+        "Field extra initializers should be consumed by the following accessor storage assignment, not emitted as a separate constructor statement.\nOutput:\n{output}"
+    );
+}
