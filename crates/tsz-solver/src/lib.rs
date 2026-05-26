@@ -400,6 +400,9 @@ mod constraint_tests;
 #[path = "../tests/function_comprehensive_tests.rs"]
 mod function_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/function_optional_param_relation_tests.rs"]
+mod function_optional_param_relation_tests;
+#[cfg(test)]
 #[path = "../tests/index_access_comprehensive_tests.rs"]
 mod index_access_comprehensive_tests;
 #[cfg(test)]
