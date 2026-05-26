@@ -601,6 +601,9 @@ mod intersection_signatures;
 #[path = "tests/issue_9762_literal_init_callback_inference.rs"]
 mod issue_9762_literal_init_callback_inference;
 #[cfg(test)]
+#[path = "tests/iterable_next_relation_routing_arch_tests.rs"]
+mod iterable_next_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
 #[cfg(test)]
