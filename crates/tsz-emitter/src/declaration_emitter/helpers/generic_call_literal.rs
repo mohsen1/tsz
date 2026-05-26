@@ -17,6 +17,8 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
+                    .or_else(|| self.generic_call_pick_mapped_type_text(expr_idx))
+                    .or_else(|| self.generic_call_returned_function_object_type_text(expr_idx))
                     .or_else(|| self.call_expression_function_variable_return_type_text(expr_idx))
                     .or_else(|| self.generic_call_returned_identity_callback_type_text(expr_idx))
                     .or_else(|| self.call_expression_local_overload_return_type_text(expr_idx))
@@ -1171,6 +1173,157 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    fn generic_call_returned_function_object_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        let [arg_idx] = arguments.nodes.as_slice() else {
+            return None;
+        };
+
+        if self.function_expression_has_type_parameters(call.expression) {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_node = self.arena.get(callee_idx)?;
+            let func = self.arena.get_function(callee_node)?;
+            return self.generic_call_returned_function_object_type_text_for_function(
+                self.arena, func, *arg_idx,
+            );
+        }
+
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            self.generic_call_returned_function_object_type_text_for_function(
+                source_arena,
+                func,
+                *arg_idx,
+            )
+        })
+    }
+
+    fn generic_call_returned_function_object_type_text_for_function(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let return_type_param = function_returned_function_type_parameter_name(source_arena, func)?;
+        if !function_declares_type_parameter(source_arena, func, &return_type_param) {
+            return None;
+        }
+
+        let has_matching_parameter = func.parameters.nodes.iter().copied().any(|param_idx| {
+            source_arena
+                .get(param_idx)
+                .and_then(|node| source_arena.get_parameter(node))
+                .is_some_and(|param| {
+                    type_node_references_type_parameter(
+                        source_arena,
+                        param.type_annotation,
+                        &return_type_param,
+                        0,
+                    ) && type_reference_identifier_name(source_arena, param.type_annotation)
+                        .as_deref()
+                        != Some(return_type_param.as_str())
+                })
+        });
+        if !has_matching_parameter {
+            return None;
+        }
+
+        let object_text = self.object_literal_callback_return_shape_type_text(arg_idx, 0)?;
+        let return_annotation = self
+            .source_slice_from_arena(source_arena, func.type_annotation)
+            .or_else(|| self.emit_type_node_text_from_arena(source_arena, func.type_annotation))?;
+        let prefix = return_annotation.split_once("=>")?.0.trim_end();
+        Some(format!("{prefix} => {object_text}"))
+    }
+
+    fn object_literal_callback_return_shape_type_text(
+        &self,
+        object_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                return None;
+            }
+            let initializer = self.object_literal_member_initializer(member_node)?;
+            let type_text = self.callback_spec_member_result_type_text(initializer, depth + 1)?;
+            members.push(Self::format_object_member_type_text(
+                &name,
+                &type_text,
+                depth + 1,
+            ));
+        }
+
+        if members.is_empty() {
+            return None;
+        }
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("{{\n{formatted_members}\n{closing_indent}}}"))
+    }
+
+    fn callback_spec_member_result_type_text(
+        &self,
+        initializer: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let initializer = self.skip_parenthesized_expression(initializer)?;
+        let node = self.arena.get(initializer)?;
+        if node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return self.object_literal_callback_return_shape_type_text(initializer, depth);
+        }
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let return_type = self.callback_function_widened_return_type_text(initializer)?;
+        (!return_type.is_empty() && return_type != "any").then_some(return_type)
+    }
+
+    fn callback_function_widened_return_type_text(&self, func_idx: NodeIndex) -> Option<String> {
+        if let Some(literal_text) = self.function_expression_literal_return_type_text(func_idx)
+            && let Some(primitive) = Self::overload_literal_primitive_name(&literal_text)
+        {
+            return Some(primitive.to_string());
+        }
+
+        let interner = self.type_interner?;
+        let func_type = self.get_node_type_or_names(&[func_idx])?;
+        let return_type = tsz_solver::type_queries::get_return_type(interner, func_type)?;
+        let widened = tsz_solver::operations::widening::widen_literal_type(interner, return_type);
+        Some(self.print_type_id_for_inferred_declaration(widened))
+    }
+
     fn call_expression_has_generic_callee(&self, expr_idx: NodeIndex) -> bool {
         let Some(expr_node) = self.arena.get(expr_idx) else {
             return false;
@@ -1241,6 +1394,34 @@ fn function_return_type_parameter_name(
     func: &FunctionData,
 ) -> Option<String> {
     type_reference_identifier_name(source_arena, func.type_annotation)
+}
+
+fn function_returned_function_type_parameter_name(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+) -> Option<String> {
+    let return_node = source_arena.get(func.type_annotation)?;
+    if return_node.kind != syntax_kind_ext::FUNCTION_TYPE {
+        return None;
+    }
+    let function_type = source_arena.get_function_type(return_node)?;
+    type_reference_identifier_name(source_arena, function_type.type_annotation)
+}
+
+fn function_declares_type_parameter(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+    type_param_name: &str,
+) -> bool {
+    func.type_parameters.as_ref().is_some_and(|type_params| {
+        type_params.nodes.iter().copied().any(|param_idx| {
+            source_arena
+                .get(param_idx)
+                .and_then(|node| source_arena.get_type_parameter(node))
+                .and_then(|param| identifier_text(source_arena, param.name))
+                .is_some_and(|name| name == type_param_name)
+        })
+    })
 }
 
 fn function_return_tuple_type_parameter_names(

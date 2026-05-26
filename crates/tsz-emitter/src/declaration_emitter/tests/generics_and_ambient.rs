@@ -119,6 +119,127 @@ fn test_multiple_type_parameters() {
     );
 }
 
+#[test]
+fn generic_call_returned_function_object_widens_callback_literals() {
+    let output = emit_dts_with_binding(
+        r#"
+type Func<Value> = (...args: any[]) => Value;
+type Spec<Shape> = {
+    [Field in keyof Shape]: Func<Shape[Field]> | Spec<Shape[Field]>;
+};
+declare function applySpec<Shape>(obj: Spec<Shape>): (...args: any[]) => Shape;
+
+export var g1 = applySpec({
+    sum: (a: any) => 3,
+    nested: {
+        mul: (b: any) => "n"
+    }
+});
+
+type Rule<Result> = {
+    [Name in keyof Result]: (() => Result[Name]) | Rule<Result[Name]>;
+};
+declare function makeRuleResult<Result>(rule: Rule<Result>): () => Result;
+
+export var g2 = makeRuleResult({
+    flag: () => true,
+    child: {
+        text: () => "ok"
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare var g1: (...args: any[]) => {\n    sum: number;\n    nested: {\n        mul: string;\n    };\n};"
+        ),
+        "Expected callback literal returns to widen inside returned function object: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare var g2: () => {\n    flag: boolean;\n    child: {\n        text: string;\n    };\n};"
+        ),
+        "Expected renamed generic/mapped callback spec to use the same source-call rule: {output}"
+    );
+}
+
+#[test]
+fn generic_call_returned_function_object_requires_callback_leaves() {
+    let output = emit_dts(
+        r#"
+type Spec<Shape> = {
+    [Field in keyof Shape]: (() => Shape[Field]) | Spec<Shape[Field]>;
+};
+declare function applySpec<Shape>(obj: Spec<Shape>): () => Shape;
+
+export var g = applySpec({
+    value: 3
+});
+"#,
+    );
+
+    assert!(
+        !output.contains("export declare var g: () => {\n    value: number;\n};"),
+        "Non-callback leaves should fall back to the normal inferred call surface: {output}"
+    );
+}
+
+#[test]
+fn generic_call_pick_mapped_arguments_preserve_public_inference_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+type Pick<T, K extends keyof T> = {
+    [P in K]: T[P];
+};
+type Box<T> = {
+    value: T;
+};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+declare function f20<T, K extends keyof T>(obj: Pick<T, K>): T;
+declare function f21<T, K extends keyof T>(obj: Pick<T, K>): K;
+declare function f22<T, K extends keyof T>(obj: Boxified<Pick<T, K>>): T;
+declare function f24<T, U, K extends keyof T | keyof U>(obj: Pick<T & U, K>): T & U;
+
+let x0 = f20({ foo: 42, bar: "hello" });
+let x1 = f21({ foo: 42, bar: "hello" });
+let x2 = f22({ foo: { value: 42 }, bar: { value: "hello" } });
+let x4 = f24({ foo: 42, bar: "hello" });
+
+function getProps<T, K extends keyof T>(obj: T, list: K[]): Pick<T, K> {
+    return {} as any;
+}
+const myAny: any = {};
+const o1 = getProps(myAny, ["foo", "bar"]);
+"#,
+    );
+
+    assert!(
+        output.contains("declare let x0: {\n    foo: number;\n    bar: string;\n};"),
+        "Expected Pick<T, K> object argument to infer the returned object surface: {output}"
+    );
+    assert!(
+        output.contains("declare let x1: \"foo\" | \"bar\";"),
+        "Expected Pick<T, K> object keys to infer K as a literal-key union: {output}"
+    );
+    assert!(
+        output.contains("declare let x2: {\n    foo: number;\n    bar: string;\n};"),
+        "Expected mapped wrapper over Pick<T, K> to unwrap one-property member values: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare let x4: {\n    foo: number;\n    bar: string;\n} & {\n    foo: number;\n    bar: string;\n};"
+        ),
+        "Expected Pick<T & U, K> to preserve the intersection return surface: {output}"
+    );
+    assert!(
+        output.contains("declare const o1: Pick<any, \"foo\" | \"bar\">;"),
+        "Expected K[] literal argument to preserve Pick<any, literal-key-union>: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================

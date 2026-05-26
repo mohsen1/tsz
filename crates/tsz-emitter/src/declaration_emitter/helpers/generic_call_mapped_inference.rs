@@ -1,0 +1,397 @@
+//! Declaration emit helpers for generic calls through mapped utility surfaces.
+
+use super::super::DeclarationEmitter;
+use tsz_parser::parser::node::{FunctionData, NodeArena};
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
+use tsz_scanner::SyntaxKind;
+
+impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn generic_call_pick_mapped_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+
+        if self.pick_call_function_expression_has_type_parameters(call.expression) {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_node = self.arena.get(callee_idx)?;
+            let func = self.arena.get_function(callee_node)?;
+            return self
+                .generic_call_pick_mapped_type_text_for_function(self.arena, func, arguments);
+        }
+
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            self.generic_call_pick_mapped_type_text_for_function(source_arena, func, arguments)
+        })
+    }
+
+    fn generic_call_pick_mapped_type_text_for_function(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        arguments: &NodeList,
+    ) -> Option<String> {
+        if let Some((return_object_idx, return_key_idx)) =
+            pick_type_reference_args(source_arena, func.type_annotation)
+        {
+            let object_text = self.type_parameter_argument_type_text(
+                source_arena,
+                func,
+                arguments,
+                return_object_idx,
+            )?;
+            let key_text = self.type_parameter_argument_type_text(
+                source_arena,
+                func,
+                arguments,
+                return_key_idx,
+            )?;
+            if object_text == "any" {
+                return Some(format!("Pick<any, {key_text}>"));
+            }
+        }
+
+        let return_text = self
+            .emit_type_node_text_from_arena(source_arena, func.type_annotation)
+            .or_else(|| self.source_slice_from_arena(source_arena, func.type_annotation))?
+            .trim()
+            .to_string();
+
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .zip(arguments.nodes.iter().copied())
+            .find_map(|(param_idx, arg_idx)| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_parameter(param_node)?;
+                let pick = pick_type_reference_in_type(source_arena, param.type_annotation)?;
+                let object_text = self
+                    .emit_type_node_text_from_arena(source_arena, pick.object_type)
+                    .or_else(|| self.source_slice_from_arena(source_arena, pick.object_type))?
+                    .trim()
+                    .to_string();
+                let key_text = self
+                    .emit_type_node_text_from_arena(source_arena, pick.key_type)
+                    .or_else(|| self.source_slice_from_arena(source_arena, pick.key_type))?
+                    .trim()
+                    .to_string();
+
+                if return_text == key_text {
+                    return self.object_literal_key_union_type_text(arg_idx);
+                }
+
+                if return_text != object_text {
+                    return None;
+                }
+
+                let shape_text = self.object_literal_pick_argument_shape_type_text(
+                    arg_idx,
+                    pick.requires_single_property_unwrap,
+                    0,
+                )?;
+                if source_arena
+                    .get(pick.object_type)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::INTERSECTION_TYPE)
+                {
+                    let arm_count = source_arena
+                        .get(pick.object_type)
+                        .and_then(|node| source_arena.get_composite_type(node))
+                        .map(|composite| composite.types.nodes.len())
+                        .unwrap_or(1);
+                    return Some(vec![shape_text; arm_count].join(" & "));
+                }
+                Some(shape_text)
+            })
+    }
+
+    fn type_parameter_argument_type_text(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        arguments: &NodeList,
+        type_param_idx: NodeIndex,
+    ) -> Option<String> {
+        let type_param_name = type_reference_identifier_name(source_arena, type_param_idx)?;
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .zip(arguments.nodes.iter().copied())
+            .find_map(|(param_idx, arg_idx)| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_parameter(param_node)?;
+                if type_reference_identifier_name(source_arena, param.type_annotation).as_deref()
+                    == Some(type_param_name.as_str())
+                {
+                    return self
+                        .preferred_expression_type_text(arg_idx)
+                        .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0));
+                }
+                if array_type_element_identifier_name(source_arena, param.type_annotation)
+                    .as_deref()
+                    == Some(type_param_name.as_str())
+                {
+                    return self.array_literal_const_union_type_text(arg_idx);
+                }
+                None
+            })
+    }
+
+    fn object_literal_pick_argument_shape_type_text(
+        &self,
+        object_idx: NodeIndex,
+        unwrap_single_property_object: bool,
+        depth: u32,
+    ) -> Option<String> {
+        if !unwrap_single_property_object {
+            return self.infer_object_literal_type_text_at(object_idx, depth);
+        }
+
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut members = Vec::new();
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                return None;
+            }
+            let initializer = self.object_literal_member_initializer(member_node)?;
+            let value_idx = self.single_property_object_literal_value(initializer)?;
+            let type_text = self
+                .infer_fallback_type_text_at(value_idx, depth + 1)
+                .or_else(|| self.preferred_expression_type_text(value_idx))?;
+            members.push(Self::format_object_member_type_text(
+                &name,
+                &type_text,
+                depth + 1,
+            ));
+        }
+
+        if members.is_empty() {
+            return None;
+        }
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("{{\n{formatted_members}\n{closing_indent}}}"))
+    }
+
+    fn single_property_object_literal_value(&self, object_idx: NodeIndex) -> Option<NodeIndex> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        let [member_idx] = object.elements.nodes.as_slice() else {
+            return None;
+        };
+        let member_node = self.arena.get(*member_idx)?;
+        if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+            return None;
+        }
+        self.object_literal_member_initializer(member_node)
+    }
+
+    fn object_literal_key_union_type_text(&self, object_idx: NodeIndex) -> Option<String> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut keys = Vec::new();
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                return None;
+            }
+            keys.push(format!("\"{name}\""));
+        }
+        (!keys.is_empty()).then(|| keys.join(" | "))
+    }
+
+    fn array_literal_const_union_type_text(&self, array_idx: NodeIndex) -> Option<String> {
+        let array_idx = self.skip_parenthesized_expression(array_idx)?;
+        let array_node = self.arena.get(array_idx)?;
+        if array_node.kind != syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return None;
+        }
+        let array = self.arena.get_literal_expr(array_node)?;
+        let mut elements = Vec::new();
+        for &element_idx in &array.elements.nodes {
+            elements.push(self.const_literal_initializer_text(element_idx)?);
+        }
+        (!elements.is_empty()).then(|| elements.join(" | "))
+    }
+
+    fn pick_call_function_expression_has_type_parameters(&self, expr_idx: NodeIndex) -> bool {
+        let Some(expr_idx) = self.skip_parenthesized_expression(expr_idx) else {
+            return false;
+        };
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        self.arena
+            .get_function(expr_node)
+            .and_then(|func| func.type_parameters.as_ref())
+            .is_some_and(|params| !params.nodes.is_empty())
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PickTypeReference {
+    object_type: NodeIndex,
+    key_type: NodeIndex,
+    requires_single_property_unwrap: bool,
+}
+
+fn pick_type_reference_args(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+) -> Option<(NodeIndex, NodeIndex)> {
+    let type_node = source_arena.get(type_idx)?;
+    if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+        return None;
+    }
+    let type_ref = source_arena.get_type_ref(type_node)?;
+    if identifier_text(source_arena, type_ref.type_name).as_deref() != Some("Pick") {
+        return None;
+    }
+    let type_args = type_ref.type_arguments.as_ref()?;
+    let [object_type, key_type] = type_args.nodes.as_slice() else {
+        return None;
+    };
+    Some((*object_type, *key_type))
+}
+
+fn pick_type_reference_in_type(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+) -> Option<PickTypeReference> {
+    pick_type_reference_in_type_inner(source_arena, type_idx, false)
+}
+
+fn pick_type_reference_in_type_inner(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+    requires_single_property_unwrap: bool,
+) -> Option<PickTypeReference> {
+    let type_node = source_arena.get(type_idx)?;
+    match type_node.kind {
+        k if k == syntax_kind_ext::TYPE_REFERENCE => {
+            if let Some((object_type, key_type)) = pick_type_reference_args(source_arena, type_idx)
+            {
+                return Some(PickTypeReference {
+                    object_type,
+                    key_type,
+                    requires_single_property_unwrap,
+                });
+            }
+            let type_ref = source_arena.get_type_ref(type_node)?;
+            type_ref
+                .type_arguments
+                .as_ref()?
+                .nodes
+                .iter()
+                .copied()
+                .find_map(|arg_idx| pick_type_reference_in_type_inner(source_arena, arg_idx, true))
+        }
+        k if k == syntax_kind_ext::PARENTHESIZED_TYPE => source_arena
+            .get_wrapped_type(type_node)
+            .and_then(|wrapped| {
+                pick_type_reference_in_type_inner(
+                    source_arena,
+                    wrapped.type_node,
+                    requires_single_property_unwrap,
+                )
+            }),
+        _ => None,
+    }
+}
+
+fn array_type_element_identifier_name(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+) -> Option<String> {
+    let type_node = source_arena.get(type_idx)?;
+    if type_node.kind != syntax_kind_ext::ARRAY_TYPE {
+        return None;
+    }
+    let array = source_arena.get_array_type(type_node)?;
+    type_reference_identifier_name(source_arena, array.element_type)
+}
+
+fn type_reference_identifier_name(source_arena: &NodeArena, type_idx: NodeIndex) -> Option<String> {
+    let type_node = source_arena.get(type_idx)?;
+    if type_node.kind == SyntaxKind::Identifier as u16 {
+        return identifier_text(source_arena, type_idx);
+    }
+    let type_ref = source_arena.get_type_ref(type_node)?;
+    identifier_text(source_arena, type_ref.type_name)
+}
+
+fn identifier_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
+    source_arena
+        .get(idx)
+        .and_then(|node| source_arena.get_identifier(node))
+        .map(|ident| ident.escaped_text.clone())
+}
+
+fn callable_function_from_symbol_decl<'a>(
+    source_arena: &'a NodeArena,
+    decl_idx: NodeIndex,
+) -> Option<&'a FunctionData> {
+    if let Some(func) = source_arena
+        .get(decl_idx)
+        .and_then(|node| source_arena.get_function(node))
+    {
+        return Some(func);
+    }
+
+    let mut current = decl_idx;
+    for _ in 0..8 {
+        let node = source_arena.get(current)?;
+        if let Some(var_decl) = source_arena.get_variable_declaration(node) {
+            let initializer_node = source_arena.get(var_decl.initializer)?;
+            if initializer_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || initializer_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return source_arena.get_function(initializer_node);
+            }
+        }
+        current = source_arena.parent_of(current)?;
+    }
+
+    None
+}
