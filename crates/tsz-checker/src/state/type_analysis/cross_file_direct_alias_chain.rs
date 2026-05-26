@@ -402,10 +402,23 @@ impl<'a> CheckerState<'a> {
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
-                Self::source_file_type_literal_has_generic_scope_independent_properties(
+                Self::source_file_type_literal_has_lowerable_properties(
                     arena,
+                    binder,
                     node,
                     type_param_names,
+                    seen,
+                    proof,
+                )
+            }
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                Self::source_file_template_literal_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    type_param_names,
+                    seen,
+                    proof,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -678,10 +691,23 @@ impl<'a> CheckerState<'a> {
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
-                Self::source_file_type_literal_has_generic_scope_independent_properties(
+                Self::source_file_type_literal_has_lowerable_properties(
                     arena,
+                    binder,
                     node,
                     &[],
+                    seen,
+                    proof,
+                )
+            }
+            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
+                Self::source_file_template_literal_type_is_generic_local_alias_application_lowerable(
+                    arena,
+                    binder,
+                    node,
+                    &[],
+                    seen,
+                    proof,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -1019,6 +1045,39 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
             )
+        })
+    }
+
+    fn source_file_template_literal_type_is_generic_local_alias_application_lowerable<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        node: &tsz_parser::parser::node::Node,
+        type_param_names: &[String],
+        seen: &mut Vec<SourceFileAliasProofKey>,
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        let Some(template) = arena.get_template_literal_type(node) else {
+            return false;
+        };
+        if arena.get(template.head).is_none() {
+            return false;
+        }
+        template.template_spans.nodes.iter().copied().all(|span_idx| {
+            let Some(span_node) = arena.get(span_idx) else {
+                return false;
+            };
+            let Some(span) = arena.get_template_span(span_node) else {
+                return false;
+            };
+            arena.get(span.literal).is_some()
+                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    arena,
+                    binder,
+                    span.expression,
+                    type_param_names,
+                    seen,
+                    proof,
+                )
         })
     }
 

@@ -275,6 +275,69 @@ fn direct_source_file_type_alias_lowers_imported_defaulted_helper_chain() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_type_literal_property_alias_chain() {
+    with_two_file_state(
+        "type Leaf<U> = { item: U };\ntype Box<T> = { value: Leaf<T> };\ntype Wrap<T, U> = T | U;\nexport type Result<T> = Wrap<T, Box<T>>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("type literal property alias chains should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Result should expose T");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_template_literal_type_alias_chain() {
+    with_two_file_state(
+        "type Accessor = `${number}`;\ntype Options = { depth: 7; accessor: Accessor };\ntype Wrap<T, U> = T | U;\nexport type Result<T> = Wrap<T, Options>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("template literal type alias chains should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Result should expose T");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_imported_mapped_options_alias_chain() {
+    with_program_state_with_libs(
+        &[
+            (
+                "create-type-options.ts",
+                "export type CreateTypeOptions<Options extends Required<Options>, OverrideOptions extends Partial<Options>, DefaultOptions extends Required<Options>> = { [Key in keyof Options]: OverrideOptions[Key] extends Options[Key] ? OverrideOptions[Key] : DefaultOptions[Key]; };",
+            ),
+            (
+                "paths.ts",
+                "import { CreateTypeOptions } from './create-type-options';\ntype Options = { depth: number; accessor: string };\ntype Defaults = { depth: 7; accessor: `${number}` };\ntype Unsafe<T, O extends Required<Options>> = T | O;\nexport type Result<T, Override extends Partial<Options> = {}> = Unsafe<T, CreateTypeOptions<Options, Override, Defaults>>;",
+            ),
+            ("requester.ts", "import { Result } from './paths';"),
+        ],
+        "requester.ts",
+        "paths.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(target_idx), true)
+                .expect("imported mapped option aliases should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Result should expose T and Override");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_single_hop_local_alias_chain() {
     with_two_file_state(
         "type Leaf = string | number;\nexport type Alias = Leaf;",
