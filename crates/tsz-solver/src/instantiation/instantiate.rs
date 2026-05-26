@@ -1445,15 +1445,12 @@ impl<'a> TypeInstantiator<'a> {
                         self.interner.lookup(mapped.constraint)
                     && let Some(TypeData::TypeParameter(tp_info)) =
                         self.interner.lookup(keyof_source)
-                    && Self::mapped_template_uses_source_index(
-                        self.interner,
-                        mapped.template,
-                        keyof_source,
-                        mapped.type_param.name,
-                    )
                     && !self.is_shadowed(tp_info.name)
                     && let Some(substituted) = self.substitution.get(tp_info.name)
                 {
+                    let template_uses_source_index = Self::mapped_template_uses_source_index(
+                        self.interner, mapped.template, keyof_source, mapped.type_param.name,
+                    );
                     let resolved =
                         crate::evaluation::evaluate::evaluate_type(self.interner, substituted);
 
@@ -1631,7 +1628,7 @@ impl<'a> TypeInstantiator<'a> {
                     // unions or other compound types (not just at the top level of a type
                     // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
                     // a union evaluates to `{}` instead of `null`.
-                    if Self::is_primitive_or_primitive_union(self.interner, resolved) {
+                    if template_uses_source_index && Self::is_primitive_or_primitive_union(self.interner, resolved) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return resolved;
                     }
