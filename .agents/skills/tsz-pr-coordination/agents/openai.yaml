@@ -1,0 +1,4 @@
+interface:
+  display_name: "TSZ PR Coordination"
+  short_description: "Keep TSZ pull requests coordinated."
+  default_prompt: "Use $tsz-pr-coordination to publish or refresh my TSZ pull request."

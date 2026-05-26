@@ -235,3 +235,136 @@ same(a, b);
         "DeepPartial same-type comparison must not produce TS2345. Got: {codes:?}"
     );
 }
+
+/// tsc rule: a deeply nested recursive identity mapped type (`Id<T>`) applied to
+/// a 6-level object with `number` vs `string` at the leaf must produce TS2322.
+/// This covers the `deeplyNestedMappedTypes.ts` conformance test scenario.
+///
+/// Structural rule: when two `Id<T>` applications are compared where the base
+/// objects differ only at the innermost leaf, the recursion guard must NOT
+/// short-circuit both evaluations to the same cached TypeId — each substitution
+/// domain is structurally distinct and must be evaluated independently.
+#[test]
+fn identity_mapped_type_six_levels_deep_leaf_mismatch_errors() {
+    let source = r#"
+type Id<T> = { readonly [P in keyof T]: Id<T[P]> };
+
+declare const numVer: Id<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>;
+declare const strVer: Id<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>;
+
+const bad: typeof strVer = numVer;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Id<T> with number vs string at leaf must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "Id<T> 6-levels deep must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// Same test with renamed type parameter (`U` instead of `T`, `Q` instead of `P`)
+/// to confirm the fix is structural and not keyed on specific identifier names.
+#[test]
+fn identity_mapped_type_six_levels_deep_leaf_mismatch_errors_alt_params() {
+    let source = r#"
+type Ident<U> = { readonly [Q in keyof U]: Ident<U[Q]> };
+
+declare const numVersion: Ident<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>;
+declare const strVersion: Ident<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>;
+
+const bad: typeof strVersion = numVersion;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Ident<U> (renamed params) with number vs string at leaf must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "Ident<U> 6-levels deep must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// tsc rule: a non-recursive identity mapped type compared with number vs string
+/// at the leaf must also produce TS2322. Covers the `Id2` pattern from
+/// `deeplyNestedMappedTypes.ts`.
+#[test]
+fn non_recursive_identity_mapped_type_deep_leaf_mismatch_errors() {
+    let source = r#"
+type Id2<T> = { [P in keyof T]: T[P] };
+
+declare const numVer: Id2<{ x: { y: { z: { a: { b: { c: number; }; }; }; }; }; }>;
+declare const strVer: Id2<{ x: { y: { z: { a: { b: { c: string; }; }; }; }; }; }>;
+
+const bad: typeof strVer = numVer;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2322),
+        "Id2<T> with number vs string at leaf must produce TS2322. Got: {codes:?}"
+    );
+    assert!(
+        !codes.contains(&2589),
+        "Id2<T> 6-levels deep must not produce TS2589. Got: {codes:?}"
+    );
+}
+
+/// tsc rule: a recursive `FindConditions`-style conditional mapped type used
+/// as a variable type annotation must not prevent TS2403 from firing when the
+/// same variable is redeclared with a different type argument.
+///
+/// This covers the `noExcessiveStackDepthError.ts` conformance scenario: the
+/// recursion guard must evaluate `FindConditions<any>` and `FindConditions<Entity>`
+/// as structurally distinct types so that TS2403 fires correctly.
+#[test]
+fn find_conditions_recursive_type_triggers_ts2403_on_redeclaration() {
+    let source = r#"
+type FindConditions<T> = T extends Array<infer I>
+    ? FindConditions<I>
+    : T extends object
+    ? { [K in keyof T]?: FindConditions<T[K]> }
+    : T;
+
+interface Entity {
+    id: number;
+    name: string;
+}
+
+declare var x: FindConditions<any>;
+declare var x: FindConditions<Entity>;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2403),
+        "FindConditions redeclaration with different type arg must produce TS2403. Got: {codes:?}"
+    );
+}
+
+/// Same `FindConditions` pattern with renamed type parameters to confirm the
+/// fix is not keyed on specific identifier names.
+#[test]
+fn find_conditions_renamed_params_triggers_ts2403_on_redeclaration() {
+    let source = r#"
+type SearchCriteria<U> = U extends Array<infer Elem>
+    ? SearchCriteria<Elem>
+    : U extends object
+    ? { [Key in keyof U]?: SearchCriteria<U[Key]> }
+    : U;
+
+interface Record {
+    id: number;
+    label: string;
+}
+
+declare var criteria: SearchCriteria<any>;
+declare var criteria: SearchCriteria<Record>;
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2403),
+        "SearchCriteria (renamed params) redeclaration must produce TS2403. Got: {codes:?}"
+    );
+}
