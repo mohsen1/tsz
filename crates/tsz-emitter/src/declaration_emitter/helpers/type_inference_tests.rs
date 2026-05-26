@@ -1,4 +1,5 @@
 use super::DeclarationEmitter;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
@@ -24,6 +25,21 @@ fn first_function_declared_return_identifier_type_text(source: &str) -> Option<S
             .flatten()
             .and_then(|func| emitter.function_body_declared_return_identifier_type_text(func))
     })
+}
+
+fn emit_test_dts_with_binding(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.emit(root)
 }
 
 #[test]
@@ -462,6 +478,44 @@ fn conditional_object_literal_union_widens_member_literals() {
         widened,
         "{\n    a: string;\n    b: number;\n    c: boolean;\n}"
     );
+}
+
+#[test]
+fn generic_rest_identity_object_literal_union_preserves_argument_order() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+let result = f({}, { a: "abc" }, { a: 1, b: 2 });
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "declare let result: {\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: string;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n};"
+        ),
+        "expected generic rest identity object union in argument order: {output}"
+    );
+}
+
+#[test]
+fn generic_rest_identity_prefers_declared_object_literal_surface() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+declare let data: { a: 1, b: "abc", c: true };
+let first = f(data, { a: 2 });
+let second = f({ a: 2 }, data);
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    for name in ["first", "second"] {
+        let expected =
+            format!("declare let {name}: {{\n    a: 1;\n    b: \"abc\";\n    c: true;\n}};");
+        assert!(
+            output.contains(&expected),
+            "expected `{name}` to reuse declared literal object surface: {output}"
+        );
+    }
 }
 
 #[test]
