@@ -131,7 +131,9 @@ impl<'a> CheckerState<'a> {
             (derived_string_index, base_string_index)
         {
             let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
-            if !self.diagnostic_relation_boolean_guard(derived_type, base_type_instantiated)
+            if !self
+                .assign_relation_outcome(derived_type, base_type_instantiated)
+                .related
                 && !class_extends_error_reported
             {
                 let derived_type_str = self.format_type(derived_type);
@@ -152,7 +154,9 @@ impl<'a> CheckerState<'a> {
             (derived_number_index, base_number_index)
         {
             let base_type_instantiated = instantiate_type(self.ctx.types, base_type, substitution);
-            if !self.diagnostic_relation_boolean_guard(derived_type, base_type_instantiated)
+            if !self
+                .assign_relation_outcome(derived_type, base_type_instantiated)
+                .related
                 && !class_extends_error_reported
             {
                 let derived_type_str = self.format_type(derived_type);
