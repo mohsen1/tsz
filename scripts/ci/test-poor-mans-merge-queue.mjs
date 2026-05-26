@@ -14,6 +14,7 @@ import {
   queueSkipReason,
   requiredCheckState,
   skipOwnerCounts,
+  skipOwnerReasonCounts,
   skipReasonCounts,
   supersededOpenQueueBranchReason,
 } from "./poor-mans-merge-queue.mjs";
@@ -222,6 +223,21 @@ assert.deepEqual(
   ],
 );
 assert.deepEqual(
+  skipOwnerReasonCounts([
+    { owner: "agent:M4-A", reason: "draft PR" },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "PR #10084 is open", summaryReason: "open PR branch" },
+  ]),
+  [
+    { owner: "agent:M4-A", reason: "auto-merge is not armed", count: 2 },
+    { owner: "agent:M4-A", reason: "draft PR", count: 1 },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed", count: 1 },
+    { owner: "agent:M4-B", reason: "open PR branch", count: 1 },
+  ],
+);
+assert.deepEqual(
   skipOwnerCounts([
     { owner: "agent:M4-A", updatedAt: "2026-05-25T10:00:00Z", reason: "draft PR" },
     { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "auto-merge is not armed" },
@@ -326,6 +342,9 @@ assert.match(cleanupActiveRunFormat, /\| 1 \| active queue run \|/);
 assert.match(cleanupActiveRunFormat, /### Skip Owner Counts/);
 assert.match(cleanupActiveRunFormat, /\| 2 \| agent:M4-A \|/);
 assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-C \|/);
+assert.match(cleanupActiveRunFormat, /### Skip Owner Reason Counts/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-A \| active queue run \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-A \| open PR branch \|/);
 assert.match(cleanupActiveRunFormat, /\| Branch \| Owner \| Reason \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| agent:M4-A \| active queue run 26423420117 \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9912` \| agent:M4-C \| PR #9912 is open \|/);
@@ -384,6 +403,9 @@ assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
 assert.match(queueSkipFormat, /### Skip Owner Counts/);
 assert.match(queueSkipFormat, /\| 14 \| agent:M1-A \|/);
 assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
+assert.match(queueSkipFormat, /### Skip Owner Reason Counts/);
+assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 5 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
 assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
