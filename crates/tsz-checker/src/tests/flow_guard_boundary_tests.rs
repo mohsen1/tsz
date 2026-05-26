@@ -23,6 +23,30 @@ function use(value: unknown) {
 }
 
 #[test]
+fn condition_type_predicate_narrows_false_branch() {
+    let codes = check_strict(
+        r#"
+declare function isString(value: unknown): value is string;
+
+function use(value: string | number) {
+    if (isString(value)) {
+        const text: string = value;
+        text.toUpperCase();
+    } else {
+        const count: number = value;
+        count.toFixed();
+    }
+}
+"#,
+    );
+
+    assert!(
+        !codes.contains(&2322) && !codes.contains(&2339),
+        "expected type predicate narrowing in both branches, got codes: {codes:?}"
+    );
+}
+
+#[test]
 fn instanceof_condition_narrows_both_branches() {
     let codes = check_strict(
         r#"
