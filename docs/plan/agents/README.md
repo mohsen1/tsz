@@ -123,8 +123,8 @@ section.
 ## GitHub Actions Outages
 
 When GitHub Actions is unavailable or checkout/action-download failures are
-clearly infrastructure-wide, do not rerun jobs as a watcher and do not enable
-auto-merge. Keep the lane moving with local, cheap evidence:
+clearly infrastructure-wide, do not rerun jobs as a watcher and do not add
+`merge-queue`. Keep the lane moving with local, cheap evidence:
 
 1. Confirm the branch is clean and synced with `origin/main`.
 2. Run the lane's local guardrail commands and any narrow script tests that
@@ -133,7 +133,9 @@ auto-merge. Keep the lane moving with local, cheap evidence:
    the local verification, and the next action after Actions recovers.
 
 Resume CI only after the external outage clears, and re-check the exact head
-before changing draft/ready state or auto-merge.
+before changing draft/ready state or adding `merge-queue`. `Queue Tested` is
+produced after the label is added, so it is not evidence to wait on before
+enqueue.
 
 ## Worktree And Cache Policy
 
