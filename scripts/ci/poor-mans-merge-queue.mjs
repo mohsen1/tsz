@@ -930,7 +930,6 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
     git(["push", forceWithLeaseArg(branch), "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
-    runGh(["workflow", "run", "ci.yml", "--repo", repository, "--ref", branch]);
   }
   return { branch, mergeOid };
 }
