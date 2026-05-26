@@ -694,6 +694,9 @@ mod recursive_path_default_type_param_tests;
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
+#[path = "tests/return_context_promise_identity_tests.rs"]
+mod return_context_promise_identity_tests;
+#[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]
