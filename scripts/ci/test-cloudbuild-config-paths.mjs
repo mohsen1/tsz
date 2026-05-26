@@ -28,6 +28,7 @@ for (const config of expectedConfigs) {
 
 for (const [workflow, configs] of workflowConfigs) {
   const workflowText = fs.readFileSync(path.join(ROOT, workflow), "utf8");
+  const allowedConfigs = new Set(configs);
 
   for (const config of configs) {
     assert.match(
@@ -39,6 +40,18 @@ for (const [workflow, configs] of workflowConfigs) {
       workflowText,
       new RegExp(`--config=${config}`),
       `${workflow} should not reference ${config} from the repository root`,
+    );
+  }
+
+  for (const config of expectedConfigs) {
+    if (allowedConfigs.has(config)) {
+      continue;
+    }
+
+    assert.doesNotMatch(
+      workflowText,
+      new RegExp(`--config=scripts/cloudbuild/${config}`),
+      `${workflow} should not reference ${config}`,
     );
   }
 }
