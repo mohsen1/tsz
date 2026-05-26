@@ -14,7 +14,8 @@ Use this checklist before creating or materially updating a TSZ PR.
   and a concrete evidence line for docs, skills, or harness-only work.
 - `Verification`: targeted local commands and CI expectation.
 - `Coordination Notes`: overlap checks, dependency branches, WIP state,
-  follow-ups, and signed handoff facts.
+  follow-ups, signed handoff facts, and whether the PR is ready for a manager or
+  queue-owner agent to review.
 
 ## Body Validation
 

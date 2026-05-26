@@ -1,13 +1,15 @@
 ---
 name: tsz-pr-coordination
-description: Create, refresh, and publish TSZ pull requests with correct coordination state. Use when opening a draft PR, updating a PR body, applying canonical agent labels, changing WIP/draft/ready state, acknowledging review, checking auto-merge readiness, or making sure a TSZ PR satisfies AgentName, Project Corpus Impact, verification, and overlap rules.
+description: Create, refresh, and publish TSZ pull requests with correct coordination state. Use when opening a draft PR, updating a PR body, applying canonical agent labels, changing WIP/draft/ready state, acknowledging review, handing off readiness to a manager agent, or making sure a TSZ PR satisfies AgentName, Project Corpus Impact, verification, and overlap rules.
 ---
 
 # TSZ PR Coordination
 
 Use this skill for TSZ PR state, especially before pushing a branch or changing
 draft/WIP/ready status. It complements `tsz-ci-pr`: use this skill for the
-coordination contract and `tsz-ci-pr` for check triage and landing.
+coordination contract and `tsz-ci-pr` for check triage. Merge and auto-merge
+coordination belongs to an explicit manager or queue-owner agent, not every
+implementation agent.
 
 ## Required Identity
 
@@ -17,6 +19,27 @@ such as `agent:claude-*` or typo labels such as `agnet:*`.
 
 Canonical ownership labels are documented in
 `docs/plan/agents/README.md`. Apply at most one `agent:*` label to a PR.
+
+## Role Split
+
+Individual implementation agents own only their own PRs. They should:
+
+- keep their PR body, labels, WIP/draft state, verification, and review replies
+  current,
+- mark their own PR ready only when implementation and verification are done and
+  the lane permits it,
+- leave a signed readiness or blocker note for the manager agent,
+- avoid queue sweeps, merge decisions, or auto-merge changes on unrelated PRs.
+
+Manager or queue-owner agents handle cross-PR coordination. They may:
+
+- inspect the full PR queue and ownership state,
+- decide merge order and dependency handoffs,
+- enable or disable auto-merge when policy and exact-head checks allow it,
+- merge ready PRs or leave signed blocker comments.
+
+If you are not acting as the manager/queue owner, do not merge PRs or use
+auto-merge as part of routine implementation work.
 
 ## Before Publishing
 
@@ -92,17 +115,19 @@ it is blocked, immediately leave a signed PR comment with:
 - next owner/action,
 - verification already run.
 
-## Ready And Auto-Merge
+## Ready Handoff
 
-Before marking ready:
+Before marking your own PR ready or handing it to the manager:
 
 1. Remove WIP markers only after implementation and verification are complete.
 2. Confirm the latest pushed head SHA is the one you reviewed.
-3. Confirm required checks for that head are green, not pending or missing.
-4. Confirm the PR body has current verification and Project Corpus Impact.
+3. Confirm the PR body has current verification and Project Corpus Impact.
+4. Comment with remaining risks, dependencies, or a clear "ready for manager
+   review/queue" note.
 
-Do not use auto-merge as a CI watcher. If checks are pending or failing, leave
-auto-merge off and comment with the blocker.
+Do not use auto-merge as a CI watcher. Unless you are the manager/queue owner,
+leave merge and auto-merge decisions to the manager after exact-head checks are
+complete.
 
 ## Review Responses
 
