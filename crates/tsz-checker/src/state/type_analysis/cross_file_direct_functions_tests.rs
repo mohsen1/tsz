@@ -5,8 +5,8 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
-use tsz_solver::TypeId;
 use tsz_solver::def::DefinitionStore;
+use tsz_solver::{TypeId, TypePredicateTarget};
 
 fn parse_bound_source_with_name(
     file_name: &str,
@@ -278,5 +278,72 @@ fn delegate_explicit_cross_file_source_function_lowers_annotated_signature() {
         state.ctx.cached_cross_file_symbol_type(summarize_sym, 1),
         Some((ty, params)),
         "explicit cross-file function result should be cached by file target",
+    );
+}
+
+#[test]
+fn delegate_explicit_cross_file_source_const_arrow_lowers_type_predicate() {
+    let (target_arena, target_binder, types) = parse_bound_source_with_name(
+        "target.ts",
+        r#"
+                export type Primitive = string | number | boolean | null | undefined;
+                export const isPrimitive = (value: unknown): value is Primitive => true;
+            "#,
+    );
+    let (requester_arena, requester_binder, _) = parse_bound_source_with_name(
+        "requester.ts",
+        "// synthetic requester with explicit symbol-file ownership only",
+    );
+    let guard_sym = target_binder
+        .file_locals
+        .get("isPrimitive")
+        .expect("guard symbol");
+
+    let mut ctx = CheckerContext::new_with_shared_def_store(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+        Arc::new(DefinitionStore::new()),
+    );
+    ctx.share_owner_symbol_type_results = true;
+    ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let mut symbol_file_index = FxHashMap::default();
+    symbol_file_index.insert(guard_sym, 1);
+    ctx.set_global_symbol_file_index(Arc::new(symbol_file_index));
+    let mut state = CheckerState { ctx };
+
+    let (ty, params) = state
+        .delegate_cross_arena_symbol_resolution(guard_sym)
+        .expect("annotated source const arrow should lower through explicit file target");
+    let shape = function_shape_for_type(&types, ty)
+        .expect("direct const arrow lowering should produce a function type");
+    let predicate = shape
+        .type_predicate
+        .expect("type guard return annotation should be preserved");
+
+    assert!(params.is_empty());
+    assert_eq!(shape.params.len(), 1);
+    assert_eq!(shape.params[0].type_id, TypeId::UNKNOWN);
+    assert_eq!(shape.return_type, TypeId::BOOLEAN);
+    assert_eq!(predicate.parameter_index, Some(0));
+    assert!(matches!(
+        predicate.target,
+        TypePredicateTarget::Identifier(_)
+    ));
+    assert_ne!(predicate.type_id, Some(TypeId::UNKNOWN));
+    assert_ne!(predicate.type_id, Some(TypeId::ERROR));
+    assert_eq!(
+        state.ctx.cached_cross_file_symbol_type(guard_sym, 1),
+        Some((ty, params)),
+        "explicit cross-file const arrow result should be cached by file target",
     );
 }

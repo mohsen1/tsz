@@ -781,11 +781,13 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
-            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
-                sym_id,
-                direct_target,
-                symbol_type_cache_from_symbol_arena,
-            ) {
+            if let Some(direct_type) = self
+                .direct_source_file_variable_or_function_annotation_result(
+                    sym_id,
+                    direct_target,
+                    true,
+                )
+            {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
