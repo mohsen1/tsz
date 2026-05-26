@@ -27,3 +27,4 @@ mod cross_file_residue;
 mod cross_file_shared_cache;
 mod source_alias_attribution;
 mod symbol_type_helpers;
+mod type_param_defaults;

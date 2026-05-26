@@ -17,6 +17,7 @@ mod cross_file_conflicts;
 mod declarations;
 mod declarations_utils;
 mod duplicate_identifier_conflict_kinds;
+mod duplicate_identifier_relation_helpers;
 mod duplicate_identifiers;
 mod duplicate_identifiers_ambient_default;
 mod duplicate_identifiers_constructor;

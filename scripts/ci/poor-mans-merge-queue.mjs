@@ -256,6 +256,25 @@ function shortDate(value) {
   return value ? String(value).slice(0, 10) : "unknown";
 }
 
+function elapsedAge(startedAt, now) {
+  const startedMs = Date.parse(startedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs)) return "unknown";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -496,23 +515,85 @@ export function skipOwnerCounts(skips) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
 }
 
-function pushSkipOwnerCounts(lines, skips) {
+export function skipOwnerReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    const reason = String(skip.summaryReason || skip.reason || "(unknown)");
+    const key = `${owner}\0${reason}`;
+    const current = counts.get(key) || { owner, reason, count: 0 };
+    current.count += 1;
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.reason.localeCompare(b.reason));
+}
+
+export function activeRunOwnerStatusCounts(runs) {
+  const counts = new Map();
+  for (const run of runs || []) {
+    const owner = String(run.owner || "(unknown)");
+    const status = String(run.status || "unknown").toLowerCase();
+    const key = `${owner}\0${status}`;
+    const current = counts.get(key) || { owner, status, count: 0, oldestStartedAt: null };
+    current.count += 1;
+    if (run.startedAt && (!current.oldestStartedAt || run.startedAt < current.oldestStartedAt)) {
+      current.oldestStartedAt = run.startedAt;
+    }
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.status.localeCompare(b.status));
+}
+
+function pushSkipOwnerCounts(lines, skips, now) {
   const ownerSummary = skipOwnerCounts(skips);
   const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
   lines.push(
     "",
     "### Skip Owner Counts",
     "",
-    hasOldestUpdated ? "| Count | Owner | Oldest updated |" : "| Count | Owner |",
-    hasOldestUpdated ? "|-------|-------|----------------|" : "|-------|-------|",
+    hasOldestUpdated ? "| Count | Owner | Oldest updated | Oldest age |" : "| Count | Owner |",
+    hasOldestUpdated ? "|-------|-------|----------------|------------|" : "|-------|-------|",
   );
   for (const entry of ownerSummary) {
     const owner = entry.owner.replace(/\|/g, "\\|");
     if (hasOldestUpdated) {
-      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} |`);
+      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} | ${elapsedAge(entry.oldestUpdatedAt, now)} |`);
     } else {
       lines.push(`| ${entry.count} | ${owner} |`);
     }
+  }
+}
+
+function pushSkipOwnerReasonCounts(lines, skips) {
+  const ownerReasonSummary = skipOwnerReasonCounts(skips);
+  lines.push(
+    "",
+    "### Skip Owner Reason Counts",
+    "",
+    "| Count | Owner | Reason |",
+    "|-------|-------|--------|",
+  );
+  for (const entry of ownerReasonSummary) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const reason = entry.reason.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${reason} |`);
+  }
+}
+
+function pushActiveRunOwnerStatusCounts(lines, runs, now) {
+  lines.push(
+    "",
+    "### Active Queue Run Owner Status Counts",
+    "",
+    "| Count | Owner | Status | Oldest started | Oldest age |",
+    "|-------|-------|--------|----------------|------------|",
+  );
+  for (const entry of activeRunOwnerStatusCounts(runs)) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const status = entry.status.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${status} | ${shortDateTime(entry.oldestStartedAt)} | ${elapsedAge(entry.oldestStartedAt, now)} |`);
   }
 }
 
@@ -945,11 +1026,19 @@ export function formatResult(result, options) {
       }
     }
     if (options.verbose && result.activeRuns?.length) {
-      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Owner | Run | Status | Started |", "|--------|----|-------|-----|--------|---------|");
+      const now = result.now || new Date().toISOString();
+      pushActiveRunOwnerStatusCounts(lines, result.activeRuns, now);
+      lines.push(
+        "",
+        "### Active Queue Runs",
+        "",
+        "| Branch | PR | Owner | Run | Status | Started | Age |",
+        "|--------|----|-------|-----|--------|---------|-----|",
+      );
       for (const run of result.activeRuns.slice(0, 50)) {
         const runId = run.runId || "(unknown)";
         const runLink = run.url ? `[${runId}](${run.url})` : runId;
-        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} | ${elapsedAge(run.startedAt, now)} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
@@ -958,7 +1047,8 @@ export function formatResult(result, options) {
       for (const entry of summary) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
-      pushSkipOwnerCounts(lines, result.skips);
+      pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
+      pushSkipOwnerReasonCounts(lines, result.skips);
       pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
@@ -984,7 +1074,8 @@ export function formatResult(result, options) {
     for (const entry of summary) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
-    pushSkipOwnerCounts(lines, result.skips);
+    pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
+    pushSkipOwnerReasonCounts(lines, result.skips);
     pushQueueSkipRows(lines, result.skips);
   }
   return `${lines.join("\n")}\n`;
