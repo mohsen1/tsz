@@ -4216,6 +4216,8 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
         def_to_name: Default::default(),
         def_types: Default::default(),
         def_type_params: Default::default(),
+        boxed_types: Default::default(),
+        boxed_def_ids: Default::default(),
         flow_analysis_cache: Default::default(),
         class_instance_type_to_decl: Default::default(),
         class_instance_type_cache: Default::default(),

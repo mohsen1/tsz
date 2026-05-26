@@ -132,6 +132,14 @@ impl<'a> DeclarationEmitter<'a> {
         type_interner: &'a TypeInterner,
         binder: &'a BinderState,
     ) -> Self {
+        for (&kind, &type_id) in &type_cache.boxed_types {
+            type_interner.set_boxed_type(kind, type_id);
+        }
+        for (&kind, def_ids) in &type_cache.boxed_def_ids {
+            for &def_id in def_ids {
+                type_interner.register_boxed_def_id(kind, def_id);
+            }
+        }
         DeclarationEmitter {
             arena,
             writer: SourceWriter::with_capacity(4096),

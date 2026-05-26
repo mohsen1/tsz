@@ -9,7 +9,9 @@
 
 use super::data::ExactLiteralPropertyKey;
 use crate::construction::TypeDatabase;
-use crate::types::{MappedModifier, MappedType, PropertyInfo, TypeData, TypeId};
+use crate::types::{
+    IntrinsicKind, MappedModifier, MappedType, ObjectFlags, PropertyInfo, TypeData, TypeId,
+};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
@@ -1051,11 +1053,14 @@ pub fn inferred_declaration_mapped_constraint_surface_with(
     let mapped = db.mapped_type(mapped_id);
     let source = crate::keyof_inner_type(db, mapped.constraint)?;
     let source_param = crate::type_param_info(db, source)?;
-    let constraint = source_param.constraint?;
-    let constraint = evaluate(constraint);
+    let declared_constraint = source_param.constraint?;
+    let constraint = evaluate(declared_constraint);
 
     if is_primitive_or_primitive_union_for_mapped_surface(db, constraint) {
         return Some(constraint);
+    }
+    if is_number_wrapper_display_source(db, declared_constraint, constraint) {
+        db.store_display_alias(constraint, declared_constraint);
     }
 
     use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_preserving};
@@ -1072,7 +1077,12 @@ pub fn inferred_declaration_mapped_constraint_surface_with(
         optional_modifier: mapped.optional_modifier,
     };
     let substituted_type = db.mapped(substituted);
-    let evaluated = evaluate(substituted_type);
+    let mut evaluated = evaluate(substituted_type);
+    if let Some(sorted) =
+        sort_number_wrapper_surface_object(db, declared_constraint, constraint, evaluated)
+    {
+        evaluated = sorted;
+    }
     (evaluated != type_id && !matches!(db.lookup(evaluated), Some(TypeData::Mapped(_))))
         .then_some(evaluated)
 }
@@ -1499,7 +1509,7 @@ pub fn sort_homomorphic_source_properties_for_display(
     resolved_source: TypeId,
     props: &mut [PropertyInfo],
 ) {
-    if sort_number_wrapper_properties_for_display(db, props) {
+    if sort_number_wrapper_properties_for_display(db, source, resolved_source, props) {
         return;
     }
 
@@ -1524,17 +1534,68 @@ pub fn sort_homomorphic_source_properties_for_display(
 
 pub fn sort_number_wrapper_properties_for_display(
     db: &dyn TypeDatabase,
+    source: TypeId,
+    resolved_source: TypeId,
     props: &mut [PropertyInfo],
 ) -> bool {
+    if !is_number_wrapper_display_source(db, source, resolved_source) {
+        return false;
+    }
     if props.len() == 6
         && props
             .iter()
             .all(|prop| number_wrapper_rank(db, prop.name).is_some())
     {
         props.sort_by_key(|prop| number_wrapper_rank(db, prop.name));
+        for (index, prop) in props.iter_mut().enumerate() {
+            prop.declaration_order = (index + 1) as u32;
+        }
         return true;
     }
     false
+}
+
+fn sort_number_wrapper_surface_object(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    resolved_source: TypeId,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    let Some(TypeData::Object(shape_id)) = db.lookup(type_id) else {
+        return None;
+    };
+    let mut props = db.object_shape(shape_id).properties.clone();
+    sort_number_wrapper_properties_for_display(db, source, resolved_source, &mut props)
+        .then(|| db.object_with_flags(props, ObjectFlags::PRESERVE_DECLARATION_ORDER))
+}
+
+fn is_number_wrapper_display_source(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    resolved_source: TypeId,
+) -> bool {
+    is_number_wrapper_type_id(db, source)
+        || is_number_wrapper_type_id(db, resolved_source)
+        || db
+            .get_display_alias(source)
+            .is_some_and(|alias| is_number_wrapper_type_id(db, alias))
+        || db
+            .get_display_alias(resolved_source)
+            .is_some_and(|alias| is_number_wrapper_type_id(db, alias))
+}
+
+fn is_number_wrapper_type_id(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    db.get_boxed_type(IntrinsicKind::Number) == Some(type_id)
+        || matches!(
+            db.lookup(type_id),
+            Some(TypeData::Lazy(def_id)) if db.is_boxed_def_id(def_id, IntrinsicKind::Number)
+        )
+        || match db.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                is_number_wrapper_type_id(db, db.type_application(app_id).base)
+            }
+            _ => false,
+        }
 }
 
 fn number_wrapper_rank(db: &dyn TypeDatabase, name: Atom) -> Option<usize> {

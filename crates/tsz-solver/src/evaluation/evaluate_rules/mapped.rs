@@ -761,10 +761,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         // For homomorphic mapped types, restore source declaration order.
         // The key extraction and dedup may have reordered properties.
-        let sorted_number_wrapper = crate::type_queries::sort_number_wrapper_properties_for_display(
-            self.interner(),
-            &mut properties,
-        );
+        let sorted_number_wrapper =
+            if let (Some(source), Some(resolved_source)) = (source_object, resolved_source_id) {
+                crate::type_queries::sort_number_wrapper_properties_for_display(
+                    self.interner(),
+                    source,
+                    resolved_source,
+                    &mut properties,
+                )
+            } else {
+                false
+            };
         if !sorted_number_wrapper && !source_decl_order.is_empty() {
             let order_map: FxHashMap<Atom, usize> = source_decl_order
                 .iter()

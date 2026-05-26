@@ -93,6 +93,10 @@ impl TypeCache {
         self.def_to_name.extend(other.def_to_name);
         self.def_types.extend(other.def_types);
         self.def_type_params.extend(other.def_type_params);
+        self.boxed_types.extend(other.boxed_types);
+        for (kind, def_ids) in other.boxed_def_ids {
+            self.boxed_def_ids.entry(kind).or_default().extend(def_ids);
+        }
     }
 }
 
@@ -1370,6 +1374,8 @@ impl<'a> CheckerContext<'a> {
     /// This allows saving type checking results for future queries.
     pub fn extract_cache(self) -> TypeCache {
         let type_env = self.type_environment.into_inner();
+        let boxed_types = type_env.snapshot_boxed_types();
+        let boxed_def_ids = type_env.snapshot_boxed_def_ids();
         let def_to_symbol = self.def_to_symbol.into_inner();
         // Build def_to_name from DefinitionStore so the emitter can print lib
         // symbol names (e.g., "Promise") without needing the lib binder arena.
@@ -1390,6 +1396,8 @@ impl<'a> CheckerContext<'a> {
             def_to_name,
             def_types: type_env.snapshot_def_types(),
             def_type_params: type_env.snapshot_def_type_params(),
+            boxed_types,
+            boxed_def_ids,
             flow_analysis_cache: self.flow_analysis_cache.into_inner(),
             class_instance_type_to_decl: self.class_instance_type_to_decl,
             class_instance_type_cache: self.class_instance_type_cache,
@@ -1822,6 +1830,8 @@ mod tests {
             def_to_name: FxHashMap::default(),
             def_types: FxHashMap::default(),
             def_type_params: FxHashMap::default(),
+            boxed_types: FxHashMap::default(),
+            boxed_def_ids: FxHashMap::default(),
             flow_analysis_cache: FxHashMap::default(),
             class_instance_type_to_decl: FxHashMap::default(),
             class_instance_type_cache: FxHashMap::default(),

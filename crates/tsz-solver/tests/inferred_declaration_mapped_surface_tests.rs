@@ -1,5 +1,8 @@
 use crate::construction::TypeInterner;
-use crate::types::{MappedType, PropertyInfo, TypeData, TypeId, TypeParamInfo};
+use crate::def::DefId;
+use crate::types::{
+    IntrinsicKind, MappedType, ObjectFlags, PropertyInfo, TypeData, TypeId, TypeParamInfo,
+};
 
 #[test]
 fn inferred_declaration_mapped_constraint_surface_uses_primitive_constraint() {
@@ -93,6 +96,8 @@ fn inferred_declaration_mapped_constraint_surface_expands_object_constraint() {
 #[test]
 fn number_wrapper_properties_sort_in_declaration_display_order() {
     let interner = TypeInterner::new();
+    let number_wrapper = interner.object(Vec::new());
+    interner.set_boxed_type(IntrinsicKind::Number, number_wrapper);
     let mut props: Vec<_> = [
         "toLocaleString",
         "toString",
@@ -106,7 +111,12 @@ fn number_wrapper_properties_sort_in_declaration_display_order() {
     .collect();
 
     assert!(
-        crate::type_queries::sort_number_wrapper_properties_for_display(&interner, &mut props,)
+        crate::type_queries::sort_number_wrapper_properties_for_display(
+            &interner,
+            number_wrapper,
+            number_wrapper,
+            &mut props,
+        )
     );
 
     let names: Vec<_> = props
@@ -122,6 +132,126 @@ fn number_wrapper_properties_sort_in_declaration_display_order() {
             "toPrecision",
             "valueOf",
             "toLocaleString",
+        ]
+    );
+}
+
+#[test]
+fn number_wrapper_properties_sort_when_source_is_boxed_lazy_def() {
+    let interner = TypeInterner::new();
+    let number_def = DefId(42);
+    let number_source = interner.lazy(number_def);
+    interner.register_boxed_def_id(IntrinsicKind::Number, number_def);
+    let resolved_source = interner.object(Vec::new());
+    let mut props: Vec<_> = [
+        "toLocaleString",
+        "toString",
+        "valueOf",
+        "toExponential",
+        "toFixed",
+        "toPrecision",
+    ]
+    .into_iter()
+    .map(|name| PropertyInfo::new(interner.intern_string(name), TypeId::VOID))
+    .collect();
+
+    assert!(
+        crate::type_queries::sort_number_wrapper_properties_for_display(
+            &interner,
+            number_source,
+            resolved_source,
+            &mut props,
+        )
+    );
+}
+
+#[test]
+fn number_wrapper_sort_preserves_display_order_after_object_interning() {
+    let interner = TypeInterner::new();
+    let number_wrapper = interner.object(Vec::new());
+    interner.set_boxed_type(IntrinsicKind::Number, number_wrapper);
+    let mut props: Vec<_> = [
+        "toLocaleString",
+        "toString",
+        "valueOf",
+        "toExponential",
+        "toFixed",
+        "toPrecision",
+    ]
+    .into_iter()
+    .map(|name| PropertyInfo::new(interner.intern_string(name), TypeId::VOID))
+    .collect();
+
+    assert!(
+        crate::type_queries::sort_number_wrapper_properties_for_display(
+            &interner,
+            number_wrapper,
+            number_wrapper,
+            &mut props,
+        )
+    );
+
+    let surface = interner.object_with_flags(props, ObjectFlags::PRESERVE_DECLARATION_ORDER);
+    let Some(TypeData::Object(shape_id)) = interner.lookup(surface) else {
+        panic!("expected object surface");
+    };
+    let mut props = interner.object_shape(shape_id).properties.clone();
+    props.sort_by_key(|prop| prop.declaration_order);
+    let names: Vec<_> = props
+        .iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "toString",
+            "toFixed",
+            "toExponential",
+            "toPrecision",
+            "valueOf",
+            "toLocaleString",
+        ]
+    );
+}
+
+#[test]
+fn number_wrapper_sort_does_not_reorder_user_object_with_same_names() {
+    let interner = TypeInterner::new();
+    let user_source = interner.object(Vec::new());
+    let mut props: Vec<_> = [
+        "toLocaleString",
+        "toString",
+        "valueOf",
+        "toExponential",
+        "toFixed",
+        "toPrecision",
+    ]
+    .into_iter()
+    .map(|name| PropertyInfo::new(interner.intern_string(name), TypeId::VOID))
+    .collect();
+
+    assert!(
+        !crate::type_queries::sort_number_wrapper_properties_for_display(
+            &interner,
+            user_source,
+            user_source,
+            &mut props,
+        )
+    );
+
+    let names: Vec<_> = props
+        .iter()
+        .map(|prop| interner.resolve_atom_ref(prop.name).to_string())
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "toLocaleString",
+            "toString",
+            "valueOf",
+            "toExponential",
+            "toFixed",
+            "toPrecision",
         ]
     );
 }

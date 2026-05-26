@@ -555,6 +555,8 @@ pub(crate) fn emit_outputs(
                         def_to_symbol: cache.def_to_symbol.clone(),
                         def_types: cache.def_types.clone(),
                         def_type_params: cache.def_type_params.clone(),
+                        boxed_types: cache.boxed_types.clone(),
+                        boxed_def_ids: cache.boxed_def_ids.clone(),
                         def_to_name: cache.def_to_name.clone(),
                     };
                     let mut emitter = DeclarationEmitter::with_type_info(
@@ -662,6 +664,8 @@ pub(crate) fn emit_outputs(
                         def_to_symbol: cache.def_to_symbol.clone(),
                         def_types: cache.def_types.clone(),
                         def_type_params: cache.def_type_params.clone(),
+                        boxed_types: cache.boxed_types.clone(),
+                        boxed_def_ids: cache.boxed_def_ids.clone(),
                         def_to_name: cache.def_to_name.clone(),
                     };
 
