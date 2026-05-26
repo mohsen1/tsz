@@ -1,5 +1,6 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::narrowing::{GuardSense, TypeGuard};
 
 pub(crate) use super::common::{
     LiteralValueKind, PredicateSignatureKind, TypeResolver,
@@ -194,6 +195,54 @@ pub(crate) fn cases_exhaust_type(
         narrowing = narrowing.with_resolver(environment);
     }
     narrowing.narrow_excluding_types(switch_type, case_types) == TypeId::NEVER
+}
+
+/// Apply a solver-owned type guard to a flow type.
+///
+/// The checker owns recognizing the AST condition, call predicate, or assertion
+/// target. This boundary owns the reusable semantic narrowing and wires the
+/// optional `TypeEnvironment` so `Lazy(DefId)` inputs resolve consistently.
+pub(crate) fn narrow_with_guard(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+    guard: &TypeGuard,
+    is_true_branch: bool,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_type(type_id, guard, GuardSense::from(is_true_branch))
+}
+
+/// Keep only the falsy constituents of a flow type.
+///
+/// This is the false-branch counterpart to truthiness guard narrowing. The
+/// checker supplies the control-flow fact; the solver owns the type algebra.
+pub(crate) fn narrow_to_falsy(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_to_falsy(type_id)
+}
+
+/// Narrow a value to the object-like branch of an `instanceof`-style check.
+pub(crate) fn narrow_to_objectish(
+    db: &dyn QueryDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    type_id: TypeId,
+) -> TypeId {
+    let mut narrowing = tsz_solver::narrowing::NarrowingContext::new(db);
+    if let Some(environment) = env {
+        narrowing = narrowing.with_resolver(environment);
+    }
+    narrowing.narrow_to_objectish(type_id)
 }
 
 fn resolve_assignment_reduction_type(
