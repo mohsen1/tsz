@@ -66,7 +66,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 (self.use_define_for_class_fields
-                    || self.property_initializer_has_equals(member_node, prop_data))
+                    || self.property_initializer_has_equals(member_node, prop_data)
+                    || self.tc39_es5_decorated_field(member_idx).is_some())
                 .then_some(member_idx)
             })
             .collect();
@@ -1162,6 +1163,8 @@ impl<'a> ES5ClassTransformer<'a> {
         use_this: bool,
     ) {
         let mut consumed_tc39_instance_initializers = false;
+        let parameter_properties_consume_tc39_initializers =
+            !self.tc39_has_instance_decorated_fields();
         for &param_idx in &params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
@@ -1178,7 +1181,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 } else {
                     IRNode::this()
                 };
-                let value = if self.tc39_instance_initializers_needed()
+                let value = if parameter_properties_consume_tc39_initializers
+                    && self.tc39_instance_initializers_needed()
                     && !consumed_tc39_instance_initializers
                 {
                     consumed_tc39_instance_initializers = true;
@@ -1220,7 +1224,10 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        if self.tc39_instance_initializers_needed() && !consumed_tc39_instance_initializers {
+        if parameter_properties_consume_tc39_initializers
+            && self.tc39_instance_initializers_needed()
+            && !consumed_tc39_instance_initializers
+        {
             let receiver_text = if use_this { "_this" } else { "this" };
             body.push(IRNode::expr_stmt(IRNode::Raw(
                 format!("__runInitializers({receiver_text}, _instanceExtraInitializers)").into(),
@@ -1228,7 +1235,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    const fn tc39_instance_initializers_needed(&self) -> bool {
+    pub(super) const fn tc39_instance_initializers_needed(&self) -> bool {
         self.tc39_decorators && self.tc39_has_instance_member_decorators
     }
 

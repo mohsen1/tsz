@@ -1412,6 +1412,52 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        if self.ctx.target_es5
+            && !self.ctx.options.legacy_decorators
+            && self.can_render_simple_tc39_decorated_class_es5(node)
+        {
+            let decorator_exprs = self
+                .collect_class_decorators(&class_data.modifiers)
+                .into_iter()
+                .filter_map(|decorator_idx| {
+                    let decorator_node = self.arena.get(decorator_idx)?;
+                    let decorator = self.arena.get_decorator(decorator_node)?;
+                    let before_len = self.writer.len();
+                    self.emit_expression(decorator.expression);
+                    let after_len = self.writer.len();
+                    let full_output = self.writer.get_output().to_string();
+                    let emitted = full_output[before_len..after_len].trim().to_string();
+                    self.writer.truncate(before_len);
+                    Some(emitted)
+                })
+                .collect::<Vec<_>>();
+            let binding_name = self
+                .get_identifier_text_opt(class_data.name)
+                .or_else(|| self.resolve_class_expr_binding_name(class_node))
+                .unwrap_or_else(|| self.next_tc39_anonymous_class_name());
+            let inner_name = self.next_tc39_anonymous_class_name();
+
+            es5_emitter.set_indent_level(self.writer.indent_level() + 1);
+            es5_emitter.set_skip_static_members(true);
+            es5_emitter.set_tc39_decorators(true);
+            es5_emitter.set_tc39_wrap_output(false);
+            let inner_output = es5_emitter
+                .emit_class_with_name(class_node, &inner_name)
+                .trim_end_matches('\n')
+                .to_string();
+            self.sync_es5_class_emitter_state(&mut es5_emitter);
+            if let Some(output) = es5_emitter.wrap_tc39_es5_class_decorated_expression_output(
+                class_node,
+                &inner_name,
+                &binding_name,
+                &binding_name,
+                &inner_output,
+                &decorator_exprs,
+            ) {
+                self.write_multiline_fragment_preserving_indent(&output);
+                return;
+            }
+        }
         let class_expr_set_function_name = if class_data.name.is_none() {
             self.resolve_class_expr_binding_name(class_node)
         } else {

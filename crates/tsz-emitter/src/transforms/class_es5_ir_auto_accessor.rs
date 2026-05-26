@@ -257,7 +257,9 @@ impl<'a> ES5ClassTransformer<'a> {
         let prop_data = self.arena.get_property_decl(prop_node)?;
 
         let has_initializer_equals = self.property_initializer_has_equals(prop_node, prop_data);
-        if !self.use_define_for_class_fields && !has_initializer_equals {
+        let has_tc39_decorated_field = self.tc39_es5_decorated_field(prop_idx).is_some();
+        if !self.use_define_for_class_fields && !has_initializer_equals && !has_tc39_decorated_field
+        {
             return None;
         }
 

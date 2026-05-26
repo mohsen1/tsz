@@ -459,7 +459,7 @@ impl<'a> Printer<'a> {
 
         !self.collect_class_decorators(&class.modifiers).is_empty()
             && class.heritage_clauses.is_none()
-            && !self.class_has_tc39_member_decorators(class)
+            && !self.class_has_unsupported_tc39_es5_member_decorators(class)
             && self.class_has_only_supported_tc39_es5_static_members(class)
     }
 
@@ -526,9 +526,25 @@ impl<'a> Printer<'a> {
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
         es5_emitter.set_skip_static_members(true);
+        let has_member_decorators = self.class_has_tc39_member_decorators(class);
+        if has_member_decorators {
+            es5_emitter.set_tc39_decorators(true);
+            es5_emitter.set_tc39_wrap_output(false);
+        }
         let mut inner_output = es5_emitter.emit_class_with_name(idx, &inner_name);
         self.sync_es5_class_emitter_state(&mut es5_emitter);
         inner_output = inner_output.trim_end_matches('\n').to_string();
+
+        if has_member_decorators {
+            return es5_emitter.wrap_tc39_es5_class_decorated_output(
+                idx,
+                &inner_name,
+                binding_name,
+                display_name,
+                &inner_output,
+                &decorator_exprs,
+            );
+        }
 
         let base_indent = "    ".repeat(self.writer.indent_level() as usize);
         let body_indent = "    ".repeat((self.writer.indent_level() + 1) as usize);
@@ -600,6 +616,68 @@ impl<'a> Printer<'a> {
                                 .collect_class_decorators(&accessor.modifiers)
                                 .is_empty()
                         })
+                }
+                k if k == syntax_kind_ext::CONSTRUCTOR => {
+                    self.arena.get_constructor(member_node).is_some_and(|ctor| {
+                        ctor.parameters.nodes.iter().any(|&param_idx| {
+                            self.arena
+                                .get(param_idx)
+                                .and_then(|param_node| self.arena.get_parameter(param_node))
+                                .is_some_and(|param| {
+                                    !self.collect_class_decorators(&param.modifiers).is_empty()
+                                })
+                        })
+                    })
+                }
+                _ => false,
+            }
+        })
+    }
+
+    fn class_has_unsupported_tc39_es5_member_decorators(&self, class: &ClassData) -> bool {
+        class.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        return false;
+                    };
+                    if self.collect_class_decorators(&method.modifiers).is_empty() {
+                        return false;
+                    }
+                    self.arena
+                        .get(method.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(prop) = self.arena.get_property_decl(member_node) else {
+                        return false;
+                    };
+                    if self.collect_class_decorators(&prop.modifiers).is_empty() {
+                        return false;
+                    }
+                    self.arena
+                        .get(prop.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
+                        || self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword)
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        return false;
+                    };
+                    if self
+                        .collect_class_decorators(&accessor.modifiers)
+                        .is_empty()
+                    {
+                        return false;
+                    }
+                    self.arena
+                        .get(accessor.name)
+                        .is_some_and(|name| name.kind == SyntaxKind::PrivateIdentifier as u16)
                 }
                 k if k == syntax_kind_ext::CONSTRUCTOR => {
                     self.arena.get_constructor(member_node).is_some_and(|ctor| {

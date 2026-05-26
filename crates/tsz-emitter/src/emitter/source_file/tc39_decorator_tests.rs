@@ -772,6 +772,96 @@ class C {
 }
 
 #[test]
+fn tc39_es5_class_and_member_decorators_share_class_wrapper() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    constructor(x: number) {}
+    @dec
+    method(x: number) {}
+    @dec
+    set x(x: number) {}
+    @dec
+    y: number;
+    @dec
+    static method(x: number) {}
+    @dec
+    static set x(x: number) {}
+    @dec
+    static y: number;
+}
+
+(@dec class C {
+    constructor(x: number) {}
+    @dec
+    method(x: number) {}
+    @dec
+    set x(x: number) {}
+    @dec
+    y: number;
+    @dec
+    static method(x: number) {}
+    @dec
+    static set x(x: number) {}
+    @dec
+    static y: number;
+});
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            emit_decorator_metadata: true,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        !output.contains("var _this = this;") && !output.contains("return _a ="),
+        "Class-decorated ES5 member decorator output should not use the member-only wrapper or reserve an outer `this` capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var C = function () {\n    var _classDecorators = [dec];")
+            && output.contains("var C = _classThis = /** @class */ (function () {")
+            && output.contains("function C_1(x)")
+            && output.contains("((function () {\n    var _classDecorators = [dec];")
+            && output.contains("function class_1(x)"),
+        "Class declarations and expressions with class+member decorators should use one class replacement wrapper.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output
+            .matches(
+                "this.y = (__runInitializers(this, _instanceExtraInitializers), __runInitializers(this, _y_initializers, void 0));"
+            )
+            .count(),
+        2,
+        "Decorated fields without explicit initializers should combine instance extra initializers with the field initializer.\nOutput:\n{output}"
+    );
+    let static_method_pos = output
+        .find("__esDecorate(_classThis, null, _static_method_decorators")
+        .expect("expected static method decorator");
+    let instance_method_pos = output
+        .find("__esDecorate(_classThis, null, _method_decorators")
+        .expect("expected instance method decorator");
+    let static_field_pos = output
+        .find("__esDecorate(null, null, _static_y_decorators")
+        .expect("expected static field decorator");
+    let class_decorator_pos = output
+        .find("__esDecorate(null, _classDescriptor = { value: _classThis }")
+        .expect("expected class decorator");
+    assert!(
+        static_method_pos < instance_method_pos
+            && instance_method_pos < static_field_pos
+            && static_field_pos < class_decorator_pos,
+        "Member decorators should apply before the class decorator in tsc order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_private_accessors_use_helper_temps() {
     let source = "\
 declare var dec: any;

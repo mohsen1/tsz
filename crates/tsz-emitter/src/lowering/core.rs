@@ -1170,6 +1170,14 @@ impl<'a> LoweringPass<'a> {
         let has_tc39_decorators = !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
             && self.class_has_decorators(class);
+        let has_tc39_class_decorators = has_tc39_decorators
+            && class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
         let has_legacy_class_decorators = self.ctx.options.legacy_decorators
             && class.modifiers.as_ref().is_some_and(|mods| {
                 mods.nodes.iter().any(|&mod_idx| {
@@ -1212,6 +1220,7 @@ impl<'a> LoweringPass<'a> {
         if has_tc39_decorators {
             self.mark_tc39_decorator_helpers(class);
             if self.ctx.target_es5
+                && !has_tc39_class_decorators
                 && self.class_has_static_tc39_public_field_decorator(class)
                 && let Some(&enclosing_body) = self.enclosing_function_bodies.last()
             {
