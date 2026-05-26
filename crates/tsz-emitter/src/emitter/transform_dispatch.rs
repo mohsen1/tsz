@@ -1094,7 +1094,7 @@ impl<'a> Printer<'a> {
         es5_emitter
     }
 
-    fn class_has_tc39_decorator_nodes(
+    pub(in crate::emitter) fn class_has_tc39_decorator_nodes(
         &self,
         class_data: &tsz_parser::parser::node::ClassData,
     ) -> bool {

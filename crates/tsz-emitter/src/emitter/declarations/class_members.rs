@@ -764,6 +764,21 @@ impl<'a> Printer<'a> {
             if name_node.is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME) {
                 if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
                 {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit_class_member_name_preserving_class_expression_name(prop.name);
+                        self.write(" = ");
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_with_tc39_class_expression_name(
+                                prop.initializer,
+                                name,
+                                false,
+                            );
+                        });
+                        self.write_semicolon();
+                        return;
+                    }
                     self.write("[");
                     let name_expr =
                         self.emit_tc39_named_class_computed_property_name(computed.expression);

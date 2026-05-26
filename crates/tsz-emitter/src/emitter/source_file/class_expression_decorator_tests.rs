@@ -39,6 +39,48 @@ fn anonymous_tc39_decorated_class_expression_uses_object_property_name() {
 }
 
 #[test]
+fn anonymous_tc39_member_decorated_class_expression_uses_object_property_name() {
+    let source = "declare var dec: any;\n({ C: class { @dec y: any; } });\n";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("__esDecorate"),
+        "Member decorator transform should run for object-property class expressions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(this, \"C\")"),
+        "Anonymous member-decorated class expression should use the object property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_tc39_decorated_class_expression_uses_literal_computed_object_names() {
+    let source = "\
+declare var dec: any;
+({ [\"C\"]: @dec class {} });
+({ [0]: class { @dec y: any; } });
+({ __proto__: @dec class {} });
+({ [\"__proto__\"]: @dec class {} });
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("__propKey(\"C\")") && !output.contains("__propKey(0)"),
+        "Literal computed property names should not allocate __propKey temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"C\")")
+            && output.contains("__setFunctionName(this, \"0\")"),
+        "Literal computed object properties should pass literal names to __setFunctionName.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"\")")
+            && output.contains("__setFunctionName(_classThis, \"__proto__\")"),
+        "Noncomputed __proto__ should not perform named evaluation, but computed __proto__ should.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn anonymous_tc39_decorated_class_expression_uses_shorthand_default_name() {
     let source = "declare var dec: any;\nvar C;\n({ C = @dec class {} } = {});\n";
     let output = emit_tc39_decorator_source(source);
@@ -112,5 +154,25 @@ fn anonymous_tc39_decorated_class_expression_uses_computed_class_field_temp() {
     assert!(
         output.contains("__setFunctionName(_classThis, _a)"),
         "Computed class field should pass the raw temp to __setFunctionName.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_tc39_decorated_class_expression_uses_literal_computed_class_field_names() {
+    let source = "\
+declare var dec: any;
+class C { static [\"x\"] = @dec class {}; }
+class D { static [0] = class { @dec y: any; }; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("__propKey(\"x\")") && !output.contains("__propKey(0)"),
+        "Literal computed class field names should not allocate __propKey temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"x\")")
+            && output.contains("__setFunctionName(this, \"0\")"),
+        "Literal computed class fields should pass literal names to __setFunctionName.\nOutput:\n{output}"
     );
 }
