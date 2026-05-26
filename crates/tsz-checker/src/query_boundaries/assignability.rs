@@ -83,12 +83,16 @@ pub(crate) fn remapped_mapped_type_has_no_outer_type_params(
 
 pub(crate) fn optional_mapped_type_adds_implicit_undefined<R: TypeResolver>(
     db: &dyn QueryDatabase,
-    resolver: &R,
+    _resolver: &R,
     type_id: TypeId,
 ) -> bool {
     let type_db = db.as_type_database();
-    let candidate = instantiate_mapped_candidate(db, resolver, type_id).unwrap_or(type_id);
-    tsz_solver::type_queries::optional_mapped_type_adds_implicit_undefined(type_db, candidate)
+    if type_db.get_display_alias(type_id).is_some()
+        || tsz_solver::type_queries::get_type_application(type_db, type_id).is_some()
+    {
+        return false;
+    }
+    tsz_solver::type_queries::optional_mapped_type_adds_implicit_undefined(type_db, type_id)
 }
 
 /// Return an instantiated homomorphic mapped target that projects over `source`.
@@ -1731,6 +1735,7 @@ pub(crate) fn check_application_variance_assignability<
 mod tests {
     use super::*;
     use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::DefId;
     use tsz_solver::{IndexSignature, MappedModifier, MappedType, TypeParamInfo};
 
     #[test]
@@ -1839,6 +1844,25 @@ mod tests {
             readonly_modifier: None,
             optional_modifier: Some(MappedModifier::Add),
         });
+
+        assert!(!optional_mapped_type_adds_implicit_undefined(
+            &db, &db, mapped
+        ));
+    }
+
+    #[test]
+    fn optional_mapped_implicit_undefined_respects_display_alias_surface() {
+        let db = TypeInterner::new();
+        let mapped = db.mapped(MappedType {
+            type_param: TypeParamInfo::simple(db.intern_string("K")),
+            constraint: TypeId::STRING,
+            template: TypeId::NUMBER,
+            name_type: None,
+            readonly_modifier: None,
+            optional_modifier: Some(MappedModifier::Add),
+        });
+        let alias = db.application(db.lazy(DefId(1)), vec![TypeId::STRING]);
+        db.store_display_alias(mapped, alias);
 
         assert!(!optional_mapped_type_adds_implicit_undefined(
             &db, &db, mapped
