@@ -478,6 +478,9 @@ mod cross_file_type_params_cache_tests;
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/destructuring_relation_routing_arch_tests.rs"]
+mod destructuring_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
 #[cfg(test)]
