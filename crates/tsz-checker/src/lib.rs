@@ -112,6 +112,9 @@ mod circular_accessor_annotation_tests;
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]
+#[path = "tests/class_namespace_static_relation_routing_arch_tests.rs"]
+mod class_namespace_static_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/class_property_typed_const_initializer_tests.rs"]
 mod class_property_typed_const_initializer_tests;
 #[cfg(test)]
@@ -526,6 +529,9 @@ mod file_session_switch_to_file_tests;
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/for_in_lhs_relation_routing_arch_tests.rs"]
+mod for_in_lhs_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
@@ -561,6 +567,9 @@ mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
+#[cfg(test)]
+#[path = "tests/in_operator_relation_routing_arch_tests.rs"]
+mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
