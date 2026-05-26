@@ -438,6 +438,29 @@ impl<'a> CheckerState<'a> {
                     }
                     init_type_for_relation = self.resolve_lazy_type(raw_init_type);
                 }
+                let jsdoc_object_initializer_relation = jsdoc_declared_type.is_some()
+                    && facts.annotation.is_none()
+                    && self.jsdoc_type_annotation_is_import_type(facts.decl_idx)
+                    && !crate::query_boundaries::common::is_union_type(
+                        self.ctx.types,
+                        evaluated_type,
+                    )
+                    && self.initializer_reaches_object_literal_through_wrappers(facts.initializer);
+                if jsdoc_object_initializer_relation {
+                    let raw_init_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
+                    let saved_initializer_node_type =
+                        self.ctx.node_types.get(&facts.initializer.0).copied();
+                    self.maybe_clear_checked_initializer_type_cache(facts.initializer);
+                    let raw_init_type =
+                        self.get_type_of_node_with_request(facts.initializer, &TypingRequest::NONE);
+                    raw_init_snap.rollback(&mut self.ctx.diagnostic_state());
+                    if let Some(saved) = saved_initializer_node_type {
+                        self.ctx.node_types.insert(facts.initializer.0, saved);
+                    } else {
+                        self.ctx.node_types.remove(&facts.initializer.0);
+                    }
+                    init_type_for_relation = self.resolve_lazy_type(raw_init_type);
+                }
                 if let Some(branch_ranges) = conditional_branch_ranges {
                     // Preserve non-assignability diagnostics from the branch expressions
                     // (e.g. TS2352/TS2873), but drop premature TS2322s produced while
@@ -917,5 +940,20 @@ impl<'a> CheckerState<'a> {
             }
             (declared_type, jsdoc_declared_type)
         }
+    }
+
+    fn jsdoc_type_annotation_is_import_type(&self, decl_idx: NodeIndex) -> bool {
+        let Some((start, length)) = self.jsdoc_type_expression_span_for_node(decl_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let start = start as usize;
+        let end = start.saturating_add(length as usize);
+        source_file
+            .text
+            .get(start..end)
+            .is_some_and(|expr| expr.trim_start().starts_with("import("))
     }
 }
