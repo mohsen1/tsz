@@ -239,3 +239,72 @@ fn subtype_cache_allow_void_return_matches_uncached_function_return_policy() {
         "strict and allow-void return policies should miss in separate cache slots",
     );
 }
+
+#[test]
+fn assignability_cache_exact_optional_matches_uncached_property_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let x = interner.intern_string("x");
+
+    let source = interner.object(vec![PropertyInfo::new(x, TypeId::UNDEFINED)]);
+    let target = interner.object(vec![PropertyInfo::opt(x, TypeId::NUMBER)]);
+
+    let inexact_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let exact_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+    );
+
+    let inexact_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        inexact_policy,
+        RelationContext::default(),
+    );
+    let exact_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        exact_policy,
+        RelationContext::default(),
+    );
+
+    let inexact_cached = db.is_assignable_to_with_policy(source, target, inexact_policy);
+    let exact_cached = db.is_assignable_to_with_policy(source, target, exact_policy);
+    let inexact_cached_again = db.is_assignable_to_with_policy(source, target, inexact_policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        inexact_cached,
+        inexact_uncached.is_related(),
+        "cached inexact optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        exact_cached,
+        exact_uncached.is_related(),
+        "cached exact optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        inexact_cached_again, inexact_cached,
+        "second inexact optional-property lookup should reuse the policy-shaped answer",
+    );
+    assert!(
+        inexact_cached,
+        "inexact optional-property mode should allow explicit `undefined` for an optional property",
+    );
+    assert!(
+        !exact_cached,
+        "exact optional-property mode should reject explicit `undefined` for an optional property",
+    );
+    assert!(
+        stats.assignability_hits >= 1,
+        "second inexact optional-property lookup should hit the assignability cache",
+    );
+    assert!(
+        stats.assignability_misses >= 2,
+        "exact and inexact optional-property policies should miss in separate cache slots",
+    );
+}
