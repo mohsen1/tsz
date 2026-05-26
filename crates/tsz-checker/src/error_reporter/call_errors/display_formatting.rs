@@ -40,6 +40,14 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn optional_parameter_type_display(&self, display: String, type_id: TypeId) -> String {
+        if query_common::type_contains_undefined(self.ctx.types, type_id) {
+            display
+        } else {
+            format!("{display} | undefined")
+        }
+    }
+
     pub(crate) fn sanitized_type_node_display(&mut self, type_node: NodeIndex) -> Option<String> {
         self.node_text(type_node)
             .and_then(|text| self.sanitize_type_annotation_text_for_diagnostic(text, true))
@@ -492,8 +500,8 @@ impl<'a> CheckerState<'a> {
                     .sanitized_type_node_display(actual_param.type_annotation)
                     .unwrap_or(type_display);
             }
-            if param.optional && !type_display.contains("undefined") {
-                type_display.push_str(" | undefined");
+            if param.optional {
+                type_display = self.optional_parameter_type_display(type_display, param.type_id);
             }
             rendered.push(format!(
                 "{}{}{}: {}",
@@ -2103,50 +2111,53 @@ impl<'a> CheckerState<'a> {
 
             let optional = param.question_token || param.initializer.is_some();
             let rest = param.dot_dot_dot_token;
+            let contextual_type_id = self
+                .contextual_parameter_type_with_env_from_expected(expected, index, rest)
+                .or_else(|| shape.params.get(index).map(|param| param.type_id))
+                .unwrap_or(TypeId::ANY);
 
-            let type_display = if param.type_annotation.is_some() {
+            let (type_display, display_type_id) = if param.type_annotation.is_some() {
                 let annotated_type = self.get_type_from_type_node(param.type_annotation);
                 let rendered_annotated = self.format_type_for_assignability_message(annotated_type);
-                if rendered_annotated == "error" {
+                let display = if rendered_annotated == "error" {
                     self.sanitized_type_node_display(param.type_annotation)
                         .unwrap_or(rendered_annotated)
                 } else {
                     rendered_annotated
-                }
+                };
+                (display, annotated_type)
             } else if let Some(display) =
                 self.contextual_rest_union_parameter_display(expected, index)
             {
-                display
+                (display, contextual_type_id)
             } else if let Some(display) =
                 self.contextual_generic_rest_parameter_display(expected, index, rest)
             {
-                display
+                (display, contextual_type_id)
             } else if matches!(
                 self.ctx.arena.get(param.name).map(|node| node.kind),
                 Some(k)
                     if k == tsz_parser::parser::syntax_kind_ext::OBJECT_BINDING_PATTERN
                         || k == tsz_parser::parser::syntax_kind_ext::ARRAY_BINDING_PATTERN
             ) {
-                let type_id = self
-                    .contextual_parameter_type_with_env_from_expected(expected, index, rest)
-                    .or_else(|| shape.params.get(index).map(|param| param.type_id))
-                    .unwrap_or(TypeId::ANY);
-                if matches!(type_id, TypeId::ANY | TypeId::UNKNOWN) {
+                let display = if matches!(contextual_type_id, TypeId::ANY | TypeId::UNKNOWN) {
                     self.binding_pattern_parameter_type_display(param.name)
-                        .unwrap_or_else(|| self.format_type_for_assignability_message(type_id))
+                        .unwrap_or_else(|| {
+                            self.format_type_for_assignability_message(contextual_type_id)
+                        })
                 } else {
-                    self.format_type_for_assignability_message(type_id)
-                }
+                    self.format_type_for_assignability_message(contextual_type_id)
+                };
+                (display, contextual_type_id)
             } else {
-                let type_id = self
-                    .contextual_parameter_type_with_env_from_expected(expected, index, rest)
-                    .or_else(|| shape.params.get(index).map(|param| param.type_id))
-                    .unwrap_or(TypeId::ANY);
-                self.format_type_for_assignability_message(type_id)
+                (
+                    self.format_type_for_assignability_message(contextual_type_id),
+                    contextual_type_id,
+                )
             };
 
-            let type_display = if optional && !type_display.contains("undefined") {
-                format!("{type_display} | undefined")
+            let type_display = if optional {
+                self.optional_parameter_type_display(type_display, display_type_id)
             } else {
                 type_display
             };
