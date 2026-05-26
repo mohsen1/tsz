@@ -1215,7 +1215,11 @@ impl<'a> Printer<'a> {
                     }
                 } else {
                     // Allocate a temp variable for this computed property name
-                    let temp = self.make_unique_name_hoisted();
+                    let temp = if self.ctx.options.legacy_decorators && !has_legacy_decorators {
+                        self.make_class_static_temp_name_hoisted(_idx)
+                    } else {
+                        self.make_unique_name_hoisted()
+                    };
                     self.computed_prop_temp_map
                         .insert(computed.expression, temp.clone());
                     if has_legacy_decorators {
@@ -1301,68 +1305,6 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
-        let needs_computed_prop_comma_expr =
-            emits_as_class_expression && !computed_prop_entries.is_empty();
-        let needs_any_comma_expr =
-            needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
-        let class_expr_comma_needs_parens = needs_any_comma_expr
-            && self
-                .arena
-                .get_extended(_idx)
-                .and_then(|ext| self.arena.get(ext.parent))
-                .is_none_or(|parent| {
-                    parent.kind != syntax_kind_ext::RETURN_STATEMENT
-                        && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
-                });
-        let class_expr_temp = if needs_any_comma_expr {
-            let temp = if let Some(ref alias) = private_class_alias {
-                alias.clone()
-            } else {
-                self.make_class_static_temp_name_hoisted(_idx)
-            };
-            if class_expr_comma_needs_parens {
-                self.write("(");
-            }
-            self.write(&temp);
-            self.write(" = ");
-            Some(temp)
-        } else {
-            None
-        };
-        let class_expr_static_temp = if needs_static_comma_expr {
-            class_expr_temp.clone()
-        } else {
-            None
-        };
-        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
-        // expression only when the comma wrapper carries *static* state
-        // (a static field initializer, a static block, or a static
-        // private field that lowers into the same comma). Instance-only
-        // private comma forms — e.g.
-        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
-        // engine's automatic assignment-based naming and tsc does not
-        // emit the helper. Mirror this so the helper inclusion decision
-        // in lowering and the comma-item emission in the printer agree.
-        let has_static_private_member = needs_private_field_lowering
-            && class.members.nodes.iter().any(|&member_idx| {
-                self.arena.get(member_idx).is_some_and(|m| {
-                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
-                        && self.arena.get_property_decl(m).is_some_and(|p| {
-                            self.arena.is_static(&p.modifiers)
-                                && is_private_identifier(self.arena, p.name)
-                        })
-                })
-            });
-        let needs_set_function_name_comma_item =
-            needs_static_comma_expr || has_static_private_member;
-        let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
-            if class.name.is_none() && needs_set_function_name_comma_item {
-                self.resolve_class_expr_binding_name(_idx)
-            } else {
-                None
-            }
-        });
-
         let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
         if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
             let mut pending_computed_entries = Vec::new();
@@ -1446,6 +1388,73 @@ impl<'a> Printer<'a> {
         {
             computed_prop_entries_consumed_by_member_name.push(entry_idx);
         }
+
+        let needs_computed_prop_comma_expr = emits_as_class_expression
+            && computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                });
+        let needs_any_comma_expr =
+            needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
+        let class_expr_comma_needs_parens = needs_any_comma_expr
+            && self
+                .arena
+                .get_extended(_idx)
+                .and_then(|ext| self.arena.get(ext.parent))
+                .is_none_or(|parent| {
+                    parent.kind != syntax_kind_ext::RETURN_STATEMENT
+                        && parent.kind != syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                });
+        let class_expr_temp = if needs_any_comma_expr {
+            let temp = if let Some(ref alias) = private_class_alias {
+                alias.clone()
+            } else {
+                self.make_class_static_temp_name_hoisted(_idx)
+            };
+            if class_expr_comma_needs_parens {
+                self.write("(");
+            }
+            self.write(&temp);
+            self.write(" = ");
+            Some(temp)
+        } else {
+            None
+        };
+        let class_expr_static_temp = if needs_static_comma_expr {
+            class_expr_temp.clone()
+        } else {
+            None
+        };
+        // tsc emits `__setFunctionName(temp, "C")` for an anonymous class
+        // expression only when the comma wrapper carries *static* state
+        // (a static field initializer, a static block, or a static
+        // private field that lowers into the same comma). Instance-only
+        // private comma forms — e.g.
+        // `(_a = class { #x; }, _C_x = new WeakMap(), _a)` — keep the
+        // engine's automatic assignment-based naming and tsc does not
+        // emit the helper. Mirror this so the helper inclusion decision
+        // in lowering and the comma-item emission in the printer agree.
+        let has_static_private_member = needs_private_field_lowering
+            && class.members.nodes.iter().any(|&member_idx| {
+                self.arena.get(member_idx).is_some_and(|m| {
+                    m.kind == syntax_kind_ext::PROPERTY_DECLARATION
+                        && self.arena.get_property_decl(m).is_some_and(|p| {
+                            self.arena.is_static(&p.modifiers)
+                                && is_private_identifier(self.arena, p.name)
+                        })
+                })
+            });
+        let needs_set_function_name_comma_item =
+            needs_static_comma_expr || has_static_private_member;
+        let class_expr_set_function_name = class_expr_temp.as_ref().and_then(|_| {
+            if class.name.is_none() && needs_set_function_name_comma_item {
+                self.resolve_class_expr_binding_name(_idx)
+            } else {
+                None
+            }
+        });
 
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
             clauses.nodes.iter().any(|&idx| {
@@ -2777,7 +2786,13 @@ impl<'a> Printer<'a> {
                     self.emit_expression(*expr_idx);
                     self.decrease_indent();
                 }
-            } else {
+            } else if computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                })
+            {
                 // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
                 self.write_line();
                 let mut emitted_entry = false;

@@ -46,6 +46,7 @@ impl<'a> Printer<'a> {
         // Check if any members have legacy decorators (method, property, accessor decorators)
         // Also checks for parameter decorators on methods and constructors.
         let has_legacy_member_decorators = self.ctx.options.legacy_decorators
+            && node.kind == syntax_kind_ext::CLASS_DECLARATION
             && class.members.nodes.iter().any(|&m_idx| {
                 let Some(m_node) = self.arena.get(m_idx) else {
                     return false;
