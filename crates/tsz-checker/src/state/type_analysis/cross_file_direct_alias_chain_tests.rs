@@ -956,6 +956,50 @@ fn direct_source_file_type_alias_lowers_constructor_type_body() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_local_interface_application_body() {
+    with_two_file_state(
+        r#"
+            interface Bucket<X> {
+                value: X;
+            }
+            export type Result<T> = T extends Bucket<infer U> ? U : T;
+        "#,
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("explicit local interface applications should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Result should preserve its type parameter");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_defaulted_local_interface_application() {
+    with_two_file_state(
+        r#"
+            interface Bucket<X = string> {
+                value: X;
+            }
+            export type Result = Bucket;
+        "#,
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                    .is_none(),
+                "defaulted interface applications need type-param metadata before direct lowering",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_generic_body_with_non_generic_local_alias_leaf() {
     with_two_file_state(
         "type Leaf = string;\nexport type Result<T> = T | Leaf;",

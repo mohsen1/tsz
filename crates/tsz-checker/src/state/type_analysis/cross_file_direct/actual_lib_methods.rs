@@ -254,7 +254,11 @@ impl<'a> CheckerState<'a> {
             })
     }
 
-    fn lib_declaration_name_matches(arena: &NodeArena, decl_idx: NodeIndex, name: &str) -> bool {
+    pub(super) fn lib_declaration_name_matches(
+        arena: &NodeArena,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
         let Some(node) = arena.get(decl_idx) else {
             return false;
         };

@@ -281,6 +281,22 @@ impl<'a> CheckerState<'a> {
                 let Some(symbol) = resolved.binder.get_symbol(resolved.sym_id) else {
                     return false;
                 };
+                if symbol.flags & symbol_flags::INTERFACE != 0 {
+                    return Self::source_file_local_interface_application_is_lowerable(
+                        resolved.arena,
+                        symbol,
+                        args.nodes.len(),
+                    ) && args.nodes.iter().copied().all(|arg| {
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            arena,
+                            binder,
+                            arg,
+                            type_param_names,
+                            seen,
+                            proof,
+                        )
+                    });
+                }
                 if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
                     return false;
                 }
@@ -578,6 +594,20 @@ impl<'a> CheckerState<'a> {
                 let Some(symbol) = resolved.binder.get_symbol(resolved.sym_id) else {
                     return false;
                 };
+                if has_type_arguments && symbol.flags & symbol_flags::INTERFACE != 0 {
+                    let Some(args) = type_ref.type_arguments.as_ref() else {
+                        return false;
+                    };
+                    return Self::source_file_local_interface_application_is_lowerable(
+                        resolved.arena,
+                        symbol,
+                        args.nodes.len(),
+                    ) && args.nodes.iter().copied().all(|arg| {
+                        Self::source_file_type_node_is_local_alias_chain_lowerable(
+                            arena, binder, arg, seen, proof,
+                        )
+                    });
+                }
                 if symbol.flags & symbol_flags::TYPE_ALIAS == 0 {
                     return false;
                 }
@@ -825,6 +855,44 @@ impl<'a> CheckerState<'a> {
                     || decl.kind == syntax_kind_ext::ENUM_DECLARATION
             })
         })
+    }
+
+    fn source_file_local_interface_application_is_lowerable(
+        arena: &NodeArena,
+        symbol: &Symbol,
+        arg_count: usize,
+    ) -> bool {
+        let disallowed = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::TYPE_ALIAS
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+        if symbol.flags & symbol_flags::INTERFACE == 0
+            || symbol.flags & disallowed != 0
+            || symbol.declarations.len() != 1
+        {
+            return false;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        if !Self::lib_declaration_name_matches(arena, decl_idx, &symbol.escaped_name) {
+            return false;
+        }
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(interface) = arena.get_interface(decl_node) else {
+            return false;
+        };
+        let param_count = interface
+            .type_parameters
+            .as_ref()
+            .map_or(0, |params| params.nodes.len());
+        if arg_count == 0 || arg_count != param_count {
+            return false;
+        }
+
+        true
     }
 
     pub(super) fn source_file_import_alias_target_for_lowering<'b>(
