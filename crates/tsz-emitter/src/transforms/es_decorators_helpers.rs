@@ -302,6 +302,8 @@ pub(super) struct ClassDecoratorStaticPrivateMethodInfo {
 pub(super) struct ClassDecoratorAutoAccessorInfo {
     pub(super) member: DecoratedMember,
     pub(super) storage_name: String,
+    pub(super) getter_temp_var: Option<String>,
+    pub(super) setter_temp_var: Option<String>,
     pub(super) initializer_idx: NodeIndex,
     pub(super) initializer_text: String,
 }

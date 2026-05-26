@@ -197,3 +197,43 @@ class C {
         "Class-decorated static blocks should not keep direct static private accessor syntax after capture.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_class_decorated_static_private_auto_accessors_use_helper_temps() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    static accessor #value = 0;
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _C_value_get, _C_value_set, _C_value_accessor_storage;")
+            && output.contains(
+                "static { _C_value_get = function _C_value_get() { return __classPrivateFieldGet(_classThis, _classThis, \"f\", _C_value_accessor_storage); }, _C_value_set = function _C_value_set(value) { __classPrivateFieldSet(_classThis, _classThis, value, \"f\", _C_value_accessor_storage); }; }"
+            )
+            && output.contains("_C_value_accessor_storage = { value: 0 };")
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"a\", _C_value_get);")
+            && output.contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"a\", _C_value_set);"),
+        "Class-decorated static private auto-accessors should use helper temps over generated storage.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_classThis.#value"),
+        "Class-decorated static blocks should not keep direct private auto-accessor syntax after capture.\nOutput:\n{output}"
+    );
+}

@@ -349,6 +349,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 &decorated_members,
                 &class_name,
+                class_span_text,
             )
         } else {
             Vec::new()
@@ -356,17 +357,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let auto_accessor_storage_decls: Vec<String> = if self.use_static_blocks {
             class_decorator_auto_accessor_infos
                 .iter()
-                .map(|info| info.storage_name.clone())
+                .flat_map(|info| {
+                    info.getter_temp_var
+                        .iter()
+                        .chain(info.setter_temp_var.iter())
+                        .chain(std::iter::once(&info.storage_name))
+                        .cloned()
+                })
                 .collect()
         } else {
             decorated_auto_accessor_infos
                 .iter()
                 .map(|info| format!("_{class_name}_{}_accessor_storage", info.storage_base))
-                .chain(
-                    class_decorator_auto_accessor_infos
+                .chain(class_decorator_auto_accessor_infos.iter().flat_map(|info| {
+                    info.getter_temp_var
                         .iter()
-                        .map(|info| info.storage_name.clone()),
-                )
+                        .chain(info.setter_temp_var.iter())
+                        .chain(std::iter::once(&info.storage_name))
+                        .cloned()
+                }))
                 .collect()
         };
 
@@ -551,17 +560,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 let set_fn = self.helper("__setFunctionName");
                 out.push_str(&format!("{i2}static {{ {set_fn}(this, {fn_name}); }}\n"));
             }
-            if !class_decorator_static_private_methods.is_empty() {
-                let assignments = class_decorator_static_private_methods
-                    .iter()
-                    .map(|info| {
-                        format!(
-                            "{} = function {}({}) {}",
-                            info.temp_var, info.function_name, info.params, info.body
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join(", ");
+            let assignments = self.class_decorator_static_private_temp_assignments(
+                &class_decorator_static_private_methods,
+                &class_decorator_auto_accessor_infos,
+                &class_this_var,
+            );
+            if !assignments.is_empty() {
                 out.push_str(&format!("{i2}static {{ {assignments}; }}\n"));
             }
 
@@ -1153,6 +1157,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 self.rewrite_class_decorator_static_private_accesses(
                     &text,
                     class_decorator_static_private_methods,
+                    class_decorator_auto_accessor_infos,
                     class_this_var,
                 )
             } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
@@ -1887,6 +1892,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
             ));
         }
 
+        if member.is_private && info.getter_temp_var.is_some() && info.setter_temp_var.is_some() {
+            return;
+        }
+
         if member.is_static {
             out.push_str(&format!(
                 "{indent}{static_prefix}get {member_name}() {{ return {get_helper}({class_ref}, {class_ref}, \"f\", {}); }}\n",
@@ -1897,6 +1906,47 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 info.storage_name
             ));
         }
+    }
+
+    fn class_decorator_static_private_temp_assignments(
+        &self,
+        method_infos: &[ClassDecoratorStaticPrivateMethodInfo],
+        auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
+        class_ref: &str,
+    ) -> String {
+        let mut assignments: Vec<String> = method_infos
+            .iter()
+            .map(|info| {
+                format!(
+                    "{} = function {}({}) {}",
+                    info.temp_var, info.function_name, info.params, info.body
+                )
+            })
+            .collect();
+
+        let get_helper = self.helper("__classPrivateFieldGet");
+        let set_helper = self.helper("__classPrivateFieldSet");
+        for info in auto_accessor_infos {
+            if !info.member.is_private {
+                continue;
+            }
+            let (Some(getter), Some(setter)) = (
+                info.getter_temp_var.as_deref(),
+                info.setter_temp_var.as_deref(),
+            ) else {
+                continue;
+            };
+            assignments.push(format!(
+                "{getter} = function {getter}() {{ return {get_helper}({class_ref}, {class_ref}, \"f\", {}); }}",
+                info.storage_name
+            ));
+            assignments.push(format!(
+                "{setter} = function {setter}(value) {{ {set_helper}({class_ref}, {class_ref}, value, \"f\", {}); }}",
+                info.storage_name
+            ));
+        }
+
+        assignments.join(", ")
     }
 
     fn emit_class_decorator_static_private_wrapper(
@@ -1939,23 +1989,40 @@ impl<'a> TC39DecoratorEmitter<'a> {
         &self,
         text: &str,
         infos: &[ClassDecoratorStaticPrivateMethodInfo],
+        auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
         class_ref: &str,
     ) -> String {
-        if infos.is_empty() {
+        if infos.is_empty() && auto_accessor_infos.is_empty() {
             return text.to_string();
         }
 
-        let mut accessors: std::collections::HashMap<&str, (Option<&str>, Option<&str>)> =
+        let mut accessors: std::collections::HashMap<String, (Option<&str>, Option<&str>)> =
             std::collections::HashMap::new();
         for info in infos {
             let entry = accessors
-                .entry(info.member_name.as_str())
+                .entry(info.member_name.clone())
                 .or_insert((None, None));
             match info.kind {
                 MemberKind::Getter => entry.0 = Some(info.temp_var.as_str()),
                 MemberKind::Setter => entry.1 = Some(info.temp_var.as_str()),
                 MemberKind::Method | MemberKind::Field | MemberKind::Accessor => {}
             }
+        }
+        for info in auto_accessor_infos {
+            if !info.member.is_private {
+                continue;
+            }
+            let (Some(getter), Some(setter)) = (
+                info.getter_temp_var.as_deref(),
+                info.setter_temp_var.as_deref(),
+            ) else {
+                continue;
+            };
+            let entry = accessors
+                .entry(self.auto_accessor_member_syntax(&info.member))
+                .or_insert((None, None));
+            entry.0 = Some(getter);
+            entry.1 = Some(setter);
         }
         if accessors.is_empty() {
             return text.to_string();
@@ -3293,6 +3360,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         class_data: &tsz_parser::parser::node::ClassData,
         decorated_members: &[DecoratedMember],
         class_name: &str,
+        class_span_text: &str,
     ) -> Vec<ClassDecoratorAutoAccessorInfo> {
         let decorated_member_indices: std::collections::HashSet<NodeIndex> = decorated_members
             .iter()
@@ -3347,10 +3415,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &DecoratedAutoAccessorInfo {
                     name: String::new(),
                     initializer_text: String::new(),
-                    storage_base,
+                    storage_base: storage_base.clone(),
                     member_var_index: 0,
                 },
             );
+            let temp_base = if class_name.is_empty() {
+                "class".to_string()
+            } else {
+                class_name.to_string()
+            };
+            let (getter_temp_var, setter_temp_var) = if is_private {
+                (
+                    Some(hygienic_temp_name(
+                        &format!("_{temp_base}_{storage_base}_get"),
+                        class_span_text,
+                    )),
+                    Some(hygienic_temp_name(
+                        &format!("_{temp_base}_{storage_base}_set"),
+                        class_span_text,
+                    )),
+                )
+            } else {
+                (None, None)
+            };
             result.push(ClassDecoratorAutoAccessorInfo {
                 member: DecoratedMember {
                     member_idx,
@@ -3361,6 +3448,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     decorator_exprs: Vec::new(),
                 },
                 storage_name,
+                getter_temp_var,
+                setter_temp_var,
                 initializer_idx: prop.initializer,
                 initializer_text: self.get_field_initializer_text(member_idx),
             });
