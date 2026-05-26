@@ -470,6 +470,17 @@ export function skipReasonCounts(skips) {
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
 }
 
+export function skipOwnerCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    counts.set(owner, (counts.get(owner) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([owner, count]) => ({ owner, count }))
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -861,6 +872,11 @@ export function formatResult(result, options) {
       for (const entry of summary) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
+      const ownerSummary = skipOwnerCounts(result.skips);
+      lines.push("", "### Skip Owner Counts", "", "| Count | Owner |", "|-------|-------|");
+      for (const entry of ownerSummary) {
+        lines.push(`| ${entry.count} | ${entry.owner.replace(/\|/g, "\\|")} |`);
+      }
       lines.push("", "### Skips", "", "| Branch | Owner | Reason |", "|--------|-------|--------|");
       for (const skip of result.skips.slice(0, 50)) {
         lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
@@ -891,6 +907,11 @@ export function formatResult(result, options) {
     lines.push("", "### Skip Reason Counts", "", "| Count | Reason |", "|-------|--------|");
     for (const entry of summary) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
+    }
+    const ownerSummary = skipOwnerCounts(result.skips);
+    lines.push("", "### Skip Owner Counts", "", "| Count | Owner |", "|-------|-------|");
+    for (const entry of ownerSummary) {
+      lines.push(`| ${entry.count} | ${entry.owner.replace(/\|/g, "\\|")} |`);
     }
     lines.push("", "### Skips", "", "| PR | Owner | Reason |", "|----|-------|--------|");
     for (const skip of result.skips.slice(0, 25)) {
