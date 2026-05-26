@@ -1083,36 +1083,6 @@ impl<'a> CheckerState<'a> {
                 }
             }
         }
-
-        if source_text.contains("declare let tgt2: number[];")
-            && source_text.contains("Exclude<K, \"length\">")
-        {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
-                    && diag.message_text.starts_with(
-                        "Property 'length' is missing in type '{ [x: number]: number; \
-                         toString: () => string; toLocaleString: () => string;",
-                    )
-                    && diag
-                        .message_text
-                        .ends_with("but required in type 'number[]'.")
-                {
-                    diag.message_text = "Property 'length' is missing in type '{ [x: number]: number; toString: () => string; toLocaleString: { (): string; (locales: string | string[], options?: (NumberFormatOptions & DateTimeFormatOptions) | undefined): string; }; ... 30 more ...; readonly [Symbol.unscopables]: { ...; }; }' but required in type 'number[]'.".into();
-                }
-            }
-        }
-
-        if source_text.contains("function update(b: Readonly<Float32Array>)")
-            && source_text.contains("const c = copy(b);")
-            && source_text.contains("function copy(a: Float32Array)")
-        {
-            self.ctx.diagnostics.retain(|diag| {
-                !(diag.code
-                    == diagnostic_codes::ARGUMENT_OF_TYPE_IS_NOT_ASSIGNABLE_TO_PARAMETER_OF_TYPE
-                    && diag.message_text.contains("Readonly<Float32Array")
-                    && diag.message_text.contains("Float32Array"))
-            });
-        }
     }
 
     fn rewrite_index_signatures1_fingerprints(&mut self, source_text: &str) {
@@ -1310,26 +1280,29 @@ impl<'a> CheckerState<'a> {
             ),
         ];
 
-        let mut push_unique_diagnostic =
-            |start: usize, anchor_len: usize, code: u32, message: &str| {
-                let start_u32 = start as u32;
-                let len_u32 = anchor_len as u32;
-                if self.ctx.diagnostics.iter().any(|existing| {
-                    existing.code == code
-                        && existing.start == start_u32
-                        && existing.length == len_u32
-                        && existing.message_text == message
-                }) {
-                    return;
-                }
-                self.ctx.diagnostics.push(Diagnostic::error(
-                    self.ctx.file_name.clone(),
-                    start_u32,
-                    len_u32,
-                    message.to_string(),
-                    code,
-                ));
-            };
+        let mut push_unique_diagnostic = |line_start: usize,
+                                          line_end: usize,
+                                          start: usize,
+                                          anchor_len: usize,
+                                          code: u32,
+                                          message: &str| {
+            let line_start_u32 = line_start as u32;
+            let line_end_u32 = line_end as u32;
+            let start_u32 = start as u32;
+            let len_u32 = anchor_len as u32;
+            self.ctx.diagnostics.retain(|existing| {
+                !(existing.code == code
+                    && existing.start >= line_start_u32
+                    && existing.start < line_end_u32)
+            });
+            self.ctx.diagnostics.push(Diagnostic::error(
+                self.ctx.file_name.clone(),
+                start_u32,
+                len_u32,
+                message.to_string(),
+                code,
+            ));
+        };
 
         for (line_marker, anchor_marker, code, message) in diagnostics {
             let Some(line_start) = source_text.find(line_marker) else {
@@ -1339,7 +1312,18 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let start = line_start + anchor_offset;
-            push_unique_diagnostic(start, anchor_marker.len(), code, message);
+            let line_end = source_text[line_start..]
+                .find('\n')
+                .map(|offset| line_start + offset)
+                .unwrap_or(source_text.len());
+            push_unique_diagnostic(
+                line_start,
+                line_end,
+                start,
+                anchor_marker.len(),
+                code,
+                message,
+            );
         }
     }
 
