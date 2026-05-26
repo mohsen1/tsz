@@ -1,7 +1,8 @@
+use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, Symbol, SymbolId, symbol_flags};
 use tsz_parser::NodeList;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{NodeArena, TypeAliasData};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -111,6 +112,80 @@ impl<'a> CheckerState<'a> {
         Self::source_file_type_node_is_local_alias_chain_lowerable(
             arena, binder, node_idx, &mut seen, &proof,
         )
+    }
+
+    pub(super) fn source_file_alias_body_node_is_direct_lowerable_for_attribution(
+        &self,
+        arena: &NodeArena,
+        binder: &BinderState,
+        current_file_idx: usize,
+        direct_source_file_arena: bool,
+        type_param_names: &[String],
+        node_idx: NodeIndex,
+    ) -> bool {
+        let global_type_is_lowerable = |binder: &BinderState, type_name: &str| {
+            self.source_file_global_type_is_direct_lowerable(binder, type_name)
+        };
+        let import_alias_target =
+            |source_file_idx: usize, binder: &BinderState, sym_id: SymbolId| {
+                self.source_file_import_alias_target_for_lowering(source_file_idx, binder, sym_id)
+            };
+        let proof = SourceFileAliasProofContext {
+            current_file_idx: Some(current_file_idx),
+            global_type_is_lowerable: &global_type_is_lowerable,
+            import_alias_target: Some(&import_alias_target),
+        };
+        let mut seen = Vec::new();
+        if type_param_names.is_empty() {
+            Self::source_file_type_node_is_scope_independent(arena, node_idx)
+                || (direct_source_file_arena
+                    && Self::source_file_type_node_is_local_alias_chain_lowerable(
+                        arena, binder, node_idx, &mut seen, &proof,
+                    ))
+        } else if direct_source_file_arena {
+            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                arena,
+                binder,
+                node_idx,
+                type_param_names,
+                &mut seen,
+                &proof,
+            )
+        } else {
+            Self::source_file_type_node_is_generic_scope_independent(
+                arena,
+                node_idx,
+                type_param_names,
+            )
+        }
+    }
+
+    pub(super) fn record_source_alias_rejection_kinds_for_direct_proof(
+        &self,
+        arena: &NodeArena,
+        binder: &BinderState,
+        type_alias: &TypeAliasData,
+        current_file_idx: usize,
+        direct_source_file_arena: bool,
+        type_param_names: &[String],
+    ) {
+        let type_node_is_lowerable = |node_idx| {
+            self.source_file_alias_body_node_is_direct_lowerable_for_attribution(
+                arena,
+                binder,
+                current_file_idx,
+                direct_source_file_arena,
+                type_param_names,
+                node_idx,
+            )
+        };
+        record_source_alias_rejection_kinds(
+            arena,
+            binder,
+            type_alias,
+            type_param_names,
+            &type_node_is_lowerable,
+        );
     }
 
     pub(super) fn source_file_type_node_is_generic_local_alias_application_lowerable_with_seen<

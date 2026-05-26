@@ -1,5 +1,6 @@
 //! Structural attribution helpers for source-file alias direct-lowering misses.
 
+#[cfg(test)]
 use crate::state::CheckerState;
 use std::collections::HashSet;
 use tsz_binder::{BinderState, symbol_flags};
@@ -20,7 +21,7 @@ pub(crate) fn record_source_alias_rejection_kinds(
     delegate_binder: &BinderState,
     type_alias: &TypeAliasData,
     type_param_names: &[String],
-    global_type_is_lowerable: &dyn Fn(&str) -> bool,
+    type_node_is_lowerable: &dyn Fn(NodeIndex) -> bool,
 ) {
     let node_idx = type_alias.type_node;
     let body_kind = body_rejection_kind(arena, node_idx);
@@ -40,7 +41,7 @@ pub(crate) fn record_source_alias_rejection_kinds(
             delegate_binder,
             node_idx,
             type_param_names,
-            global_type_is_lowerable,
+            type_node_is_lowerable,
         );
         let first_non_lowerable_leaf_type_reference =
             first_non_lowerable_leaf_type_reference_in_node(
@@ -48,7 +49,7 @@ pub(crate) fn record_source_alias_rejection_kinds(
                 delegate_binder,
                 node_idx,
                 type_param_names,
-                global_type_is_lowerable,
+                type_node_is_lowerable,
             );
         record_direct_source_file_type_alias_body_rejection_residue(
             DirectSourceFileTypeAliasBodyRejectionResidueInput {
@@ -258,22 +259,14 @@ fn first_non_lowerable_type_reference_in_node<'a>(
     delegate_binder: &BinderState,
     root_idx: NodeIndex,
     type_param_names: &[String],
-    global_type_is_lowerable: &dyn Fn(&str) -> bool,
+    type_node_is_lowerable: &dyn Fn(NodeIndex) -> bool,
 ) -> Option<TypeReferenceAttribution<'a>> {
     let mut stack = vec![root_idx];
     while let Some(node_idx) = stack.pop() {
         let Some(node) = arena.get(node_idx) else {
             continue;
         };
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && !type_reference_subtree_is_lowerable(
-                arena,
-                delegate_binder,
-                node_idx,
-                type_param_names,
-                global_type_is_lowerable,
-            )
-        {
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE && !type_node_is_lowerable(node_idx) {
             return Some(TypeReferenceAttribution {
                 kind: type_reference_rejection_kind(
                     arena,
@@ -295,15 +288,9 @@ fn first_non_lowerable_leaf_type_reference_in_node<'a>(
     delegate_binder: &BinderState,
     root_idx: NodeIndex,
     type_param_names: &[String],
-    global_type_is_lowerable: &dyn Fn(&str) -> bool,
+    type_node_is_lowerable: &dyn Fn(NodeIndex) -> bool,
 ) -> Option<TypeReferenceAttribution<'a>> {
-    if type_reference_subtree_is_lowerable(
-        arena,
-        delegate_binder,
-        root_idx,
-        type_param_names,
-        global_type_is_lowerable,
-    ) {
+    if type_node_is_lowerable(root_idx) {
         return None;
     }
 
@@ -314,7 +301,7 @@ fn first_non_lowerable_leaf_type_reference_in_node<'a>(
             delegate_binder,
             child,
             type_param_names,
-            global_type_is_lowerable,
+            type_node_is_lowerable,
         ) {
             return Some(reference);
         }
@@ -324,31 +311,6 @@ fn first_non_lowerable_leaf_type_reference_in_node<'a>(
         kind: type_reference_rejection_kind(arena, delegate_binder, root_idx, type_param_names),
         name: type_reference_name(arena, root_idx),
     })
-}
-
-fn type_reference_subtree_is_lowerable(
-    arena: &NodeArena,
-    delegate_binder: &BinderState,
-    node_idx: NodeIndex,
-    type_param_names: &[String],
-    global_type_is_lowerable: &dyn Fn(&str) -> bool,
-) -> bool {
-    if type_param_names.is_empty() {
-        CheckerState::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
-            arena,
-            delegate_binder,
-            node_idx,
-            global_type_is_lowerable,
-        )
-    } else {
-        CheckerState::source_file_type_node_is_generic_local_alias_application_lowerable(
-            arena,
-            delegate_binder,
-            node_idx,
-            type_param_names,
-            global_type_is_lowerable,
-        )
-    }
 }
 
 fn type_reference_name(arena: &NodeArena, node_idx: NodeIndex) -> Option<&str> {
@@ -670,13 +632,23 @@ mod tests {
         let (arena, alias_body) = alias_body_from_source("type Result<T> = Array<T> | Missing<T>;");
         let binder = BinderState::new();
         let global_type_is_lowerable = |name: &str| name == "Array";
+        let type_param_names = vec![String::from("T")];
+        let type_node_is_lowerable = |node_idx| {
+            CheckerState::source_file_type_node_is_generic_local_alias_application_lowerable(
+                &arena,
+                &binder,
+                node_idx,
+                &type_param_names,
+                &global_type_is_lowerable,
+            )
+        };
 
         let first = first_non_lowerable_type_reference_in_node(
             &arena,
             &binder,
             alias_body,
-            &[String::from("T")],
-            &global_type_is_lowerable,
+            &type_param_names,
+            &type_node_is_lowerable,
         )
         .expect("first non-lowerable type reference");
 
@@ -694,21 +666,31 @@ mod tests {
             alias_body_from_source("type Result<T> = Pick<T, Missing<keyof T>>;");
         let binder = BinderState::new();
         let global_type_is_lowerable = |name: &str| name == "Pick";
+        let type_param_names = vec![String::from("T")];
+        let type_node_is_lowerable = |node_idx| {
+            CheckerState::source_file_type_node_is_generic_local_alias_application_lowerable(
+                &arena,
+                &binder,
+                node_idx,
+                &type_param_names,
+                &global_type_is_lowerable,
+            )
+        };
 
         let first = first_non_lowerable_type_reference_in_node(
             &arena,
             &binder,
             alias_body,
-            &[String::from("T")],
-            &global_type_is_lowerable,
+            &type_param_names,
+            &type_node_is_lowerable,
         )
         .expect("first non-lowerable type reference");
         let leaf = first_non_lowerable_leaf_type_reference_in_node(
             &arena,
             &binder,
             alias_body,
-            &[String::from("T")],
-            &global_type_is_lowerable,
+            &type_param_names,
+            &type_node_is_lowerable,
         )
         .expect("first non-lowerable leaf type reference");
 

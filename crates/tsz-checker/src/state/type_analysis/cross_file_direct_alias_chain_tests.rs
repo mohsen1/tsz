@@ -275,6 +275,39 @@ fn direct_source_file_type_alias_lowers_imported_defaulted_helper_chain() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_imported_builtin_union_helper_chain() {
+    with_program_state_with_libs(
+        &[
+            (
+                "primitive.ts",
+                "export type Primitive = string | number | boolean | null | undefined;",
+            ),
+            (
+                "built-in.ts",
+                "import { Primitive } from './primitive';\nexport type Builtin = Primitive | Function | Date | Error | RegExp;",
+            ),
+            (
+                "deep.ts",
+                "import { Builtin } from './built-in';\nexport type Deep<T> = T extends Exclude<Builtin, Error> ? T : Partial<T>;",
+            ),
+            ("requester.ts", "import { Deep } from './deep';"),
+        ],
+        "requester.ts",
+        "deep.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let deep_sym = target_binder.file_locals.get("Deep").expect("Deep");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(deep_sym, Some(target_idx), true)
+                .expect("imported builtin union helper aliases should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Deep should expose T");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_type_literal_property_alias_chain() {
     with_two_file_state(
         "type Leaf<U> = { item: U };\ntype Box<T> = { value: Leaf<T> };\ntype Wrap<T, U> = T | U;\nexport type Result<T> = Wrap<T, Box<T>>;",

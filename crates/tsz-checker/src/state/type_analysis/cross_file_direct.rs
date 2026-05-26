@@ -7,7 +7,6 @@ use super::cross_file_direct_actual_lib::{
     allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
     is_direct_actual_lib_value_interface_name, iterator_object_has_global_augmentations,
 };
-use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
 pub(crate) use paths::{
@@ -1582,15 +1581,13 @@ impl<'a> CheckerState<'a> {
             }
         };
         if !body_is_direct_lowerable {
-            let global_type_is_lowerable = |type_name: &str| {
-                self.source_file_global_type_is_direct_lowerable(delegate_binder, type_name)
-            };
-            record_source_alias_rejection_kinds(
+            self.record_source_alias_rejection_kinds_for_direct_proof(
                 symbol_arena,
                 delegate_binder,
                 type_alias,
+                target_file_idx,
+                direct_source_file_arena,
                 &type_param_names,
-                &global_type_is_lowerable,
             );
             record(DirectSourceFileTypeAliasLoweringOutcome::BodyNotDirectLowerable);
             return None;
