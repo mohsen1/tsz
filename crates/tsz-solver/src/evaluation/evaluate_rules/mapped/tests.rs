@@ -1,7 +1,7 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::recursion::RecursionResult;
-use crate::types::TypeParamInfo;
+use crate::types::{TupleElement, TypeParamInfo};
 
 #[test]
 fn evaluate_keyof_or_constraint_preserves_reentrant_constraint() {
