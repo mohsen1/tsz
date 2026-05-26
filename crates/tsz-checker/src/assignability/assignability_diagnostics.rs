@@ -1109,6 +1109,43 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Check pre-resolved source/target types and keep those exact types in the
+    /// generic TS2322 display.
+    pub(crate) fn check_pre_resolved_assignable_or_report_at_exact_anchor(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+        source_idx: NodeIndex,
+        diag_idx: NodeIndex,
+    ) -> bool {
+        if self.should_suppress_assignability_diagnostic(source, target) {
+            return true;
+        }
+        if self.should_suppress_assignability_for_parse_recovery(source_idx, diag_idx) {
+            return true;
+        }
+
+        let outcome = self.assign_relation_outcome(source, target);
+        if outcome.related {
+            return true;
+        }
+        if self.should_skip_weak_union_error_with_outcome(
+            source,
+            target,
+            source_idx,
+            Some(&outcome),
+        ) {
+            return true;
+        }
+        if outcome.weak_union_violation {
+            self.error_no_common_properties(source, target, diag_idx);
+            return false;
+        }
+
+        self.error_type_not_assignable_at_with_raw_display_types(source, target, diag_idx);
+        false
+    }
+
     /// Check assignability and emit a generic TS2322 diagnostic at `diag_idx`.
     ///
     /// This is used for call sites that intentionally avoid detailed reason rendering

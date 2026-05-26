@@ -739,7 +739,7 @@ impl<'a> CheckerState<'a> {
                         {
                             self.ensure_relation_input_ready(check_type);
                             self.ensure_relation_input_ready(target_type);
-                            self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+                            self.check_pre_resolved_assignable_or_report_at_exact_anchor(
                                 check_type,
                                 target_type,
                                 target_idx,
