@@ -807,11 +807,36 @@ function readJsonIfExists(p) {
 }
 
 let _benchReadinessStatus;
+let _benchmarkSourceKind = null;
+
+function benchmarkArtifactFiles() {
+  const artifactsDir = path.join(ROOT, "artifacts");
+  const ciLatest = [
+    "bench-vs-tsgo-github-latest.json",
+    "bench-vs-tsgo-gcs-latest.json",
+    "bench-results.json",
+  ].map((file) => path.join(artifactsDir, file));
+
+  try {
+    const localArtifacts = fs.readdirSync(artifactsDir)
+      .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
+      .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
+      .sort()
+      .reverse()
+      .map((file) => path.join(artifactsDir, file));
+    return [...ciLatest, ...localArtifacts];
+  } catch {
+    return ciLatest;
+  }
+}
+
 function loadBenchReadinessStatus() {
   if (_benchReadinessStatus === undefined) {
     _benchReadinessStatus = readJsonIfExists(path.join(ROOT, "artifacts", "bench-readiness-status.json")) ?? null;
   }
-  return _benchReadinessStatus;
+  if (_benchReadinessStatus) return _benchReadinessStatus;
+  if (_benchmarkSourceKind === "snapshot") return { artifact_absent: true };
+  return null;
 }
 
 function sanitizeLegacyBenchmarkData(data) {
@@ -831,37 +856,27 @@ function loadBenchmarks() {
   const overrideArtifact = process.env.TSZ_WEBSITE_BENCHMARK_ARTIFACT;
   if (overrideArtifact) {
     const data = readJsonIfExists(overrideArtifact);
-    if (data?.results) return sanitizeLegacyBenchmarkData(data);
+    if (data?.results) {
+      _benchmarkSourceKind = "override";
+      return sanitizeLegacyBenchmarkData(data);
+    }
   }
 
-  const artifactsDir = path.join(ROOT, "artifacts");
-  const ciLatest = [
-    "bench-vs-tsgo-github-latest.json",
-    "bench-vs-tsgo-gcs-latest.json",
-    "bench-results.json",
-  ].map((file) => path.join(artifactsDir, file));
-  const artifactFiles = (() => {
-    try {
-      const localArtifacts = fs.readdirSync(artifactsDir)
-        .filter((file) => file.startsWith("bench-vs-tsgo-") && file.endsWith(".json"))
-        .filter((file) => !["bench-vs-tsgo-github-latest.json", "bench-vs-tsgo-gcs-latest.json", "bench-results.json"].includes(file))
-        .sort()
-        .reverse()
-        .map((file) => path.join(artifactsDir, file));
-      return [...ciLatest, ...localArtifacts];
-    } catch {
-      return ciLatest;
-    }
-  })();
-
-  for (const location of artifactFiles) {
+  for (const location of benchmarkArtifactFiles()) {
     const data = readJsonIfExists(location);
-    if (data?.results) return sanitizeLegacyBenchmarkData(data);
+    if (data?.results) {
+      _benchmarkSourceKind = "artifact";
+      return sanitizeLegacyBenchmarkData(data);
+    }
   }
 
   const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
-  if (snapshot?.results) return sanitizeLegacyBenchmarkData(snapshot);
+  if (snapshot?.results) {
+    _benchmarkSourceKind = "snapshot";
+    return sanitizeLegacyBenchmarkData(snapshot);
+  }
 
+  _benchmarkSourceKind = null;
   return null;
 }
 
