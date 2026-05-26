@@ -691,7 +691,6 @@ impl<'a> CheckerState<'a> {
                             && value_type != TypeId::ANY
                             && check_target != TypeId::ERROR
                             && check_target != TypeId::ANY
-                            && !self.is_assignable_to(value_type, check_target)
                         {
                             let _ = self.check_assignable_or_report_at_exact_anchor(
                                 value_type,

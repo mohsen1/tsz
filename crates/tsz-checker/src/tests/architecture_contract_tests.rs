@@ -3880,9 +3880,9 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
     );
 }
 
-/// Object-literal property diagnostics must route declared-property
-/// assignability through the canonical relation diagnostic helper instead of a
-/// raw boolean relation plus manual TS2322 reporting.
+/// Object-literal property diagnostics must route declared-property and
+/// contextual-property assignability through canonical relation diagnostic
+/// helpers instead of raw boolean relations plus manual TS2322 reporting.
 #[test]
 fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
     let source = fs::read_to_string("src/types/computation/object_literal/computation.rs")
@@ -3894,9 +3894,24 @@ fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
          relation diagnostic helper"
     );
     assert!(
+        source.contains("check_assignable_or_report_at_exact_anchor("),
+        "object literal contextual-property diagnostics must use the canonical \
+         relation diagnostic helper"
+    );
+    assert!(
         !source.contains("error_type_not_assignable_at_with_anchor("),
         "object literal declared-property diagnostics must not bypass relation \
          outcome handling with the manual TS2322 reporter"
+    );
+    let contextual_recheck = source
+        .split("let recheck_key_remapped_property")
+        .nth(1)
+        .and_then(|tail| tail.split("// Freshness model").next())
+        .expect("failed to locate object-literal contextual-property recheck block");
+    assert!(
+        !contextual_recheck.contains("!self.is_assignable_to("),
+        "object literal contextual-property diagnostics must not pre-gate the \
+         canonical relation diagnostic helper with raw is_assignable_to"
     );
 }
 
