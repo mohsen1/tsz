@@ -575,32 +575,59 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        if let Some(export_name) = type_text.strip_prefix("typeof module.exports.") {
-            if self
-                .js_define_property_function_initializer_for_export_name(export_name)
-                .is_some()
-            {
-                return "() => void".to_string();
-            }
-        }
-        if let Some(start) = type_text.find("typeof module.exports.") {
-            let export_start = start + "typeof module.exports.".len();
-            let export_name: String = type_text[export_start..]
+        const NEEDLE: &str = "typeof module.exports.";
+        let mut output: Option<String> = None;
+        let mut cursor = 0usize;
+
+        while let Some(relative_start) = type_text[cursor..].find(NEEDLE) {
+            let start = cursor + relative_start;
+            let name_start = start + NEEDLE.len();
+            let export_name: String = type_text[name_start..]
                 .chars()
-                .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
+                .take_while(|ch| Self::define_property_jsdoc_identifier_part(*ch))
                 .collect();
+            let name_end = name_start + export_name.len();
+            let Some(out) = output.as_mut() else {
+                if export_name.is_empty()
+                    || self
+                        .js_define_property_function_initializer_for_export_name(&export_name)
+                        .is_none()
+                {
+                    cursor = name_end;
+                    continue;
+                }
+
+                let mut out = String::with_capacity(type_text.len());
+                out.push_str(&type_text[..start]);
+                out.push_str("() => void");
+                output = Some(out);
+                cursor = name_end;
+                continue;
+            };
+
+            out.push_str(&type_text[cursor..start]);
             if !export_name.is_empty()
                 && self
                     .js_define_property_function_initializer_for_export_name(&export_name)
                     .is_some()
             {
-                return type_text.replace(
-                    &format!("typeof module.exports.{export_name}"),
-                    "() => void",
-                );
+                out.push_str("() => void");
+            } else {
+                out.push_str(&type_text[start..name_end]);
             }
+            cursor = name_end;
         }
-        type_text.to_string()
+
+        if let Some(mut out) = output {
+            out.push_str(&type_text[cursor..]);
+            out
+        } else {
+            type_text.to_string()
+        }
+    }
+
+    const fn define_property_jsdoc_identifier_part(ch: char) -> bool {
+        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
     }
 
     pub(in crate::declaration_emitter) fn js_define_property_jsdoc_body_return_text(

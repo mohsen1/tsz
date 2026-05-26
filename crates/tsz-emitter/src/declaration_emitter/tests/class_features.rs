@@ -645,6 +645,52 @@ fn js_export_const_class_expr_synthesizes_class_decl() {
 }
 
 #[test]
+fn js_exports_class_expression_static_alias_elides_recursive_constructor_returns() {
+    let output = emit_js_dts(
+        r#"
+exports.Root = class {
+    static make() {
+        return new exports.Root();
+    }
+};
+exports.RootAlias = exports.Root;
+"#,
+    );
+
+    assert!(
+        output.contains("export var RootAlias: {"),
+        "Expected exports.* class expression alias to emit a constructor object type: {output}"
+    );
+    assert!(
+        output.contains("make(): /*elided*/ any;"),
+        "Expected static recursive constructor return to be elided in the member surface: {output}"
+    );
+}
+
+#[test]
+fn js_exports_class_expression_alias_elides_recursive_constructor_returns() {
+    let output = emit_js_dts(
+        r#"
+exports.Box = class {
+    clone() {
+        return new exports.Box();
+    }
+};
+exports.BoxAlias = exports.Box;
+"#,
+    );
+
+    assert!(
+        output.contains("export var BoxAlias: {"),
+        "Expected exports.* class expression alias to emit a constructor object type: {output}"
+    );
+    assert!(
+        output.contains("clone(): /*elided*/ any;"),
+        "Expected renamed recursive constructor return to be elided in the member surface: {output}"
+    );
+}
+
+#[test]
 fn ts_namespace_export_const_class_expr_emits_structural_constructor_type() {
     let output = emit_dts(
         "export namespace N {\n    export const C = class {\n        foo(): void {}\n    };\n}",
