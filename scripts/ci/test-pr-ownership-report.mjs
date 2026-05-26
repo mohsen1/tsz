@@ -143,6 +143,10 @@ withTempDir((dir) => {
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
     cwd: ROOT,
     encoding: "utf8",
+    env: {
+      ...process.env,
+      TSZ_PR_OWNERSHIP_REPORT_NOW: "2026-05-26T11:15:00Z",
+    },
   });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
@@ -169,15 +173,15 @@ withTempDir((dir) => {
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
   assert.match(
     result.stdout,
-    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1 \(oldest updated 2026-05-23\)[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1 \(oldest updated 2026-05-23, oldest age 3d 2h\)[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
   );
   assert.match(
     result.stdout,
-    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1 \(oldest updated 2026-05-22\)[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24\)[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+    /Conflicting Main PRs[\s\S]*Owner counts:[\s\S]*agent:delta: 1 \(oldest updated 2026-05-22, oldest age 4d 3h\)[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24, oldest age 2d\)[\s\S]*PRs:[\s\S]*#19: agent:delta; draft; DIRTY; CONFLICTING; auto-merge off; fix\(checker\): conflicting draft branch[\s\S]*#18: agent:zeta; ready; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
   assert.match(
     result.stdout,
-    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24\)[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1 \(oldest updated 2026-05-24, oldest age 2d\)[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
   assert.match(
     result.stdout,

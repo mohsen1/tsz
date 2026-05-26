@@ -202,8 +202,33 @@ function shortDate(value) {
   return value ? value.slice(0, 10) : "unknown";
 }
 
-function ownerCountSummary(entry) {
-  const oldest = Object.hasOwn(entry, "oldestUpdatedAt") ? ` (oldest updated ${shortDate(entry.oldestUpdatedAt)})` : "";
+function reportNow() {
+  return process.env.TSZ_PR_OWNERSHIP_REPORT_NOW || new Date().toISOString();
+}
+
+function elapsedAge(updatedAt, now) {
+  const updatedMs = Date.parse(updatedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(nowMs)) return "unknown";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - updatedMs) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
+function ownerCountSummary(entry, now) {
+  const oldest = Object.hasOwn(entry, "oldestUpdatedAt")
+    ? ` (oldest updated ${shortDate(entry.oldestUpdatedAt)}, oldest age ${elapsedAge(entry.oldestUpdatedAt, now)})`
+    : "";
   return `${entry.owner}: ${entry.count}${oldest}`;
 }
 
@@ -439,6 +464,7 @@ function makeReport(pulls) {
 }
 
 function printMarkdown(report) {
+  const now = reportNow();
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
@@ -521,7 +547,7 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.blockedReadyMainOwnerCounts) {
-      console.log(`- ${ownerCountSummary(entry)}`);
+      console.log(`- ${ownerCountSummary(entry, now)}`);
     }
     console.log("");
     console.log("PRs:");
@@ -539,7 +565,7 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.conflictingReadyMainOwnerCounts) {
-      console.log(`- ${ownerCountSummary(entry)}`);
+      console.log(`- ${ownerCountSummary(entry, now)}`);
     }
     console.log("");
     console.log("PRs:");
@@ -559,7 +585,7 @@ function printMarkdown(report) {
     console.log("");
     console.log("Owner counts:");
     for (const entry of report.conflictingMainOwnerCounts) {
-      console.log(`- ${ownerCountSummary(entry)}`);
+      console.log(`- ${ownerCountSummary(entry, now)}`);
     }
     console.log("");
     console.log("PRs:");
