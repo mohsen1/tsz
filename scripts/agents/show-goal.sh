@@ -11,11 +11,12 @@ set -euo pipefail
 usage() {
   local stream="${1:-1}"
   cat >&"$stream" <<'USAGE'
-usage: scripts/agents/show-goal.sh <AgentName> [--no-fetch]
+usage: scripts/agents/show-goal.sh <AgentName> [--no-fetch|--local]
 
 Examples:
   scripts/agents/show-goal.sh M1-A
   scripts/agents/show-goal.sh Studio-F --no-fetch
+  scripts/agents/show-goal.sh Studio-F --local
 USAGE
 }
 
@@ -37,9 +38,11 @@ if [[ "$AGENT" == --* ]]; then
 fi
 
 NO_FETCH=false
+LOCAL_ONLY=false
 if [[ $# -eq 2 ]]; then
   case "$2" in
     --no-fetch) NO_FETCH=true ;;
+    --local) LOCAL_ONLY=true ;;
     *) echo "unknown argument: $2" >&2; usage 2; exit 1 ;;
   esac
 fi
@@ -52,11 +55,12 @@ esac
 ROOT="$(git rev-parse --show-toplevel)"
 GOAL_PATH="docs/plan/agents/${AGENT}.md"
 
-if [[ "$NO_FETCH" == false ]]; then
+if [[ "$LOCAL_ONLY" == false && "$NO_FETCH" == false ]]; then
   git -C "$ROOT" fetch -q origin main || true
 fi
 
-if git -C "$ROOT" show "origin/main:${GOAL_PATH}" >/tmp/tsz-agent-goal.$$ 2>/dev/null; then
+if [[ "$LOCAL_ONLY" == false ]] \
+  && git -C "$ROOT" show "origin/main:${GOAL_PATH}" >/tmp/tsz-agent-goal.$$ 2>/dev/null; then
   cat /tmp/tsz-agent-goal.$$
   rm -f /tmp/tsz-agent-goal.$$
   exit 0
