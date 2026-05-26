@@ -1845,13 +1845,6 @@ impl<'a> CheckerState<'a> {
         type_args: Option<&[TypeId]>,
         allow_source_file_arena: bool,
     ) -> Option<rustc_hash::FxHashMap<NodeIndex, TypeId>> {
-        let sym_id = delegate_binder.get_node_symbol(interface_idx).or_else(|| {
-            let arena_ptr = interface_arena as *const NodeArena as usize;
-            self.ctx
-                .cross_file_node_symbols_for_arena(delegate_binder, arena_ptr)
-                .and_then(|symbols| symbols.get(&interface_idx.0).copied())
-        })?;
-
         let direct_member_arena = is_direct_actual_lib_declaration_arena(interface_arena)
             || is_direct_lowering_declaration_arena(interface_arena)
             || (allow_source_file_arena && is_direct_lowering_source_file_arena(interface_arena));
@@ -1923,6 +1916,13 @@ impl<'a> CheckerState<'a> {
 
             return (!results.is_empty()).then_some(results);
         }
+
+        let sym_id = delegate_binder.get_node_symbol(interface_idx).or_else(|| {
+            let arena_ptr = interface_arena as *const NodeArena as usize;
+            self.ctx
+                .cross_file_node_symbols_for_arena(delegate_binder, arena_ptr)
+                .and_then(|symbols| symbols.get(&interface_idx.0).copied())
+        })?;
 
         let (interface_type, params) = self.direct_cross_file_interface_lowering(
             sym_id,
