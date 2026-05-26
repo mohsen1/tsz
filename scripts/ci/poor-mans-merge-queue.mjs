@@ -438,6 +438,17 @@ export function failureCommentBody(agentName, reason) {
   ].join("\n");
 }
 
+export function skipReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const reason = String(skip.reason || "(unknown)");
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -473,6 +484,7 @@ function cleanupQueueBranches(repository, options) {
   let skippedActiveRuns = 0;
   let skippedUnrecognized = 0;
   let supersededOpen = 0;
+  const activeRuns = [];
   const deletions = [];
   const skips = [];
   const currentBaseOid = options.cleanupSupersededOpenQueueBranches
@@ -499,6 +511,12 @@ function cleanupQueueBranches(repository, options) {
         const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
         if (activeRun) {
           skippedActiveRuns += 1;
+          activeRuns.push({
+            branch: queueBranchInfo.branch,
+            number,
+            runId: activeRun.databaseId || null,
+            url: activeRun.url || "",
+          });
           if (options.verbose) {
             skips.push({
               branch: queueBranchInfo.branch,
@@ -518,6 +536,12 @@ function cleanupQueueBranches(repository, options) {
     const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
     if (activeRun) {
       skippedActiveRuns += 1;
+      activeRuns.push({
+        branch: queueBranchInfo.branch,
+        number,
+        runId: activeRun.databaseId || null,
+        url: activeRun.url || "",
+      });
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
@@ -547,6 +571,7 @@ function cleanupQueueBranches(repository, options) {
 
   return {
     cleanupQueueBranches: true,
+    activeRuns,
     deleted,
     deletions,
     dryRun: options.dryRun,
@@ -776,6 +801,14 @@ export function formatResult(result, options) {
         lines.push(`| \`${deletion.branch}\` | #${deletion.number} | ${state} |`);
       }
     }
+    if (options.verbose && result.activeRuns?.length) {
+      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Run |", "|--------|----|-----|");
+      for (const run of result.activeRuns.slice(0, 50)) {
+        const runId = run.runId || "(unknown)";
+        const runLink = run.url ? `[${runId}](${run.url})` : runId;
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${runLink} |`);
+      }
+    }
     if (options.verbose && result.skips?.length) {
       lines.push("", "### Skips", "", "| Branch | Reason |", "|--------|--------|");
       for (const skip of result.skips.slice(0, 50)) {
@@ -800,9 +833,17 @@ export function formatResult(result, options) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }
   if (!result.cleanupQueueBranches && options.verbose && result.skips?.length) {
+    const summary = skipReasonCounts(result.skips);
+    lines.push("", "### Skip Reason Counts", "", "| Count | Reason |", "|-------|--------|");
+    for (const entry of summary) {
+      lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
+    }
     lines.push("", "### Skips", "", "| PR | Reason |", "|----|--------|");
     for (const skip of result.skips.slice(0, 25)) {
       lines.push(`| #${skip.number} | ${skip.reason.replace(/\|/g, "\\|")} |`);
+    }
+    if (result.skips.length > 25) {
+      lines.push(`| ... | ${result.skips.length - 25} more skipped PR(s) omitted |`);
     }
   }
   return `${lines.join("\n")}\n`;
