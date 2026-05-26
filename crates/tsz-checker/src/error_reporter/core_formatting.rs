@@ -936,6 +936,31 @@ impl<'a> CheckerState<'a> {
         self.format_assignability_type_for_message_internal(ty, other, true)
     }
 
+    pub(crate) fn format_type_for_assignability_message_skip_application_alias(
+        &mut self,
+        ty: TypeId,
+    ) -> String {
+        self.ensure_relation_input_ready(ty);
+        let mut formatter =
+            tsz_solver::TypeFormatter::with_symbols(self.ctx.types, &self.ctx.binder.symbols)
+                .with_def_store(&self.ctx.definition_store)
+                .with_diagnostic_mode()
+                .with_skip_application_display_alias_chase()
+                .with_preserve_optional_parameter_surface_syntax(true)
+                .with_strict_null_checks(self.ctx.compiler_options.strict_null_checks)
+                .with_builtin_iterator_return_type(
+                    if self.ctx.compiler_options.strict_builtin_iterator_return {
+                        TypeId::UNDEFINED
+                    } else {
+                        TypeId::ANY
+                    },
+                )
+                .with_exact_optional_property_types(
+                    self.ctx.compiler_options.exact_optional_property_types,
+                );
+        formatter.format(ty).into_owned()
+    }
+
     pub(crate) fn format_assignability_type_for_message_preserving_nullish(
         &mut self,
         ty: TypeId,
