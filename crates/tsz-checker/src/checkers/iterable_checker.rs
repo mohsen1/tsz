@@ -974,7 +974,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(expr_type, expr_idx, false);
+        self.emit_ts2488_not_iterable(expr_type, expr_idx, false, None);
         false
     }
 
@@ -1064,7 +1064,8 @@ impl<'a> CheckerState<'a> {
         }
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(spread_type, expr_idx, false);
+        let literal_display_type = self.literal_type_from_initializer(expr_idx);
+        self.emit_ts2488_not_iterable(spread_type, expr_idx, false, literal_display_type);
         false
     }
 
@@ -1152,7 +1153,12 @@ impl<'a> CheckerState<'a> {
             };
 
             // tsc reports TS2488 before TS2571 for this path.
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+            self.emit_ts2488_not_iterable(
+                pattern_type,
+                pattern_idx,
+                is_assignment_array_target,
+                None,
+            );
             if let Some((start, end)) = ts2571_span {
                 self.error(
                     start,
@@ -1166,7 +1172,12 @@ impl<'a> CheckerState<'a> {
 
         // In array destructuring, TypeScript still reports TS2488 for `never`.
         if resolved_type == TypeId::NEVER {
-            self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+            self.emit_ts2488_not_iterable(
+                pattern_type,
+                pattern_idx,
+                is_assignment_array_target,
+                None,
+            );
             return false;
         }
 
@@ -1237,7 +1248,7 @@ impl<'a> CheckerState<'a> {
         // path, and that case is already handled above when `target.is_es5()`.
 
         // Not iterable - emit TS2488
-        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target);
+        self.emit_ts2488_not_iterable(pattern_type, pattern_idx, is_assignment_array_target, None);
         false
     }
 
@@ -1509,6 +1520,7 @@ impl<'a> CheckerState<'a> {
         type_id: TypeId,
         error_node: NodeIndex,
         is_assignment_target: bool,
+        literal_display_type: Option<TypeId>,
     ) {
         if let Some((start, end)) = self.get_node_span(error_node) {
             let evaluated_type = self.evaluate_type_for_assignability(type_id);
@@ -1522,7 +1534,11 @@ impl<'a> CheckerState<'a> {
             } else {
                 evaluated_type
             };
-            let type_str = self.format_type_diagnostic_widened(display_type);
+            let type_str = if let Some(literal_display_type) = literal_display_type {
+                self.format_type(literal_display_type)
+            } else {
+                self.format_type_diagnostic_widened(display_type)
+            };
             let message = format_message(
                 diagnostic_messages::TYPE_MUST_HAVE_A_SYMBOL_ITERATOR_METHOD_THAT_RETURNS_AN_ITERATOR,
                 &[&type_str],

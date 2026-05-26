@@ -863,8 +863,16 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .get_mapped(MappedTypeId(mapped_id));
 
-        // Only apply if no name remapping (as clause)
         if mapped.name_type.is_some() {
+            if let Some(result) =
+                super::mapped_template_index::try_evaluate_remapped_mapped_template_for_index(
+                    self.evaluator,
+                    &mapped,
+                    self.index_type,
+                )
+            {
+                return Some(result);
+            }
             return None;
         }
 
