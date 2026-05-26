@@ -5,6 +5,8 @@ import { pathToFileURL } from "node:url";
 import { PROJECT_ROWS_BY_NAME } from "./project-rows.mjs";
 import { isGreen, isIncompleteCompat } from "./row-utils.mjs";
 
+const TARGET_TSZ_SPEEDUP = 2;
+
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
@@ -92,6 +94,20 @@ function lossClosureForRow(row) {
   return LOSS_CLOSURE_BY_ROW.get(row.name) ?? null;
 }
 
+function tszSpeedupVsTsgo(row) {
+  const tszMs = asNumber(row?.tsz_ms);
+  const tsgoMs = asNumber(row?.tsgo_ms);
+  if (tszMs != null && tsgoMs != null && tszMs > 0 && tsgoMs > 0) {
+    return tsgoMs / tszMs;
+  }
+
+  const factor = asNumber(row?.factor ?? row?.ratio);
+  if (factor == null || factor <= 0) return null;
+  if (row?.winner === "tsz") return factor;
+  if (row?.winner === "tsgo") return 1 / factor;
+  return null;
+}
+
 function measurementProfileStatus(input) {
   const profile = input?.measurement_profile;
   if (!profile || typeof profile !== "object") {
@@ -166,6 +182,15 @@ function hasCompleteAttribution(status) {
   return Boolean(status?.present && status?.dominant_subsystem);
 }
 
+function targetGapFactor(speedup) {
+  if (speedup == null || speedup <= 0) return null;
+  return TARGET_TSZ_SPEEDUP / speedup;
+}
+
+function targetGapForSort(value) {
+  return value ?? -Infinity;
+}
+
 // Null factors sort last (treated as the lowest possible value) so that rows
 // with a real factor always appear before rows with an unknown factor.
 function factorForSort(value) {
@@ -182,6 +207,12 @@ function compareFamiliesByWorstFactorDesc(a, b) {
   const factorDelta = factorForSort(b.worst_factor) - factorForSort(a.worst_factor);
   if (factorDelta !== 0) return factorDelta;
   return a.family.localeCompare(b.family);
+}
+
+function compareTargetGaps(a, b) {
+  const gapDelta = targetGapForSort(b.target_gap_factor) - targetGapForSort(a.target_gap_factor);
+  if (gapDelta !== 0) return gapDelta;
+  return String(a.name).localeCompare(String(b.name));
 }
 
 function duplicateProjectRows(rows) {
@@ -207,6 +238,33 @@ export function createTsgoWinnerReport(input, inputPath) {
   const duplicateRows = duplicateProjectRows(rows);
   const duplicateNames = new Set(duplicateRows.map((row) => row.name));
   const incompleteCompatExcluded = rows.filter(isIncompleteCompat).length;
+  const eligibleRows = rows
+    .filter((row) => isGreen(row) && !duplicateNames.has(row?.name))
+    .map((row) => {
+      const speedup = tszSpeedupVsTsgo(row);
+      const gapFactor = speedup == null ? null : targetGapFactor(speedup);
+      return {
+        name: row.name,
+        winner: row.winner ?? null,
+        factor: asNumber(row.factor),
+        tsz_speedup_vs_tsgo: speedup,
+        target_gap_factor: gapFactor,
+        tsz_ms: asNumber(row.tsz_ms),
+        tsgo_ms: asNumber(row.tsgo_ms),
+        lines: asNumber(row.lines),
+        kb: asNumber(row.kb),
+        project_files: asNumber(row.project_files),
+        files_reached: asNumber(row.compatibility?.files_reached ?? row.project_files),
+        peak_memory_bytes: asNumber(row.compatibility?.peak_memory_bytes),
+        exit_class: row.compatibility?.exit_class ?? null,
+        semantic_owner_family: row.compatibility?.semantic_owner_family ?? null,
+        loss_closure: lossClosureForRow(row),
+        attribution_status: attributionStatusForRow(row),
+      };
+    });
+  const targetGapRows = eligibleRows
+    .filter((row) => row.tsz_speedup_vs_tsgo == null || row.tsz_speedup_vs_tsgo < TARGET_TSZ_SPEEDUP)
+    .sort(compareTargetGaps);
 
   const winners = rows
     .filter((row) => row?.winner === "tsgo" && isGreen(row) && !duplicateNames.has(row?.name))
@@ -270,8 +328,18 @@ export function createTsgoWinnerReport(input, inputPath) {
       missing_attribution_rows: missingAttributionRows,
       incomplete_compat_excluded: incompleteCompatExcluded,
     },
+    two_x_target: {
+      tsz_speedup_target: TARGET_TSZ_SPEEDUP,
+      eligible_green_rows: eligibleRows.length,
+      project_eligible_green_rows: eligibleRows.filter((row) => row.semantic_owner_family).length,
+      rows_meeting_target: eligibleRows.length - targetGapRows.length,
+      rows_below_target: targetGapRows.length,
+      project_rows_below_target: targetGapRows.filter((row) => row.semantic_owner_family).length,
+      worst_gap: targetGapRows[0] ?? null,
+    },
     measurement_profile: measurementProfileStatus(input),
     duplicate_rows: duplicateRows,
+    target_gaps: targetGapRows,
     worst: winners[0] ?? null,
     by_owner_family: [...byOwnerFamily.values()].sort(compareFamiliesByWorstFactorDesc),
     rows: winners,
@@ -298,6 +366,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     [
       `green tsgo winners: ${report.totals.green_tsgo_winners}`,
       `project green tsgo winners: ${report.totals.project_green_tsgo_winners}`,
+      `2x target gaps: ${report.two_x_target.rows_below_target}/${report.two_x_target.eligible_green_rows}`,
       `report: ${path.relative(process.cwd(), outputPath).split(path.sep).join("/")}`,
     ].join("\n"),
   );

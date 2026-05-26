@@ -155,6 +155,22 @@ withTempDir((dir) => {
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 1);
   assert.deepEqual(report.totals.missing_attribution_rows, ["single-file-loss", "vite-vanilla-ts-app"]);
   assert.equal(report.totals.incomplete_compat_excluded, 0);
+  assert.deepEqual(report.two_x_target, {
+    tsz_speedup_target: 2,
+    eligible_green_rows: 4,
+    project_eligible_green_rows: 2,
+    rows_meeting_target: 1,
+    rows_below_target: 3,
+    project_rows_below_target: 2,
+    worst_gap: report.target_gaps[0],
+  });
+  assert.deepEqual(
+    report.target_gaps.map((row) => row.name),
+    ["ts-toolbelt-project", "vite-vanilla-ts-app", "single-file-loss"],
+  );
+  assert.equal(report.target_gaps[0].semantic_owner_family, "recursive type evaluation pressure");
+  assert.equal(report.target_gaps[0].tsz_speedup_vs_tsgo, 106.15 / 873.92);
+  assert.equal(report.target_gaps[0].target_gap_factor, 2 / (106.15 / 873.92));
   assert.deepEqual(report.measurement_profile, {
     present: true,
     mode: "release-pgo",
@@ -255,6 +271,11 @@ withTempDir((dir) => {
     "200 classes",
     "BCT candidates=200",
   ]);
+  assert.deepEqual(
+    report.target_gaps.map((row) => row.name),
+    ["BCT candidates=200", "200 classes"],
+  );
+  assert.equal(report.two_x_target.rows_below_target, 2);
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
@@ -345,6 +366,12 @@ withTempDir((dir) => {
   assert.deepEqual(report.totals.missing_loss_closure_rows, ["complete-project", "single-file-win"]);
   assert.equal(report.totals.green_tsgo_winners_with_attribution, 0);
   assert.deepEqual(report.totals.missing_attribution_rows, ["complete-project", "single-file-win"]);
+  assert.equal(report.two_x_target.eligible_green_rows, 2);
+  assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.deepEqual(
+    report.target_gaps.map((row) => row.name),
+    ["complete-project", "single-file-win"],
+  );
   assert.deepEqual(report.measurement_profile, {
     present: false,
     mode: null,
@@ -355,6 +382,36 @@ withTempDir((dir) => {
   assert.deepEqual(
     report.rows.map((r) => r.name),
     ["complete-project", "single-file-win"],
+  );
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  writeJson(input, {
+    results: [
+      { name: "target-met", winner: "tsz", factor: 2.5, tsz_ms: 10, tsgo_ms: 25 },
+      { name: "target-short", winner: "tsz", factor: 1.5, tsz_ms: 10, tsgo_ms: 15 },
+      { name: "tsgo-win", winner: "tsgo", factor: 3, tsz_ms: 30, tsgo_ms: 10 },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps: 2\/3/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_meeting_target, 1);
+  assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.deepEqual(
+    report.target_gaps.map((row) => [row.name, row.tsz_speedup_vs_tsgo]),
+    [
+      ["tsgo-win", 10 / 30],
+      ["target-short", 15 / 10],
+    ],
   );
 });
 
