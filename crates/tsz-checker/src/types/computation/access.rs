@@ -121,13 +121,14 @@ impl<'a> CheckerState<'a> {
             .map(|name| self.ctx.types.literal_string(name))
             .unwrap_or(index_type);
 
-        // When the index is a `symbol`-typed identifier, convert to a
-        // `UniqueSymbol(SymbolRef)` so the solver can match binding-identity
-        // properties stored as `__unique_<sym_id>`.  This mirrors how TypeScript
-        // resolves `ws[sym]` when `sym: symbol` was used as a computed property
-        // name in the object's type declaration.
+        // When the index is a `symbol`-typed identifier, convert it to the same
+        // binding-identity key used by computed property lowering. Cross-file
+        // const-symbol bindings use the stable `__symbol_<file>_<sym>` atom;
+        // local non-unique symbol declarations fall back to `__unique_<sym>`.
         let index_type_for_access = if index_type == TypeId::SYMBOL {
-            self.nonunique_symbol_index_type(access.name_or_argument)
+            self.symbol_valued_binding_property_name(access.name_or_argument, index_type)
+                .map(|name| self.ctx.types.literal_string(&name))
+                .or_else(|| self.nonunique_symbol_index_type(access.name_or_argument))
                 .unwrap_or(index_type_for_access)
         } else {
             index_type_for_access
