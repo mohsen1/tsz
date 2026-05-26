@@ -1217,9 +1217,7 @@ impl<'a> CheckerState<'a> {
             // Picking the first non-generic overload would produce wrong errors
             // when later overloads match the provided attributes.
             let mut non_generic = sigs.iter().filter(|s| s.type_params.is_empty());
-            let Some(sig) = non_generic.next() else {
-                return None;
-            };
+            let sig = non_generic.next()?;
             if non_generic.next().is_some() {
                 return None;
             }
@@ -1458,9 +1456,7 @@ impl<'a> CheckerState<'a> {
             sigs.first()?
         } else {
             let mut with_props = sigs.iter().filter(|sig| !sig.params.is_empty());
-            let Some(sig) = with_props.next() else {
-                return None;
-            };
+            let sig = with_props.next()?;
             if with_props.next().is_some() {
                 return None;
             }
