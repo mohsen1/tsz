@@ -294,9 +294,8 @@ impl<'a> Printer<'a> {
         &mut self,
         initializer: String,
     ) -> Option<String> {
-        let previous = self
-            .current_new_target_substitution
-            .replace("_newTarget".into());
+        let previous = self.current_new_target_substitution.take();
+        self.current_new_target_substitution = Some("_newTarget".into());
         self.pending_new_target_capture_initializer = Some(initializer);
         previous
     }
