@@ -505,6 +505,9 @@ mod file_session_switch_to_file_tests;
 #[path = "../tests/flow_boundary_contract_tests.rs"]
 mod flow_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/for_in_lhs_relation_routing_arch_tests.rs"]
+mod for_in_lhs_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
