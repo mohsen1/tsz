@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 01:12 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10183` merged.
+- 2026-05-26 01:43 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10187` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -95,10 +95,18 @@ node scripts/ci/pr-ownership-report.mjs
     a full `Skip Reason Counts` table before the capped per-PR details. The
     latest live dry run reports 44 PRs skipped because auto-merge is not armed
     and 16 skipped as draft PRs, with no queue-ready auto-merge candidate.
+  - `#10185` merged on 2026-05-26 as
+    `41fdc94314 ci: show active queue runs in cleanup report (#10185)`.
+    Verbose queue-branch cleanup dry runs now include an `Active Queue Runs`
+    table with branch, PR, run id, and run URL for preserved active runs.
+  - `#10187` merged on 2026-05-26 as
+    `61f7b41458 ci: summarize cleanup queue branch skips (#10187)`.
+    Verbose queue-branch cleanup dry runs now include cleanup-specific
+    `Skip Reason Counts`, grouping detailed rows such as open PR branches and
+    active queue runs without losing per-branch evidence.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
-    longer matches current `main`; the latest dry run reports zero stale queue
-    branches and preserves no active queue runs.
+    longer matches current `main`.
   - `#9889` landed through the poor-man queue during M1-A queue drain. Its
     stale synthetic queue branch was deleted after merge.
   - `#9875` was selected by the queue but conflicted with current `main`.
@@ -125,8 +133,12 @@ node scripts/ci/pr-ownership-report.mjs
     stale branch needs a signed handoff.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
-    `pr-9632`, and `pr-9912`. The stale merged-PR queue branches for `#9848`,
-    `#9889`, `#10160`, and `#10163` were deleted.
+    `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
+    branches and group the six preserved branches as open PR branch skips or
+    active queue runs; the exact active-run subset changes as synthetic runs
+    complete, so re-run the cleanup dry-run for current run ids. The stale
+    merged-PR queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were
+    deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
