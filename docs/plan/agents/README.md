@@ -37,7 +37,7 @@ Recent local/live evidence on 2026-05-26:
 | Draft/WIP PRs | live query: `gh pr list --state open` plus WIP labels/titles |
 | PR label hygiene | clean |
 | Diagnostic conformance detail | `12,582 / 12,582` |
-| Accepted-regression list | 30 tests |
+| Accepted-regression list | live query: `python3 scripts/conformance/query-conformance.py --dashboard` |
 | JavaScript emit snapshot | `13,094 / 13,530` |
 | Declaration emit snapshot | `1,606 / 1,669` |
 | Open issues | 134 |
