@@ -1236,7 +1236,10 @@ impl<'a> TypeFormatter<'a> {
 
         let formatted = self.format(id);
         let needs_parens = match self.interner.lookup(id) {
-            Some(TypeData::Intersection(_)) => !formatted.starts_with("NonNullable<"),
+            Some(TypeData::Intersection(_)) => {
+                !formatted.starts_with("NonNullable<")
+                    && contains_top_level_intersection_separator(&formatted)
+            }
             Some(TypeData::Function(_)) => true,
             Some(TypeData::Callable(_)) => {
                 formatted.starts_with('(')
