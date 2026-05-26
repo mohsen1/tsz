@@ -71,10 +71,13 @@ impl<'a> CheckerState<'a> {
             let db = self.ctx.types.as_type_database();
             return query::is_callable_type(db, syntax_instantiated_type_arg)
                 || query::callable_shape_for_type(db, syntax_instantiated_type_arg).is_some()
-                || self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint);
+                || self.diagnostic_relation_boolean_guard(
+                    syntax_instantiated_type_arg,
+                    inst_constraint,
+                );
         }
 
-        self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint)
+        self.diagnostic_relation_boolean_guard(syntax_instantiated_type_arg, inst_constraint)
             || self.base_union_members_satisfy_constraint(
                 syntax_instantiated_type_arg,
                 inst_constraint,

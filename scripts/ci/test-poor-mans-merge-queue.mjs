@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import {
   activeBranchQueueRun,
+  activeRunOwnerStatusCounts,
   activeSyntheticQueueRun,
   failureCommentBody,
   formatResult,
@@ -13,6 +14,9 @@ import {
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
+  skipOwnerCounts,
+  skipOwnerReasonCounts,
+  skipReasonCounts,
   supersededOpenQueueBranchReason,
 } from "./poor-mans-merge-queue.mjs";
 
@@ -186,6 +190,78 @@ assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
 assert.equal(queueSkipReason({ ...pr(), statusCheckRollup: undefined }, { kind: "passed" }, "main"), null);
+assert.deepEqual(
+  skipReasonCounts([
+    { number: 1, reason: "draft PR" },
+    { number: 2, reason: "auto-merge is not armed" },
+    { number: 3, reason: "draft PR" },
+  ]),
+  [
+    { reason: "draft PR", count: 2 },
+    { reason: "auto-merge is not armed", count: 1 },
+  ],
+);
+assert.deepEqual(
+  skipReasonCounts([
+    { reason: "PR #1 is open", summaryReason: "open PR branch" },
+    { reason: "PR #2 is open", summaryReason: "open PR branch" },
+    { reason: "active queue run 123", summaryReason: "active queue run" },
+  ]),
+  [
+    { reason: "open PR branch", count: 2 },
+    { reason: "active queue run", count: 1 },
+  ],
+);
+assert.deepEqual(
+  skipOwnerCounts([
+    { owner: "agent:M4-A", reason: "draft PR" },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+  ]),
+  [
+    { owner: "agent:M4-A", count: 2 },
+    { owner: "agent:M4-B", count: 1 },
+  ],
+);
+assert.deepEqual(
+  skipOwnerReasonCounts([
+    { owner: "agent:M4-A", reason: "draft PR" },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "PR #10084 is open", summaryReason: "open PR branch" },
+  ]),
+  [
+    { owner: "agent:M4-A", reason: "auto-merge is not armed", count: 2 },
+    { owner: "agent:M4-A", reason: "draft PR", count: 1 },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed", count: 1 },
+    { owner: "agent:M4-B", reason: "open PR branch", count: 1 },
+  ],
+);
+assert.deepEqual(
+  activeRunOwnerStatusCounts([
+    { owner: "agent:M4-A", status: "in_progress", startedAt: "2026-05-26T03:35:21Z" },
+    { owner: "agent:M4-A", status: "queued", startedAt: "2026-05-26T03:40:00Z" },
+    { owner: "agent:M4-A", status: "queued", startedAt: "2026-05-26T03:20:00Z" },
+    { owner: "agent:M1-C", status: "queued", startedAt: "2026-05-26T03:45:00Z" },
+  ]),
+  [
+    { owner: "agent:M4-A", status: "queued", count: 2, oldestStartedAt: "2026-05-26T03:20:00Z" },
+    { owner: "agent:M1-C", status: "queued", count: 1, oldestStartedAt: "2026-05-26T03:45:00Z" },
+    { owner: "agent:M4-A", status: "in_progress", count: 1, oldestStartedAt: "2026-05-26T03:35:21Z" },
+  ],
+);
+assert.deepEqual(
+  skipOwnerCounts([
+    { owner: "agent:M4-A", updatedAt: "2026-05-25T10:00:00Z", reason: "draft PR" },
+    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "auto-merge is not armed" },
+  ]),
+  [
+    { owner: "agent:M4-A", count: 2, oldestUpdatedAt: "2026-05-23T08:00:00Z" },
+    { owner: "agent:M4-B", count: 1, oldestUpdatedAt: "2026-05-24T09:00:00Z" },
+  ],
+);
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
@@ -225,6 +301,160 @@ assert.match(cleanupFormat, /Would delete 2 stale queue branch/);
 assert.match(cleanupFormat, /Included 1 superseded open PR branch/);
 assert.match(cleanupFormat, /open superseded/);
 assert.doesNotMatch(cleanupFormat, /\| #undefined \|/);
+
+const cleanupActiveRunFormat = formatResult({
+  cleanupQueueBranches: true,
+  activeRuns: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      number: 9515,
+      owner: "agent:M4-A",
+      runId: 26423420117,
+      url: "https://github.example/runs/26423420117",
+      status: "in_progress",
+      startedAt: "2026-05-26T03:35:21Z",
+    },
+    {
+      branch: "automation/merge-queue/pr-10084",
+      number: 10084,
+      owner: "agent:M1-C",
+      runId: 26423420118,
+      url: "https://github.example/runs/26423420118",
+      status: "queued",
+      startedAt: "2026-05-26T04:45:00Z",
+    },
+  ],
+  deletions: [],
+  dryRun: true,
+  skippedActiveRuns: 2,
+  skippedOpen: 0,
+  skippedUnrecognized: 0,
+  supersededOpen: 0,
+  now: "2026-05-26T05:05:00Z",
+  skips: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      owner: "agent:M4-A",
+      reason: "active queue run 26423420117",
+      summaryReason: "active queue run",
+    },
+    {
+      branch: "automation/merge-queue/pr-9632",
+      owner: "agent:M4-A",
+      reason: "PR #9632 is open",
+      summaryReason: "open PR branch",
+    },
+    {
+      branch: "automation/merge-queue/pr-9912",
+      owner: "agent:M4-C",
+      reason: "PR #9912 is open",
+      summaryReason: "open PR branch",
+    },
+  ],
+  wouldDelete: 0,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupActiveRunFormat, /Preserved 2 branch\(es\) with active queue runs/);
+assert.match(cleanupActiveRunFormat, /### Active Queue Run Owner Status Counts/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M1-C \| queued \| 2026-05-26 04:45Z \| 20m \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-A \| in_progress \| 2026-05-26 03:35Z \| 1h 29m \|/);
+assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
+assert.match(
+  cleanupActiveRunFormat,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| agent:M4-A \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \| 1h 29m \|/,
+);
+assert.match(
+  cleanupActiveRunFormat,
+  /\| `automation\/merge-queue\/pr-10084` \| #10084 \| agent:M1-C \| \[26423420118\]\(https:\/\/github\.example\/runs\/26423420118\) \| queued \| 2026-05-26 04:45Z \| 20m \|/,
+);
+assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
+assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| active queue run \|/);
+assert.match(cleanupActiveRunFormat, /### Skip Owner Counts/);
+assert.match(cleanupActiveRunFormat, /\| 2 \| agent:M4-A \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-C \|/);
+assert.match(cleanupActiveRunFormat, /### Skip Owner Reason Counts/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-A \| active queue run \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-A \| open PR branch \|/);
+assert.match(cleanupActiveRunFormat, /\| Branch \| Owner \| Reason \|/);
+assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| agent:M4-A \| active queue run 26423420117 \|/);
+assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9912` \| agent:M4-C \| PR #9912 is open \|/);
+
+const cleanupOwnerDateFormat = formatResult({
+  cleanupQueueBranches: true,
+  activeRuns: [],
+  deletions: [],
+  dryRun: true,
+  skippedActiveRuns: 0,
+  skippedOpen: 3,
+  skippedUnrecognized: 0,
+  supersededOpen: 0,
+  now: "2026-05-26T11:15:00Z",
+  skips: [
+    {
+      branch: "automation/merge-queue/pr-9515",
+      owner: "agent:M4-A",
+      reason: "PR #9515 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-25T10:00:00Z",
+    },
+    {
+      branch: "automation/merge-queue/pr-9632",
+      owner: "agent:M4-A",
+      reason: "PR #9632 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-24T09:00:00Z",
+    },
+    {
+      branch: "automation/merge-queue/pr-9912",
+      owner: "agent:M4-C",
+      reason: "PR #9912 is open",
+      summaryReason: "open PR branch",
+      updatedAt: "2026-05-23T08:00:00Z",
+    },
+  ],
+  wouldDelete: 0,
+}, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
+assert.match(cleanupOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
+assert.match(cleanupOwnerDateFormat, /\| 2 \| agent:M4-A \| 2026-05-24 \| 2d 2h \|/);
+assert.match(cleanupOwnerDateFormat, /\| 1 \| agent:M4-C \| 2026-05-23 \| 3d 3h \|/);
+assert.match(cleanupOwnerDateFormat, /\| Branch \| Owner \| Updated \| Reason \|/);
+assert.match(cleanupOwnerDateFormat, /\| `automation\/merge-queue\/pr-9632` \| agent:M4-A \| 2026-05-24 \| PR #9632 is open \|/);
+
+const queueSkipFormat = formatResult({
+  selected: null,
+  skips: Array.from({ length: 27 }, (_, index) => ({
+    number: index + 1,
+    owner: index % 2 === 0 ? "agent:M1-A" : "agent:M4-B",
+    reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
+  })),
+}, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
+assert.match(queueSkipFormat, /### Skip Reason Counts/);
+assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
+assert.match(queueSkipFormat, /### Skip Owner Counts/);
+assert.match(queueSkipFormat, /\| 14 \| agent:M1-A \|/);
+assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
+assert.match(queueSkipFormat, /### Skip Owner Reason Counts/);
+assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 5 \| agent:M1-A \| draft PR \|/);
+assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
+assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
+assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
+
+const queueSkipOwnerDateFormat = formatResult({
+  now: "2026-05-26T11:15:00Z",
+  selected: null,
+  skips: [
+    { number: 1, owner: "agent:M1-A", reason: "draft PR", updatedAt: "2026-05-25T10:00:00Z" },
+    { number: 2, owner: "agent:M1-A", reason: "auto-merge is not armed", updatedAt: "2026-05-23T08:00:00Z" },
+    { number: 3, owner: "agent:M4-B", reason: "auto-merge is not armed", updatedAt: "2026-05-24T09:00:00Z" },
+  ],
+}, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
+assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \| 3d 3h \|/);
+assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \| 2d 2h \|/);
+assert.match(queueSkipOwnerDateFormat, /\| PR \| Owner \| Updated \| Reason \|/);
+assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| auto-merge is not armed \|/);
 
 assert.match(
   formatResult({

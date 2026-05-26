@@ -203,7 +203,7 @@ impl<'a> CheckerState<'a> {
                                 contextual_type,
                             )
                         })))
-                && self.is_assignable_to(contextual_type, expected_type)
+                && self.diagnostic_relation_boolean_guard(contextual_type, expected_type)
             {
                 return_type = contextual_type;
             }
@@ -226,7 +226,7 @@ impl<'a> CheckerState<'a> {
                 && request.contextual_type.is_some()
                 && self
                     .async_contextual_return_call_has_only_fixed_arguments(return_data.expression)
-                && !self.is_assignable_to(return_type, expected_type)
+                && !self.diagnostic_relation_boolean_guard(return_type, expected_type)
             {
                 self.invalidate_expression_for_contextual_retry(return_data.expression);
                 let mut raw_return_type = self
@@ -329,7 +329,9 @@ impl<'a> CheckerState<'a> {
             && !target_is_top_level_error
             && (!expected_contains_error_nested || allow_check_through_nested_error)
         {
-            if is_conditional_expr && !self.is_assignable_to(return_type, expected_type) {
+            if is_conditional_expr
+                && !self.diagnostic_relation_boolean_guard(return_type, expected_type)
+            {
                 // Per-branch error elaboration for conditional expressions.
                 // Instead of "Type '1 | 2' is not assignable to type '3'" at `return`,
                 // emit "Type '1' is not assignable to type '3'" at each failing branch.
@@ -965,7 +967,7 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     )
                     .is_none_or(|constraint| {
-                        self.is_assignable_to(
+                        self.diagnostic_relation_boolean_guard(
                             constraint,
                             self.ctx.types.evaluate_keyof(object_type),
                         )
@@ -987,7 +989,7 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|constraint| {
                         let keyof_object = self.ctx.types.evaluate_keyof(object_type);
-                        !self.is_assignable_to(constraint, keyof_object)
+                        !self.diagnostic_relation_boolean_guard(constraint, keyof_object)
                     })
                 });
 
