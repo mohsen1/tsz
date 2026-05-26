@@ -14,45 +14,45 @@ impl<'a> CheckerState<'a> {
     pub(crate) fn check_jsdoc_duplicate_imports(&mut self) {
         use tsz_common::comments::{get_jsdoc_content, is_jsdoc_comment};
 
-        let Some(sf) = self.ctx.arena.source_files.first() else {
-            return;
-        };
-        let source_text: String = sf.text.to_string();
-        let comments = sf.comments.clone();
-        let statements: Vec<NodeIndex> = sf.statements.nodes.clone();
-
         // (name, abs_pos, len, is_jsdoc)
         let mut import_positions: Vec<(String, u32, u32, bool)> = Vec::new();
 
-        // Collect JSDoc `@import` names and positions.
-        for comment in &comments {
-            if !is_jsdoc_comment(comment, &source_text) {
-                continue;
-            }
-            let comment_text =
-                &source_text[comment.pos as usize..(comment.end as usize).min(source_text.len())];
-            let content = get_jsdoc_content(comment, &source_text);
+        {
+            let Some(sf) = self.ctx.arena.source_files.first() else {
+                return;
+            };
+            let source_text = sf.text.as_ref();
 
-            for line in content.lines() {
-                let trimmed = line.trim_start_matches('*').trim();
-                if let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "import") {
-                    let imports = Self::parse_jsdoc_import_tag(rest);
-                    for (local_name, _specifier, _import_name) in imports {
-                        if let Some(name_offset) =
-                            Self::find_import_name_in_comment(comment_text, &local_name)
-                        {
-                            let abs_pos = comment.pos + name_offset as u32;
-                            let len = local_name.len() as u32;
-                            import_positions.push((local_name, abs_pos, len, true));
+            // Collect JSDoc `@import` names and positions.
+            for comment in &sf.comments {
+                if !is_jsdoc_comment(comment, source_text) {
+                    continue;
+                }
+                let comment_text = &source_text
+                    [comment.pos as usize..(comment.end as usize).min(source_text.len())];
+                let content = get_jsdoc_content(comment, source_text);
+
+                for line in content.lines() {
+                    let trimmed = line.trim_start_matches('*').trim();
+                    if let Some(rest) = Self::strip_jsdoc_tag_prefix(trimmed, "import") {
+                        let imports = Self::parse_jsdoc_import_tag(rest);
+                        for (local_name, _specifier, _import_name) in imports {
+                            if let Some(name_offset) =
+                                Self::find_import_name_in_comment(comment_text, &local_name)
+                            {
+                                let abs_pos = comment.pos + name_offset as u32;
+                                let len = local_name.len() as u32;
+                                import_positions.push((local_name, abs_pos, len, true));
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // Collect runtime ES import names and positions from top-level statements.
-        for stmt_idx in &statements {
-            self.collect_runtime_import_positions(*stmt_idx, &mut import_positions);
+            // Collect runtime ES import names and positions from top-level statements.
+            for &stmt_idx in &sf.statements.nodes {
+                self.collect_runtime_import_positions(stmt_idx, &mut import_positions);
+            }
         }
 
         let mut seen: std::collections::HashMap<String, Vec<(u32, u32, bool)>> =
