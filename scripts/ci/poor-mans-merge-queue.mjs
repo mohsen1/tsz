@@ -471,18 +471,18 @@ export function supersededOpenQueueBranchReason(queueBranch, currentBaseOid, que
   return `superseded open PR queue branch for older base (current ${basePrefix || "unknown"})`;
 }
 
-function readPullRequestState(repository, number) {
-  return runGhJson([
-    "api",
-    `repos/${repository}/pulls/${number}`,
-    "--jq",
-    "{number: .number, state: .state, merged: (.merged_at != null), updatedAt: .updated_at}",
-  ]);
+export function normalizePullRequestState(pr) {
+  return {
+    number: pr.number,
+    state: pr.state,
+    merged: pr.merged_at != null,
+    updatedAt: pr.updated_at || "",
+    owner: agentLabel(pr.labels),
+  };
 }
 
-function readPullRequestOwner(repository, number) {
-  const pr = runGhJson(["api", `repos/${repository}/pulls/${number}`]);
-  return agentLabel(pr.labels);
+function readPullRequestState(repository, number) {
+  return normalizePullRequestState(runGhJson(["api", `repos/${repository}/pulls/${number}`]));
 }
 
 function deleteRemoteBranch(branch) {
@@ -747,8 +747,8 @@ function cleanupQueueBranches(repository, options) {
     const { number } = metadata;
 
     const pullRequest = readPullRequestState(repository, number);
+    const owner = pullRequest.owner || "";
     if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
-      const owner = readPullRequestOwner(repository, number);
       const supersededReason = options.cleanupSupersededOpenQueueBranches
         ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
         : null;
@@ -796,7 +796,7 @@ function cleanupQueueBranches(repository, options) {
       activeRuns.push({
         branch: queueBranchInfo.branch,
         number,
-        owner: "",
+        owner,
         runId: activeRun.databaseId || null,
         url: activeRun.url || "",
         status: activeRun.status || "",
@@ -805,9 +805,10 @@ function cleanupQueueBranches(repository, options) {
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
-          owner: "",
+          owner,
           reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
           summaryReason: "active queue run",
+          updatedAt: pullRequest.updatedAt || "",
         });
       }
       continue;
