@@ -1298,14 +1298,15 @@ impl<'a> CheckerState<'a> {
                 .types
                 .get_display_properties(evaluated_source)
                 .is_some();
-
+        if let Some(display) = self.typeof_result_source_display(evaluated_source, target) {
+            return display.to_string();
+        }
         if source_has_display_props
             && self.target_is_normalized_object_literal_union(target)
             && display_has_boolean_member_literal_assignability(&source_display)
         {
             return source_display;
         }
-
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
             || ([source, evaluated_source].into_iter().any(|candidate| {
