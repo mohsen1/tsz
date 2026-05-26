@@ -10,7 +10,7 @@ struct ReturnContextSubstitutionRequest<'a> {
 }
 
 impl<'a> ReturnContextSubstitutionRequest<'a> {
-    fn new(source: TypeId, target: TypeId, tracked_type_params: &'a FxHashSet<Atom>) -> Self {
+    const fn new(source: TypeId, target: TypeId, tracked_type_params: &'a FxHashSet<Atom>) -> Self {
         Self {
             source,
             target,
