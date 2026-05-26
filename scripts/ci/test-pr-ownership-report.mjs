@@ -103,6 +103,7 @@ withTempDir((dir) => {
       number: 17,
       title: "fix(checker): ready but blocked",
       isDraft: false,
+      updatedAt: "2026-05-23T09:15:00Z",
       baseRefName: "main",
       headRefName: "agent/blocked-ready",
       mergeStateStatus: "BLOCKED",
@@ -115,6 +116,7 @@ withTempDir((dir) => {
       number: 18,
       title: "fix(solver): conflicting ready branch",
       isDraft: false,
+      updatedAt: "2026-05-24T10:20:30Z",
       baseRefName: "main",
       headRefName: "agent/conflicting-ready",
       mergeStateStatus: "DIRTY",
@@ -166,7 +168,7 @@ withTempDir((dir) => {
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
   assert.match(
     result.stdout,
-    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
   );
   assert.match(
     result.stdout,
@@ -174,7 +176,7 @@ withTempDir((dir) => {
   );
   assert.match(
     result.stdout,
-    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#18: agent:zeta; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#18: agent:zeta; updated 2026-05-24; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
   );
   assert.match(
     result.stdout,
@@ -327,6 +329,7 @@ withTempDir((dir) => {
       agentName: "epsilon",
       agentLabel: "agent:epsilon",
       autoMergeArmed: false,
+      updatedAt: "2026-05-23T09:15:00Z",
       mergeable: "MERGEABLE",
       title: "fix(checker): ready but blocked",
     },
@@ -339,6 +342,7 @@ withTempDir((dir) => {
       agentName: "delta",
       agentLabel: "agent:delta",
       autoMergeArmed: false,
+      updatedAt: null,
       mergeStateStatus: "DIRTY",
       mergeable: "CONFLICTING",
       title: "fix(checker): conflicting draft branch",
@@ -349,6 +353,7 @@ withTempDir((dir) => {
       agentName: "zeta",
       agentLabel: "agent:zeta",
       autoMergeArmed: false,
+      updatedAt: "2026-05-24T10:20:30Z",
       mergeStateStatus: "DIRTY",
       mergeable: "CONFLICTING",
       title: "fix(solver): conflicting ready branch",
@@ -365,6 +370,7 @@ withTempDir((dir) => {
       agentName: "zeta",
       agentLabel: "agent:zeta",
       autoMergeArmed: false,
+      updatedAt: "2026-05-24T10:20:30Z",
       mergeStateStatus: "DIRTY",
       mergeable: "CONFLICTING",
       title: "fix(solver): conflicting ready branch",
