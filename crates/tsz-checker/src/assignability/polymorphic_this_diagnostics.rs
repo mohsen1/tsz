@@ -135,14 +135,13 @@ impl<'a> CheckerState<'a> {
         }
 
         let receiver_type = self.get_type_of_node(access.expression);
-        if receiver_type == target || !self.diagnostic_relation_boolean_guard(receiver_type, target)
-        {
+        if receiver_type == target || !self.assign_relation_outcome(receiver_type, target).related {
             return None;
         }
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, receiver_type)
             && let Some(member) = members.into_iter().find(|&member| {
-                member != target && self.diagnostic_relation_boolean_guard(member, target)
+                member != target && self.assign_relation_outcome(member, target).related
             })
         {
             return Some(member);

@@ -685,6 +685,9 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
+mod nullish_target_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
@@ -705,6 +708,9 @@ mod overload_anchor_at_argument_tests;
 #[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
+#[cfg(test)]
+#[path = "tests/polymorphic_this_relation_routing_arch_tests.rs"]
+mod polymorphic_this_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
@@ -792,6 +798,9 @@ mod ts2590_array_literal_identity_skip_tests;
 #[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
+#[cfg(test)]
+#[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
+mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
