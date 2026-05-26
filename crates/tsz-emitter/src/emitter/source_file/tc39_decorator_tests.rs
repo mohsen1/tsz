@@ -588,6 +588,54 @@ class C {
 }
 
 #[test]
+fn tc39_class_and_member_decorated_static_private_members_use_helper_temps() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    @dec
+    static #method() {}
+    @dec
+    static get #value() { return 0; }
+    @dec
+    static set #value(value) {}
+    @dec
+    static #field = 1;
+    @dec
+    static accessor #accessor = 2;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _C_method_get, _C_value_get, _C_value_set, _C_field, _C_accessor_get, _C_accessor_set, _C_accessor_accessor_storage;")
+            && output.contains("_C_method_get = function _C_method_get() { return _static_private_method_descriptor.value; }")
+            && output.contains("_C_value_get = function _C_value_get() { return _static_private_get_value_descriptor.get.call(this); }")
+            && output.contains("_C_value_set = function _C_value_set(value) { return _static_private_set_value_descriptor.set.call(this, value); }")
+            && output.contains("access: { has: obj => __classPrivateFieldIn(_classThis, obj), get: obj => __classPrivateFieldGet(obj, _classThis, \"a\", _C_method_get) }")
+            && output.contains("access: { has: obj => __classPrivateFieldIn(_classThis, obj), get: obj => __classPrivateFieldGet(obj, _classThis, \"f\", _C_field), set: (obj, value) => { __classPrivateFieldSet(obj, _classThis, value, \"f\", _C_field); } }")
+            && output.contains("access: { has: obj => __classPrivateFieldIn(_classThis, obj), get: obj => __classPrivateFieldGet(obj, _classThis, \"a\", _C_accessor_get), set: (obj, value) => { __classPrivateFieldSet(obj, _classThis, value, \"a\", _C_accessor_set); } }"),
+        "Class and member decorated static private elements should expose class-replacement-safe helper temps.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("obj.#method")
+            && !output.contains("obj.#value")
+            && !output.contains("obj.#field")
+            && !output.contains("obj.#accessor"),
+        "Class and member decorated static private access records must not keep native private syntax.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_es2015_static_private_fields_use_storage_temps() {
     let source = "\
 declare var dec: any;

@@ -293,16 +293,19 @@ pub(super) struct DecoratedAutoAccessorInfo {
 pub(super) struct ClassDecoratorStaticPrivateMethodInfo {
     pub(super) member_idx: NodeIndex,
     pub(super) kind: MemberKind,
+    pub(super) is_decorated: bool,
     pub(super) member_name: String,
     pub(super) needs_wrapper: bool,
     pub(super) temp_var: String,
     pub(super) function_name: String,
+    pub(super) descriptor_var: Option<String>,
     pub(super) params: String,
     pub(super) body: String,
 }
 
 pub(super) struct ClassDecoratorAutoAccessorInfo {
     pub(super) member: DecoratedMember,
+    pub(super) is_decorated: bool,
     pub(super) storage_name: String,
     pub(super) getter_temp_var: Option<String>,
     pub(super) setter_temp_var: Option<String>,
@@ -312,6 +315,7 @@ pub(super) struct ClassDecoratorAutoAccessorInfo {
 
 pub(super) struct ClassDecoratorStaticPrivateFieldInfo {
     pub(super) member_idx: NodeIndex,
+    pub(super) is_decorated: bool,
     pub(super) member_name: String,
     pub(super) storage_name: String,
     pub(super) initializer_text: String,
