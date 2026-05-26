@@ -50,8 +50,9 @@ impl<'a> CheckerState<'a> {
             if self.type_parameter_default_syntactically_satisfies_constraint(param_idx) {
                 continue;
             }
-            let mut default_satisfies =
-                self.diagnostic_relation_boolean_guard(default_type, constraint_type);
+            let mut default_satisfies = self
+                .assign_relation_outcome(default_type, constraint_type)
+                .related;
             if !default_satisfies {
                 self.ensure_refs_resolved(default_type);
                 self.ensure_refs_resolved(constraint_type);
@@ -64,7 +65,8 @@ impl<'a> CheckerState<'a> {
                     )
                 {
                     default_satisfies = self
-                        .diagnostic_relation_boolean_guard(evaluated_default, evaluated_constraint)
+                        .assign_relation_outcome(evaluated_default, evaluated_constraint)
+                        .related
                         || self.satisfies_array_like_constraint(
                             evaluated_default,
                             evaluated_constraint,
@@ -88,7 +90,8 @@ impl<'a> CheckerState<'a> {
                     let evaluated_default =
                         self.evaluate_type_for_assignability(instantiated_default);
                     default_satisfies = self
-                        .diagnostic_relation_boolean_guard(evaluated_default, constraint_type)
+                        .assign_relation_outcome(evaluated_default, constraint_type)
+                        .related
                         || self.satisfies_array_like_constraint(evaluated_default, constraint_type)
                         || self.conditional_result_branches_satisfy_constraint(
                             evaluated_default,
