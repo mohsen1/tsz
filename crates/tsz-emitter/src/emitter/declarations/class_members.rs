@@ -199,6 +199,11 @@ impl<'a> Printer<'a> {
             // Emit modifiers (static, async only for JavaScript)
             self.emit_method_modifiers_js(&method.modifiers);
         }
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         // Emit generator asterisk (skip for async generators being lowered)
         if has_generator_asterisk && !needs_async_generator_lowering {
@@ -361,6 +366,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_method_modifiers_js(&method.modifiers);
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if method.asterisk_token {
             self.write("*");
@@ -613,6 +623,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         // ES decorators are emitted verbatim when not using legacy
                         // (experimental) decorator lowering via __decorate.
@@ -756,6 +769,11 @@ impl<'a> Printer<'a> {
 
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
+        if self.should_preserve_native_decorator_comments(&prop.modifiers)
+            && let Some(name_node) = self.arena.get(prop.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if prop.initializer.is_some()
             && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
@@ -854,6 +872,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         if !self.ctx.options.legacy_decorators {
                             self.emit(mod_idx);
@@ -877,6 +898,21 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    pub(in crate::emitter) fn should_preserve_native_decorator_comments(
+        &self,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        self.ctx.options.target == ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     pub(in crate::emitter) fn emit_constructor_declaration(&mut self, node: &Node) {
@@ -1534,6 +1570,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("get ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
@@ -1565,6 +1606,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("set ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);

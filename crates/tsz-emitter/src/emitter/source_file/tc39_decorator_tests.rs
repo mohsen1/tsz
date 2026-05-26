@@ -221,6 +221,71 @@ class C {
 }
 
 #[test]
+fn esnext_native_decorators_preserve_between_decorator_comments() {
+    let source = "\
+declare const dec: any;
+
+/*1*/
+(
+/*2*/
+@dec
+/*3*/
+@dec
+/*4*/
+class C {
+    /*5*/
+    @dec
+    /*6*/
+    @dec
+    /*7*/
+    method() {}
+
+    /*8*/
+    @dec
+    /*9*/
+    @dec
+    /*10*/
+    get value() { return 1; }
+
+    /*11*/
+    @dec
+    /*12*/
+    @dec
+    /*13*/
+    field = 1;
+}
+);
+";
+
+    let (parser, root) = parse_test_source(source);
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            target: ScriptTarget::ESNext,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("/*2*/\n@dec\n/*3*/\n@dec\n/*4*/\nclass C"),
+        "Class decorator comments should stay between native decorators and the class keyword.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("/*5*/\n    @dec\n    /*6*/\n    @dec\n    /*7*/\n    method() { }")
+            && output.contains(
+                "/*8*/\n    @dec\n    /*9*/\n    @dec\n    /*10*/\n    get value() { return 1; }"
+            )
+            && output
+                .contains("/*11*/\n    @dec\n    /*12*/\n    @dec\n    /*13*/\n    field = 1;"),
+        "Member decorator comments should stay between native decorators and member tokens.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;

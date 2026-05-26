@@ -262,6 +262,9 @@ impl<'a> Printer<'a> {
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(&class.modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if emit_invalid_namespace_static
                         && mod_node.kind == SyntaxKind::StaticKeyword as u16
                     {
@@ -1462,6 +1465,11 @@ impl<'a> Printer<'a> {
                 static_super_base_alias.as_deref()
             };
 
+        if self.should_preserve_native_decorator_comments(&class.modifiers)
+            && let Some(name_node) = self.arena.get(class.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
         self.write("class");
 
         // Determine the class expression name.
