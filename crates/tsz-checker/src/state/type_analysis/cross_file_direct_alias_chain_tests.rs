@@ -1008,6 +1008,27 @@ fn direct_source_file_type_alias_lowers_intersection_of_local_and_global_applica
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_utility_augmented_required_context() {
+    with_two_file_state_with_libs(
+        "import { Primitive } from './aliases-and-guards';\ntype SetDifference<A, B> = A extends B ? never : A;\nexport type Omit<T, K extends keyof any> = Pick<T, SetDifference<keyof T, K>>;\nexport type AugmentedRequired<T extends object, K extends keyof T = keyof T> = Omit<T, K> & Required<Pick<T, K>>;",
+        "import { AugmentedRequired } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let augmented_required_sym = target_binder
+                .file_locals
+                .get("AugmentedRequired")
+                .expect("AugmentedRequired");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(augmented_required_sym, Some(1), true)
+                .expect("utility mapped-type context should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "AugmentedRequired should expose T and K");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_shadowed_global_function_reference() {
     with_two_file_state_with_libs(
         "interface Function { local: string }\nexport type FunctionKeys<T> = { [K in keyof T]-?: T[K] extends Function ? K : never }[keyof T];",
