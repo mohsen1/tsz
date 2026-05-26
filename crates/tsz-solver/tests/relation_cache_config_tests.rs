@@ -770,3 +770,71 @@ fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
         "strict-any policy must not let nested `any` silence the property mismatch",
     );
 }
+
+#[test]
+fn assignability_policy_flip_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let strict = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let loose = RelationPolicy::from_flags(0);
+
+    let strict_uncached = query_relation(
+        &interner,
+        TypeId::NULL,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        strict,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_cached = db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, strict);
+
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict-null assignability must match the uncached typed relation query",
+    );
+
+    let loose_uncached = query_relation(
+        &interner,
+        TypeId::NULL,
+        TypeId::NUMBER,
+        RelationKind::Assignable,
+        loose,
+        RelationContext::default(),
+    )
+    .is_related();
+    let loose_cached = db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, loose);
+
+    assert_eq!(
+        loose_cached, loose_uncached,
+        "cached non-strict assignability must match the uncached typed relation query",
+    );
+    assert_ne!(
+        strict_cached, loose_cached,
+        "null assignability should differ across strict-null policy slots",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, strict),
+        strict_uncached,
+        "strict slot must remain stable after populating the non-strict slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            TypeId::NULL,
+            TypeId::NUMBER,
+            strict.cache_config(),
+        )),
+        Some(strict_uncached),
+        "strict policy result must be stored under the strict policy-derived key",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            TypeId::NULL,
+            TypeId::NUMBER,
+            loose.cache_config(),
+        )),
+        Some(loose_uncached),
+        "non-strict policy result must be stored under the non-strict policy-derived key",
+    );
+}
