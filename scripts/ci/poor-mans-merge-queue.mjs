@@ -484,6 +484,7 @@ function cleanupQueueBranches(repository, options) {
   let skippedActiveRuns = 0;
   let skippedUnrecognized = 0;
   let supersededOpen = 0;
+  const activeRuns = [];
   const deletions = [];
   const skips = [];
   const currentBaseOid = options.cleanupSupersededOpenQueueBranches
@@ -510,6 +511,12 @@ function cleanupQueueBranches(repository, options) {
         const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
         if (activeRun) {
           skippedActiveRuns += 1;
+          activeRuns.push({
+            branch: queueBranchInfo.branch,
+            number,
+            runId: activeRun.databaseId || null,
+            url: activeRun.url || "",
+          });
           if (options.verbose) {
             skips.push({
               branch: queueBranchInfo.branch,
@@ -529,6 +536,12 @@ function cleanupQueueBranches(repository, options) {
     const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
     if (activeRun) {
       skippedActiveRuns += 1;
+      activeRuns.push({
+        branch: queueBranchInfo.branch,
+        number,
+        runId: activeRun.databaseId || null,
+        url: activeRun.url || "",
+      });
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
@@ -558,6 +571,7 @@ function cleanupQueueBranches(repository, options) {
 
   return {
     cleanupQueueBranches: true,
+    activeRuns,
     deleted,
     deletions,
     dryRun: options.dryRun,
@@ -785,6 +799,14 @@ export function formatResult(result, options) {
           ? "open superseded"
           : deletion.merged ? "merged" : String(deletion.state || "closed").toLowerCase();
         lines.push(`| \`${deletion.branch}\` | #${deletion.number} | ${state} |`);
+      }
+    }
+    if (options.verbose && result.activeRuns?.length) {
+      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Run |", "|--------|----|-----|");
+      for (const run of result.activeRuns.slice(0, 50)) {
+        const runId = run.runId || "(unknown)";
+        const runLink = run.url ? `[${runId}](${run.url})` : runId;
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${runLink} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
