@@ -45,6 +45,8 @@ jobs:
       - id: gate
         env:
           GH_TOKEN: ${{ github.token }}
+          CI_EVENT_NAME: ${{ github.event_name }}
+          CI_REF: ${{ github.ref }}
         shell: bash
         run: |
           set -euo pipefail
@@ -59,7 +61,17 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          if [[ "${CI_EVENT_NAME}" == "push" \
+                && "${CI_REF}" == refs/heads/automation/merge-queue/* ]]; then
+            # Queue branches are synthetic latest-main merge commits. The PR
+            # head has already passed required PR CI before queueing, so keep
+            # only the required summary check alive for queue throughput.
+            echo "Merge-queue synthetic branch - publishing CI Summary without heavy suites."
+            should_run=false
+            full_run=false
+            required_summary=true
+            compiler_checks_required=false
+          elif [[ "${{ github.event_name }}" == "pull_request" ]]; then
             # The `labeled` event triggers on every label add. We only care
             # about the `ci-approved` label (used to opt fork PRs into CI).
             # For any other label, this would just duplicate the existing
