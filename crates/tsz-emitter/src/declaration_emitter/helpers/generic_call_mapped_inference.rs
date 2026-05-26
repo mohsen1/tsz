@@ -688,10 +688,10 @@ fn type_parameter_name(source_arena: &NodeArena, type_param_idx: NodeIndex) -> O
         .and_then(|param| identifier_text(source_arena, param.name))
 }
 
-fn mapped_type_from_annotation<'a>(
-    source_arena: &'a NodeArena,
+fn mapped_type_from_annotation(
+    source_arena: &NodeArena,
     type_idx: NodeIndex,
-) -> Option<&'a tsz_parser::parser::node::MappedTypeData> {
+) -> Option<&tsz_parser::parser::node::MappedTypeData> {
     let type_node = source_arena.get(type_idx)?;
     if type_node.kind == syntax_kind_ext::MAPPED_TYPE {
         return source_arena.get_mapped_type(type_node);
@@ -725,10 +725,10 @@ fn identifier_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
         .map(|ident| ident.escaped_text.clone())
 }
 
-fn callable_function_from_symbol_decl<'a>(
-    source_arena: &'a NodeArena,
+fn callable_function_from_symbol_decl(
+    source_arena: &NodeArena,
     decl_idx: NodeIndex,
-) -> Option<&'a FunctionData> {
+) -> Option<&FunctionData> {
     if let Some(func) = source_arena
         .get(decl_idx)
         .and_then(|node| source_arena.get_function(node))
