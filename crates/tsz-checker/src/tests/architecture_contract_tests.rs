@@ -3880,6 +3880,40 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
     );
 }
 
+/// Nested object-literal property diagnostics should choose the source and
+/// property-name anchor, then let the canonical exact-anchor relation helper
+/// own the TS2322 relation decision and rendering.
+#[test]
+fn test_nested_object_literal_property_diagnostics_use_exact_anchor_relation_helper() {
+    let source = fs::read_to_string("src/assignability/assignability_diagnostics.rs")
+        .expect("failed to read assignability_diagnostics.rs");
+    let nested_property_block = source
+        .split("// Check nested object literal excess properties FIRST")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("self.ctx.diagnostics.len() > diag_count_before")
+                .next()
+        })
+        .expect("failed to locate nested object-literal property diagnostic block");
+
+    assert!(
+        nested_property_block
+            .contains("check_assignable_or_report_at_exact_anchor_without_source_elaboration("),
+        "nested object-literal property diagnostics must use the canonical exact-anchor \
+         relation helper"
+    );
+    assert!(
+        !nested_property_block.contains("diagnostic_relation_boolean_guard("),
+        "nested object-literal property diagnostics must not pre-gate the canonical \
+         relation helper with a raw boolean relation"
+    );
+    assert!(
+        !nested_property_block.contains("error_type_not_assignable_at_with_anchor("),
+        "nested object-literal property diagnostics must not bypass relation outcome \
+         handling with the manual TS2322 reporter"
+    );
+}
+
 /// Object-literal property diagnostics must route declared-property and
 /// contextual-property assignability through canonical relation diagnostic
 /// helpers instead of raw boolean relations plus manual TS2322 reporting.

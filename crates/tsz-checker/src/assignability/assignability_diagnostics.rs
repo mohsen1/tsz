@@ -503,15 +503,12 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            if !self.diagnostic_relation_boolean_guard(prop_value_type, target_prop_type) {
-                // Report TS2322 at the property name (use _with_anchor to avoid
-                // assignment_diagnostic_anchor_idx walking up to the variable declaration)
-                self.error_type_not_assignable_at_with_anchor(
-                    prop_value_type,
-                    target_prop_type,
-                    prop_name_idx,
-                );
-            }
+            let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
+                prop_value_type,
+                target_prop_type,
+                prop_value_idx,
+                prop_name_idx,
+            );
         }
 
         self.ctx.diagnostics.len() > diag_count_before
