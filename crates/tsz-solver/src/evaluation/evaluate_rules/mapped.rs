@@ -134,7 +134,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// missing marker and must be preserved. tsz does not model that marker
     /// separately yet, so only the non-exact path can safely remove
     /// `undefined`.
-    fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
+    pub(super) fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
         if strip && !self.interner().exact_optional_property_types() {
             crate::narrowing::utils::remove_undefined(self.interner(), ty)
         } else {
