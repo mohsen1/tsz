@@ -234,10 +234,15 @@ const value: number = ws[importedSym];
         "./b.ts",
     );
 
-    assert!(
-        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
-        "imported same-binding symbol access should preserve declared member type, got {codes:?}",
-    );
+    for code in [
+        diagnostic_codes::ELEMENT_IMPLICITLY_HAS_AN_ANY_TYPE_BECAUSE_EXPRESSION_OF_TYPE_CANT_BE_USED_TO_IN,
+        diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+    ] {
+        assert!(
+            !codes.contains(&code),
+            "imported same-binding symbol access should preserve declared member type, got {codes:?}",
+        );
+    }
 }
 
 #[test]
