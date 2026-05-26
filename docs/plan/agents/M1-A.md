@@ -24,7 +24,7 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 02:15 UTC lane refresh:
+- 2026-05-26 02:30 UTC lane refresh:
   - Direct `agent:M1-A` PR queue is empty after `#10190` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
@@ -114,6 +114,11 @@ node scripts/ci/pr-ownership-report.mjs
     `scripts/ci/pr-ownership-report.mjs` now includes a `Conflicting Main PRs`
     section and JSON fields for main-based PRs whose current head is dirty or
     conflicting, grouped by owner.
+  - `#10195` merged on 2026-05-26 as
+    `a1057e55d0 ci: summarize PR ownership by owner (#10195)`.
+    `scripts/ci/pr-ownership-report.mjs` now includes an `Owner Summary`
+    section and `ownerSummaries` JSON with per-owner open, ready, draft, WIP,
+    stacked-child, blocked-ready, conflicting-main, and auto-merge counts.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -133,6 +138,9 @@ node scripts/ci/pr-ownership-report.mjs
 - Current PR-garden surfaces to inspect before issue backlog:
   - `#10150` merged on 2026-05-25 and is no longer an active queue unblocker.
     Its stale synthetic branch was cleaned after merge.
+  - Use the ownership report's `Owner Summary` section for the current
+    owner-by-owner workload and handoff view. Counts are live GitHub state and
+    should be re-run each cycle, not copied into this lane note.
   - No queue-ready auto-merge PR is currently selected by
     `scripts/ci/poor-mans-merge-queue.mjs --dry-run`; earlier ready PRs are
     either drafts, not auto-merge armed, or already handed off.
