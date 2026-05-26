@@ -58,3 +58,21 @@ let goodNumber: K = 42;
         "plain string index signatures still produce string | number keys"
     );
 }
+
+#[test]
+fn keyof_template_and_number_index_signature_accepts_number_key() {
+    let source = r#"
+type Mixed = { [key: `prefix_${string}`]: boolean; [idx: number]: boolean };
+type K = keyof Mixed;
+
+let okTemplate: K = "prefix_hello";
+let okNumber: K = 42;
+let bad: K = "nope";
+"#;
+
+    assert_eq!(
+        ts2322_count(source),
+        1,
+        "`keyof` must keep number when a numeric index is paired with a template index"
+    );
+}

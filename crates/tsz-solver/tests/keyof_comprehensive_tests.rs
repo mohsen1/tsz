@@ -528,6 +528,45 @@ fn test_keyof_template_index_signature_with_fixed_property_excludes_plain_string
 }
 
 #[test]
+fn test_keyof_template_and_number_index_signature_includes_number() {
+    let interner = TypeInterner::new();
+    let template_key = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix_")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: template_key,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!(
+            "Expected union for template plus number index signature, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let member_list = interner.type_list(members);
+
+    assert!(member_list.contains(&template_key));
+    assert!(member_list.contains(&TypeId::NUMBER));
+    assert!(!member_list.contains(&TypeId::STRING));
+}
+
+#[test]
 fn test_keyof_object_with_number_index_includes_number() {
     let interner = TypeInterner::new();
     let obj_with_index = interner.object_with_index(ObjectShape {
