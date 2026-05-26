@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import pathlib
 import re
 import sys
@@ -166,6 +167,39 @@ def summarize_failures(failures: list[str]) -> FailureSummary:
     return summary
 
 
+def build_json_report(
+    findings: list[Finding],
+    allowlist: dict[str, AllowEntry],
+    failures: list[str],
+) -> dict[str, object]:
+    counts = grouped_counts(findings)
+    summary = summarize_failures(failures)
+    return {
+        "ok": not failures,
+        "total_findings": len(findings),
+        "files_with_findings": len(counts),
+        "failure_summary": dataclasses.asdict(summary),
+        "failures": failures,
+        "findings": [
+            {
+                "path": finding.path,
+                "line_no": finding.line_no,
+                "call": finding.call,
+                "category": allowlist[finding.path].category
+                if finding.path in allowlist
+                else "UNALLOWLISTED",
+                "text": finding.text,
+            }
+            for finding in findings
+        ],
+    }
+
+
+def write_json_report(path: pathlib.Path, report: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> None:
     by_path: dict[str, list[Finding]] = defaultdict(list)
     for finding in findings:
@@ -182,11 +216,19 @@ def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> N
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print all tracked findings")
+    parser.add_argument(
+        "--json-report",
+        type=pathlib.Path,
+        help="write a machine-readable report before exiting",
+    )
     args = parser.parse_args(argv)
 
     findings = scan()
     allowlist = load_allowlist()
     failures = audit(findings, allowlist)
+
+    if args.json_report is not None:
+        write_json_report(args.json_report, build_json_report(findings, allowlist, failures))
 
     if args.list or failures:
         print_report(findings, allowlist)

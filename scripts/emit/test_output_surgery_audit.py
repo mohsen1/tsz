@@ -61,6 +61,25 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(summary.over_allowlist, 1)
         self.assertEqual(summary.stale_allowlist, 1)
 
+    def test_json_report_includes_summary_and_categories(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+            self.audit.Finding("b.rs", 2, "replace", "rewritten = rewritten.replace(&a, &b);"),
+        ]
+        allowlist = {
+            "b.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "existing debt"),
+        }
+        failures = ["a.rs: 1 unallowlisted output-surgery call(s)"]
+
+        report = self.audit.build_json_report(findings, allowlist, failures)
+
+        self.assertFalse(report["ok"])
+        self.assertEqual(report["total_findings"], 2)
+        self.assertEqual(report["files_with_findings"], 2)
+        self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
+        self.assertEqual(report["findings"][0]["category"], "UNALLOWLISTED")
+        self.assertEqual(report["findings"][1]["category"], "semantic-output-surgery")
+
     def test_scan_ignores_data_cleanup_but_finds_output_surgery(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             base = pathlib.Path(temp_dir)
