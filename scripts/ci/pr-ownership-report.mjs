@@ -84,6 +84,24 @@ function issueRefsFrom(text) {
   return [...String(text).matchAll(/#(\d+)/g)].map((match) => Number(match[1]));
 }
 
+function uniqueIssueRefs(refs, prNumber) {
+  return [...new Set(refs.filter((issue) => issue !== prNumber))].sort((a, b) => a - b);
+}
+
+function claimedIssueRefsFromBody(body) {
+  const refs = [];
+  for (const match of String(body).matchAll(
+    /\b(?:addresses?|closes?|fix(?:es)?|resolves?)\b[^\r\n.]*/gi,
+  )) {
+    refs.push(...issueRefsFrom(match[0]));
+  }
+  return refs;
+}
+
+function claimedIssueRefsFrom(pr) {
+  return uniqueIssueRefs([...issueRefsFrom(pr.title), ...claimedIssueRefsFromBody(pr.body)], pr.number);
+}
+
 function titleScope(title) {
   return String(title)
     .toLowerCase()
@@ -132,9 +150,8 @@ function makeReport(pulls) {
     labels: pr.labels.sort(),
     agentName: agentNameFrom(pr.body),
     agentLabels: agentLabelsFrom(pr.labels),
-    issueRefs: [...new Set(issueRefsFrom(`${pr.title}\n${pr.body}`).filter((issue) => issue !== pr.number))].sort(
-      (a, b) => a - b,
-    ),
+    issueRefs: uniqueIssueRefs(issueRefsFrom(`${pr.title}\n${pr.body}`), pr.number),
+    claimedIssueRefs: claimedIssueRefsFrom(pr),
     titleScope: titleScope(pr.title),
   }));
 
@@ -152,7 +169,7 @@ function makeReport(pulls) {
     }
     byScope.get(pr.titleScope).push(pr.number);
 
-    for (const issue of pr.issueRefs) {
+    for (const issue of pr.claimedIssueRefs) {
       if (!byIssue.has(issue)) {
         byIssue.set(issue, []);
       }
