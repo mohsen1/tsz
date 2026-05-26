@@ -24,7 +24,7 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 01:39 UTC lane refresh:
+- 2026-05-26 01:43 UTC lane refresh:
   - Direct `agent:M1-A` PR queue is empty after `#10187` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
@@ -133,10 +133,12 @@ node scripts/ci/pr-ownership-report.mjs
     stale branch needs a signed handoff.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
-    `pr-9632`, and `pr-9912`. The latest cleanup dry run reports zero stale
-    branches, five open PR branch skips, and one active queue run
-    (`#9515`/`26427174368`). The stale merged-PR queue branches for `#9848`,
-    `#9889`, `#10160`, and `#10163` were deleted.
+    `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
+    branches and group the six preserved branches as open PR branch skips or
+    active queue runs; the exact active-run subset changes as synthetic runs
+    complete, so re-run the cleanup dry-run for current run ids. The stale
+    merged-PR queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were
+    deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
