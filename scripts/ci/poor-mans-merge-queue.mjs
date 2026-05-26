@@ -256,6 +256,25 @@ function shortDate(value) {
   return value ? String(value).slice(0, 10) : "unknown";
 }
 
+function elapsedAge(startedAt, now) {
+  const startedMs = Date.parse(startedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs)) return "unknown";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -513,6 +532,54 @@ function pushSkipOwnerCounts(lines, skips) {
     } else {
       lines.push(`| ${entry.count} | ${owner} |`);
     }
+  }
+}
+
+function pushCleanupSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| Branch | Owner | Updated | Reason |" : "| Branch | Owner | Reason |",
+    hasUpdatedAt ? "|--------|-------|---------|--------|" : "|--------|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 50)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 50) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 50} more skipped branch(es) omitted |`
+      : `| ... |  | ${skips.length - 50} more skipped branch(es) omitted |`);
+  }
+}
+
+function pushQueueSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| PR | Owner | Updated | Reason |" : "| PR | Owner | Reason |",
+    hasUpdatedAt ? "|----|-------|---------|--------|" : "|----|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 25)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 25) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 25} more skipped PR(s) omitted |`
+      : `| ... |  | ${skips.length - 25} more skipped PR(s) omitted |`);
   }
 }
 
@@ -897,11 +964,18 @@ export function formatResult(result, options) {
       }
     }
     if (options.verbose && result.activeRuns?.length) {
-      lines.push("", "### Active Queue Runs", "", "| Branch | PR | Owner | Run | Status | Started |", "|--------|----|-------|-----|--------|---------|");
+      const now = result.now || new Date().toISOString();
+      lines.push(
+        "",
+        "### Active Queue Runs",
+        "",
+        "| Branch | PR | Owner | Run | Status | Started | Age |",
+        "|--------|----|-------|-----|--------|---------|-----|",
+      );
       for (const run of result.activeRuns.slice(0, 50)) {
         const runId = run.runId || "(unknown)";
         const runLink = run.url ? `[${runId}](${run.url})` : runId;
-        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} |`);
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} | ${elapsedAge(run.startedAt, now)} |`);
       }
     }
     if (options.verbose && result.skips?.length) {
@@ -911,13 +985,7 @@ export function formatResult(result, options) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
       pushSkipOwnerCounts(lines, result.skips);
-      lines.push("", "### Skips", "", "| Branch | Owner | Reason |", "|--------|-------|--------|");
-      for (const skip of result.skips.slice(0, 50)) {
-        lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
-      }
-      if (result.skips.length > 50) {
-        lines.push(`| ... |  | ${result.skips.length - 50} more skipped branch(es) omitted |`);
-      }
+      pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
@@ -943,13 +1011,7 @@ export function formatResult(result, options) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
     pushSkipOwnerCounts(lines, result.skips);
-    lines.push("", "### Skips", "", "| PR | Owner | Reason |", "|----|-------|--------|");
-    for (const skip of result.skips.slice(0, 25)) {
-      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
-    }
-    if (result.skips.length > 25) {
-      lines.push(`| ... |  | ${result.skips.length - 25} more skipped PR(s) omitted |`);
-    }
+    pushQueueSkipRows(lines, result.skips);
   }
   return `${lines.join("\n")}\n`;
 }
