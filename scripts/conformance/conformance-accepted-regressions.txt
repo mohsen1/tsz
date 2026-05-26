@@ -32,4 +32,5 @@ TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/literal/stringMappingOverPatternLiterals.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
 TypeScript/tests/cases/conformance/types/members/indexSignatures1.ts
+TypeScript/tests/cases/conformance/types/tuple/contextualTypeWithTuple.ts
 TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
