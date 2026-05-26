@@ -248,9 +248,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             //     are NOT properties of typeof globalThis;
             //   - a name not bound in the file's global locals at all (e.g.
             //     the key is a quoted ambient-module name like `"mod"`).
-            if object_type == TypeId::ANY
-                && is_typeof_global_this_type_node(self.ctx.arena, indexed_access.object_type)
-            {
+            if is_typeof_global_this_type_node(self.ctx.arena, indexed_access.object_type) {
                 // In type position, the index is a LiteralType wrapping a string literal
                 if let Some(key) =
                     get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)

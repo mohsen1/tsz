@@ -64,6 +64,19 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn typeof_global_this_indexed_key_is_missing(&self, key: &str) -> bool {
+        if key == "globalThis" {
+            return false;
+        }
+        let Some(sym_id) = self.ctx.binder.file_locals.get(key) else {
+            return true;
+        };
+        self.ctx.binder.get_symbol(sym_id).is_some_and(|symbol| {
+            symbol.has_any_flags(tsz_binder::symbol_flags::BLOCK_SCOPED_VARIABLE)
+                && !symbol.has_any_flags(tsz_binder::symbol_flags::FUNCTION_SCOPED_VARIABLE)
+        })
+    }
+
     pub(crate) fn is_keyof_for_current_object(
         &mut self,
         ty: TypeId,
@@ -486,6 +499,19 @@ impl<'a> CheckerState<'a> {
         let object_type = self.get_type_from_type_node(data.object_type);
         let index_type = self.get_type_from_type_node(data.index_type);
         use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
+
+        if crate::types_domain::type_node_helpers::is_typeof_global_this_type_node(
+            self.ctx.arena,
+            data.object_type,
+        ) && let Some(key) =
+            crate::types_domain::type_node_helpers::get_string_literal_from_type_index(
+                self.ctx.arena,
+                data.index_type,
+            )
+            && self.typeof_global_this_indexed_key_is_missing(&key)
+        {
+            return;
+        }
 
         if indexed_access_object_alias_application_exceeds_depth(self, data.object_type) {
             self.error_at_node(
