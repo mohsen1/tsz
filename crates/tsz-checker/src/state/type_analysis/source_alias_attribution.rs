@@ -71,11 +71,12 @@ pub(crate) fn record_source_alias_rejection_kinds(
                     .map(|source_file| source_file.file_name.as_str()),
             },
         );
-        record_type_reference_rejection_kinds_in_node(
+        record_non_lowerable_type_reference_rejection_kinds_in_node(
             arena,
             delegate_binder,
             node_idx,
             type_param_names,
+            type_node_is_lowerable,
         );
     }
 }
@@ -214,6 +215,24 @@ fn record_type_reference_rejection_kinds_in_node(
     }
 }
 
+fn record_non_lowerable_type_reference_rejection_kinds_in_node(
+    arena: &NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+    type_node_is_lowerable: &dyn Fn(NodeIndex) -> bool,
+) {
+    for kind in non_lowerable_type_reference_rejection_kinds_in_node(
+        arena,
+        delegate_binder,
+        root_idx,
+        type_param_names,
+        type_node_is_lowerable,
+    ) {
+        record_direct_source_file_type_alias_type_reference_rejection_kind(kind);
+    }
+}
+
 fn first_type_reference_rejection_kind_in_node(
     arena: &NodeArena,
     delegate_binder: &BinderState,
@@ -341,6 +360,36 @@ fn type_reference_rejection_kinds_in_node(
                 node_idx,
                 type_param_names,
             ));
+        }
+        stack.extend(arena.get_children(node_idx));
+    }
+    kinds
+}
+
+fn non_lowerable_type_reference_rejection_kinds_in_node(
+    arena: &NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+    type_node_is_lowerable: &dyn Fn(NodeIndex) -> bool,
+) -> Vec<DirectSourceFileTypeAliasTypeReferenceRejectionKind> {
+    let mut kinds = Vec::new();
+    let mut stack = vec![root_idx];
+    while let Some(node_idx) = stack.pop() {
+        let Some(node) = arena.get(node_idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            if type_node_is_lowerable(node_idx) {
+                continue;
+            } else {
+                kinds.push(type_reference_rejection_kind(
+                    arena,
+                    delegate_binder,
+                    node_idx,
+                    type_param_names,
+                ));
+            }
         }
         stack.extend(arena.get_children(node_idx));
     }
@@ -484,6 +533,31 @@ mod tests {
         (arena, alias_body)
     }
 
+    fn bound_alias_body_from_source(source: &str) -> (NodeArena, BinderState, NodeIndex) {
+        let mut parser = ParserState::new("fixture.ts".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let mut binder = BinderState::new();
+        binder.bind_source_file(parser.get_arena(), root);
+        let arena = parser.get_arena().clone();
+        let source_file = arena
+            .get_source_file_at(root)
+            .expect("source file should parse");
+        let alias_body = source_file
+            .statements
+            .nodes
+            .iter()
+            .rev()
+            .copied()
+            .find_map(|idx| {
+                arena
+                    .get(idx)
+                    .and_then(|node| arena.get_type_alias(node))
+                    .map(|alias| alias.type_node)
+            })
+            .expect("type alias body");
+        (arena, binder, alias_body)
+    }
+
     #[test]
     fn source_file_alias_type_reference_attribution_resolves_import_alias_target() {
         let (arena, alias_body) = alias_body_from_source("type Box = Alias;");
@@ -600,6 +674,38 @@ mod tests {
         assert!(kinds.contains(
             &DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeParameter,
         ));
+    }
+
+    #[test]
+    fn source_file_alias_type_reference_counts_skip_lowerable_subtrees() {
+        let (arena, binder, alias_body) = bound_alias_body_from_source(
+            "type Leaf = string;\ntype Box<T> = T | Leaf;\ntype Result<T> = Array<Box<T>> | Missing<T>;",
+        );
+        let global_type_is_lowerable = |name: &str| name == "Array";
+        let type_param_names = vec![String::from("T")];
+        let type_node_is_lowerable = |node_idx| {
+            CheckerState::source_file_type_node_is_generic_local_alias_application_lowerable(
+                &arena,
+                &binder,
+                node_idx,
+                &type_param_names,
+                &global_type_is_lowerable,
+            )
+        };
+
+        let kinds = non_lowerable_type_reference_rejection_kinds_in_node(
+            &arena,
+            &binder,
+            alias_body,
+            &type_param_names,
+            &type_node_is_lowerable,
+        );
+
+        assert_eq!(
+            kinds,
+            vec![DirectSourceFileTypeAliasTypeReferenceRejectionKind::UnresolvedIdentifier],
+            "aggregate rejection counters should skip lowerable helper subtrees",
+        );
     }
 
     #[test]
