@@ -731,6 +731,27 @@ pub fn contains_recursive_operation_application_db(
     found
 }
 
+/// Return true when `type_id` itself is an application of a recursive generic
+/// alias whose body requires concrete evaluation.
+pub fn is_recursive_operation_application_db(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    let Some(TypeData::Application(app_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    let app = db.type_application(app_id);
+    let Some(TypeData::Lazy(def_id)) = db.lookup(app.base) else {
+        return false;
+    };
+    let Some(body) = def_store.get_body(def_id) else {
+        return false;
+    };
+    super::signatures_and_advanced::body_arg_requires_concrete_form(db, body)
+        && crate::visitor::contains_lazy_def_id(db, body, def_id)
+}
+
 /// Return true when `type_id` (or any union/intersection member reachable from it)
 /// is a `ConditionalType` whose `extends_type` is still an unevaluated
 /// `Application` type.
