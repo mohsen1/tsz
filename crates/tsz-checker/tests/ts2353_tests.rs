@@ -65,6 +65,50 @@ const badInline: { [key: number]: boolean } = { baz: true };
 }
 
 #[test]
+fn ts2353_quotes_non_identifier_excess_property_name() {
+    let source = r#"
+interface I { foo: string; }
+const i: I = { foo: "x", "bad-name": "y" };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        1,
+        "Expected one TS2353 for hyphenated excess key, got: {diags:?}",
+    );
+    assert!(
+        ts2353[0].1.contains("'\"bad-name\"'"),
+        "Expected TS2353 to quote non-identifier key, got: {:?}",
+        ts2353[0].1
+    );
+}
+
+#[test]
+fn ts2353_keeps_identifier_and_numeric_excess_property_names_unquoted() {
+    let source = r#"
+interface I { foo: string; }
+const ident: I = { foo: "x", goodName: "y" };
+const numeric: I = { foo: "x", 42: "y" };
+"#;
+    let diags = get_diagnostics(source);
+    let ts2353: Vec<_> = diags.iter().filter(|d| d.0 == 2353).collect();
+    assert_eq!(
+        ts2353.len(),
+        2,
+        "Expected TS2353 for identifier and numeric excess keys, got: {diags:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'goodName'")),
+        "Expected identifier excess key to stay unquoted, got: {ts2353:?}",
+    );
+    assert!(
+        ts2353.iter().any(|(_, msg)| msg.contains("'42'")),
+        "Expected numeric excess key to stay unquoted, got: {ts2353:?}",
+    );
+}
+
+#[test]
 fn record_number_allows_quoted_numeric_object_literal_key() {
     let source = r#"
 type NumRecord = Record<number, boolean>;
@@ -1264,8 +1308,8 @@ const ti: TemplateIndexed = {
         "Property 'foo-bar' doesn't match either pattern; expected TS2353, got: {diags:?}"
     );
     assert!(
-        ts2353[0].1.contains("'foo-bar'"),
-        "Expected 'foo-bar' in error message, got: {:?}",
+        ts2353[0].1.contains("'\"foo-bar\"'"),
+        "Expected quoted 'foo-bar' in error message, got: {:?}",
         ts2353[0].1
     );
 }
@@ -1452,5 +1496,170 @@ const sc: StringContainer = {
     assert!(
         ts2353.is_empty(),
         "Non-F-bounded: 'items' is an inherited property and must not trigger TS2353; got: {ts2353:?}"
+    );
+}
+
+// --- Issue #9681: excess-property check through `?:`/`??`/`||`/return wrappers ---
+//
+// Structural rule: when a fresh object literal flows through an expression
+// that contextually types its operands (`?:`, `??`, `||`, return statements,
+// call arguments, parens), the excess-property rule must apply to that
+// literal — not be skipped because the assignment site sees a composite
+// source (union of fresh members) rather than a single fresh literal.
+
+#[test]
+fn ternary_branch_object_literal_reports_excess_property() {
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+declare const cond: boolean;
+const v: I = cond ? { a: 1, b: 2 } : { a: 3 };
+"#,
+    );
+    let excess: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'b'"))
+        .collect();
+    assert!(
+        !excess.is_empty(),
+        "Expected excess-property diagnostic for 'b' in a ternary branch, got: {diags:?}",
+    );
+}
+
+#[test]
+fn nullish_coalescing_right_object_literal_reports_excess_property() {
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+declare const d: I | undefined;
+const v: I = d ?? { a: 1, b: 2 };
+"#,
+    );
+    let excess: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'b'"))
+        .collect();
+    assert!(
+        !excess.is_empty(),
+        "Expected excess-property diagnostic for 'b' on the right of `??`, got: {diags:?}",
+    );
+}
+
+#[test]
+fn non_contextual_binary_rhs_does_not_report_property_excess() {
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+const v: I = (0 as any) + { a: 1, b: 2 };
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.0 != 2353
+            && !d
+                .1
+                .contains("Object literal may only specify known properties")),
+        "Did not expect property-level excess checking through `+`, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_branch_excess_property_uses_renamed_property() {
+    // Test matrix item: the rule applies regardless of property spelling.
+    let diags = get_diagnostics(
+        r#"
+interface MyShape { name: string }
+declare const cond: boolean;
+const v: MyShape = cond ? { name: "a", age: 30 } : { name: "b" };
+"#,
+    );
+    let excess: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'age'"))
+        .collect();
+    assert!(
+        !excess.is_empty(),
+        "Expected excess-property diagnostic for 'age' in a renamed-property ternary, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_branch_nested_object_literal_reports_inner_excess_property() {
+    // Test matrix item: nested literal in a branch must still be checked.
+    let diags = get_diagnostics(
+        r#"
+interface I { a: { b: number } }
+declare const c: boolean;
+const v: I = c ? { a: { b: 1, c: 2 } } : { a: { b: 2 } };
+"#,
+    );
+    let excess: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'c'"))
+        .collect();
+    assert!(
+        !excess.is_empty(),
+        "Expected excess-property diagnostic for inner 'c' in a nested ternary literal, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_branches_without_excess_property_stay_clean() {
+    // Negative control: matching literals in both branches must not emit
+    // any TS2353/TS2322 — the rule fires only when a fresh member has an
+    // actual excess property against the target.
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+declare const cond: boolean;
+const v: I = cond ? { a: 1 } : { a: 2 };
+"#,
+    );
+    assert!(
+        diags.iter().all(|d| d.0 != 2353 && d.0 != 2322),
+        "Did not expect any excess-property diagnostic for a clean ternary, got: {diags:?}",
+    );
+}
+
+#[test]
+fn ternary_branch_object_literal_in_call_argument_reports_excess_property() {
+    // Test matrix item: the rule must fire on call-argument context, where
+    // the failure surfaces as TS2345 with the excess elaboration.
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+declare function take(x: I): void;
+declare const c: boolean;
+take(c ? { a: 1, b: 2 } : { a: 3 });
+"#,
+    );
+    assert!(
+        diags
+            .iter()
+            .any(|d| matches!(d.0, 2345 | 2353 | 2322) && d.1.contains('\'')),
+        "Expected an excess-property diagnostic for the call-argument ternary, got: {diags:?}",
+    );
+}
+
+#[test]
+fn return_statement_conditional_branch_reports_excess_property() {
+    // Test matrix item: same structural rule applies on `return` branches —
+    // tsc still excess-checks each conditional branch against the declared
+    // return type even though the union result is what flows up.
+    let diags = get_diagnostics(
+        r#"
+interface I { a: number }
+declare const c: boolean;
+function f(): I {
+    return c ? { a: 1, b: 2 } : { a: 3 };
+}
+"#,
+    );
+    let excess: Vec<_> = diags
+        .iter()
+        .filter(|d| (d.0 == 2353 || d.0 == 2322) && d.1.contains("'b'"))
+        .collect();
+    assert!(
+        !excess.is_empty(),
+        "Expected excess-property diagnostic for 'b' returned in a conditional branch, got: {diags:?}",
     );
 }

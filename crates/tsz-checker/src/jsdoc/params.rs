@@ -2714,6 +2714,27 @@ impl<'a> CheckerState<'a> {
         out
     }
 
+    /// Map of `@template` parameter name -> its constraint type-expression
+    /// string for the `@template {Constraint} T` form.
+    ///
+    /// Only names that carry an explicit constraint appear in the map; a bare
+    /// `@template T` contributes no entry. As in tsc, a single brace clause
+    /// (`@template {C} A, B`) constrains only the first listed name.
+    ///
+    /// Callers resolve each string to a `TypeId` via `resolve_jsdoc_reference`
+    /// at the point where the type parameter is lowered. As with `@template`
+    /// defaults, a constraint that references a sibling `@template` parameter
+    /// resolves only at sites that register each parameter in scope before
+    /// resolving the next.
+    pub(crate) fn jsdoc_template_constraint_strings(
+        jsdoc: &str,
+    ) -> std::collections::HashMap<String, String> {
+        Self::jsdoc_template_constraints(jsdoc)
+            .into_iter()
+            .filter_map(|(name, constraint)| constraint.map(|c| (name, c)))
+            .collect()
+    }
+
     /// Emit JSDoc `@template` syntax diagnostics for invalid brace forms like
     /// `@template {T}`. tsc reports both TS1069 at `{` and TS2304 at `T`.
     pub(crate) fn validate_jsdoc_template_tag_syntax_at_decl(&mut self, decl_idx: NodeIndex) {

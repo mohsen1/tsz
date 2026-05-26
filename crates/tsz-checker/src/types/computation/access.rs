@@ -19,7 +19,9 @@ pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
             || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
         {
             if let Some(access) = arena.get_access_expr(node) {
-                access.question_dot_token
+                // Parentheses break the chain (fall through to `_ => false`),
+                // so `(o?.a).b` is not a continuation.
+                access.question_dot_token || is_optional_chain(arena, access.expression)
             } else {
                 false
             }
@@ -221,15 +223,15 @@ impl<'a> CheckerState<'a> {
             )
         };
 
-        // Handle optional chain continuations: for `o?.b["c"]`, when processing `["c"]`,
-        // the object type from `o?.b` includes `undefined`. Strip nullish types when this
-        // element access is a continuation of an optional chain.
-        let object_type =
+        // Strip nullish from the object type when this element access continues
+        // an optional chain (e.g., the `["c"]` in `o?.b["c"]`). Track whether
+        // stripping occurred so we can add `| undefined` back to the result.
+        let (object_type, is_chain_continuation) =
             if !access.question_dot_token && is_optional_chain(self.ctx.arena, access.expression) {
-                let (non_nullish, _) = self.split_nullish_type(object_type);
-                non_nullish.unwrap_or(object_type)
+                let (non_nullish, stripped) = self.split_nullish_type(object_type);
+                (non_nullish.unwrap_or(object_type), stripped.is_some())
             } else {
-                object_type
+                (object_type, false)
             };
         let object_type = if !skip_flow_narrowing
             && self
@@ -1481,7 +1483,8 @@ impl<'a> CheckerState<'a> {
                 // We should not defer this case to IndexAccess(T, ...).
                 if let Some(key_source) =
                     self.keyof_source_type_param(index_type, pre_resolution_object_type)
-                    && !self.is_assignable_to(pre_resolution_object_type, key_source)
+                    && !self
+                        .diagnostic_relation_boolean_guard(pre_resolution_object_type, key_source)
                     && !self.object_constraint_covers_keyof_source(
                         pre_resolution_object_type,
                         key_source,
@@ -1747,6 +1750,39 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // Wide `symbol` element access via a `symbol`-typed identifier
+        // (`let s: symbol; obj[s]`). The binder converts such an identifier to a
+        // binding-identity `UniqueSymbol(ref)` (so `index_type_for_access` differs
+        // from the raw `symbol`), which lets the access resolve a member declared
+        // under that exact binding while still failing for keys the type does not
+        // declare. tsc reports an implicit-any element access (TS7053 for objects,
+        // TS7015 for arrays/tuples) when the type provides neither that member nor
+        // a `symbol` index signature.
+        //
+        // Scope note: a bare wide-`symbol` expression that was NOT converted (a
+        // call result, or a widened `unique symbol` read such as `Symbol.iterator`,
+        // which tsz widens to `symbol` in value position) is deliberately left
+        // alone — it cannot be distinguished from a valid well-known-symbol access.
+        if !report_no_index
+            && use_index_signature_check
+            && index_type == TypeId::SYMBOL
+            && index_type_for_access != index_type
+        {
+            let missing = match crate::query_boundaries::common::union_members(
+                self.ctx.types,
+                object_type_for_access,
+            ) {
+                Some(members) => members.iter().any(|&member| {
+                    self.symbol_keyed_access_is_missing(member, index_type_for_access)
+                }),
+                None => self
+                    .symbol_keyed_access_is_missing(object_type_for_access, index_type_for_access),
+            };
+            if missing {
+                report_no_index = true;
+            }
+        }
+
         if !report_no_index
             && use_index_signature_check
             && crate::query_boundaries::common::intersection_members(
@@ -1875,6 +1911,15 @@ impl<'a> CheckerState<'a> {
             } else if !report_no_index {
                 self.report_possibly_nullish_object(access.expression, cause);
             }
+        }
+
+        // The chain can short-circuit at the `?.`; add back the `| undefined`
+        // that was stripped when resolving the element access.
+        if is_chain_continuation {
+            result_type = crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                result_type,
+            );
         }
 
         let result_type = if skip_flow_narrowing {

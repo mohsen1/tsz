@@ -1,5 +1,5 @@
 use crate::output::printer::{PrintOptions, Printer};
-use tsz_common::common::ScriptTarget;
+use tsz_common::common::{ModuleKind, ScriptTarget};
 use tsz_parser::ParserState;
 
 /// When the same `import X = ...` alias is re-declared (e.g., a duplicate
@@ -119,6 +119,38 @@ fn namespace_relative_const_enum_aliases_inline_and_elide_es5() {
 }
 
 #[test]
+fn reopened_dotted_namespace_const_enum_alias_comments_are_erased_es5() {
+    let source = "namespace Root.View.Child {\n    export const enum E { A, B }\n    export function keep() {}\n}\nnamespace Root.View {\n    /** erased alias */\n    import Local = Child.E;\n    export class Use {\n        m() {\n            const a = Local.B;\n        }\n    }\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        module: ModuleKind::AMD,
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert_eq!(
+        output.matches("var Root;").count(),
+        1,
+        "Reopened dotted namespaces should share the root `var` declaration.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("erased alias"),
+        "Comments attached to erased const-enum import aliases should be erased with the alias.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var a = 1 /* Local.B */;"),
+        "ES5 const enum aliases should still inline at usage sites.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn sibling_namespaces_keep_local_const_enum_alias_scope() {
     let source = "namespace A {\n  export const enum E { X = 1 }\n  import Local = E;\n  export const a = Local.X;\n}\nnamespace B {\n  export const enum E { X = 2 }\n  import Local = E;\n  export const b = Local.X;\n}";
 
@@ -211,5 +243,33 @@ fn erased_import_alias_preserves_trailing_standalone_comment_es5() {
     assert!(
         output.contains("// keep me"),
         "Standalone trailing comments after erased import aliases should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn namespace_import_alias_reference_scan_stays_inside_namespace_body_es5() {
+    let source = "namespace a {\n  export class A {}\n}\nnamespace c.a.b {\n  import ma = a;\n}\nnamespace holder {\n  export function keep() {}\n  import m5 = c;\n  import m6 = c.a;\n  import m7 = c.a.b;\n}\ndeclare namespace m5 {\n  export var value: number;\n}\ndeclare namespace m6 {\n  export var value: number;\n}\nnamespace valueNs {\n  export const x = 1;\n}\nnamespace holder2 {\n  import v = valueNs;\n  export const y = v.x;\n}";
+
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+
+    let options = PrintOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let mut printer = Printer::new(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        !output.contains("var m5 = c;")
+            && !output.contains("var m6 = c.a;")
+            && !output.contains("var m7 = c.a.b;"),
+        "Namespace import aliases should ignore references from later sibling declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var v = valueNs;") && output.contains("holder2.y = v.x;"),
+        "Namespace import aliases used inside their own namespace body should still emit.\nOutput:\n{output}"
     );
 }

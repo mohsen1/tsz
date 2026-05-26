@@ -328,15 +328,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {
-        if let Some(members) = query::union_members_for_type(self.ctx.types, type_id) {
-            let normalized: Vec<TypeId> = members
-                .into_iter()
-                .map(|member| query::enum_member_domain(self.ctx.types, member))
-                .collect();
-            query::union_types(self.ctx.types, normalized)
-        } else {
-            query::enum_member_domain(self.ctx.types, type_id)
-        }
+        query::enum_member_union_domain(self.ctx.types, type_id)
     }
 
     fn typeof_switch_operand(&self, switch_expr: NodeIndex) -> Option<NodeIndex> {
@@ -630,17 +622,12 @@ impl<'a> CheckerState<'a> {
             return true;
         };
 
-        let mut has_default = false;
-        let mut clause_indices = Vec::new();
-        for &clause_idx in &case_block.statements.nodes {
-            let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
-                continue;
-            };
-            if clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE {
-                has_default = true;
-            }
-            clause_indices.push(clause_idx);
-        }
+        let has_default = case_block.statements.nodes.iter().any(|&clause_idx| {
+            self.ctx
+                .arena
+                .get(clause_idx)
+                .is_some_and(|clause_node| clause_node.kind == syntax_kind_ext::DEFAULT_CLAUSE)
+        });
 
         // Without a default clause, unmatched discriminants can skip the switch
         // body unless case coverage is exhaustive.
@@ -653,7 +640,7 @@ impl<'a> CheckerState<'a> {
         let mut falls_from_next = true;
         let mut any_entry_falls_through = false;
 
-        for &clause_idx in clause_indices.iter().rev() {
+        for &clause_idx in case_block.statements.nodes.iter().rev() {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
                 continue;
             };

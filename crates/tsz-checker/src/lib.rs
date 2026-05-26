@@ -223,6 +223,9 @@ mod rest_parameter_tests;
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
 #[cfg(test)]
+#[path = "../tests/spread_rest_diagnostics_tests.rs"]
+mod spread_rest_diagnostics_tests;
+#[cfg(test)]
 #[path = "../tests/spread_rest_tests.rs"]
 mod spread_rest_tests;
 #[cfg(test)]
@@ -264,6 +267,9 @@ mod ts2320_tests;
 #[cfg(test)]
 #[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
 mod ts2322_destructuring_obj_literal_tests;
+#[cfg(test)]
+#[path = "../tests/ts2322_indexed_access_type_param_tests.rs"]
+mod ts2322_indexed_access_type_param_tests;
 #[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
@@ -370,6 +376,9 @@ mod ts7057_yield_implicit_any;
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
 #[cfg(test)]
+#[path = "../tests/typeof_operator_result_union_tests.rs"]
+mod typeof_operator_result_union_tests;
+#[cfg(test)]
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
@@ -396,6 +405,12 @@ mod architecture_contract_tests_src;
 #[cfg(test)]
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/array_literal_spread_inference_widening_tests.rs"]
+mod array_literal_spread_inference_widening_tests;
+#[cfg(test)]
+#[path = "tests/as_const_nested_literal_display_tests.rs"]
+mod as_const_nested_literal_display_tests;
 #[cfg(test)]
 #[path = "tests/assertion_type_predicate_diagnostics_tests.rs"]
 mod assertion_type_predicate_diagnostics_tests;
@@ -433,8 +448,14 @@ mod closure_destructuring_top_level_diagnostics_tests;
 #[path = "../tests/conditional_alias_unreduced_keeps_alias_display_tests.rs"]
 mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[cfg(test)]
+#[path = "tests/conditional_break_narrowing_tests.rs"]
+mod conditional_break_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
+#[cfg(test)]
+#[path = "tests/conditional_never_param_inference_tests.rs"]
+mod conditional_never_param_inference_tests;
 #[cfg(test)]
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
@@ -460,6 +481,9 @@ mod direct_generic_return_tests;
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
+#[path = "tests/do_while_exit_narrowing_tests.rs"]
+mod do_while_exit_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
@@ -468,6 +492,9 @@ mod enum_indexed_access_tests;
 #[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
+#[cfg(test)]
+#[path = "tests/enum_residual_narrowing_tests.rs"]
+mod enum_residual_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
@@ -483,6 +510,9 @@ mod for_in_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
+#[cfg(test)]
+#[path = "tests/generic_callback_sibling_arg_inference_tests.rs"]
+mod generic_callback_sibling_arg_inference_tests;
 #[cfg(test)]
 #[path = "tests/generic_class_constructor_literal_preservation_tests.rs"]
 mod generic_class_constructor_literal_preservation_tests;
@@ -501,6 +531,9 @@ mod generic_spread_iterability_tests;
 #[cfg(test)]
 #[path = "../tests/generic_tests.rs"]
 mod generic_tests;
+#[cfg(test)]
+#[path = "tests/generic_unknown_type_arg_tests.rs"]
+mod generic_unknown_type_arg_tests;
 #[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
@@ -538,6 +571,9 @@ mod jsdoc_function_return_type_anchor_tests;
 #[path = "../tests/jsdoc_readonly_tests.rs"]
 mod jsdoc_readonly_tests;
 #[cfg(test)]
+#[path = "../tests/jsdoc_recursive_generic_typedef_tests.rs"]
+mod jsdoc_recursive_generic_typedef_tests;
+#[cfg(test)]
 #[path = "../tests/jsdoc_reference_kernel_tests.rs"]
 mod jsdoc_reference_kernel_tests;
 #[cfg(test)]
@@ -567,6 +603,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "../tests/keyof_function_type_is_never_tests.rs"]
+mod keyof_function_type_is_never_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_mapped_as_clause_tests.rs"]
 mod keyof_mapped_as_clause_tests;
@@ -607,8 +646,14 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/object_literal_computed_symbol_member_tests.rs"]
+mod object_literal_computed_symbol_member_tests;
+#[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
+#[cfg(test)]
+#[path = "tests/object_spread_discriminant_narrowing_tests.rs"]
+mod object_spread_discriminant_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/object_spread_optional_merge_tests.rs"]
 mod object_spread_optional_merge_tests;
@@ -633,6 +678,12 @@ mod property_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
+#[path = "tests/recursive_callable_infer_cycle_tests.rs"]
+mod recursive_callable_infer_cycle_tests;
+#[cfg(test)]
+#[path = "tests/recursive_generic_arrow_tests.rs"]
+mod recursive_generic_arrow_tests;
 #[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
@@ -752,13 +803,13 @@ pub fn run_js_grammar_pass(
     let Some(source) = arena.get_source_file_at(source_file) else {
         return Vec::new();
     };
-    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    let statements = source.statements.nodes.as_slice();
     if statements.is_empty() {
         return Vec::new();
     }
     let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
-    checker.check_js_grammar_statements(&statements);
+    checker.check_js_grammar_statements(statements);
     checker.ctx.diagnostics
 }
 
@@ -784,14 +835,14 @@ pub fn run_isolated_declarations_pass(
     let Some(source) = arena.get_source_file_at(source_file) else {
         return Vec::new();
     };
-    let statements: Vec<tsz_parser::NodeIndex> = source.statements.nodes.to_vec();
+    let statements = source.statements.nodes.as_slice();
     if statements.is_empty() {
         return Vec::new();
     }
     let interner = tsz_solver::construction::TypeInterner::new();
     let mut checker = CheckerState::new(arena, binder, &interner, file_name, options);
-    checker.check_isolated_declarations(&statements);
-    checker.check_isolated_decl_class_expressions(&statements);
-    checker.check_isolated_decl_augmentations(&statements);
+    checker.check_isolated_declarations(statements);
+    checker.check_isolated_decl_class_expressions(statements);
+    checker.check_isolated_decl_augmentations(statements);
     checker.ctx.diagnostics
 }

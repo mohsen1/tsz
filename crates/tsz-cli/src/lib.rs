@@ -46,6 +46,9 @@ mod fs_tests;
 #[path = "../tests/reporter_tests.rs"]
 mod reporter_tests;
 #[cfg(test)]
+#[path = "../tests/reserved_word_emit_tests.rs"]
+mod reserved_word_emit_tests;
+#[cfg(test)]
 #[path = "../tests/tsc_compat_tests.rs"]
 mod tsc_compat_tests;
 #[cfg(test)]

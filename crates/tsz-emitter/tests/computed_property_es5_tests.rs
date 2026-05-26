@@ -26,7 +26,9 @@ fn assert_comment_forced_comma_is_outdented(output: &str, assignment_fragment: &
     let assignment_line = lines
         .iter()
         .position(|line| line.contains(assignment_fragment))
-        .expect("lowered computed assignment line should be present");
+        .unwrap_or_else(|| {
+            panic!("lowered computed assignment line should be present.\nOutput:\n{output}")
+        });
     let comma_line = lines
         .get(assignment_line + 1)
         .expect("separator comma should follow the trailing comment line");
@@ -211,6 +213,25 @@ class C extends Base {
     assert_comment_forced_comma_is_outdented(
         &output,
         "_a[_super.prototype.bar.call(_this)] = function () { } // needs capture",
+    );
+}
+
+#[test]
+fn computed_method_identifier_trailing_comment_aligns_comma_expression_separator() {
+    let source = r#"
+class C {
+    foo(key) {
+        var obj = {
+            [key]() { } // keep method comment
+        };
+    }
+}
+"#;
+    let output = emit_es5(source);
+
+    assert_comment_forced_comma_is_outdented(
+        &output,
+        "_a[key] = function () { } // keep method comment",
     );
 }
 

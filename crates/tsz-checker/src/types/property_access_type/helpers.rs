@@ -8,7 +8,7 @@ use crate::state::{CheckerState, MAX_INSTANTIATION_DEPTH};
 use tsz_binder::symbol_flags;
 use tsz_common::common::Visibility;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::AccessExprData;
+use tsz_parser::parser::node::{AccessExprData, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
@@ -299,9 +299,7 @@ impl<'a> CheckerState<'a> {
             if parent_node.kind == syntax_kind_ext::VARIABLE_DECLARATION {
                 if let Some(var_decl) = self.ctx.arena.get_variable_declaration(parent_node)
                     && var_decl.type_annotation.is_some()
-                    && self
-                        .node_text(var_decl.type_annotation)
-                        .is_some_and(|text| text.contains("['"))
+                    && self.type_node_contains_string_indexed_access(var_decl.type_annotation)
                 {
                     return true;
                 }
@@ -315,6 +313,47 @@ impl<'a> CheckerState<'a> {
             current = parent;
         }
         false
+    }
+
+    fn type_node_contains_string_indexed_access(&self, type_node: NodeIndex) -> bool {
+        let mut stack = vec![type_node];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.ctx.arena.get(current) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE
+                && let Some(indexed) = self.ctx.arena.get_indexed_access_type(node)
+                && self.is_string_literal_type_node(indexed.index_type)
+            {
+                return true;
+            }
+            stack.extend(self.ctx.arena.get_children(current));
+        }
+        false
+    }
+
+    fn is_string_literal_type_node(&self, type_node: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_node) else {
+            return false;
+        };
+        if node.kind == SyntaxKind::StringLiteral as u16
+            || node.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        {
+            return true;
+        }
+        if node.kind != syntax_kind_ext::LITERAL_TYPE {
+            return false;
+        }
+        let Some(literal_type) = self.ctx.arena.get_literal_type(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get(literal_type.literal)
+            .is_some_and(|literal| {
+                literal.kind == SyntaxKind::StringLiteral as u16
+                    || literal.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            })
     }
 
     fn type_reference_class_declares_public_instance_member(
@@ -1460,7 +1499,48 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .instantiation_depth
             .set(self.ctx.instantiation_depth.get() - 1);
-        self.instantiate_callable_result_from_request(idx, result, request)
+        let result = self.instantiate_callable_result_from_request(idx, result, request);
+        // The inner function strips nullish from the object type, but the chain
+        // can still short-circuit, so the result must include `| undefined`.
+        if !request.flow.skip_flow_narrowing() {
+            self.add_chain_continuation_undefined(idx, result)
+        } else {
+            result
+        }
+    }
+
+    fn add_chain_continuation_undefined(&mut self, idx: NodeIndex, result: TypeId) -> TypeId {
+        use crate::types_domain::computation::access::is_optional_chain;
+
+        if matches!(result, TypeId::ERROR | TypeId::ANY | TypeId::NEVER) {
+            return result;
+        }
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return result;
+        };
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return result;
+        };
+        if access.question_dot_token {
+            return result;
+        }
+        if !is_optional_chain(self.ctx.arena, access.expression) {
+            return result;
+        }
+        // Only add `| undefined` when the chain can actually short-circuit —
+        // non-nullable roots (e.g., `declare const o: { a: { b: number } }`)
+        // produce just `number` for `o?.a.b`.
+        let obj_type = self.get_type_of_node(access.expression);
+        let obj_eval = self.evaluate_application_type(obj_type);
+        let (_, nullish) = self.split_nullish_type(obj_eval);
+        if nullish.is_some() {
+            crate::query_boundaries::optional_chain::add_undefined_if_missing(
+                self.ctx.types,
+                result,
+            )
+        } else {
+            result
+        }
     }
 
     pub(crate) fn missing_typescript_lib_dom_global_alias(&self, idx: NodeIndex) -> Option<String> {
@@ -1809,7 +1889,7 @@ impl<'a> CheckerState<'a> {
         let source_type = self.get_type_of_node(source_idx);
         let target_type =
             crate::query_boundaries::common::remove_undefined(self.ctx.types, declared_type);
-        if !self.is_assignable_to(source_type, target_type) {
+        if !self.diagnostic_relation_boolean_guard(source_type, target_type) {
             let _ = self.check_assignable_or_report_at_exact_anchor(
                 source_type,
                 target_type,

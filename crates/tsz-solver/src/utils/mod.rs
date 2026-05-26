@@ -54,6 +54,9 @@ pub(crate) fn literal_key_for_property_name(
 /// and any atom that is not a valid JavaScript numeric literal.
 pub(crate) fn atom_as_numeric_key(db: &dyn TypeDatabase, atom: Atom) -> Option<f64> {
     let name = db.resolve_atom_ref(atom);
+    if !is_numeric_literal_name(name.as_ref()) {
+        return None;
+    }
     tsz_common::numeric::parse_numeric_literal_value(name.as_ref())
 }
 
@@ -261,11 +264,13 @@ pub fn widen_if_recursive_intersection_member(
     }
 
     if let Some(union_members) = crate::type_queries::get_union_members(db, nested_target) {
-        let non_undef: Vec<TypeId> = union_members
+        let mut non_undef = union_members
             .into_iter()
-            .filter(|&m| m != TypeId::UNDEFINED)
-            .collect();
-        if non_undef.len() == 1 && is_lazy_outer_member(non_undef[0]) {
+            .filter(|&m| m != TypeId::UNDEFINED);
+        let Some(member) = non_undef.next() else {
+            return nested_target;
+        };
+        if non_undef.next().is_none() && is_lazy_outer_member(member) {
             return db.union(vec![outer_intersection, TypeId::UNDEFINED]);
         }
     }

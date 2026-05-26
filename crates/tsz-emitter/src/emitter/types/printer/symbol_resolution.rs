@@ -4,6 +4,7 @@ use tsz_binder::{Symbol, SymbolId, symbol_flags};
 use tsz_common::interner::Atom;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::computation::{TypeSubstitution, instantiate_type_cached};
 use tsz_solver::types::TypeId;
 use tsz_solver::visitor;
 
@@ -182,6 +183,41 @@ impl<'a> TypePrinter<'a> {
 
     pub(crate) fn def_type_fallback(&self, def_id: tsz_solver::def::DefId) -> Option<TypeId> {
         self.type_cache?.def_types.get(&def_id.0).copied()
+    }
+
+    /// tsc caps recursive generic function DTS expansion at 10 levels; beyond that it
+    /// emits `/*elided*/ any` to prevent infinite output. This method implements that
+    /// depth guard: given the already-resolved `shape_id` and the concrete `type_args`,
+    /// it instantiates the return type and recurses until the depth limit, then falls
+    /// back to the elided sentinel.
+    fn print_recursive_function_application(
+        &self,
+        shape_id: tsz_solver::types::FunctionShapeId,
+        type_args: &[TypeId],
+    ) -> String {
+        let func_shape = self.interner.function_shape(shape_id);
+        let subst = TypeSubstitution::from_args(self.interner, &func_shape.type_params, type_args);
+        let mut return_template = func_shape.return_type;
+        if self.recursive_expansion_depth > 0
+            && visitor::object_shape_id(self.interner, return_template)
+                .or_else(|| visitor::object_with_index_shape_id(self.interner, return_template))
+                .is_some()
+        {
+            return_template = self.rename_recursive_function_type_params_for_depth(return_template);
+        }
+        let return_type = instantiate_type_cached(self.interner, None, return_template, &subst);
+        let expansion_limit = if visitor::intersection_list_id(self.interner, return_type).is_some()
+        {
+            crate::MAX_RECURSIVE_INTERSECTION_EXPANSION
+        } else {
+            crate::MAX_RECURSIVE_EXPANSION
+        };
+        if self.recursive_expansion_depth >= expansion_limit {
+            return self.print_recursive_expansion_limit(return_type);
+        }
+        let mut nested = self.clone();
+        nested.recursive_expansion_depth += 1;
+        nested.print_type(return_type)
     }
 
     pub(crate) fn symbol_def_type_fallback(&self, sym_id: SymbolId) -> Option<TypeId> {
@@ -627,6 +663,24 @@ impl<'a> TypePrinter<'a> {
         }
         if let Some(app_id) = visitor::application_id(self.interner, type_id) {
             let app = self.interner.type_application(app_id);
+            // Detect App(Lazy(fn_def), type_args) where fn_def stores a generic function type.
+            // These represent deferred recursive const-arrow-function calls and must be
+            // expanded depth-limitedly (up to 10 levels, then `/*elided*/ any`) rather than
+            // printed as a named type reference like "fnName<Args>".
+            let recursive_shape_id = visitor::lazy_def_id(self.interner, app.base)
+                .and_then(|def_id| self.def_type_fallback(def_id))
+                .and_then(|func_type| visitor::function_shape_id(self.interner, func_type))
+                .filter(|&shape_id| {
+                    !self
+                        .interner
+                        .function_shape(shape_id)
+                        .type_params
+                        .is_empty()
+                });
+            if let Some(shape_id) = recursive_shape_id {
+                return self.print_recursive_function_application(shape_id, &app.args);
+            }
+
             let base_has_name = visitor::lazy_def_id(self.interner, app.base).is_some()
                 || visitor::type_query_symbol(self.interner, app.base).is_some()
                 || visitor::enum_components(self.interner, app.base).is_some()
@@ -689,7 +743,7 @@ impl<'a> TypePrinter<'a> {
             // `print_conditional` while it walks `cond.extends_type`.
             if self.is_in_extends_clause() && visitor::is_infer_type(self.interner, type_id) {
                 let mut result = String::from("infer ");
-                result.push_str(&self.resolve_type_param_name(param_info.name));
+                result.push_str(&self.resolve_type_param_type_name(type_id, param_info.name));
                 if let Some(constraint) = param_info.constraint {
                     // The constraint of an `infer T extends C` annotation is
                     // not itself part of the extends clause for `infer`
@@ -712,7 +766,7 @@ impl<'a> TypePrinter<'a> {
                 }
                 return "unknown".to_string();
             }
-            return self.print_type_parameter(&param_info);
+            return self.print_type_parameter_type(type_id, &param_info);
         }
         if let Some(def_id) = visitor::lazy_def_id(self.interner, type_id) {
             return self.print_lazy_type(def_id);

@@ -541,38 +541,42 @@ fn test_private_identifier_emits_private_marker() {
 
 // =============================================================================
 // Class Expression Synthesis
-// tsc rule: when `export const X = class { }` (or `class X { }` with matching
-// name) has no explicit type annotation, the .d.ts synthesizes a class
-// declaration `export declare class X { ... }` preserving all members.
+// tsc rule: JS exports with class expression initializers synthesize class
+// declarations, while TS exports keep the variable shape and emit structural
+// constructor object types.
 // =============================================================================
 
 #[test]
-fn export_const_anonymous_class_expr_synthesizes_class_decl() {
+fn ts_export_const_anonymous_class_expr_emits_structural_constructor_type() {
     let output = emit_dts("export const C = class {\n    foo(): void {}\n};");
     assert!(
-        output.contains("export declare class C"),
-        "anonymous class expression should synthesize class decl: {output}"
+        output.contains("export declare const C: {"),
+        "TS class expression export should keep the const binding: {output}"
     );
     assert!(
-        output.contains("foo(): void"),
-        "method should be preserved in synthesized class: {output}"
+        output.contains("    new (): {\n        foo(): void;\n    };"),
+        "TS class expression export should expose a structural constructor type: {output}"
     );
     assert!(
-        !output.contains("new ()"),
-        "should not emit constructor type for synthesized class: {output}"
+        !output.contains("export declare class C"),
+        "TS class expression export must not synthesize a class declaration: {output}"
     );
 }
 
 #[test]
-fn export_const_same_name_class_expr_synthesizes_class_decl() {
+fn ts_export_const_same_name_class_expr_emits_structural_constructor_type() {
     let output = emit_dts("export const D = class D {\n    bar(): void {}\n};");
     assert!(
-        output.contains("export declare class D"),
-        "same-name class expression should synthesize class decl: {output}"
+        output.contains("export declare const D: {"),
+        "TS same-name class expression export should keep the const binding: {output}"
     );
     assert!(
-        output.contains("bar(): void"),
-        "method should be preserved in synthesized class: {output}"
+        output.contains("    new (): {\n        bar(): void;\n    };"),
+        "TS same-name class expression export should expose a structural constructor type: {output}"
+    );
+    assert!(
+        !output.contains("export declare class D"),
+        "TS same-name class expression export must not synthesize a class declaration: {output}"
     );
 }
 
@@ -607,14 +611,54 @@ fn export_const_typed_class_expr_emits_annotation() {
 }
 
 #[test]
-fn export_const_generic_class_expr_synthesizes_generic_class_decl() {
+fn ts_export_const_generic_class_expr_emits_structural_constructor_type() {
     let output = emit_dts("export const Box = class<T> {\n    value!: T;\n};");
     assert!(
-        output.contains("export declare class Box<T>"),
-        "generic class expression should synthesize generic class decl: {output}"
+        output.contains("export declare const Box: {"),
+        "TS generic class expression export should keep the const binding: {output}"
     );
     assert!(
-        output.contains("value: T"),
-        "generic member should be preserved in synthesized class: {output}"
+        output.contains("    new <T>(): {\n        value: T;\n    };"),
+        "TS generic class expression export should expose a generic structural constructor type: {output}"
+    );
+    assert!(
+        !output.contains("export declare class Box"),
+        "TS generic class expression export must not synthesize a class declaration: {output}"
+    );
+}
+
+#[test]
+fn js_export_const_class_expr_synthesizes_class_decl() {
+    let output = emit_js_dts("export const C = class {\n    foo() {}\n};");
+    assert!(
+        output.contains("export class C {"),
+        "JS class expression export should synthesize a class declaration: {output}"
+    );
+    assert!(
+        output.contains("foo(): void;"),
+        "JS synthesized class should preserve members: {output}"
+    );
+    assert!(
+        !output.contains("export const C: {"),
+        "JS class expression export should not emit a constructor object type: {output}"
+    );
+}
+
+#[test]
+fn ts_namespace_export_const_class_expr_emits_structural_constructor_type() {
+    let output = emit_dts(
+        "export namespace N {\n    export const C = class {\n        foo(): void {}\n    };\n}",
+    );
+    assert!(
+        output.contains("    const C: {"),
+        "TS namespace class expression export should keep the const binding: {output}"
+    );
+    assert!(
+        output.contains("new (): {") && output.contains("foo(): void;"),
+        "TS namespace class expression export should expose a structural constructor type: {output}"
+    );
+    assert!(
+        !output.contains("class C"),
+        "TS namespace class expression export must not synthesize a class declaration: {output}"
     );
 }

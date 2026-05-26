@@ -239,6 +239,7 @@ impl<'a> CheckerContext<'a> {
         self.type_resolution_visiting.clear();
         self.pruning_union_members = false;
         self.jsdoc_typedef_resolving.borrow_mut().clear();
+        self.jsdoc_generic_typedef_resolving.borrow_mut().clear();
         self.resolving_jsdoc_typedefs.borrow_mut().clear();
         self.refs_resolved.clear();
         self.application_symbols_resolved.clear();
@@ -291,6 +292,7 @@ impl<'a> CheckerContext<'a> {
         self.inside_closure_depth = 0;
         self.in_const_assertion = false;
         self.preserve_literal_types = false;
+        self.preserve_logical_operand_literals = false;
         self.use_declared_type_for_identifier = false;
         self.skip_array_contextual_supertype_collapse = false;
         self.generic_excess_skip = None;

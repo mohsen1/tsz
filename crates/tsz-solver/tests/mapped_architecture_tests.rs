@@ -18,6 +18,7 @@ use crate::types::{
     MappedModifier, MappedType, PropertyInfo, TupleElement, TypeData, TypeParamInfo, Visibility,
 };
 use rustc_hash::FxHashMap;
+use tsz_common::Atom;
 
 // =============================================================================
 // classify_mapped_source tests
@@ -599,4 +600,373 @@ fn mapped_type_over_type_param_with_array_constraint() {
     if let Some(TypeData::Object(_)) = interner.lookup(result) {
         panic!("Expected array or deferred mapped type, got plain Object");
     }
+}
+
+// =============================================================================
+// Mapped types with `-?` over optional tuple elements (issue #9712)
+//
+// Structural rule: when a homomorphic mapped type's `-?` modifier removes
+// optionality from a source tuple element that was originally optional, the
+// resulting element must have `optional = false` AND its type must not
+// retain the implicit `| undefined` introduced by the source's optionality.
+// This mirrors the object-property `-?` handling. Tests vary the iteration
+// variable name and element types to prove the rule is structural.
+// =============================================================================
+
+/// Build `{ [<iter> in keyof T]-?: T[<iter>] }` for an arbitrary T.
+fn build_required_mapped(interner: &TypeInterner, iter_name: &str, source: TypeId) -> MappedType {
+    let iter_atom = interner.intern_string(iter_name);
+    let iter_param = TypeParamInfo {
+        name: iter_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.type_param(iter_param);
+    let template = interner.index_access(source, iter_type);
+    MappedType {
+        type_param: iter_param,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: Some(MappedModifier::Remove),
+    }
+}
+
+fn assert_tuple_elements(interner: &TypeInterner, type_id: TypeId, expected: &[(TypeId, bool)]) {
+    match interner.lookup(type_id) {
+        Some(TypeData::Tuple(tuple_id)) => {
+            let elements = interner.tuple_list(tuple_id);
+            assert_eq!(
+                elements.len(),
+                expected.len(),
+                "tuple element count mismatch"
+            );
+            for (i, (elem, &(want_ty, want_opt))) in elements.iter().zip(expected).enumerate() {
+                assert_eq!(elem.type_id, want_ty, "element {i} type mismatch");
+                assert_eq!(
+                    elem.optional, want_opt,
+                    "element {i} optional flag mismatch"
+                );
+                assert!(!elem.rest, "element {i} unexpected rest flag");
+            }
+        }
+        other => panic!("expected Tuple, got {other:?}"),
+    }
+}
+
+#[test]
+fn required_over_optional_tuple_strips_optional_and_undefined() {
+    // Reported repro: Required<[number, string?]> → [number, string].
+    // Both the optional flag and the implicit `| undefined` must be gone.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let mapped = build_required_mapped(&interner, "K", source);
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::NUMBER, false), (TypeId::STRING, false)],
+    );
+}
+
+#[test]
+fn required_over_optional_tuple_is_iter_name_invariant() {
+    // Renaming the iteration variable must not change the structural rule.
+    // `K`, `P`, `X` all produce the same all-required tuple.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::BOOLEAN,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    for iter_name in ["K", "P", "X"] {
+        let mapped = build_required_mapped(&interner, iter_name, source);
+        let mapped_id = interner.mapped(mapped);
+        let result = evaluate_type(&interner, mapped_id);
+        assert_tuple_elements(
+            &interner,
+            result,
+            &[(TypeId::BOOLEAN, false), (TypeId::NUMBER, false)],
+        );
+    }
+}
+
+#[test]
+fn required_over_multiple_optional_tuple_elements() {
+    // All optional source elements get optional=false AND lose `| undefined`.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let mapped = build_required_mapped(&interner, "K", source);
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::STRING, false), (TypeId::NUMBER, false)],
+    );
+}
+
+#[test]
+fn no_modifier_over_optional_tuple_preserves_optional() {
+    // Boundary: with no optional modifier, source optional is preserved.
+    let interner = TypeInterner::new();
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: true,
+            rest: false,
+        },
+    ]);
+
+    let iter_atom = interner.intern_string("K");
+    let iter_param = TypeParamInfo {
+        name: iter_atom,
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.type_param(iter_param);
+    let template = interner.index_access(source, iter_type);
+
+    let mapped = MappedType {
+        type_param: iter_param,
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None, // identity — preserve source flags
+    };
+
+    let mapped_id = interner.mapped(mapped);
+    let result = evaluate_type(&interner, mapped_id);
+    // Element 1 stays optional and its type is the declared `string` (the
+    // implicit undefined comes back at read-time via tuple indexed access).
+    assert_tuple_elements(
+        &interner,
+        result,
+        &[(TypeId::NUMBER, false), (TypeId::STRING, true)],
+    );
+}
+
+// =============================================================================
+// `-?` strips `undefined` from the value of an originally-optional property
+//
+// tsc's `getTypeOfMappedSymbol` applies `removeMissingOrUndefinedType` when the
+// `-?` modifier removes optionality from a property that was optional in the
+// source. In non-exact optional mode that removes top-level `undefined`; in
+// exact optional mode explicit `undefined` is not the missing marker and must
+// be preserved.
+// =============================================================================
+
+/// Build a homomorphic identity mapped type `{ [K in keyof Src]<mod> Src[K] }`
+/// over `source`, evaluate it, and return the `(type_id, optional)` of the
+/// property named `prop`. `iter_var` exercises iteration-variable-name
+/// independence.
+fn eval_identity_mapped_prop(
+    interner: &TypeInterner,
+    source: TypeId,
+    prop: Atom,
+    iter_var: &str,
+    optional_modifier: Option<MappedModifier>,
+) -> (TypeId, bool) {
+    let k_name = interner.intern_string(iter_var);
+    let k_param = interner.type_param(TypeParamInfo {
+        name: k_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: k_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(source),
+        name_type: None,
+        template: interner.index_access(source, k_param),
+        optional_modifier,
+        readonly_modifier: None,
+    };
+    let result = evaluate_type(interner, interner.mapped(mapped));
+    let shape_id = match interner.lookup(result) {
+        Some(TypeData::Object(id)) => id,
+        other => panic!("expected Object from homomorphic mapped type, got {other:?}"),
+    };
+    let shape = interner.object_shape(shape_id);
+    let p = shape
+        .properties
+        .iter()
+        .find(|p| p.name == prop)
+        .expect("property present in mapped result");
+    (p.type_id, p.optional)
+}
+
+#[test]
+fn remove_optional_strips_explicit_undefined_from_value() {
+    // Non-exact optional mode: Req<{ a?: number | undefined }> -> { a: number }.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(a, num_or_undef)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional, "-? must clear the optional flag");
+    assert_eq!(ty, TypeId::NUMBER, "-? must strip the explicit `undefined`");
+}
+
+#[test]
+fn remove_optional_exact_optional_preserves_explicit_undefined() {
+    // With exact optional property types, `a?: number | undefined` has an
+    // explicit `undefined` member. `-?` removes the missing marker only, so the
+    // explicit `undefined` remains.
+    let interner = TypeInterner::new();
+    interner.set_exact_optional_property_types(true);
+    let a = interner.intern_string("a");
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(a, num_or_undef)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional, "-? must still clear the optional flag");
+    assert_eq!(
+        ty, num_or_undef,
+        "exact optional mode must preserve explicit `undefined`"
+    );
+}
+
+#[test]
+fn remove_optional_strip_is_iteration_var_name_invariant() {
+    // Same rule must hold when the iteration variable is `P`, not `K`.
+    let interner = TypeInterner::new();
+    let x = interner.intern_string("x");
+    let str_or_undef = interner.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(x, str_or_undef)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, x, "P", Some(MappedModifier::Remove));
+    assert!(!optional);
+    assert_eq!(
+        ty,
+        TypeId::STRING,
+        "rule must not depend on iteration var name"
+    );
+}
+
+#[test]
+fn remove_optional_preserves_non_undefined_union_members() {
+    // `a?: number | null | undefined` with `-?` -> `number | null` (only the
+    // top-level `undefined` is removed; `null` survives).
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let union_all = interner.union(vec![TypeId::NUMBER, TypeId::NULL, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(a, union_all)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional);
+    let expected = interner.union(vec![TypeId::NUMBER, TypeId::NULL]);
+    assert_eq!(
+        ty, expected,
+        "only `undefined` must be stripped, `null` kept"
+    );
+}
+
+#[test]
+fn remove_optional_on_plain_optional_keeps_declared_type() {
+    // Control: `a?: number` (no explicit undefined) with `-?` -> `number`.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let source = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional);
+    assert_eq!(ty, TypeId::NUMBER);
+}
+
+#[test]
+fn remove_optional_does_not_strip_undefined_from_required_property() {
+    // Negative control: a NON-optional `a: number | undefined` with `-?` keeps
+    // `undefined` — the strip is gated on the source property being optional.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::new(a, num_or_undef)]);
+
+    let (ty, optional) =
+        eval_identity_mapped_prop(&interner, source, a, "K", Some(MappedModifier::Remove));
+    assert!(!optional);
+    assert_eq!(
+        ty, num_or_undef,
+        "non-optional source must retain `undefined` under `-?`"
+    );
+}
+
+#[test]
+fn no_optional_modifier_does_not_strip_undefined() {
+    // Negative control: an identity mapped type with NO optional modifier must
+    // preserve both optionality and the value's `undefined`.
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let num_or_undef = interner.union(vec![TypeId::NUMBER, TypeId::UNDEFINED]);
+    let source = interner.object(vec![PropertyInfo::opt(a, num_or_undef)]);
+
+    let (ty, optional) = eval_identity_mapped_prop(&interner, source, a, "K", None);
+    assert!(optional, "no modifier preserves source optionality");
+    assert_eq!(
+        ty, num_or_undef,
+        "value must retain `undefined` without `-?`"
+    );
 }

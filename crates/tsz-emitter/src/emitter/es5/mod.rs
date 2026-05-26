@@ -13,6 +13,7 @@ mod helpers;
 mod helpers_async;
 mod helpers_async_generator;
 mod helpers_async_shadowing;
+mod helpers_object_literal;
 #[allow(dead_code)]
 pub(in crate::emitter) mod loop_capture;
 mod templates;

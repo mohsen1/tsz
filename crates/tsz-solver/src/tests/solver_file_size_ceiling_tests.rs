@@ -171,10 +171,6 @@ const SOLVER_OVERSIZED_FILE_CEILINGS: &[(&str, &str)] = &[
         "solver_file_diag_format_compound",
         "diagnostics/format/compound.rs",
     ),
-    (
-        "solver_file_eval_infer_pattern_helpers",
-        "evaluation/evaluate_rules/infer_pattern_helpers.rs",
-    ),
     ("solver_file_narrowing_core", "narrowing/core.rs"),
     ("solver_file_relations_compat", "relations/compat.rs"),
     (

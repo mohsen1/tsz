@@ -3,14 +3,16 @@
 //! Handles TypeScript's conditional types: `T extends U ? X : Y`
 //! Including distributive conditional types over union types.
 
+mod phases;
+
 use crate::instantiation::instantiate::{
-    TypeSubstitution, instantiate_generic, instantiate_type_with_infer,
+    TypeSubstitution, instantiate_generic, instantiate_type, instantiate_type_with_infer,
 };
 use crate::operations::property::PropertyAccessResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::{
-    ConditionalType, ObjectShape, ObjectShapeId, PropertyInfo, TupleElement, TypeData, TypeId,
-    TypeParamInfo,
+    CallSignature, CallableShape, ConditionalType, ObjectShape, ObjectShapeId, ParamInfo,
+    PropertyInfo, TupleElement, TypeData, TypeId, TypeParamInfo,
 };
 use crate::visitor::{callable_shape_id, function_shape_id};
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -20,6 +22,7 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 use crate::type_queries::get_application_base;
+use phases::TailCallStep;
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Maximum depth for tail-recursive conditional evaluation.
@@ -193,80 +196,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().conditional(*cond);
             }
 
-            let evaluated_check = self.evaluate(cond.check_type);
-            let mut check_type = self.normalize_conditional_object_operand(evaluated_check);
-            let evaluated_extends = self.evaluate(cond.extends_type);
-            let extends_type = self.normalize_conditional_object_operand(evaluated_extends);
-            if matches!(
-                self.interner().lookup(check_type),
-                Some(TypeData::Application(_))
-            ) && let Some(expanded_check) =
-                self.try_expand_application_for_conditional_check(check_type)
-            {
-                check_type = expanded_check;
-            }
-
-            // When check_type is an unresolvable Application (e.g., Promise<string>
-            // where Promise is referenced via TypeQuery with no DefId yet), try to
-            // resolve it structurally. This is critical for Awaited<T>-style patterns
-            // where the conditional needs to see Promise's structural members (like
-            // `then`) for infer pattern matching.
-            //
-            // Uses get_type_params + resolve_ref on the SymbolRef directly, bypassing
-            // the DefId path which may not be available yet during lazy evaluation.
-            if let Some(TypeData::Application(app_id)) = self.interner().lookup(check_type) {
-                let app = self.interner().type_application(app_id);
-                if let Some(TypeData::TypeQuery(sym_ref)) = self.interner().lookup(app.base)
-                    && let Some(type_params) = self.resolver().get_type_params(sym_ref)
-                    && let Some(resolved_base) =
-                        self.resolver().resolve_ref(sym_ref, self.interner())
-                    && !type_params.is_empty()
-                    && type_params.len() == app.args.len()
-                {
-                    let args = app.args.clone();
-                    let expanded_args = self.expand_type_args(&args);
-                    let instantiated = crate::instantiation::instantiate::instantiate_generic(
-                        self.interner(),
-                        resolved_base,
-                        &type_params,
-                        &expanded_args,
-                    );
-                    let resolved = self.evaluate(instantiated);
-                    if resolved != check_type {
-                        check_type = resolved;
-                    }
-                }
-            }
-
-            trace!(
-                check_raw = cond.check_type.0,
-                check_eval = check_type.0,
-                check_key = ?self.interner().lookup(check_type),
-                extends_raw = cond.extends_type.0,
-                extends_eval = extends_type.0,
-                extends_key = ?self.interner().lookup(extends_type),
-                "evaluate_conditional"
-            );
-
-            // PERF: Cache predicate results for extends_type once per iteration.
-            // type_contains_infer is called up to 5 times and contains_free_type_parameters
-            // at least once, each creating fresh FxHashSet/FxHashMap allocations.
-            let extends_has_infer = self.type_contains_infer(extends_type)
-                || self.type_contains_infer(cond.extends_type);
-            // Use the FREE-type-parameter query: type parameters bound by inner
-            // function/callable signatures (e.g., the `T` in `<T>() => ...`) are
-            // already resolved within their own scope, so they must not force the
-            // surrounding conditional to stay deferred. Without this distinction,
-            // `(<T>() => T extends any ? 1 : 2) extends (<T>() => T extends Y ? 1 : 2)`
-            // — the structural shape of the type-challenges `Equal<X, Y>` trick —
-            // is incorrectly held deferred whenever either side embeds a generic
-            // function literal.
-            let extends_has_type_params =
-                crate::visitor::contains_free_type_parameters(self.interner(), extends_type)
-                    || crate::visitor::contains_free_type_parameters(
-                        self.interner(),
-                        cond.extends_type,
-                    );
+            let ops = self.resolve_operands(cond);
+            let check_type = ops.check_type;
+            let extends_type = ops.extends_type;
+            let extends_has_infer = ops.extends_has_infer;
+            let extends_has_type_params = ops.extends_has_type_params;
 
             if cond.is_distributive && check_type == TypeId::NEVER {
                 return TypeId::NEVER;
@@ -316,10 +250,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
 
             if let Some(TypeData::Infer(info)) = self.interner().lookup(extends_type) {
-                if matches!(
+                // A bare `infer X` extends clause always matches, so tsc takes the
+                // true branch with `X` bound to the check type. Normal evaluation
+                // defers when the check type is still a free type parameter (the
+                // conditional has no concrete input yet). During the TS2589
+                // depth-detection pass the alias body is evaluated with its type
+                // parameters left free, so deferring here hides unconditionally
+                // recursive aliases like `type A<T> = T extends infer X ? A<X & B>
+                // : never` from the recursion guard. In that pass, bind `X` to the
+                // free type parameter and follow the true branch so the guard can
+                // observe the re-applied alias and surface TS2589.
+                let check_is_unresolved_param = matches!(
                     self.interner().lookup(check_type),
                     Some(TypeData::TypeParameter(_) | TypeData::Infer(_))
-                ) {
+                );
+                let drive_recursion_for_depth_check = self.is_depth_detection_pass()
+                    && matches!(
+                        self.interner().lookup(check_type),
+                        Some(TypeData::TypeParameter(_))
+                    );
+                if check_is_unresolved_param && !drive_recursion_for_depth_check {
                     return self.interner().conditional(*cond);
                 }
 
@@ -762,42 +712,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 ) && !loop_bindings.is_empty()
                 {
                     let substituted_true = self.substitute_infer(cond.true_type, &loop_bindings);
-                    // Check for tail-recursive true branch (e.g., Trim<T> recurses on match):
-                    // type Trim<S> = S extends ` ${infer T}` ? Trim<T> : S;
-                    // The substituted true branch Trim<T> is an Application that expands
-                    // to another Conditional — handle it as a tail call WITHOUT
-                    // incrementing the depth guard, controlled by MAX_TAIL_RECURSION_DEPTH.
-                    if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                        if let Some(TypeData::Conditional(next_cond_id)) =
-                            self.interner().lookup(substituted_true)
-                        {
-                            let next_cond = self.interner().get_conditional(next_cond_id);
-                            current_cond = next_cond;
+                    match self.try_dispatch_tail_call(
+                        substituted_true,
+                        &mut tail_application_branch,
+                        tail_recursion_count,
+                    ) {
+                        TailCallStep::Continue(next) => {
+                            current_cond = next;
                             tail_recursion_count += 1;
                             continue;
                         }
-                        if let Some(instantiated) =
-                            self.try_instantiate_application_for_tail_call(substituted_true)
-                        {
-                            if let Some(TypeData::Conditional(next_cond_id)) =
-                                self.interner().lookup(instantiated)
-                            {
-                                tail_application_branch.get_or_insert(substituted_true);
-                                let next_cond = self.interner().get_conditional(next_cond_id);
-                                current_cond = next_cond;
-                                tail_recursion_count += 1;
-                                continue;
-                            }
-                            // Not a conditional — evaluate normally.
-                            // Signal the intermediate Application for forward display alias.
-                            self.apparent_conditional_branch = Some(substituted_true);
+                        TailCallStep::InstantiatedApp { original, resolved } => {
+                            self.apparent_conditional_branch = Some(original);
                             return self.evaluate_preserving_tail_application_branch_alias(
-                                instantiated,
-                                Some(substituted_true),
+                                resolved,
+                                Some(original),
                             );
                         }
+                        TailCallStep::BareApplication | TailCallStep::NoTailCall => {}
                     }
-                    // Direct Application branch.
+                    // Direct Application branch (runs even at limit).
                     if matches!(
                         self.interner().lookup(substituted_true),
                         Some(TypeData::Application(_))
@@ -916,47 +850,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 // Infer match failed — take the false branch.
-                // Check if the false branch is a tail-recursive conditional.
-                // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
-                if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                    if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(cond.false_type)
-                    {
-                        let next_cond = self.interner().get_conditional(next_cond_id);
-                        current_cond = next_cond;
+                match self.try_dispatch_tail_call(
+                    cond.false_type,
+                    &mut tail_application_branch,
+                    tail_recursion_count,
+                ) {
+                    TailCallStep::Continue(next) => {
+                        current_cond = next;
                         tail_recursion_count += 1;
                         continue;
                     }
-                    // Also detect Application that expands to Conditional (common pattern):
-                    // type TrimLeft<T> = T extends ` ${infer R}` ? TrimLeft<R> : T;
-                    // The false branch may be `TrimLeft<R>` (Application, not Conditional).
-                    if let Some(instantiated) =
-                        self.try_instantiate_application_for_tail_call(cond.false_type)
-                    {
-                        if let Some(TypeData::Conditional(next_cond_id)) =
-                            self.interner().lookup(instantiated)
-                        {
-                            tail_application_branch.get_or_insert(cond.false_type);
-                            let next_cond = self.interner().get_conditional(next_cond_id);
-                            current_cond = next_cond;
-                            tail_recursion_count += 1;
-                            continue;
-                        }
-                        self.apparent_conditional_branch = Some(cond.false_type);
+                    TailCallStep::InstantiatedApp { original, resolved } => {
+                        self.apparent_conditional_branch = Some(original);
                         return self.evaluate_preserving_tail_application_branch_alias(
-                            instantiated,
-                            Some(cond.false_type),
+                            resolved,
+                            Some(original),
                         );
                     }
-                    if matches!(
-                        self.interner().lookup(cond.false_type),
-                        Some(TypeData::Application(_))
-                    ) {
+                    TailCallStep::BareApplication => {
                         self.apparent_conditional_branch = Some(cond.false_type);
                     }
+                    TailCallStep::NoTailCall => {}
                 }
-
-                // Not a tail-recursive case - evaluate normally
                 return self.evaluate(cond.false_type);
             }
 
@@ -967,71 +882,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.evaluate(cond.false_type);
             }
 
-            // Subtype check path — use strict checking (no bivariant rest)
-            // to match tsc's `isTypeAssignableTo` which respects strictFunctionTypes.
-            //
-            // PERF: Check the evaluator's conditional_subtype_cache first. Deeply
-            // recursive conditional types (DeepReadonly, Compute, etc.) re-check
-            // the same (check, extends) pair many times across distributed branches
-            // and tail-recursion iterations. Caching avoids redundant structural
-            // comparison which dominates the time for these benchmarks.
-            let is_sub = if let Some(cached) =
-                self.cached_conditional_subtype(check_type, extends_type)
-            {
-                cached
-            } else {
-                // Thread-local depth guard: evaluating conditional types can trigger
-                // subtype checks that evaluate MORE conditional types, creating an
-                // Evaluator → SubtypeChecker → Evaluator → ... chain where each
-                // instance has fresh cycle-detection state. Without this global
-                // depth limit, recursive generic types like `Vector<T> implements
-                // Seq<T>` with `Exclude<T, U>` in overloads cause stack overflow.
-                thread_local! {
-                    static CONDITIONAL_SUBTYPE_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
-                }
-                let prev_depth = CONDITIONAL_SUBTYPE_DEPTH.with(|d| {
-                    let c = d.get();
-                    d.set(c + 1);
-                    c
-                });
-                let result = if prev_depth >= 50 {
-                    // At excessive depth, conservatively assume not a subtype
-                    // (takes the false/else branch of the conditional).
-                    // This matches tsc's behavior of returning the deferred
-                    // conditional when instantiation depth is exceeded.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    false
-                } else if Self::is_primitive_vs_function(self.interner(), check_type, extends_type)
-                {
-                    // Fast-path: primitive types (string, number, boolean, bigint,
-                    // symbol) are never subtypes of Function. The structural subtype
-                    // checker may incorrectly autobox the primitive to its wrapper
-                    // type (String, Number, etc.) and find structural compatibility
-                    // with the evaluated Function interface. This fast-path prevents
-                    // `string extends Function` from incorrectly taking the true
-                    // branch, matching tsc's behavior where primitives never extend
-                    // Function.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    false
-                } else if Self::function_intrinsic_extends_callable_target(
-                    self.interner(),
-                    check_type,
-                    extends_type,
-                ) {
-                    // In conditional types, tsc treats the global `Function`
-                    // intrinsic as satisfying callable targets. Ordinary
-                    // assignment intentionally remains stricter.
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    true
-                } else {
-                    let mut strict_checker = self.conditional_subtype_checker();
-                    let r = strict_checker.is_subtype_of(check_type, extends_type);
-                    CONDITIONAL_SUBTYPE_DEPTH.with(|d| d.set(d.get().saturating_sub(1)));
-                    r
-                };
-                self.cache_conditional_subtype(check_type, extends_type, result);
-                result
-            };
+            let is_sub = self.check_conditional_subtype(check_type, extends_type);
             trace!(
                 check = check_type.0,
                 extends = extends_type.0,
@@ -1079,46 +930,28 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 cond.false_type
             };
 
-            // Check if the result branch is directly a conditional for tail-recursion
-            // IMPORTANT: Check BEFORE calling evaluate to avoid incrementing depth
-            if tail_recursion_count < Self::MAX_TAIL_RECURSION_DEPTH {
-                if let Some(TypeData::Conditional(next_cond_id)) =
-                    self.interner().lookup(result_branch)
-                {
-                    let next_cond = self.interner().get_conditional(next_cond_id);
-                    current_cond = next_cond;
+            match self.try_dispatch_tail_call(
+                result_branch,
+                &mut tail_application_branch,
+                tail_recursion_count,
+            ) {
+                TailCallStep::Continue(next) => {
+                    current_cond = next;
                     tail_recursion_count += 1;
                     continue;
                 }
-                // Also detect Application that expands to Conditional (tail-call through
-                // type alias like `TrimLeft<R>` which is Application, not Conditional)
-                if let Some(instantiated) =
-                    self.try_instantiate_application_for_tail_call(result_branch)
-                {
-                    if let Some(TypeData::Conditional(next_cond_id)) =
-                        self.interner().lookup(instantiated)
-                    {
-                        tail_application_branch.get_or_insert(result_branch);
-                        let next_cond = self.interner().get_conditional(next_cond_id);
-                        current_cond = next_cond;
-                        tail_recursion_count += 1;
-                        continue;
-                    }
-                    self.apparent_conditional_branch = Some(result_branch);
+                TailCallStep::InstantiatedApp { original, resolved } => {
+                    self.apparent_conditional_branch = Some(original);
                     return self.evaluate_preserving_tail_application_branch_alias(
-                        instantiated,
-                        Some(result_branch),
+                        resolved,
+                        Some(original),
                     );
                 }
-                if matches!(
-                    self.interner().lookup(result_branch),
-                    Some(TypeData::Application(_))
-                ) {
+                TailCallStep::BareApplication => {
                     self.apparent_conditional_branch = Some(result_branch);
                 }
+                TailCallStep::NoTailCall => {}
             }
-
-            // Not a tail-recursive case - evaluate normally
             return self.evaluate_preserving_tail_application_branch_alias(
                 result_branch,
                 tail_application_branch,
@@ -1252,12 +1085,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         };
         let app = self.interner().type_application(app_id);
-        let def_id = match self.interner().lookup(app.base)? {
-            TypeData::Lazy(def_id) => Some(def_id),
-            TypeData::TypeQuery(sym_ref) => self.resolver().symbol_to_def_id(sym_ref),
-            _ => None,
-        }?;
-        let resolved = self.resolver().resolve_lazy(def_id, self.interner())?;
+        // For TypeQuery bases (e.g. `typeof ClassName<T>`), always use
+        // `resolve_type_query` to get the CONSTRUCTOR type. `resolve_lazy` would
+        // return the INSTANCE type for classes (via `class_instance_types`), so
+        // `InstanceType<typeof Class<T>>` would fail its constructor constraint check.
+        let (def_id_opt, resolved, base_is_type_query) = match self.interner().lookup(app.base)? {
+            TypeData::Lazy(def_id) => {
+                let r = self.resolver().resolve_lazy(def_id, self.interner())?;
+                (Some(def_id), r, false)
+            }
+            TypeData::TypeQuery(sym_ref) => {
+                let def_id_opt = self.resolver().symbol_to_def_id(sym_ref);
+                let r = self
+                    .resolver()
+                    .resolve_type_query(sym_ref, self.interner())?;
+                (def_id_opt, r, true)
+            }
+            _ => return None,
+        };
         if app.args.len() == 1
             && let Some(TypeData::IndexAccess(obj, idx)) = self.interner().lookup(resolved)
             && let Some(TypeData::TypeParameter(tp)) = self.interner().lookup(obj)
@@ -1272,9 +1117,24 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return Some(direct);
             }
         }
-        let type_params = self
-            .resolver()
-            .get_lazy_type_params(def_id)
+        // For TypeQuery-based Applications (e.g. `typeof ClassExpr<T>`), use
+        // per-signature instantiation so that the class type parameters stored in
+        // `sig.type_params` are CONSUMED rather than SHADOWED. The standard
+        // `instantiate_generic` path calls `TypeInstantiator` which calls
+        // `enter_shadowing_scope(&sig.type_params)`, blocking substitution of those
+        // names from an outer substitution.
+        if base_is_type_query {
+            let instantiate_result = self.try_instantiate_callable_type_params(resolved, &app.args);
+            if let Some(specialized) = instantiate_result {
+                let evaluated = self.evaluate(specialized);
+                return (evaluated != type_id).then_some(evaluated);
+            }
+            // If per-sig instantiation didn't apply (e.g., resolved is not a
+            // Callable), fall through to the generic path below.
+        }
+
+        let type_params = def_id_opt
+            .and_then(|def_id| self.resolver().get_lazy_type_params(def_id))
             .filter(|params| params.len() == app.args.len())
             .unwrap_or_else(|| self.extract_type_params_from_type(resolved));
         if type_params.len() != app.args.len() {
@@ -1291,6 +1151,93 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
         let evaluated = self.evaluate(instantiated);
         (evaluated != type_id).then_some(evaluated)
+    }
+
+    /// Instantiate a `Callable` type's signatures using per-signature substitution.
+    ///
+    /// When `typeof ClassExpr<T>` appears as the check type of a conditional like
+    /// `InstanceType<typeof ClassExpr<T>>`, the class's type parameters live inside
+    /// `sig.type_params` on the constructor signatures. The standard
+    /// `instantiate_generic` path calls `TypeInstantiator` which calls
+    /// `enter_shadowing_scope(&sig.type_params)`, adding those names to the shadowed
+    /// set and preventing them from being substituted.
+    ///
+    /// This method bypasses that by building a substitution from each signature's own
+    /// `type_params` and applying it to the signature's parts individually (the same
+    /// approach as the checker's `instantiate_signature`). Type params are consumed
+    /// (set to `Vec::new()`) in the output signatures so the resulting Callable is
+    /// fully concrete with respect to the supplied `type_args`.
+    ///
+    /// Returns `Some(new_callable_id)` when at least one construct signature was
+    /// successfully instantiated; returns `None` otherwise (wrong arg count, not a
+    /// Callable, etc.).
+    pub(in crate::evaluation) fn try_instantiate_callable_type_params(
+        &mut self,
+        callable_id: TypeId,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        let cs_id = match self.interner().lookup(callable_id)? {
+            TypeData::Callable(cs_id) => cs_id,
+            _ => return None,
+        };
+        let shape = self.interner().callable_shape(cs_id);
+
+        fn instantiate_sig(
+            interner: &dyn crate::construction::TypeDatabase,
+            sig: &CallSignature,
+            type_args: &[TypeId],
+        ) -> Option<CallSignature> {
+            if sig.type_params.len() != type_args.len() {
+                return None;
+            }
+            let subst = TypeSubstitution::from_args(interner, &sig.type_params, type_args);
+            let params: Vec<ParamInfo> = sig
+                .params
+                .iter()
+                .map(|p| ParamInfo {
+                    type_id: instantiate_type(interner, p.type_id, &subst),
+                    ..*p
+                })
+                .collect();
+            let return_type = instantiate_type(interner, sig.return_type, &subst);
+            let this_type = sig.this_type.map(|t| instantiate_type(interner, t, &subst));
+            Some(CallSignature {
+                type_params: Vec::new(),
+                params,
+                return_type,
+                this_type,
+                type_predicate: sig.type_predicate,
+                is_method: sig.is_method,
+            })
+        }
+
+        let mut new_construct_sigs: Vec<CallSignature> = Vec::new();
+        let mut any_changed = false;
+        for sig in shape.construct_signatures.iter() {
+            match instantiate_sig(self.interner(), sig, type_args) {
+                Some(new_sig) => {
+                    any_changed = true;
+                    new_construct_sigs.push(new_sig);
+                }
+                None => {
+                    new_construct_sigs.push(sig.clone());
+                }
+            }
+        }
+        if !any_changed {
+            return None;
+        }
+
+        let new_shape = CallableShape {
+            construct_signatures: new_construct_sigs,
+            call_signatures: shape.call_signatures.to_vec(),
+            properties: shape.properties.to_vec(),
+            string_index: shape.string_index,
+            number_index: shape.number_index,
+            symbol: shape.symbol,
+            is_abstract: shape.is_abstract,
+        };
+        Some(self.interner().callable(new_shape))
     }
 
     /// Check if this is a primitive type vs Function/callable target.
@@ -1976,11 +1923,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     extends_elem.optional.then_some(TypeId::UNDEFINED)
                 } else if check_elements.len() == 1 && !check_elements[0].rest {
                     let elem = &check_elements[0];
-                    Some(if elem.optional {
-                        self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                    // Optional source cannot fill a required pattern slot.
+                    if elem.optional && !extends_elem.optional {
+                        None
                     } else {
-                        elem.type_id
-                    })
+                        let ty = if elem.optional {
+                            self.interner().union2(elem.type_id, TypeId::UNDEFINED)
+                        } else {
+                            elem.type_id
+                        };
+                        Some(ty)
+                    }
                 } else {
                     None
                 }
@@ -2005,6 +1958,9 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             }
                             if check_elements.len() == 1 && !check_elements[0].rest {
                                 let elem = &check_elements[0];
+                                if elem.optional && !extends_elem.optional {
+                                    return self.evaluate(cond.false_type);
+                                }
                                 let elem_type = if elem.optional {
                                     self.interner().union2(elem.type_id, TypeId::UNDEFINED)
                                 } else {
@@ -2077,6 +2033,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 Some(TypeData::ReadonlyType(inner)) => inner,
                 _ => prop.type_id,
             };
+            let mut captured = false;
             if let Some(nested_shape_id) = match self.interner().lookup(nested_type) {
                 Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                     Some(shape_id)
@@ -2100,7 +2057,17 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         return None;
                     }
                     infer_nested = Some((prop.name, nested_name, info));
+                    captured = true;
                 }
+            }
+
+            // A property that still carries an `infer` variable this fast path did
+            // not record (e.g. inside a function parameter, an array, or a nested
+            // object with multiple infers) cannot be modeled here. Defer to the
+            // general `match_infer_pattern` engine, which handles every position
+            // with variance-aware candidate merging.
+            if !captured && self.type_contains_infer(prop.type_id) {
+                return None;
             }
         }
 

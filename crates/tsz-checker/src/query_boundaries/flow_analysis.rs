@@ -73,6 +73,27 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
         .unwrap_or(type_id)
 }
 
+pub(crate) fn enum_member_union_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(members) = union_members_for_type(db, type_id) else {
+        return enum_member_domain(db, type_id);
+    };
+
+    let mut normalized: Option<Vec<TypeId>> = None;
+    for (index, member) in members.iter().copied().enumerate() {
+        let domain = enum_member_domain(db, member);
+        if let Some(normalized) = normalized.as_mut() {
+            normalized.push(domain);
+        } else if domain != member {
+            let mut changed = Vec::with_capacity(members.len());
+            changed.extend_from_slice(&members[..index]);
+            changed.push(domain);
+            normalized = Some(changed);
+        }
+    }
+
+    normalized.map_or(type_id, |members| union_types(db, members))
+}
+
 pub(crate) fn type_has_typeof_result(
     db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
@@ -201,6 +222,69 @@ fn assignment_source_assignable_to_member(
     }
 }
 
+fn non_nullish_constraint_reduction_for_assignment(
+    db: &dyn TypeDatabase,
+    env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
+    initial_type: TypeId,
+    assigned_type: TypeId,
+) -> Option<TypeId> {
+    let base_constraint = assignment_reduction_base_constraint(db, initial_type);
+    if base_constraint == initial_type {
+        return None;
+    }
+
+    let reduced_constraint = tsz_solver::narrowing::remove_nullish(db, base_constraint);
+    if reduced_constraint == base_constraint
+        || reduced_constraint == initial_type
+        || reduced_constraint == TypeId::NEVER
+    {
+        return None;
+    }
+
+    let non_nullish_initial = tsz_solver::narrowing::remove_nullish(db, initial_type);
+    let assigned_type = resolve_assignment_reduction_type(db, env, assigned_type);
+    let assigned_matches_non_nullish_initial = if let Some(environment) = env {
+        non_nullish_initial != initial_type
+            && is_assignable_with_env(db, environment, assigned_type, non_nullish_initial, true)
+            && is_assignable_with_env(db, environment, non_nullish_initial, assigned_type, true)
+    } else {
+        non_nullish_initial != initial_type
+            && is_assignable_strict_null(db, assigned_type, non_nullish_initial)
+            && is_assignable_strict_null(db, non_nullish_initial, assigned_type)
+    };
+    let assigned_has_reduced_constraint_surface = if let Some(environment) = env {
+        is_assignable_with_env(db, environment, assigned_type, initial_type, true)
+            && is_assignable_with_env(db, environment, assigned_type, reduced_constraint, true)
+    } else {
+        is_assignable_strict_null(db, assigned_type, initial_type)
+            && is_assignable_strict_null(db, assigned_type, reduced_constraint)
+    };
+    if !(assigned_matches_non_nullish_initial || assigned_has_reduced_constraint_surface) {
+        return None;
+    }
+
+    Some(reduced_constraint)
+}
+
+fn assignment_reduction_base_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if let Some((object_type, index_type)) =
+        tsz_solver::type_queries::get_index_access_types(db, type_id)
+    {
+        let object_constraint =
+            tsz_solver::type_queries::get_base_constraint_of_type(db, object_type);
+        if object_constraint != object_type
+            && let Some(prop_name) =
+                tsz_solver::type_queries::get_string_literal_value(db, index_type)
+            && let Some(prop) =
+                tsz_solver::type_queries::find_property_in_object(db, object_constraint, prop_name)
+        {
+            return prop.type_id;
+        }
+    }
+
+    tsz_solver::type_queries::get_base_constraint_of_type(db, type_id)
+}
+
 fn assigned_value_preserves_enum_identity(
     db: &dyn TypeDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
@@ -265,6 +349,12 @@ pub(crate) fn narrow_assignment(
     }
 
     let resolved_initial = resolve_assignment_reduction_type(db, env, initial_type);
+
+    if let Some(reduced) =
+        non_nullish_constraint_reduction_for_assignment(db, env, initial_type, assigned_type)
+    {
+        return reduced;
+    }
 
     if enum_member_domain(db, resolved_initial) != resolved_initial {
         let assigned_resolved = resolve_assignment_reduction_type(db, env, assigned_type);
@@ -546,7 +636,7 @@ mod tests {
     use super::*;
     use tsz_common::Visibility;
     use tsz_solver::construction::TypeInterner;
-    use tsz_solver::{FunctionShape, PropertyInfo};
+    use tsz_solver::{FunctionShape, PropertyInfo, TypeParamInfo};
 
     fn function_returning(db: &TypeInterner, return_type: TypeId) -> TypeId {
         db.function(FunctionShape {
@@ -578,6 +668,15 @@ mod tests {
         }
     }
 
+    fn type_param_with_constraint(db: &TypeInterner, name: &str, constraint: TypeId) -> TypeId {
+        db.type_param(TypeParamInfo {
+            name: db.intern_string(name),
+            constraint: Some(constraint),
+            default: None,
+            is_const: false,
+        })
+    }
+
     #[test]
     fn assignment_reduction_preserves_top_like_initial_types() {
         let db = TypeInterner::new();
@@ -602,6 +701,34 @@ mod tests {
 
         assert_eq!(
             narrow_assignment(&db, None, TypeId::STRING, TypeId::NUMBER),
+            TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn assignment_reduction_uses_non_nullish_type_parameter_constraint_surface() {
+        let db = TypeInterner::new();
+        let nullable_string = db.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let type_param = type_param_with_constraint(&db, "T", nullable_string);
+        let assigned = tsz_solver::narrowing::remove_nullish(&db, type_param);
+
+        assert_eq!(
+            narrow_assignment(&db, None, type_param, assigned),
+            TypeId::STRING
+        );
+    }
+
+    #[test]
+    fn assignment_reduction_uses_non_nullish_indexed_access_constraint_surface() {
+        let db = TypeInterner::new();
+        let nullable_string = db.union(vec![TypeId::STRING, TypeId::UNDEFINED]);
+        let object = db.object(vec![property(&db, "x", nullable_string)]);
+        let type_param = type_param_with_constraint(&db, "T", object);
+        let indexed = db.index_access(type_param, db.literal_string("x"));
+        let assigned = db.intersection(vec![indexed, db.object(Vec::new())]);
+
+        assert_eq!(
+            narrow_assignment(&db, None, indexed, assigned),
             TypeId::STRING
         );
     }
@@ -658,6 +785,30 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn enum_member_union_domain_keeps_plain_union_identity() {
+        let db = TypeInterner::new();
+        let union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+        assert_eq!(enum_member_union_domain(&db, union), union);
+    }
+
+    #[test]
+    fn enum_member_union_domain_rewrites_only_enum_members() {
+        let db = TypeInterner::new();
+        let literal = db.literal_string("ready");
+        let enum_member = db.enum_type(tsz_solver::def::DefId(701), literal);
+        let union = db.union(vec![enum_member, TypeId::NUMBER]);
+
+        let domain = enum_member_union_domain(&db, union);
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&literal));
+        assert!(members.contains(&TypeId::NUMBER));
+        assert!(!members.contains(&enum_member));
     }
 
     #[test]

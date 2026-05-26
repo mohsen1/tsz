@@ -60,55 +60,101 @@ pub fn enabled_fast() -> bool {
     *ENABLED_FAST.get_or_init(|| std::env::var_os("TSZ_PERF_COUNTERS").is_some())
 }
 
-/// Why a `CheckerState::with_parent_cache` (and the matching
-/// `copy_symbol_file_targets_to`) call fired. Each variant pins one specific
-/// call site so the counter dump shows attribution: "X of the 17,329
-/// constructions came from `delegate_cross_arena_symbol_resolution`,
-/// Y came from `jsdoc_type_construction`, ...".
-///
-/// Adding a new reason: add the variant, update `REASON_NAMES` to keep them
-/// aligned, and increase `CHECKER_CREATION_REASON_COUNT`.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CheckerCreationReason {
-    /// `cross_file.rs::delegate_cross_arena_symbol_resolution` — the headline
-    /// hot path; deep recursion through cross-file type queries.
-    DelegateCrossArenaSymbol = 0,
-    /// `cross_file.rs::delegate_cross_arena_class_instance_type`.
-    DelegateCrossArenaClass = 1,
-    /// `cross_file.rs::delegate_cross_arena_interface_type`.
-    DelegateCrossArenaInterface = 2,
-    /// Other `cross_file.rs` delegate variants (heritage, etc).
-    DelegateCrossArenaOther = 3,
-    /// JSDoc namespace-typedef lookups crossing arenas.
-    JsDocLookup = 4,
-    /// JSDoc type-construction (synthesized object/function shapes).
-    JsDocTypeConstruction = 5,
-    /// CommonJS `module.exports` / `exports.x` resolution + collection.
-    CjsExports = 6,
-    /// Cross-file type alias resolution.
-    AliasResolution = 7,
-    /// `import("…").Foo` indirect import-type resolution.
-    ImportType = 8,
-    /// Type-environment `core.rs` deep resolution helpers.
-    TypeEnvironmentCore = 9,
-    /// `types::queries::callable_truthiness` cross-file fall-through.
-    CallableTruthiness = 10,
-    /// Expando property assignments crossing files.
-    ExpandoProperty = 11,
-    /// `identifier::resolution` cross-file fallback.
-    IdentifierResolution = 12,
-    /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
-    CallHelpers = 13,
-    /// `computed_helpers_binding` deep alias resolution.
-    BindingHelpers = 14,
-    /// `class_abstract_checker` cross-file abstract-method check.
-    ClassAbstract = 15,
-    /// Anything not explicitly classified above.
-    Other = 16,
+// Declarative manifest for enum-backed counter families. Each entry owns the
+// Rust variant, stable numeric index, and dump/JSON display name together so
+// adding a bucket does not require editing parallel count/name tables by hand.
+macro_rules! perf_counter_enum {
+    (
+        $(#[$enum_meta:meta])*
+        pub enum $enum_name:ident {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident = $index:expr => $name:literal,
+            )+
+        }
+
+        pub const $count_name:ident;
+        pub const $names_name:ident;
+    ) => {
+        $(#[$enum_meta])*
+        #[repr(usize)]
+        pub enum $enum_name {
+            $(
+                $(#[$variant_meta])*
+                $variant = $index,
+            )+
+        }
+
+        pub const $count_name: usize = [$($name),+].len();
+
+        pub const $names_name: [&str; $count_name] = [
+            $($name,)+
+        ];
+
+        impl $enum_name {
+            #[inline(always)]
+            pub const fn as_index(self) -> usize {
+                self as usize
+            }
+
+            pub const fn name(self) -> &'static str {
+                $names_name[self as usize]
+            }
+        }
+    };
 }
 
-pub const CHECKER_CREATION_REASON_COUNT: usize = 17;
+perf_counter_enum! {
+    /// Why a `CheckerState::with_parent_cache` (and the matching
+    /// `copy_symbol_file_targets_to`) call fired. Each variant pins one specific
+    /// call site so the counter dump shows attribution: "X of the 17,329
+    /// constructions came from `delegate_cross_arena_symbol_resolution`,
+    /// Y came from `jsdoc_type_construction`, ...".
+    ///
+    /// Adding a new reason: add one manifest entry below. The enum variant, stable
+    /// display name, count, and `REASON_NAMES` order are generated together.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CheckerCreationReason {
+        /// `cross_file.rs::delegate_cross_arena_symbol_resolution` — the headline
+        /// hot path; deep recursion through cross-file type queries.
+        DelegateCrossArenaSymbol = 0 => "DelegateCrossArenaSymbol",
+        /// `cross_file.rs::delegate_cross_arena_class_instance_type`.
+        DelegateCrossArenaClass = 1 => "DelegateCrossArenaClass",
+        /// `cross_file.rs::delegate_cross_arena_interface_type`.
+        DelegateCrossArenaInterface = 2 => "DelegateCrossArenaInterface",
+        /// Other `cross_file.rs` delegate variants (heritage, etc).
+        DelegateCrossArenaOther = 3 => "DelegateCrossArenaOther",
+        /// JSDoc namespace-typedef lookups crossing arenas.
+        JsDocLookup = 4 => "JsDocLookup",
+        /// JSDoc type-construction (synthesized object/function shapes).
+        JsDocTypeConstruction = 5 => "JsDocTypeConstruction",
+        /// CommonJS `module.exports` / `exports.x` resolution + collection.
+        CjsExports = 6 => "CjsExports",
+        /// Cross-file type alias resolution.
+        AliasResolution = 7 => "AliasResolution",
+        /// `import("…").Foo` indirect import-type resolution.
+        ImportType = 8 => "ImportType",
+        /// Type-environment `core.rs` deep resolution helpers.
+        TypeEnvironmentCore = 9 => "TypeEnvironmentCore",
+        /// `types::queries::callable_truthiness` cross-file fall-through.
+        CallableTruthiness = 10 => "CallableTruthiness",
+        /// Expando property assignments crossing files.
+        ExpandoProperty = 11 => "ExpandoProperty",
+        /// `identifier::resolution` cross-file fallback.
+        IdentifierResolution = 12 => "IdentifierResolution",
+        /// Generic call-helpers cross-file resolution (`call_helpers.rs`).
+        CallHelpers = 13 => "CallHelpers",
+        /// `computed_helpers_binding` deep alias resolution.
+        BindingHelpers = 14 => "BindingHelpers",
+        /// `class_abstract_checker` cross-file abstract-method check.
+        ClassAbstract = 15 => "ClassAbstract",
+        /// Anything not explicitly classified above.
+        Other = 16 => "Other",
+    }
+
+    pub const CHECKER_CREATION_REASON_COUNT;
+    pub const REASON_NAMES;
+}
 
 /// Number of log-spaced buckets in the interner lock-wait histogram.
 /// See `LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS` for the bucket boundaries.
@@ -133,207 +179,95 @@ pub const LOCK_WAIT_BUCKET_UPPER_BOUNDS_NS: [u64; LOCK_WAIT_BUCKET_COUNT] = [
     u64::MAX,    // overflow
 ];
 
-/// Human-readable names, one entry per `CheckerCreationReason` variant.
-/// MUST stay in sync with the enum.
-pub const REASON_NAMES: [&str; CHECKER_CREATION_REASON_COUNT] = [
-    "DelegateCrossArenaSymbol",
-    "DelegateCrossArenaClass",
-    "DelegateCrossArenaInterface",
-    "DelegateCrossArenaOther",
-    "JsDocLookup",
-    "JsDocTypeConstruction",
-    "CjsExports",
-    "AliasResolution",
-    "ImportType",
-    "TypeEnvironmentCore",
-    "CallableTruthiness",
-    "ExpandoProperty",
-    "IdentifierResolution",
-    "CallHelpers",
-    "BindingHelpers",
-    "ClassAbstract",
-    "Other",
-];
-
-impl CheckerCreationReason {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// How `delegate_cross_arena_symbol_resolution` found the target arena for
+    /// a cache miss that must construct a child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissSource {
+        /// `binder.symbol_arenas` pointed at a non-current arena.
+        SymbolArena = 0 => "symbol_arenas",
+        /// `binder.declaration_arenas` found a non-current declaration arena.
+        DeclarationArena = 1 => "declaration_arenas",
+        /// `cross_file_symbol_targets` resolved the target file index.
+        SymbolFileTarget = 2 => "symbol_file_targets",
+        /// Fallback bucket for unexpected delegation shapes.
+        Unknown = 3 => "unknown",
     }
-    pub const fn name(self) -> &'static str {
-        REASON_NAMES[self as usize]
+
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES;
+}
+
+perf_counter_enum! {
+    /// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaSymbolMissKind {
+        TypeAlias = 0 => "type_alias",
+        Interface = 1 => "interface",
+        Class = 2 => "class",
+        Function = 3 => "function",
+        Variable = 4 => "variable",
+        Property = 5 => "property",
+        Method = 6 => "method",
+        Accessor = 7 => "accessor",
+        Enum = 8 => "enum",
+        Module = 9 => "module",
+        Alias = 10 => "alias",
+        TypeParameter = 11 => "type_parameter",
+        TypeLiteral = 12 => "type_literal",
+        Signature = 13 => "signature",
+        Constructor = 14 => "constructor",
+        ObjectLiteral = 15 => "object_literal",
+        Unresolved = 16 => "unresolved",
+        Other = 17 => "other",
     }
+
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT;
+    pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES;
 }
 
-/// How `delegate_cross_arena_symbol_resolution` found the target arena for
-/// a cache miss that must construct a child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissSource {
-    /// `binder.symbol_arenas` pointed at a non-current arena.
-    SymbolArena = 0,
-    /// `binder.declaration_arenas` found a non-current declaration arena.
-    DeclarationArena = 1,
-    /// `cross_file_symbol_targets` resolved the target file index.
-    SymbolFileTarget = 2,
-    /// Fallback bucket for unexpected delegation shapes.
-    Unknown = 3,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT: usize = 4;
-
-pub const CROSS_ARENA_SYMBOL_MISS_SOURCE_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_SOURCE_COUNT] = [
-    "symbol_arenas",
-    "declaration_arenas",
-    "symbol_file_targets",
-    "unknown",
-];
-
-impl CrossArenaSymbolMissSource {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    /// Outcome of the no-child named-alias shortcut attempted before
+    /// constructing a `DelegateCrossArenaSymbol` child checker.
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum CrossArenaAliasShortcutOutcome {
+        Success = 0 => "success",
+        NotAlias = 1 => "not_alias",
+        MissingSymbol = 2 => "missing_symbol",
+        MissingModule = 3 => "missing_module",
+        MissingImportName = 4 => "missing_import_name",
+        NamespaceImport = 5 => "namespace_import",
+        DefaultImport = 6 => "default_import",
+        MissingAliasFile = 7 => "missing_alias_file",
+        MissingTarget = 8 => "missing_target",
+        SelfTarget = 9 => "self_target",
+        MissingTargetSymbol = 10 => "missing_target_symbol",
+        TargetAlias = 11 => "target_alias",
+        AliasPartner = 12 => "alias_partner",
+        InterfaceValueMerge = 13 => "interface_value_merge",
+        UnknownResult = 14 => "unknown_result",
+        ErrorResult = 15 => "error_result",
     }
+
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT;
+    pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES;
 }
 
-/// Coarse symbol-kind bucket for `DelegateCrossArenaSymbol` misses.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaSymbolMissKind {
-    TypeAlias = 0,
-    Interface = 1,
-    Class = 2,
-    Function = 3,
-    Variable = 4,
-    Property = 5,
-    Method = 6,
-    Accessor = 7,
-    Enum = 8,
-    Module = 9,
-    Alias = 10,
-    TypeParameter = 11,
-    TypeLiteral = 12,
-    Signature = 13,
-    Constructor = 14,
-    ObjectLiteral = 15,
-    Unresolved = 16,
-    Other = 17,
-}
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_COUNT: usize = 18;
-
-pub const CROSS_ARENA_SYMBOL_MISS_KIND_NAMES: [&str; CROSS_ARENA_SYMBOL_MISS_KIND_COUNT] = [
-    "type_alias",
-    "interface",
-    "class",
-    "function",
-    "variable",
-    "property",
-    "method",
-    "accessor",
-    "enum",
-    "module",
-    "alias",
-    "type_parameter",
-    "type_literal",
-    "signature",
-    "constructor",
-    "object_literal",
-    "unresolved",
-    "other",
-];
-
-impl CrossArenaSymbolMissKind {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
+perf_counter_enum! {
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum DirectCrossFileInterfaceLoweringOutcome {
+        Success = 0 => "success",
+        RejectedNonDirectArena = 1 => "rejected_non_direct_arena",
+        MissingSymbol = 2 => "missing_symbol",
+        NotInterface = 3 => "not_interface",
+        DisallowedMergeFlags = 4 => "disallowed_merge_flags",
+        MissingDeclarations = 5 => "missing_declarations",
+        ComplexDeclaration = 6 => "complex_declaration",
+        UnknownOrError = 7 => "unknown_or_error",
     }
-}
 
-/// Outcome of the no-child named-alias shortcut attempted before constructing
-/// a `DelegateCrossArenaSymbol` child checker.
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum CrossArenaAliasShortcutOutcome {
-    Success = 0,
-    NotAlias = 1,
-    MissingSymbol = 2,
-    MissingModule = 3,
-    MissingImportName = 4,
-    NamespaceImport = 5,
-    DefaultImport = 6,
-    MissingAliasFile = 7,
-    MissingTarget = 8,
-    SelfTarget = 9,
-    MissingTargetSymbol = 10,
-    TargetAlias = 11,
-    AliasPartner = 12,
-    InterfaceValueMerge = 13,
-    UnknownResult = 14,
-    ErrorResult = 15,
-}
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT: usize = 16;
-
-pub const CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_NAMES: [&str;
-    CROSS_ARENA_ALIAS_SHORTCUT_OUTCOME_COUNT] = [
-    "success",
-    "not_alias",
-    "missing_symbol",
-    "missing_module",
-    "missing_import_name",
-    "namespace_import",
-    "default_import",
-    "missing_alias_file",
-    "missing_target",
-    "self_target",
-    "missing_target_symbol",
-    "target_alias",
-    "alias_partner",
-    "interface_value_merge",
-    "unknown_result",
-    "error_result",
-];
-
-impl CrossArenaAliasShortcutOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
-    }
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(usize)]
-pub enum DirectCrossFileInterfaceLoweringOutcome {
-    Success = 0,
-    RejectedNonDirectArena = 1,
-    MissingSymbol = 2,
-    NotInterface = 3,
-    DisallowedMergeFlags = 4,
-    MissingDeclarations = 5,
-    ComplexDeclaration = 6,
-    UnknownOrError = 7,
-}
-
-pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT: usize = 8;
-
-pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES: [&str;
-    DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT] = [
-    "success",
-    "rejected_non_direct_arena",
-    "missing_symbol",
-    "not_interface",
-    "disallowed_merge_flags",
-    "missing_declarations",
-    "complex_declaration",
-    "unknown_or_error",
-];
-
-impl DirectCrossFileInterfaceLoweringOutcome {
-    #[inline(always)]
-    pub const fn as_index(self) -> usize {
-        self as usize
-    }
+    pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_COUNT;
+    pub const DIRECT_CROSS_FILE_INTERFACE_LOWERING_OUTCOME_NAMES;
 }
 
 /// How `compute_type_of_symbol` found the symbol payload for a call.

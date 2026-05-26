@@ -1,5 +1,7 @@
 //! Compound type formatting methods for `TypeFormatter`.
 
+mod object_parts;
+
 use super::TypeFormatter;
 use super::needs_property_name_quotes;
 use crate::types::{
@@ -20,109 +22,6 @@ pub(super) struct SignatureFormatOpts<'a> {
 }
 
 impl<'a> TypeFormatter<'a> {
-    fn collapse_truncated_tail_part(part: &str) -> String {
-        let Some((prefix, ty)) = part.split_once(": ") else {
-            return part.to_string();
-        };
-        if ty.starts_with('{') {
-            return format!("{prefix}: {{ ...; }}");
-        }
-        part.to_string()
-    }
-
-    /// Format object-like parts with tsc-style long-type truncation:
-    /// keep a long prefix and the last member, inserting `... N more ...`.
-    ///
-    /// This is used for both plain object literals and object-with-index displays.
-    /// tsc starts truncating only on larger member counts (roughly 22+), and
-    /// preserves the tail member (often useful symbol members such as
-    /// `[Symbol.unscopables]`).
-    fn format_object_parts(&self, parts: Vec<String>) -> String {
-        if parts.is_empty() {
-            return "{}".to_string();
-        }
-
-        // Match tsc's higher truncation threshold (small/medium objects display fully).
-        const TRUNCATE_THRESHOLD: usize = 22;
-        if parts.len() < TRUNCATE_THRESHOLD {
-            return format!("{{ {}; }}", parts.join("; "));
-        }
-
-        let is_string_apparent_member_list = parts
-            .first()
-            .is_some_and(|part| part.starts_with("toString:"))
-            && parts
-                .iter()
-                .any(|part| part.starts_with("[Symbol.iterator]"));
-        // Keep at most this many leading members before the omitted-count marker.
-        let max_head_parts = if is_string_apparent_member_list {
-            1
-        } else {
-            17
-        };
-        // Soft budget for head text. Long member signatures (for example,
-        // `toLocaleString` overloads) reduce the number of retained heads.
-        const MAX_HEAD_CHARS: usize = 380;
-
-        let total = parts.len();
-        let tail_index = parts
-            .iter()
-            .rposition(|part| part.starts_with("[Symbol.") || part.starts_with("readonly [Symbol."))
-            .filter(|&idx| idx > 0)
-            .unwrap_or(total - 1);
-        let tail = Self::collapse_truncated_tail_part(&parts[tail_index]);
-        let max_head_chars = if tail_index == total - 1 {
-            MAX_HEAD_CHARS
-        } else {
-            255
-        };
-        let mut head_count = 0usize;
-        let mut used_chars = 0usize;
-
-        for (idx, part) in parts.iter().enumerate().take(tail_index) {
-            if head_count >= max_head_parts {
-                break;
-            }
-            let part_cost = if head_count == 0 {
-                part.len()
-            } else {
-                // "; " separator
-                part.len() + 2
-            };
-            let next_used = used_chars + part_cost;
-            let remaining_after = total - (idx + 1) - 1; // tail excluded
-            let omitted_digits = remaining_after.max(1).to_string().len();
-            // Reserve space for `; ... N more ...; <tail>`
-            let reserve_for_marker = 2 + 4 + omitted_digits + 9;
-            let reserve_for_tail = 2 + tail.len();
-
-            // Keep at least two head parts when available; after that, enforce budget.
-            if head_count >= 2 && next_used + reserve_for_marker + reserve_for_tail > max_head_chars
-            {
-                break;
-            }
-
-            used_chars = next_used;
-            head_count += 1;
-        }
-
-        // Ensure progress even with extremely long first members.
-        if head_count == 0 {
-            head_count = 1;
-        }
-
-        let omitted = total.saturating_sub(head_count + 1);
-        if omitted == 0 {
-            return format!("{{ {}; }}", parts.join("; "));
-        }
-
-        let mut display_parts = Vec::with_capacity(head_count + 2);
-        display_parts.extend(parts.iter().take(head_count).cloned());
-        display_parts.push(format!("... {omitted} more ..."));
-        display_parts.push(tail);
-        format!("{{ {}; }}", display_parts.join("; "))
-    }
-
     fn visible_object_properties<'b>(&self, props: &'b [PropertyInfo]) -> Vec<&'b PropertyInfo> {
         let default_name = self.interner.intern_string("default");
         let internal_default_name = self.interner.intern_string("_default");
@@ -1064,6 +963,20 @@ impl<'a> TypeFormatter<'a> {
             }
         }
 
+        // tsc collapses a union of enum members to the bare enum name only
+        // when the union covers EVERY member of the enum. A proper subset
+        // (e.g. `E.A | E.B` of a three-member enum) must render member by
+        // member as `E.A | E.B`. When the full parent enum type itself is
+        // present in the union, coverage is guaranteed, so this gate applies
+        // only to the individual-member case (`parent_enum_name` unset).
+        if parent_enum_name.is_none()
+            && let Some(member_def) = any_enum_member_def_id
+            && let Some(total) = self.enum_total_member_count(member_def)
+            && enum_member_count < total
+        {
+            return None;
+        }
+
         // If a parent-level enum absorbed all literals, just show the enum name.
         if parent_enum_name.is_some() && enum_member_count > 1 && rendered.len() == 1 {
             return Some(
@@ -1075,6 +988,21 @@ impl<'a> TypeFormatter<'a> {
         }
 
         (saw_enum_member && enum_member_count > 1).then_some(rendered.join(" | "))
+    }
+
+    /// Number of distinct member values declared by the enum that owns
+    /// `member_def_id`, derived from the parent enum's structural type.
+    /// Returns `None` when the parent or its structural type can't be
+    /// resolved (the caller then keeps its existing collapse behavior).
+    fn enum_total_member_count(&self, member_def_id: crate::def::DefId) -> Option<usize> {
+        let def_store = self.def_store?;
+        let arena = self.symbol_arena?;
+        let sym_id = def_store.get(member_def_id)?.symbol_id?;
+        let symbol = arena.get(SymbolId(sym_id))?;
+        let parent_def_id = def_store.find_def_by_symbol(symbol.parent.0)?;
+        let structural = def_store.get(parent_def_id)?.body?;
+        let count = self.collect_leaf_literal_ids(structural).len();
+        (count > 0).then_some(count)
     }
 
     /// Recognize a full (parent-level) enum type — `TypeData::Enum(def_id, structural_type)`

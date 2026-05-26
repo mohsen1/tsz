@@ -13,6 +13,7 @@ use crate::query_boundaries::common::is_template_literal_type;
 use crate::state::CheckerState;
 use crate::types_domain::type_node_helpers::type_node_includes_explicit_undefined;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -39,14 +40,14 @@ fn dedup_call_signatures_keep_last(sigs: &mut Vec<tsz_solver::CallSignature>) {
     // Build a signature key from param types + return type for identity.
     // Walk from the end and record the last index for each unique key.
     // Then retain only those positions.
-    let key_of =
-        |sig: &tsz_solver::CallSignature| -> (Vec<tsz_solver::TypeId>, tsz_solver::TypeId) {
-            let param_types: Vec<_> = sig.params.iter().map(|p| p.type_id).collect();
-            (param_types, sig.return_type)
-        };
+    type SignatureKey = (SmallVec<[TypeId; 4]>, TypeId);
 
-    let mut seen: FxHashMap<(Vec<tsz_solver::TypeId>, tsz_solver::TypeId), usize> =
-        FxHashMap::default();
+    let key_of = |sig: &tsz_solver::CallSignature| -> SignatureKey {
+        let param_types = sig.params.iter().map(|p| p.type_id).collect();
+        (param_types, sig.return_type)
+    };
+
+    let mut seen: FxHashMap<SignatureKey, usize> = FxHashMap::default();
     // Record the LAST index for each key
     for (i, sig) in sigs.iter().enumerate() {
         seen.insert(key_of(sig), i);

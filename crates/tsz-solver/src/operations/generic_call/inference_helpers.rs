@@ -561,15 +561,14 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
     pub(super) fn direct_inference_tracking_target(&self, ty: TypeId) -> Option<TypeId> {
         match self.interner.lookup(ty) {
             Some(TypeData::Union(members)) => {
-                let non_nullish: Vec<TypeId> = self
-                    .interner
-                    .type_list(members)
+                let member_list = self.interner.type_list(members);
+                let mut non_nullish = member_list
                     .iter()
                     .copied()
-                    .filter(|member| !member.is_nullable())
-                    .collect();
-                if non_nullish.len() == 1 {
-                    self.direct_inference_tracking_target(non_nullish[0])
+                    .filter(|member| !member.is_nullable());
+                let member = non_nullish.next()?;
+                if non_nullish.next().is_none() {
+                    self.direct_inference_tracking_target(member)
                 } else {
                     None
                 }

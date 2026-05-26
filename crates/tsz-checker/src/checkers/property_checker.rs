@@ -191,6 +191,19 @@ impl<'a> CheckerState<'a> {
 
         let in_static_context = self.is_in_static_class_member_context(error_node);
 
+        // An abstract member has no base implementation to dispatch to, so
+        // referencing it through `super.` is an error (TS2513), which tsc gives
+        // priority over the field-via-super (TS2855) diagnostic below.
+        if self.report_abstract_member_via_super(
+            object_expr,
+            property_name,
+            error_node,
+            class_idx,
+            is_static,
+        ) {
+            return false;
+        }
+
         // TS2855 fires when `super.<field>` accesses a parent class **instance**
         // field. From within a static member/initializer, `super` is the parent
         // class object itself (not its prototype), so `super.x` resolves to the
@@ -578,14 +591,13 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         property_name: &str,
     ) -> Option<String> {
-        if self.receiver_property_visibility(object_type, property_name)
-            != Some(tsz_solver::Visibility::Protected)
-        {
-            return None;
-        }
-
-        let display = self.format_type_diagnostic(object_type);
-        display.contains(" & ").then_some(display)
+        let owner_type =
+            crate::query_boundaries::property_access::protected_intersection_owner_type(
+                self.ctx.types,
+                object_type,
+                property_name,
+            )?;
+        Some(self.format_type_diagnostic(owner_type))
     }
 
     fn intersection_has_unrelated_public_property_member(

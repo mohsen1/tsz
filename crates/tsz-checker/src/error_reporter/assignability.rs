@@ -20,7 +20,8 @@ pub(crate) use super::assignability_type_helpers::{
 };
 pub(super) use super::assignability_type_helpers::{
     has_own_signature_type_params, is_builtin_wrapper_name, is_callable_application_type,
-    is_object_prototype_method, is_object_prototype_method_for_array_target,
+    is_function_like_for_literal_member_widening, is_object_prototype_method,
+    is_object_prototype_method_for_array_target,
 };
 
 impl<'a> CheckerState<'a> {
@@ -545,6 +546,17 @@ impl<'a> CheckerState<'a> {
         if source == target {
             return;
         }
+        // A type alias flagged as unconditionally-infinite (TS2589 at its
+        // definition) collapses to the error type in tsc, which is assignable in
+        // both directions. When either side involves such a poisoned alias, the
+        // structural relation is meaningless, so suppress the TS2322 cascade.
+        // Gated on the poison set so the common case pays nothing.
+        if self.ctx.definition_store.has_any_depth_poisoned()
+            && (self.ctx.type_involves_depth_poisoned_def(source)
+                || self.ctx.type_involves_depth_poisoned_def(target))
+        {
+            return;
+        }
         // Centralized suppression for TS2322 cascades on unresolved escape-hatch types.
         if !self.has_exact_optional_property_mismatch(source, target)
             && self.should_suppress_assignability_diagnostic(source, target)
@@ -735,16 +747,11 @@ impl<'a> CheckerState<'a> {
         }
         match reason {
             Some(ref failure_reason) => {
-                // ExcessProperty errors need special handling: emit at the property position,
-                // not the statement position. Find the object literal and call the excess
-                // property checker to emit at the correct position.
                 if matches!(
                     failure_reason,
                     tsz_solver::SubtypeFailureReason::ExcessProperty { .. }
                 ) {
-                    // Walk through statements and binary expressions to find the object literal
                     let start_idx = if let Some(node) = self.ctx.arena.get(anchor_idx) {
-                        // If anchor is a return statement, start from its expression
                         if node.kind == syntax_kind_ext::RETURN_STATEMENT {
                             self.ctx
                                 .arena
@@ -763,14 +770,19 @@ impl<'a> CheckerState<'a> {
                     } else {
                         anchor_idx
                     };
-                    let literal_idx = self.find_rhs_object_literal(start_idx);
-                    if let Some(obj_idx) = literal_idx {
-                        self.check_object_literal_excess_properties(source, target, obj_idx);
+                    let diags_before = self.ctx.diagnostics.len();
+                    for obj_idx in self.collect_rhs_object_literals(start_idx) {
+                        let literal_type = self.get_type_of_node(obj_idx);
+                        self.check_object_literal_excess_properties(literal_type, target, obj_idx);
                     }
-                    // If we can't find an object literal, the solver's excess property
-                    // check may be from a non-literal fresh type (shouldn't happen in
-                    // typical code, but fallback to avoid silent suppression).
-                    return;
+                    if self.ctx.diagnostics.len() > diags_before {
+                        return;
+                    }
+                    if crate::query_boundaries::common::union_members(self.ctx.types, source)
+                        .is_none()
+                    {
+                        return;
+                    }
                 }
                 // Skip MissingProperty for computed symbol expressions (TS2339 emitted separately).
                 if let tsz_solver::SubtypeFailureReason::MissingProperty {
@@ -803,6 +815,8 @@ impl<'a> CheckerState<'a> {
                     diag.message_text = self
                         .rewrite_declared_generic_alias_source_in_ts2322_message(
                             anchor_idx,
+                            source,
+                            target,
                             diag.message_text,
                         );
                 }
@@ -1227,6 +1241,7 @@ impl<'a> CheckerState<'a> {
         if !source_from_annotation
             && let Some(display) = self.declared_generic_alias_source_display_for_target_display(
                 anchor_idx,
+                source,
                 &source_str,
                 &target_str,
             )
@@ -1283,17 +1298,20 @@ impl<'a> CheckerState<'a> {
                 .types
                 .get_display_properties(evaluated_source)
                 .is_some();
-
+        if let Some(display) = self.typeof_result_source_display(evaluated_source, target) {
+            return display.to_string();
+        }
         if source_has_display_props
             && self.target_is_normalized_object_literal_union(target)
             && display_has_boolean_member_literal_assignability(&source_display)
         {
             return source_display;
         }
-
         if self.is_literal_sensitive_assignment_target(target)
             || self.target_preserves_literal_surface(target)
-            || (source_display.contains("=>") && !target_is_constructor_like)
+            || ([source, evaluated_source].into_iter().any(|candidate| {
+                is_function_like_for_literal_member_widening(self.ctx.types, candidate)
+            }) && !target_is_constructor_like)
             || !Self::display_has_member_literals_assignability(&source_display)
         {
             return source_display;
@@ -1325,16 +1343,15 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_some();
         if !source_has_display_props && !source_is_array {
-            let has_direct_literal_prop = crate::query_boundaries::common::object_shape_for_type(
-                self.ctx.types,
-                evaluated_source,
-            )
-            .is_some_and(|shape| {
-                shape.properties.iter().any(|p| {
-                    crate::query_boundaries::common::is_literal_type(self.ctx.types, p.type_id)
-                })
-            });
-            if has_direct_literal_prop {
+            // A non-fresh source (no fresh-object-literal display provenance —
+            // e.g. produced by `as const`, a declared annotation, or a named
+            // type) carries canonical literal members that tsc preserves
+            // verbatim at every nesting depth. Only genuinely fresh object
+            // literals (which intern a widened canonical shape) are widened for
+            // non-literal targets. Detect a literal member at ANY depth, not
+            // just the top level, so nested const-asserted literals like
+            // `{ p: { q: 1 } }` are preserved instead of text-widened.
+            if self.source_carries_canonical_literal_member(evaluated_source) {
                 return source_display;
             }
         }
@@ -1366,19 +1383,67 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Returns `true` when `ty` (a non-fresh source type) contains a literal-typed
+    /// member at any nesting depth: a property of an object, an array element, a
+    /// tuple element, or a union member, recursively. Used to decide whether a
+    /// source whose canonical shape is authoritative (no fresh-object-literal
+    /// display provenance) should be displayed verbatim instead of text-widened.
+    pub(super) fn source_carries_canonical_literal_member(&self, ty: TypeId) -> bool {
+        let mut visiting = rustc_hash::FxHashSet::default();
+        self.source_carries_canonical_literal_member_inner(ty, &mut visiting, 0)
+    }
+
+    fn source_carries_canonical_literal_member_inner(
+        &self,
+        ty: TypeId,
+        visiting: &mut rustc_hash::FxHashSet<TypeId>,
+        depth: usize,
+    ) -> bool {
+        const MAX_DEPTH: usize = 8;
+        if depth > MAX_DEPTH || !visiting.insert(ty) {
+            return false;
+        }
+        let db = self.ctx.types;
+        let recurse = |child: TypeId, visiting: &mut rustc_hash::FxHashSet<TypeId>| -> bool {
+            crate::query_boundaries::common::is_literal_type(db, child)
+                || self.source_carries_canonical_literal_member_inner(child, visiting, depth + 1)
+        };
+
+        if let Some(shape) = crate::query_boundaries::common::object_shape_for_type(db, ty) {
+            return shape
+                .properties
+                .iter()
+                .any(|p| recurse(p.type_id, visiting));
+        }
+        if let Some(elem) = crate::query_boundaries::common::array_element_type(db, ty) {
+            return recurse(elem, visiting);
+        }
+        if let Some(elements) = crate::query_boundaries::common::tuple_elements(db, ty) {
+            return elements.iter().any(|e| recurse(e.type_id, visiting));
+        }
+        if let Some(members) = crate::query_boundaries::common::union_members(db, ty) {
+            return members.iter().any(|&m| recurse(m, visiting));
+        }
+        false
+    }
+
     pub(super) fn rewrite_target_display_for_non_literal_assignability(
         &mut self,
         target: TypeId,
         target_display: String,
     ) -> String {
-        // Callable types use syntax like `{ (x: "foo"): number; }` which has `: "` pattern
-        // but these are parameter literals that should be preserved, not object property
-        // literals that should be widened. Skip rewriting for callable types.
-        let is_callable_type =
-            crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, target)
-                .is_some();
-        if target_display.contains("=>")
-            || is_callable_type
+        // Conditional types separate the false branch with `:` (`C extends E ? X : Y`),
+        // which the text-based member-literal widener mistakes for an object member and
+        // widens (`... : 2` → `... : number`, `... : "no"` → `... : string`). tsc renders
+        // deferred conditional branches verbatim, so never text-widen a conditional target.
+        if crate::query_boundaries::common::is_conditional_type(self.ctx.types, target) {
+            return target_display;
+        }
+        let evaluated = self.evaluate_type_for_assignability(target);
+        let target_is_function_like = [target, evaluated].into_iter().any(|candidate| {
+            is_function_like_for_literal_member_widening(self.ctx.types, candidate)
+        });
+        if target_is_function_like
             || !Self::display_has_member_literals_assignability(&target_display)
         {
             return target_display;
@@ -1388,7 +1453,6 @@ impl<'a> CheckerState<'a> {
         if Self::type_displays_as_application(self.ctx.types, target) {
             return target_display;
         }
-        let evaluated = self.evaluate_type_for_assignability(target);
         let widened = crate::query_boundaries::common::widen_type(self.ctx.types, evaluated);
         let widened = self.widen_function_like_display_type(widened);
         let widened_display = self
@@ -1820,7 +1884,7 @@ impl<'a> CheckerState<'a> {
                 tgt_str = self.format_type_diagnostic(unfolded);
             }
             if let Some(display) = self.declared_generic_alias_source_display_for_target_display(
-                anchor_idx, &src_str, &tgt_str,
+                anchor_idx, source, &src_str, &tgt_str,
             ) {
                 src_str = display;
             }

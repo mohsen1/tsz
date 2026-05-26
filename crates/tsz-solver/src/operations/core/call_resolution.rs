@@ -1848,16 +1848,8 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         // If we got here, no signature matched.
-        // Use the last overload signature's return type as the fallback (matching
-        // tsc behavior). tsc uses the last declaration's return type for error
-        // recovery, allowing downstream code to see the expected shape. For
-        // example, `[].concat(...)` on `never[]` should still produce `never[]`,
-        // not `never`, so that chained `.map()` resolves correctly.
-        let fallback_return = callable
-            .call_signatures
-            .last()
-            .map(|s| s.return_type)
-            .unwrap_or(TypeId::NEVER);
+        let fallback_return =
+            overload_failure_return_type(self.interner, &callable.call_signatures);
         CallResult::NoOverloadMatch {
             func_type: self.interner.callable(callable.clone()),
             arg_types: arg_types.to_vec(),
@@ -1865,6 +1857,34 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             fallback_return,
         }
     }
+}
+
+/// Compute the result type of a call expression that matched no overload
+/// signature, mirroring tsc's `createUnionOfSignaturesForOverloadFailure`:
+/// `getIntersectionType(candidates.map(getReturnTypeOfSignature))`.
+///
+/// The intersection makes disjoint primitive returns (`string` & `number`)
+/// collapse to `never` — assignable to any annotation, so it suppresses
+/// downstream cascades after the TS2769 already reported — while compatible
+/// object returns merge (`{ a }` & `{ b }`) so member access still resolves and
+/// uniform returns survive intact for chained access.
+///
+/// Generic overloads need per-candidate instantiation for an accurate recovery
+/// type; intersecting their un-instantiated return types (still carrying free
+/// type parameters) would mislead, so those keep the simpler last-signature
+/// recovery type.
+pub fn overload_failure_return_type(
+    db: &dyn QueryDatabase,
+    signatures: &[CallSignature],
+) -> TypeId {
+    let Some(last) = signatures.last() else {
+        return TypeId::NEVER;
+    };
+    if signatures.iter().any(|sig| !sig.type_params.is_empty()) {
+        return last.return_type;
+    }
+    db.factory()
+        .intersection(signatures.iter().map(|sig| sig.return_type).collect())
 }
 
 pub fn infer_call_signature<C: AssignabilityChecker>(

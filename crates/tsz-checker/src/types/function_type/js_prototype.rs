@@ -216,8 +216,6 @@ impl<'a> CheckerState<'a> {
             })?;
         let mut properties = rustc_hash::FxHashMap::default();
         self.collect_js_constructor_this_properties(body_idx, &mut properties, None, false);
-        let constructor_property_names: rustc_hash::FxHashSet<_> =
-            properties.keys().copied().collect();
         if let Some((func_name, sym_id)) = self.js_constructor_function_name_and_symbol(func_idx) {
             let PrototypeMembers {
                 method_bindings,
@@ -231,21 +229,25 @@ impl<'a> CheckerState<'a> {
             for (name, prop) in method_bindings {
                 properties.entry(name).or_insert(prop);
             }
-            for (name, mut prop) in this_props {
-                let factory = self.ctx.types.factory();
-                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
-                if let Some(existing) = properties.get_mut(&name) {
-                    if existing.write_type == TypeId::ANY {
-                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
-                    } else if !constructor_property_names.contains(&name) {
-                        let merged = factory.union2(existing.type_id, widened_prop_type);
-                        existing.type_id = merged;
-                        existing.write_type = merged;
+            if !this_props.is_empty() {
+                let constructor_property_names: rustc_hash::FxHashSet<_> =
+                    properties.keys().copied().collect();
+                for (name, mut prop) in this_props {
+                    let factory = self.ctx.types.factory();
+                    let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
+                    if let Some(existing) = properties.get_mut(&name) {
+                        if existing.write_type == TypeId::ANY {
+                            existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                        } else if !constructor_property_names.contains(&name) {
+                            let merged = factory.union2(existing.type_id, widened_prop_type);
+                            existing.type_id = merged;
+                            existing.write_type = merged;
+                        }
+                    } else {
+                        prop.type_id = widened_prop_type;
+                        prop.write_type = prop.type_id;
+                        properties.insert(name, prop);
                     }
-                } else {
-                    prop.type_id = widened_prop_type;
-                    prop.write_type = prop.type_id;
-                    properties.insert(name, prop);
                 }
             }
         }

@@ -876,6 +876,40 @@ export const y = value;
 }
 
 #[test]
+fn amd_known_declaration_bang_module_ignores_non_import_text() {
+    let declarations = r#"declare module "loader!module" {
+    export const value: number;
+}
+"#;
+    let source = r#"/// <reference path="types.d.ts"/>
+
+export const msg = "loader!module";
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut declaration_file = parser.arena.source_files[0].clone();
+    declaration_file.file_name = "types.d.ts".to_string();
+    declaration_file.text = std::sync::Arc::from(declarations);
+    declaration_file.is_declaration_file = true;
+    parser.arena.source_files.push(declaration_file);
+
+    let output = lower_and_print(
+        &parser.arena,
+        root,
+        PrintOptions {
+            module: ModuleKind::AMD,
+            ..Default::default()
+        },
+    )
+    .code;
+
+    assert!(
+        !output.contains("/// <reference"),
+        "Known .d.ts files should not be preserved just because ordinary source text mentions their bang module.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_missing_declaration_fallback_ignores_exported_string_with_bang() {
     let source = r#"/// <reference path="missing.d.ts"/>
 export const msg = "Hello!";
@@ -2222,10 +2256,56 @@ fn invalid_namespace_static_var_and_function_modifiers_are_preserved() {
 }
 
 #[test]
+fn invalid_namespace_static_class_enum_and_namespace_modifiers_are_preserved() {
+    let source = r#"namespace N {
+    public class PublicClass { }
+    private class PrivateClass { }
+    static class StaticClass { }
+    static namespace Inner { export var value = 1; }
+    static enum Color { Red }
+}"#;
+    let output = parse_lower_print(
+        source,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("class PublicClass"),
+        "Invalid public modifier on namespace class should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("class PrivateClass"),
+        "Invalid private modifier on namespace class should be erased.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("public class") && !output.contains("private class"),
+        "Access modifiers on namespace classes must not survive JS emit.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static class StaticClass"),
+        "Invalid static modifier on namespace class should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static let Inner;"),
+        "Invalid static modifier on nested namespace binding should be preserved.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static let Color;"),
+        "Invalid static modifier on namespace enum binding should be preserved.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn invalid_namespace_static_modifiers_are_erased_for_es5() {
     let source = r#"namespace N {
     static var staticValue: number = 1;
     static function staticFn(x: string) { }
+    static class StaticClass { }
+    static namespace Inner { export var value = 1; }
+    static enum Color { Red }
 }"#;
     let output = parse_lower_print(source, PrintOptions::es5());
 
@@ -2238,7 +2318,15 @@ fn invalid_namespace_static_modifiers_are_erased_for_es5() {
         "ES5 namespace function recovery should erase invalid static.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("static var") && !output.contains("static function"),
+        output.contains("var Inner;"),
+        "ES5 namespace recovery should still emit the nested namespace binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var Color;"),
+        "ES5 namespace recovery should still emit the enum binding.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("static "),
         "ES5 namespace output must not preserve invalid static modifiers.\nOutput:\n{output}"
     );
 }

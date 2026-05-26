@@ -3,15 +3,18 @@ use tsz_parser::parser::{NodeArena, NodeIndex};
 use tsz_solver::TypeId;
 use tsz_solver::computation::TypeResolver;
 
+use crate::query_boundaries::application_keyof as query;
+
 impl<'a> CheckerState<'a> {
     pub(crate) fn application_info_or_display_alias(
         &self,
         type_id: TypeId,
     ) -> Option<(TypeId, Vec<TypeId>)> {
-        crate::query_boundaries::common::application_info(self.ctx.types, type_id).or_else(|| {
-            self.ctx.types.get_display_alias(type_id).and_then(|alias| {
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            })
+        query::application_info(self.ctx.types, type_id).or_else(|| {
+            self.ctx
+                .types
+                .get_display_alias(type_id)
+                .and_then(|alias| query::application_info(self.ctx.types, alias))
         })
     }
 
@@ -22,10 +25,8 @@ impl<'a> CheckerState<'a> {
         self.ctx
             .types
             .get_display_alias(type_id)
-            .and_then(|alias| {
-                crate::query_boundaries::common::application_info(self.ctx.types, alias)
-            })
-            .or_else(|| crate::query_boundaries::common::application_info(self.ctx.types, type_id))
+            .and_then(|alias| query::application_info(self.ctx.types, alias))
+            .or_else(|| query::application_info(self.ctx.types, type_id))
     }
 
     fn is_promise_like_application_pair(&mut self, source: TypeId, target: TypeId) -> bool {
@@ -57,9 +58,7 @@ impl<'a> CheckerState<'a> {
             "then",
         )
         .success_type()
-        .and_then(|then_type| {
-            crate::query_boundaries::common::call_signatures_for_type(self.ctx.types, then_type)
-        })
+        .and_then(|then_type| query::call_signatures_for_type(self.ctx.types, then_type))
         .is_some_and(|signatures| !signatures.is_empty())
     }
 
@@ -112,7 +111,7 @@ impl<'a> CheckerState<'a> {
         };
         self.ctx
             .resolve_type_to_symbol_id(type_id)
-            .or_else(|| crate::query_boundaries::common::object_symbol(self.ctx.types, type_id))
+            .or_else(|| query::object_symbol(self.ctx.types, type_id))
             == Some(base_sym)
     }
 
@@ -121,10 +120,9 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) =
-            self.application_info_or_display_alias(source).zip(
-                crate::query_boundaries::common::application_info(self.ctx.types, target),
-            )
+        let Some(((source_base, source_args), (target_base, target_args))) = self
+            .application_info_or_display_alias(source)
+            .zip(query::application_info(self.ctx.types, target))
         else {
             return false;
         };
@@ -137,7 +135,7 @@ impl<'a> CheckerState<'a> {
             && target_args.iter().any(|&arg| arg != TypeId::NEVER)
             && target_args.iter().all(|&arg| {
                 matches!(arg, TypeId::UNKNOWN | TypeId::NEVER)
-                    || crate::query_boundaries::common::is_type_parameter_like(self.ctx.types, arg)
+                    || query::is_type_parameter_like(self.ctx.types, arg)
             })
             && self.is_promise_like_application_pair(source, target)
     }
@@ -175,10 +173,9 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> bool {
-        let Some(((source_base, source_args), (target_base, target_args))) =
-            self.application_info_or_display_alias(source).zip(
-                crate::query_boundaries::common::application_info(self.ctx.types, target),
-            )
+        let Some(((source_base, source_args), (target_base, target_args))) = self
+            .application_info_or_display_alias(source)
+            .zip(query::application_info(self.ctx.types, target))
         else {
             return false;
         };
@@ -186,7 +183,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let def_id = crate::query_boundaries::common::lazy_def_id(self.ctx.types, source_base);
+        let def_id = query::lazy_def_id(self.ctx.types, source_base);
         let variances = def_id.and_then(|d| {
             if let Some(cached) =
                 tsz_solver::construction::QueryDatabase::get_type_param_variance(self.ctx.types, d)
@@ -224,25 +221,17 @@ impl<'a> CheckerState<'a> {
                 {
                     return false;
                 }
-                crate::query_boundaries::common::type_param_info(self.ctx.types, target_arg)
+                query::type_param_info(self.ctx.types, target_arg)
                     .and_then(|param| param.constraint)
                     .is_some_and(|constraint| {
                         constraint == source_arg
                             || (self.is_assignable_to(source_arg, constraint)
                                 && self.is_assignable_to(constraint, source_arg))
-                            || crate::query_boundaries::common::type_param_info(
-                                self.ctx.types,
-                                constraint,
-                            )
-                            .zip(crate::query_boundaries::common::type_param_info(
-                                self.ctx.types,
-                                source_arg,
-                            ))
-                            .is_some_and(
-                                |(constraint_param, source_param)| {
+                            || query::type_param_info(self.ctx.types, constraint)
+                                .zip(query::type_param_info(self.ctx.types, source_arg))
+                                .is_some_and(|(constraint_param, source_param)| {
                                     constraint_param.name == source_param.name
-                                },
-                            )
+                                })
                     })
             })
     }
@@ -254,23 +243,19 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         use tsz_parser::parser::syntax_kind_ext::{INTERFACE_DECLARATION, PROPERTY_SIGNATURE};
 
-        let Some(source_members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, source)
-        else {
+        let Some(source_members) = query::union_members(self.ctx.types, source) else {
             return false;
         };
 
-        let target_keyof_inner =
-            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, target);
+        let target_keyof_inner = query::keyof_inner_type(self.ctx.types, target);
         let source_keyof_inner = source_members.iter().find_map(|&member| {
-            crate::query_boundaries::common::keyof_inner_type(self.ctx.types, member)
+            query::keyof_inner_type(self.ctx.types, member)
                 .filter(|_| member == target || self.ctx.types.is_assignable_to(member, target))
         });
         let Some(inner) = target_keyof_inner.or(source_keyof_inner) else {
             return false;
         };
-        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, inner)
-        else {
+        let Some(def_id) = query::lazy_def_id(self.ctx.types, inner) else {
             return false;
         };
         let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
@@ -336,19 +321,12 @@ impl<'a> CheckerState<'a> {
                 &self.ctx,
                 target,
             );
-        if let Some(atom) = crate::query_boundaries::common::string_literal_value(
-            self.ctx.types,
-            resolved_target_keyof,
-        ) {
+        if let Some(atom) = query::string_literal_value(self.ctx.types, resolved_target_keyof) {
             augmented_keys.insert(atom);
         }
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, resolved_target_keyof)
-        {
+        if let Some(members) = query::union_members(self.ctx.types, resolved_target_keyof) {
             for member in members {
-                if let Some(atom) =
-                    crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
-                {
+                if let Some(atom) = query::string_literal_value(self.ctx.types, member) {
                     augmented_keys.insert(atom);
                 }
             }
@@ -362,21 +340,14 @@ impl<'a> CheckerState<'a> {
                     member,
                 );
             self.ctx.types.is_assignable_to(member, target)
-                || crate::query_boundaries::common::keyof_inner_type(self.ctx.types, member)
-                    .and_then(|member_inner| {
-                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, member_inner)
-                    })
+                || query::keyof_inner_type(self.ctx.types, member)
+                    .and_then(|member_inner| query::lazy_def_id(self.ctx.types, member_inner))
                     .is_some_and(|member_def_id| member_def_id == def_id)
                 || (evaluated_member != member
-                    && crate::query_boundaries::common::keyof_inner_type(
-                        self.ctx.types,
-                        evaluated_member,
-                    )
-                    .and_then(|member_inner| {
-                        crate::query_boundaries::common::lazy_def_id(self.ctx.types, member_inner)
-                    })
-                    .is_some_and(|member_def_id| member_def_id == def_id))
-                || crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
+                    && query::keyof_inner_type(self.ctx.types, evaluated_member)
+                        .and_then(|member_inner| query::lazy_def_id(self.ctx.types, member_inner))
+                        .is_some_and(|member_def_id| member_def_id == def_id))
+                || query::string_literal_value(self.ctx.types, member)
                     .is_some_and(|atom| augmented_keys.contains(&atom))
         })
     }

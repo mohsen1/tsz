@@ -60,6 +60,7 @@ pub fn transform_enum_to_ir(arena: &NodeArena, enum_idx: NodeIndex) -> Option<IR
         name: name.into(),
         members,
         namespace_export: None,
+        invalid_namespace_static: false,
     })
 }
 

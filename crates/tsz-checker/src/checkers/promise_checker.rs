@@ -643,7 +643,7 @@ impl<'a> CheckerState<'a> {
         for sig in &sigs {
             if let Some(expected_this) = sig.this_type
                 && expected_this != TypeId::VOID
-                && !self.is_assignable_to(type_id, expected_this)
+                && !self.diagnostic_relation_boolean_guard(type_id, expected_this)
             {
                 rejected_this_type.get_or_insert(expected_this);
                 continue;

@@ -324,4 +324,133 @@ mod binding_contextual_type_tests {
             "Nested destructured optional `inner` should propagate `| undefined`: {codes:?}"
         );
     }
+
+    // ---------------------------------------------------------------------
+    // Array-destructuring defaults preserve fresh-literal element types
+    // under `const`, matching tsc. Rule: a `const` array binding element with
+    // a default whose literal kind matches the fresh array-literal source
+    // element keeps both literals (`const [first = 0] = [10, 20]` → `0 | 10`);
+    // `let`/`var`/parameters widen; mismatched primitive kinds widen the
+    // source but keep the (const) default literal. The target annotations
+    // below distinguish `0 | 10` from `number` purely via assignability codes.
+    // ---------------------------------------------------------------------
+
+    /// Reported repro: `const [first = 0] = [10, 20]` infers `0 | 10`, so
+    /// assigning to `0 | 10` is fine but assigning to `null` is not.
+    #[test]
+    fn const_array_default_preserves_literal_element() {
+        let codes = check_source_codes("const [first = 0] = [10, 20]; const ok: 0 | 10 = first;");
+        assert!(
+            !codes.contains(&2322),
+            "first should be `0 | 10`, assignable to `0 | 10`: {codes:?}"
+        );
+        let codes = check_source_codes("const [first = 0] = [10, 20]; const bad: 0 = first;");
+        assert!(
+            codes.contains(&2322),
+            "first is `0 | 10`, not assignable to `0`: {codes:?}"
+        );
+    }
+
+    /// Same rule with a renamed binder — the fix is keyed on structure, not on
+    /// the identifier spelling (CLAUDE.md §25 anti-hardcoding checklist).
+    #[test]
+    fn const_array_default_preserves_literal_element_renamed_binder() {
+        let codes =
+            check_source_codes("const [renamed = 0] = [10, 20]; const ok: 0 | 10 = renamed;");
+        assert!(
+            !codes.contains(&2322),
+            "renamed should be `0 | 10`: {codes:?}"
+        );
+    }
+
+    /// `let` (and `var`) widen the inferred type to the primitive, so the
+    /// literal target no longer accepts it.
+    #[test]
+    fn let_array_default_widens_to_primitive() {
+        let codes = check_source_codes("let [first = 0] = [10, 20]; const x: 0 | 10 = first;");
+        assert!(
+            codes.contains(&2322),
+            "let binding widens to `number`, not assignable to `0 | 10`: {codes:?}"
+        );
+    }
+
+    /// String-literal defaults preserve string-literal source elements.
+    #[test]
+    fn const_array_string_default_preserves_literal_element() {
+        let codes =
+            check_source_codes("const [a = \"d\"] = [\"s\", \"t\"]; const ok: \"s\" | \"d\" = a;");
+        assert!(
+            !codes.contains(&2322),
+            "a should be `\"s\" | \"d\"`: {codes:?}"
+        );
+    }
+
+    /// Mismatched primitive kinds: the source string literal widens to
+    /// `string`, but the `const` default `0` is preserved, giving `string | 0`.
+    #[test]
+    fn const_array_default_widens_mismatched_source_but_keeps_default_literal() {
+        // `string | 0` is the inferred type: assignable to `string | 0`.
+        let codes = check_source_codes("const [a = 0] = [\"s\"]; const ok: string | 0 = a;");
+        assert!(
+            !codes.contains(&2322),
+            "a should be `string | 0`: {codes:?}"
+        );
+        // The `0` member proves the default literal was preserved (not widened
+        // to `number`): assigning to bare `string` must still fail.
+        let codes = check_source_codes("const [a = 0] = [\"s\"]; const bad: string = a;");
+        assert!(
+            codes.contains(&2322),
+            "a is `string | 0`, the literal `0` is not assignable to `string`: {codes:?}"
+        );
+    }
+
+    /// Boundary: when the source is an already-widened `number[]` variable (not
+    /// a fresh array literal), the element widens to `number` in both tsc/tsz.
+    #[test]
+    fn array_default_from_widened_source_stays_primitive() {
+        let codes =
+            check_source_codes("const arr = [1, 2, 3]; const [a = 0] = arr; const x: 0 | 10 = a;");
+        assert!(
+            codes.contains(&2322),
+            "destructuring a `number[]` variable yields `number`: {codes:?}"
+        );
+    }
+
+    /// Control: without a default, the fresh array literal element widens to
+    /// the primitive (`const [first] = [10, 20]` → `number`).
+    #[test]
+    fn const_array_no_default_widens_element() {
+        let codes = check_source_codes("const [first] = [10, 20]; const x: 10 = first;");
+        assert!(
+            codes.contains(&2322),
+            "without a default the element widens to `number`: {codes:?}"
+        );
+    }
+
+    /// Nested array destructuring inherits const-ness, so the inner element is
+    /// also preserved (`const [[a = 0]] = [[10]]` → `0 | 10`).
+    #[test]
+    fn const_nested_array_default_preserves_literal_element() {
+        let codes = check_source_codes("const [[a = 0]] = [[10]]; const ok: 0 | 10 = a;");
+        assert!(
+            !codes.contains(&2322),
+            "nested const destructuring preserves `0 | 10`: {codes:?}"
+        );
+    }
+
+    /// Per-element: only the defaulted position preserves its literal; the
+    /// non-defaulted sibling widens (`const [a, b = 0] = [10, 20]` → a:
+    /// `number`, b: `0 | 20`).
+    #[test]
+    fn const_array_default_is_per_element() {
+        // b has a default and preserves `0 | 20`.
+        let codes = check_source_codes("const [a, b = 0] = [10, 20]; const ok: 0 | 20 = b;");
+        assert!(!codes.contains(&2322), "b should be `0 | 20`: {codes:?}");
+        // a has no default and widens to `number`.
+        let codes = check_source_codes("const [a, b = 0] = [10, 20]; const bad: 10 = a;");
+        assert!(
+            codes.contains(&2322),
+            "a has no default and widens to `number`: {codes:?}"
+        );
+    }
 }

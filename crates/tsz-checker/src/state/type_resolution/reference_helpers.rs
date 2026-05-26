@@ -148,6 +148,15 @@ impl<'a> CheckerState<'a> {
                         self.error_namespace_used_as_type_at(name, type_name_idx);
                         return TypeId::ERROR;
                     }
+                    // A type alias that circularly references itself collapsed to
+                    // a non-generic error type. A bare reference (no type args)
+                    // resolves to that error type with no arity diagnostic; the
+                    // TS2315 "not generic" for argument-bearing references is
+                    // emitted by the type-reference validation path. This avoids
+                    // a spurious TS2314 for the self-reference's missing args.
+                    if self.type_reference_alias_collapsed_to_error(sym_id) {
+                        return TypeId::ERROR;
+                    }
                     let type_params = self.get_reference_type_params_for_symbol(sym_id, name);
                     if !type_params.is_empty() {
                         self.ctx
@@ -658,6 +667,7 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let mut params = Vec::with_capacity(names.len());
+        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
         for (name, is_const, default_str) in names {
             if name.is_empty() {
                 continue;
@@ -665,9 +675,12 @@ impl<'a> CheckerState<'a> {
             let default = default_str
                 .as_deref()
                 .and_then(|s| self.resolve_jsdoc_reference(s));
+            let constraint = constraint_strs
+                .get(&name)
+                .and_then(|s| self.resolve_jsdoc_reference(s));
             params.push(tsz_solver::TypeParamInfo {
                 name: self.ctx.types.intern_string(&name),
-                constraint: None,
+                constraint,
                 default,
                 is_const,
             });
