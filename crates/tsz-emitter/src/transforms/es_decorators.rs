@@ -1571,8 +1571,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         } else {
                             format!("{run_init}({class_this_var}, {init_var}{init_arg})")
                         };
+                        let comment = self.leading_member_comment(member_idx);
                         out.push_str(&format!(
-                            "{indent}static {{\n{inner_indent}{} = {{ value: {value} }};\n{indent}}}\n",
+                            "{indent}static {{\n{}{inner_indent}{} = {{ value: {value} }};\n{indent}}}\n",
+                            comment
+                                .map(|comment| format!("{inner_indent}{comment}\n"))
+                                .unwrap_or_default(),
                             info.storage_name
                         ));
                     }
@@ -1596,32 +1600,33 @@ impl<'a> TC39DecoratorEmitter<'a> {
             } else {
                 class_close
             };
-            let member_text = if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
-            {
-                let text = self
-                    .static_block_texts
-                    .get(&member_idx)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
-                    });
-                self.rewrite_class_decorator_static_private_accesses(
-                    &text,
-                    class_decorator_static_private_methods,
-                    class_decorator_auto_accessor_infos,
-                    class_decorator_static_private_fields,
-                    class_this_var,
-                )
-            } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                self.static_member_texts
-                    .get(&member_idx)
-                    .cloned()
-                    .unwrap_or_else(|| {
-                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
-                    })
-            } else {
-                self.emit_member_bounded(member_node, next_boundary.min(class_close))
-            };
+            let raw_member_text =
+                if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                    let text = self
+                        .static_block_texts
+                        .get(&member_idx)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                        });
+                    self.rewrite_class_decorator_static_private_accesses(
+                        &text,
+                        class_decorator_static_private_methods,
+                        class_decorator_auto_accessor_infos,
+                        class_decorator_static_private_fields,
+                        class_this_var,
+                    )
+                } else if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    self.static_member_texts
+                        .get(&member_idx)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                        })
+                } else {
+                    self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                };
+            let member_text = self.member_text_with_leading_comment(member_idx, &raw_member_text);
 
             let is_decorated_field = decorated_field_idx_set.contains(&member_idx)
                 && (fields_in_class_body
@@ -1763,6 +1768,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         )
                     };
 
+                    self.push_leading_member_comment(member_idx, indent, out);
                     if decorated_static_fields_emit_in_source_order && is_static {
                         let lhs = if fi.is_bracket_access {
                             format!("{init_receiver}[{}]", fi.access_expr)
@@ -1899,12 +1905,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         "({run_init}({_class_alias}, {prev_extra}), {run_init}({_class_alias}, {init_var}{init_arg}))"
                     )
                 };
-                let mut assignment = String::new();
-                if let Some(comment) = self.leading_member_comments(member.member_idx, indent) {
-                    assignment.push_str(&comment);
-                    assignment.push('\n');
-                    assignment.push_str(indent);
-                }
+                let post_indent = indent.strip_prefix("    ").unwrap_or(indent);
+                let mut assignment = self
+                    .leading_member_comment_block(member.member_idx, post_indent)
+                    .unwrap_or_default();
                 assignment.push_str(&format!("{storage_name} = {{ value: {value} }}"));
                 post_iife_assignments.push(assignment);
             }
@@ -2064,7 +2068,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                                 })
                                 .unwrap_or(""),
                         );
-                        post_iife_assignments.push(format!("{storage_name} = {{ value: {rhs} }}"));
+                        let post_indent = indent.strip_prefix("    ").unwrap_or(indent);
+                        let mut assignment = self
+                            .leading_member_comment_block(member.member_idx, post_indent)
+                            .unwrap_or_default();
+                        assignment.push_str(&format!("{storage_name} = {{ value: {rhs} }}"));
+                        post_iife_assignments.push(assignment);
                         continue;
                     }
                     if self.use_define_for_class_fields {
@@ -2329,30 +2338,37 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     )
                 };
 
+                let member = &decorated_members[fi.member_var_index];
+                let mut assignment = String::new();
+                if let Some(comment) = self.leading_member_comment(member.member_idx) {
+                    assignment.push_str(inner_indent);
+                    assignment.push_str(&comment);
+                    assignment.push('\n');
+                }
                 if self.use_define_for_class_fields && !self.use_static_blocks {
                     let key_expr = if fi.is_bracket_access {
                         fi.access_expr.clone()
                     } else {
                         format!("\"{}\"", fi.access_expr)
                     };
-                    ctor_init_calls.push(format!(
+                    assignment.push_str(&format!(
                         "{inner_indent}Object.defineProperty(this, {key_expr}, {{\n{inner_indent}    enumerable: true,\n{inner_indent}    configurable: true,\n{inner_indent}    writable: true,\n{inner_indent}    value: {rhs}\n{inner_indent}}});\n"
                     ));
                 } else {
-                    let member = &decorated_members[fi.member_var_index];
                     if !self.use_static_blocks && member.is_private {
                         let storage_name = self.private_field_storage_name(class_name, member);
-                        ctor_init_calls
-                            .push(format!("{inner_indent}{storage_name}.set(this, {rhs});\n"));
+                        assignment
+                            .push_str(&format!("{inner_indent}{storage_name}.set(this, {rhs});\n"));
                     } else {
                         let lhs = if fi.is_bracket_access {
                             format!("this[{}]", fi.access_expr)
                         } else {
                             format!("this.{}", fi.access_expr)
                         };
-                        ctor_init_calls.push(format!("{inner_indent}{lhs} = {rhs};\n"));
+                        assignment.push_str(&format!("{inner_indent}{lhs} = {rhs};\n"));
                     }
                 }
+                ctor_init_calls.push(assignment);
             }
             // Last instance field's extra-initializers
             if let Some(last_fi) = field_infos
@@ -2665,10 +2681,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 out.push_str(&format!("{indent}{storage_name};\n"));
             }
 
-            if let Some(comment) = self.leading_member_comments(member.member_idx, indent) {
-                out.push_str(&comment);
-                out.push('\n');
-            }
+            self.push_leading_member_comment(member.member_idx, indent, out);
 
             if member.is_private {
                 let descriptor_var = var_info.descriptor_var.as_deref().unwrap_or("_descriptor");
@@ -2704,10 +2717,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             return;
         }
 
-        if let Some(comment) = self.leading_member_comments(member.member_idx, indent) {
-            out.push_str(&comment);
-            out.push('\n');
-        }
+        self.push_leading_member_comment(member.member_idx, indent, out);
 
         let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
         let get_helper = self.helper("__classPrivateFieldGet");
@@ -3104,7 +3114,35 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
-    fn leading_member_comments(&self, member_idx: NodeIndex, indent: &str) -> Option<String> {
+    fn member_text_with_leading_comment(&self, member_idx: NodeIndex, member_text: &str) -> String {
+        let text = self.strip_trailing_standalone_comments(member_text);
+        let Some(comment) = self.leading_member_comment(member_idx) else {
+            return text;
+        };
+        if text.trim_start().starts_with(&comment) {
+            return text;
+        }
+        if text.is_empty() {
+            comment
+        } else {
+            format!("{comment}\n{text}")
+        }
+    }
+
+    fn leading_member_comment_block(&self, member_idx: NodeIndex, indent: &str) -> Option<String> {
+        self.leading_member_comment(member_idx)
+            .map(|comment| format!("{comment}\n{indent}"))
+    }
+
+    fn push_leading_member_comment(&self, member_idx: NodeIndex, indent: &str, out: &mut String) {
+        if let Some(comment) = self.leading_member_comment(member_idx) {
+            out.push_str(indent);
+            out.push_str(&comment);
+            out.push('\n');
+        }
+    }
+
+    fn leading_member_comment(&self, member_idx: NodeIndex) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         let source = self.source_text?;
         let start = member_node.pos as usize;
@@ -3129,24 +3167,46 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
         if !comments.is_empty() {
             comments.reverse();
-            return Some(comments.join(&format!("\n{indent}")));
+            return comments.into_iter().next();
         }
 
         let end = self.find_member_clean_start(member_node).min(source.len());
-        if start >= end {
-            return None;
+        if start < end {
+            return source[start..end]
+                .lines()
+                .map(str::trim)
+                .find(|line| is_comment_line(line))
+                .map(ToOwned::to_owned);
         }
 
-        let comments: Vec<String> = source[start..end]
-            .lines()
-            .map(str::trim)
-            .filter(|line| is_comment_line(line))
-            .map(ToOwned::to_owned)
-            .collect();
-        if comments.is_empty() {
-            None
+        None
+    }
+
+    fn strip_trailing_standalone_comments(&self, text: &str) -> String {
+        let mut lines: Vec<&str> = text.lines().collect();
+        while lines.last().is_some_and(|line| line.trim().is_empty()) {
+            lines.pop();
+        }
+        let mut stripped_comment = false;
+        while lines
+            .last()
+            .is_some_and(|line| is_comment_line(line.trim()))
+        {
+            stripped_comment = true;
+            lines.pop();
+            while lines.last().is_some_and(|line| line.trim().is_empty()) {
+                lines.pop();
+            }
+        }
+        if stripped_comment {
+            let stripped = lines.join("\n").trim_end().to_string();
+            if let Some(prefix) = stripped.strip_suffix("{}") {
+                format!("{prefix}{{ }}")
+            } else {
+                stripped
+            }
         } else {
-            Some(comments.join(&format!("\n{indent}")))
+            text.to_string()
         }
     }
 

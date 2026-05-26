@@ -315,6 +315,107 @@ class C {
 }
 
 #[test]
+fn tc39_transformed_decorated_members_preserve_outer_comments() {
+    let source = "\
+declare const dec: any;
+
+@dec
+class C {
+    /*method0*/
+    @dec
+    /*method1*/
+    method() {}
+
+    /*get0*/
+    @dec
+    /*get1*/
+    get value() { return 1; }
+
+    /*field0*/
+    @dec
+    /*field1*/
+    field = 1;
+
+    /*accessor0*/
+    @dec
+    /*accessor1*/
+    accessor z = 1;
+
+    /*static0*/
+    @dec
+    /*static1*/
+    static #s = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("/*method0*/\n        method() { }")
+            && output.contains("/*get0*/\n        get value() { return 1; }")
+            && output.contains("/*field0*/\n        field = (__runInitializers")
+            && output.contains("/*accessor0*/\n        get z()")
+            && output.contains("static {\n            /*static0*/\n            _C_s ="),
+        "Transformed TC39 member output should keep the outer source-leading member comments.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("/*method1*/")
+            && !output.contains("/*get1*/")
+            && !output.contains("/*field1*/")
+            && !output.contains("/*accessor1*/")
+            && !output.contains("/*static1*/"),
+        "Transformed TC39 member output should not promote comments between decorator lines.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn tc39_es2015_moved_decorated_fields_preserve_outer_comments() {
+    let source = "\
+declare const dec: any;
+
+@dec
+class C {
+    /*field0*/
+    @dec
+    /*field1*/
+    field = 1;
+
+    /*accessor0*/
+    @dec
+    /*accessor1*/
+    accessor z = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains(
+            "constructor() {\n            /*field0*/\n            this.field = __runInitializers"
+        ) && output.contains("/*accessor0*/\n        get z()"),
+        "Lower-target TC39 member replacement sites should keep source-leading comments for moved fields and accessors.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("/*field1*/") && !output.contains("/*accessor1*/"),
+        "Lower-target TC39 member replacement sites should not use comments between decorator lines.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;
