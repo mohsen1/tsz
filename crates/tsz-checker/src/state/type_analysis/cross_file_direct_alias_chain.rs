@@ -260,15 +260,6 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                 )
             }
-            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
-                Self::source_file_template_literal_type_is_generic_local_alias_application_lowerable(
-                    arena,
-                    binder,
-                    node,
-                    type_param_names,
-                    seen,
-                )
-            }
             _ => false,
         }
     }
@@ -471,15 +462,6 @@ impl<'a> CheckerState<'a> {
                     &[],
                 )
             }
-            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
-                Self::source_file_template_literal_type_is_generic_local_alias_application_lowerable(
-                    arena,
-                    binder,
-                    node,
-                    &[],
-                    seen,
-                )
-            }
             _ => false,
         }
     }
@@ -661,39 +643,6 @@ impl<'a> CheckerState<'a> {
                 seen,
             )
         })
-    }
-
-    fn source_file_template_literal_type_is_generic_local_alias_application_lowerable(
-        arena: &NodeArena,
-        binder: &BinderState,
-        node: &tsz_parser::parser::node::Node,
-        type_param_names: &[String],
-        seen: &mut AliasCycleTracker,
-    ) -> bool {
-        let Some(template) = arena.get_template_literal_type(node) else {
-            return false;
-        };
-
-        template
-            .template_spans
-            .nodes
-            .iter()
-            .copied()
-            .all(|span_idx| {
-                let Some(span_node) = arena.get(span_idx) else {
-                    return false;
-                };
-                let Some(span) = arena.get_template_span(span_node) else {
-                    return false;
-                };
-                Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
-                    arena,
-                    binder,
-                    span.expression,
-                    type_param_names,
-                    seen,
-                )
-            })
     }
 
     fn source_file_type_literal_properties_are_lowerable(

@@ -1218,28 +1218,6 @@ impl<'a> CheckerState<'a> {
                     )
                 })
             }
-            k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => arena
-                .get_template_literal_type(node)
-                .is_some_and(|template| {
-                    template
-                        .template_spans
-                        .nodes
-                        .iter()
-                        .copied()
-                        .all(|span_idx| {
-                            let Some(span_node) = arena.get(span_idx) else {
-                                return false;
-                            };
-                            let Some(span) = arena.get_template_span(span_node) else {
-                                return false;
-                            };
-                            Self::source_file_type_node_is_generic_scope_independent(
-                                arena,
-                                span.expression,
-                                type_param_names,
-                            )
-                        })
-                }),
             _ => false,
         }
     }
