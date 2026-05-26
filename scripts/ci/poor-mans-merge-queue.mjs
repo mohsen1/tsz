@@ -156,6 +156,27 @@ function runGhJson(args) {
   return JSON.parse(runGh(args));
 }
 
+function encodedQuery(params) {
+  return Object.entries(params)
+    .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+    .join("&");
+}
+
+function readPaginatedArray(path, { limit = Number.POSITIVE_INFINITY, perPage = 100 } = {}) {
+  const items = [];
+  for (let page = 1; items.length < limit; page += 1) {
+    const pageSize = Math.min(perPage, limit - items.length);
+    const separator = path.includes("?") ? "&" : "?";
+    const chunk = runGhJson(["api", `${path}${separator}per_page=${pageSize}&page=${page}`]);
+    if (!Array.isArray(chunk)) {
+      throw new Error(`expected GitHub API array from ${path}`);
+    }
+    items.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return items.slice(0, limit);
+}
+
 function git(args, options = {}) {
   return run("git", args, options);
 }
@@ -325,68 +346,67 @@ export function queueSkipReason(pr, requiredState, base) {
   return null;
 }
 
+export function normalizeRestPullRequest(pr, repository, statusCheckRollup = undefined) {
+  const baseRepository = pr.base?.repo?.full_name || repository;
+  const headRepository = pr.head?.repo?.full_name || "";
+  const normalized = {
+    autoMergeRequest: pr.auto_merge || null,
+    baseRefName: pr.base?.ref || "",
+    body: pr.body || "",
+    headRefName: pr.head?.ref || "",
+    headRefOid: pr.head?.sha || "",
+    isCrossRepository: Boolean(headRepository && baseRepository && headRepository !== baseRepository),
+    isDraft: Boolean(pr.draft),
+    labels: Array.isArray(pr.labels) ? pr.labels : [],
+    number: pr.number,
+    title: pr.title || "",
+    updatedAt: pr.updated_at || "",
+    url: pr.html_url || "",
+  };
+  if (statusCheckRollup !== undefined) {
+    normalized.statusCheckRollup = statusCheckRollup;
+  }
+  return normalized;
+}
+
 function readPullRequests(repository, base, maxPrs) {
-  return runGhJson([
-    "pr", "list",
-    "--repo", repository,
-    "--state", "open",
-    "--base", base,
-    "--limit", String(maxPrs),
-    "--json", [
-      "autoMergeRequest",
-      "baseRefName",
-      "body",
-      "headRefName",
-      "headRefOid",
-      "isCrossRepository",
-      "isDraft",
-      "labels",
-      "number",
-      "title",
-      "updatedAt",
-      "url",
-    ].join(","),
-  ]);
+  const query = encodedQuery({ state: "open", base });
+  return readPaginatedArray(`repos/${repository}/pulls?${query}`, { limit: maxPrs })
+    .map((pr) => normalizeRestPullRequest(pr, repository));
 }
 
 function readPullRequest(repository, number) {
-  return runGhJson([
-    "pr", "view", String(number),
-    "--repo", repository,
-    "--json", [
-      "autoMergeRequest",
-      "baseRefName",
-      "body",
-      "headRefName",
-      "headRefOid",
-      "isCrossRepository",
-      "isDraft",
-      "labels",
-      "number",
-      "statusCheckRollup",
-      "title",
-      "updatedAt",
-      "url",
-    ].join(","),
-  ]);
+  const pr = runGhJson(["api", `repos/${repository}/pulls/${number}`]);
+  const normalized = normalizeRestPullRequest(pr, repository);
+  return normalizeRestPullRequest(
+    pr,
+    repository,
+    normalized.headRefOid ? commitStatusRollup(repository, normalized.headRefOid) : [],
+  );
+}
+
+export function normalizeRestWorkflowRun(run) {
+  return {
+    databaseId: run.id,
+    status: run.status || "",
+    conclusion: run.conclusion || "",
+    headSha: run.head_sha || "",
+    url: run.html_url || "",
+    createdAt: run.created_at || "",
+    startedAt: run.run_started_at || run.created_at || "",
+    updatedAt: run.updated_at || "",
+  };
 }
 
 function readWorkflowRun(repository, runId) {
-  return runGhJson([
-    "run", "view", runId,
-    "--repo", repository,
-    "--json", "databaseId,status,conclusion,url,createdAt,startedAt,updatedAt",
-  ]);
+  return normalizeRestWorkflowRun(runGhJson(["api", `repos/${repository}/actions/runs/${runId}`]));
 }
 
 function readBranchWorkflowRuns(repository, branch) {
-  return runGhJson([
-    "run", "list",
-    "--repo", repository,
-    "--branch", branch,
-    "--limit", "20",
-    "--json", "databaseId,status,conclusion,headSha,url,createdAt,startedAt,updatedAt",
-  ]);
+  const query = encodedQuery({ branch });
+  const response = runGhJson(["api", `repos/${repository}/actions/runs?${query}&per_page=20`]);
+  const runs = Array.isArray(response.workflow_runs) ? response.workflow_runs : [];
+  return runs.map(normalizeRestWorkflowRun);
 }
 
 function readRemoteQueueBranches(options) {
@@ -433,11 +453,7 @@ function readPullRequestState(repository, number) {
 }
 
 function readPullRequestOwner(repository, number) {
-  const pr = runGhJson([
-    "pr", "view", String(number),
-    "--repo", repository,
-    "--json", "labels",
-  ]);
+  const pr = runGhJson(["api", `repos/${repository}/pulls/${number}`]);
   return agentLabel(pr.labels);
 }
 
@@ -862,13 +878,17 @@ function commitStatusRollup(repository, sha) {
   ]);
   return [
     ...(status.statuses || []).map((item) => ({
+      __typename: "StatusContext",
       context: item.context,
       state: item.state,
+      targetUrl: item.target_url || "",
     })),
     ...(checks.check_runs || []).map((item) => ({
+      __typename: "CheckRun",
       name: item.name,
       status: item.status,
       conclusion: item.conclusion,
+      detailsUrl: item.html_url || item.details_url || "",
     })),
   ];
 }
@@ -899,10 +919,10 @@ function waitForSyntheticChecks(repository, synthetic, options) {
 
 function mergePullRequest(repository, pr) {
   runGh([
-    "pr", "merge", String(pr.number),
-    "--repo", repository,
-    "--squash",
-    "--match-head-commit", pr.headRefOid,
+    "api", "-X", "PUT",
+    `repos/${repository}/pulls/${pr.number}/merge`,
+    "-f", `merge_method=squash`,
+    "-f", `sha=${pr.headRefOid}`,
   ]);
 }
 
