@@ -3,4 +3,5 @@ mod class_members;
 mod class_members_async_generator;
 mod core;
 mod namespace;
+mod namespace_body;
 mod namespace_runtime;

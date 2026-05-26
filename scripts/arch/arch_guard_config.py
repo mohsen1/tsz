@@ -47,7 +47,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/types/class_type/core.rs",
             "crates/tsz-checker/src/types/computation/binary.rs",
             "crates/tsz-checker/src/types/computation/call/inner.rs",
-            "crates/tsz-checker/src/types/computation/call_inference.rs",
             "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/function_type.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
@@ -309,9 +308,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down by 8 after rebasing on main removed additional direct
         # common references.
         #
-        # Refreshed #9852 on current main for contextual-wrapper excess-property
-        # diagnostics; this records the merged live count.
-        3440,
+        # Ratcheted down to the live merged Application-source refresh count
+        # after current main reduced the quarantine surface.
+        3338,
     ),
 ]
 
