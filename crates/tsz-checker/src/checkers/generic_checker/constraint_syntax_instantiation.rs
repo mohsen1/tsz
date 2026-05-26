@@ -9,16 +9,13 @@ use tsz_solver::{TypeId, TypeParamInfo};
 
 impl<'a> CheckerState<'a> {
     pub(super) fn type_arg_is_unknown_keyword(&self, type_arg_idx: NodeIndex) -> bool {
-        self.node_text(type_arg_idx)
-            .is_some_and(|text| text.trim() == "unknown")
+        self.ctx
+            .arena
+            .get(type_arg_idx)
+            .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
             || self
                 .type_arg_identifier_name(type_arg_idx)
                 .is_some_and(|name| name == "unknown")
-            || self
-                .ctx
-                .arena
-                .get(type_arg_idx)
-                .is_some_and(|node| node.kind == SyntaxKind::UnknownKeyword as u16)
     }
 
     pub(super) fn syntax_instantiated_type_arg_satisfies_constraint(
@@ -74,10 +71,13 @@ impl<'a> CheckerState<'a> {
             let db = self.ctx.types.as_type_database();
             return query::is_callable_type(db, syntax_instantiated_type_arg)
                 || query::callable_shape_for_type(db, syntax_instantiated_type_arg).is_some()
-                || self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint);
+                || self.diagnostic_relation_boolean_guard(
+                    syntax_instantiated_type_arg,
+                    inst_constraint,
+                );
         }
 
-        self.is_assignable_to(syntax_instantiated_type_arg, inst_constraint)
+        self.diagnostic_relation_boolean_guard(syntax_instantiated_type_arg, inst_constraint)
             || self.base_union_members_satisfy_constraint(
                 syntax_instantiated_type_arg,
                 inst_constraint,
@@ -224,5 +224,23 @@ impl<'a> CheckerState<'a> {
             &substitution,
         );
         (instantiated != type_arg).then_some(instantiated)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn unknown_type_arg_detection_does_not_read_source_text() {
+        let source = include_str!("constraint_syntax_instantiation.rs");
+        for forbidden in [
+            ["node_text", "(type_arg_idx)"].join(""),
+            ["text.trim()", " == ", "\"unknown\""].join(""),
+        ] {
+            assert!(
+                !source.contains(&forbidden),
+                "`unknown` type-argument detection must use syntax/name facts, \
+                 not source text: found {forbidden}"
+            );
+        }
     }
 }

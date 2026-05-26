@@ -229,6 +229,28 @@ let x: { a: number; b: string } = { a: 1 };
     );
 }
 
+#[test]
+fn ts2322_optional_parameter_annotation_uses_structural_undefined() {
+    let source = r#"
+type undefinedBox = { value: string };
+function f(value?: undefinedBox) {
+    const target: undefinedBox = value;
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2322 = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .unwrap_or_else(|| panic!("Expected TS2322, got: {diagnostics:?}"));
+    assert!(
+        ts2322
+            .message_text
+            .contains("Type 'undefinedBox | undefined' is not assignable to type 'undefinedBox'"),
+        "TS2322 should append optional-parameter undefined structurally, got: {:?}",
+        ts2322.message_text
+    );
+}
+
 // =========================================================================
 // TS2322 / private brand mismatch — migrated in assignability.rs
 // =========================================================================
@@ -555,6 +577,34 @@ const env: EnvFunction = () => simple;
         !ts2322.message_text.contains("string | Promise"),
         "TS2322 should not expand the alias body, got: {}",
         ts2322.message_text
+    );
+}
+
+#[test]
+fn ts2322_alias_rewrite_preserves_optional_parameter_undefined_surface() {
+    let source = r#"
+declare var f: (s: string, n?: number) => void;
+declare var g: (s: string, b?: boolean) => void;
+f = g;
+g = f;
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|d| d.code == 2322)
+        .map(|d| d.message_text.as_str())
+        .collect();
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '(s: string, b?: boolean | undefined) => void' is not assignable to type '(s: string, n?: number | undefined) => void'"
+        )),
+        "TS2322 should preserve optional source parameter `| undefined`, got: {messages:#?}"
+    );
+    assert!(
+        messages.iter().any(|message| message.contains(
+            "Type '(s: string, n?: number | undefined) => void' is not assignable to type '(s: string, b?: boolean | undefined) => void'"
+        )),
+        "TS2322 should preserve optional source parameter `| undefined`, got: {messages:#?}"
     );
 }
 

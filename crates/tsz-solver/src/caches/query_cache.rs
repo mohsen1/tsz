@@ -42,6 +42,42 @@ type PropertyAccessCacheKey = (TypeId, Atom, bool, bool);
 const SUBTYPE_POLICY_TRACE_OP: &str = "is_subtype_of_with_policy";
 const ASSIGNABILITY_POLICY_TRACE_OP: &str = "is_assignable_to_with_policy";
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachedPolicyRelation {
+    Subtype,
+    Assignability,
+}
+
+impl CachedPolicyRelation {
+    const fn trace_op(self) -> &'static str {
+        match self {
+            Self::Subtype => SUBTYPE_POLICY_TRACE_OP,
+            Self::Assignability => ASSIGNABILITY_POLICY_TRACE_OP,
+        }
+    }
+
+    const fn relation_kind(self) -> RelationKind {
+        match self {
+            Self::Subtype => RelationKind::Subtype,
+            Self::Assignability => RelationKind::Assignable,
+        }
+    }
+
+    const fn cache_key(
+        self,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> RelationCacheKey {
+        match self {
+            Self::Subtype => RelationCacheKey::for_subtype(source, target, policy.cache_config()),
+            Self::Assignability => {
+                RelationCacheKey::for_assignability(source, target, policy.cache_config())
+            }
+        }
+    }
+}
+
 /// Thread-safe shared query cache for cross-file type checking.
 ///
 /// In multi-file projects (e.g., ts-toolbelt with 242 files), each file checker
@@ -660,23 +696,161 @@ impl<'a> QueryCache<'a> {
         }
     }
 
-    /// Helper to check a relation cache.
-    fn check_cache(
-        &self,
-        cache: &RefCell<FxHashMap<RelationCacheKey, bool>>,
-        key: RelationCacheKey,
-    ) -> Option<bool> {
-        cache.borrow().get(&key).copied()
+    fn relation_fast_path(&self, source: TypeId, target: TypeId) -> Option<bool> {
+        // Fast identity/top/bottom paths avoid cache key construction,
+        // RefCell borrowing, and relation engine allocation entirely.
+        if source == target
+            || target == TypeId::UNKNOWN
+            || source == TypeId::NEVER
+            || source == TypeId::ERROR
+            || target == TypeId::ERROR
+            || is_error_type(self.as_type_database(), source)
+            || is_error_type(self.as_type_database(), target)
+        {
+            return Some(true);
+        }
+        if target == TypeId::NEVER {
+            return Some(false);
+        }
+        // `any` is related to everything except `never`, which is already
+        // handled above. This preserves the previous query-cache shortcut.
+        if source == TypeId::ANY || target == TypeId::ANY {
+            return Some(true);
+        }
+        None
     }
 
-    /// Helper to insert into a relation cache.
-    fn insert_cache(
+    const fn relation_local_cache(
         &self,
-        cache: &RefCell<FxHashMap<RelationCacheKey, bool>>,
+        relation: CachedPolicyRelation,
+    ) -> &RefCell<FxHashMap<RelationCacheKey, bool>> {
+        match relation {
+            CachedPolicyRelation::Subtype => &self.subtype_cache,
+            CachedPolicyRelation::Assignability => &self.assignability_cache,
+        }
+    }
+
+    const fn relation_cache_hit_counter(&self, relation: CachedPolicyRelation) -> &Cell<u64> {
+        match relation {
+            CachedPolicyRelation::Subtype => &self.subtype_cache_hits,
+            CachedPolicyRelation::Assignability => &self.assignability_cache_hits,
+        }
+    }
+
+    const fn relation_cache_miss_counter(&self, relation: CachedPolicyRelation) -> &Cell<u64> {
+        match relation {
+            CachedPolicyRelation::Subtype => &self.subtype_cache_misses,
+            CachedPolicyRelation::Assignability => &self.assignability_cache_misses,
+        }
+    }
+
+    fn lookup_policy_relation_cache(
+        &self,
+        relation: CachedPolicyRelation,
+        key: RelationCacheKey,
+    ) -> Option<bool> {
+        if let Some(result) = self
+            .relation_local_cache(relation)
+            .borrow()
+            .get(&key)
+            .copied()
+        {
+            let hits = self.relation_cache_hit_counter(relation);
+            hits.set(hits.get() + 1);
+            return Some(result);
+        }
+
+        if let Some(shared) = self.shared {
+            let result = match relation {
+                CachedPolicyRelation::Subtype => shared.subtype_cache.get(&key).map(|r| *r),
+                CachedPolicyRelation::Assignability => {
+                    shared.assignability_cache.get(&key).map(|r| *r)
+                }
+            };
+            if let Some(result) = result {
+                self.relation_local_cache(relation)
+                    .borrow_mut()
+                    .insert(key, result);
+                let hits = self.relation_cache_hit_counter(relation);
+                hits.set(hits.get() + 1);
+                return Some(result);
+            }
+        }
+
+        let misses = self.relation_cache_miss_counter(relation);
+        misses.set(misses.get() + 1);
+        None
+    }
+
+    fn insert_policy_relation_cache(
+        &self,
+        relation: CachedPolicyRelation,
         key: RelationCacheKey,
         result: bool,
     ) {
-        cache.borrow_mut().insert(key, result);
+        self.relation_local_cache(relation)
+            .borrow_mut()
+            .insert(key, result);
+        if let Some(shared) = self.shared {
+            match relation {
+                CachedPolicyRelation::Subtype => {
+                    shared.subtype_cache.insert(key, result);
+                }
+                CachedPolicyRelation::Assignability => {
+                    shared.assignability_cache.insert(key, result);
+                }
+            }
+        }
+    }
+
+    fn is_cached_policy_relation(
+        &self,
+        relation: CachedPolicyRelation,
+        source: TypeId,
+        target: TypeId,
+        policy: RelationPolicy,
+    ) -> bool {
+        if let Some(result) = self.relation_fast_path(source, target) {
+            return result;
+        }
+
+        let trace_enabled = query_trace::enabled();
+        let trace_op = relation.trace_op();
+        let trace_query_id = trace_enabled.then(|| {
+            let query_id = query_trace::next_query_id();
+            query_trace::relation_start(
+                query_id,
+                trace_op,
+                source,
+                target,
+                policy.cache_config().flags,
+            );
+            query_id
+        });
+        let key = relation.cache_key(source, target, policy);
+
+        if let Some(result) = self.lookup_policy_relation_cache(relation, key) {
+            if let Some(query_id) = trace_query_id {
+                query_trace::relation_end(query_id, trace_op, result, true);
+            }
+            return result;
+        }
+
+        let result = query_relation(
+            self.as_type_database(),
+            source,
+            target,
+            relation.relation_kind(),
+            policy,
+            RelationContext::default(),
+        )
+        .related;
+
+        self.insert_policy_relation_cache(relation, key, result);
+        if let Some(query_id) = trace_query_id {
+            query_trace::relation_end(query_id, trace_op, result, false);
+        }
+        result
     }
 
     fn check_property_cache(&self, key: PropertyAccessCacheKey) -> Option<PropertyAccessResult> {
@@ -1532,86 +1706,7 @@ impl QueryDatabase for QueryCache<'_> {
         target: TypeId,
         policy: RelationPolicy,
     ) -> bool {
-        // Fast identity/top/bottom paths — avoid cache key construction, RefCell
-        // borrow, and SubtypeChecker allocation entirely.
-        if source == target
-            || target == TypeId::UNKNOWN
-            || source == TypeId::NEVER
-            || source == TypeId::ERROR
-            || target == TypeId::ERROR
-            || is_error_type(self.as_type_database(), source)
-            || is_error_type(self.as_type_database(), target)
-        {
-            return true;
-        }
-        if target == TypeId::NEVER {
-            return false;
-        }
-        // `any` is assignable to/from everything except `never` (already handled above).
-        // At the top-level (depth 0), allow_any is always true in SubtypeChecker,
-        // so this is safe regardless of flags.
-        if source == TypeId::ANY || target == TypeId::ANY {
-            return true;
-        }
-
-        let trace_enabled = query_trace::enabled();
-        let trace_query_id = trace_enabled.then(|| {
-            let query_id = query_trace::next_query_id();
-            query_trace::relation_start(
-                query_id,
-                SUBTYPE_POLICY_TRACE_OP,
-                source,
-                target,
-                policy.legacy_packed_flags(),
-            );
-            query_id
-        });
-        let key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
-        let cached = self.subtype_cache.borrow().get(&key).copied();
-
-        if let Some(result) = cached {
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
-            if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
-            }
-            return result;
-        }
-
-        // L2: Check shared cross-file cache.
-        if let Some(shared) = self.shared
-            && let Some(result) = shared.subtype_cache.get(&key).map(|r| *r)
-        {
-            self.subtype_cache.borrow_mut().insert(key, result);
-            self.subtype_cache_hits
-                .set(self.subtype_cache_hits.get() + 1);
-            if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, true);
-            }
-            return result;
-        }
-
-        self.subtype_cache_misses
-            .set(self.subtype_cache_misses.get() + 1);
-
-        let result = query_relation(
-            self.as_type_database(),
-            source,
-            target,
-            RelationKind::Subtype,
-            policy,
-            RelationContext::default(),
-        );
-        let result = result.related;
-        self.subtype_cache.borrow_mut().insert(key, result);
-        // Write to shared cache for cross-file benefit.
-        if let Some(shared) = self.shared {
-            shared.subtype_cache.insert(key, result);
-        }
-        if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, SUBTYPE_POLICY_TRACE_OP, result, false);
-        }
-        result
+        self.is_cached_policy_relation(CachedPolicyRelation::Subtype, source, target, policy)
     }
 
     fn is_assignable_to_with_policy(
@@ -1620,86 +1715,7 @@ impl QueryDatabase for QueryCache<'_> {
         target: TypeId,
         policy: RelationPolicy,
     ) -> bool {
-        // Fast identity/top/bottom paths — avoid cache key construction, RefCell
-        // borrow, and CompatChecker allocation entirely.
-        if source == target
-            || target == TypeId::UNKNOWN
-            || source == TypeId::NEVER
-            || source == TypeId::ERROR
-            || target == TypeId::ERROR
-            || is_error_type(self.as_type_database(), source)
-            || is_error_type(self.as_type_database(), target)
-        {
-            return true;
-        }
-        if target == TypeId::NEVER && source != TypeId::NEVER {
-            return false;
-        }
-        // `any` is assignable to/from everything except `never` (already handled above).
-        // CompatChecker defaults to allow_any_suppression=true (non-sound mode),
-        // and apply_flags does not change it, so this is safe.
-        if source == TypeId::ANY || target == TypeId::ANY {
-            return true;
-        }
-
-        let trace_enabled = query_trace::enabled();
-        let trace_query_id = trace_enabled.then(|| {
-            let query_id = query_trace::next_query_id();
-            query_trace::relation_start(
-                query_id,
-                ASSIGNABILITY_POLICY_TRACE_OP,
-                source,
-                target,
-                policy.legacy_packed_flags(),
-            );
-            query_id
-        });
-        let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
-
-        if let Some(result) = self.check_cache(&self.assignability_cache, key) {
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
-            if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
-            }
-            return result;
-        }
-
-        // L2: Check shared cross-file cache.
-        if let Some(shared) = self.shared
-            && let Some(result) = shared.assignability_cache.get(&key).map(|r| *r)
-        {
-            self.assignability_cache.borrow_mut().insert(key, result);
-            self.assignability_cache_hits
-                .set(self.assignability_cache_hits.get() + 1);
-            if let Some(query_id) = trace_query_id {
-                query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, true);
-            }
-            return result;
-        }
-
-        self.assignability_cache_misses
-            .set(self.assignability_cache_misses.get() + 1);
-
-        let result = query_relation(
-            self.as_type_database(),
-            source,
-            target,
-            RelationKind::Assignable,
-            policy,
-            RelationContext::default(),
-        );
-        let result = result.related;
-
-        self.insert_cache(&self.assignability_cache, key, result);
-        // Write to shared cache for cross-file benefit.
-        if let Some(shared) = self.shared {
-            shared.assignability_cache.insert(key, result);
-        }
-        if let Some(query_id) = trace_query_id {
-            query_trace::relation_end(query_id, ASSIGNABILITY_POLICY_TRACE_OP, result, false);
-        }
-        result
+        self.is_cached_policy_relation(CachedPolicyRelation::Assignability, source, target, policy)
     }
 
     /// Convenience wrapper for `is_subtype_of` with default flags.

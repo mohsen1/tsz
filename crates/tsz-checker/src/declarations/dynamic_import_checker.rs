@@ -45,7 +45,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check if the specifier type is assignable to `string`
-        if !self.is_assignable_to(arg_type, TypeId::STRING) {
+        if !self.diagnostic_relation_boolean_guard(arg_type, TypeId::STRING) {
             let type_str = self.format_type(arg_type);
             let message = format_message(
                 diagnostic_messages::DYNAMIC_IMPORTS_SPECIFIER_MUST_BE_OF_TYPE_STRING_BUT_HERE_HAS_TYPE,
@@ -172,7 +172,7 @@ impl<'a> CheckerState<'a> {
         // For import attribute options (`with` / `assert`), prefer a top-level
         // TS2322 anchored at the options object, matching tsc fingerprints.
         if self.import_options_has_attribute_property(options_idx) {
-            if !self.is_assignable_to(options_type, import_call_options_type) {
+            if !self.diagnostic_relation_boolean_guard(options_type, import_call_options_type) {
                 use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
                 let source_str = self.format_type(options_type);
                 let message = format_message(

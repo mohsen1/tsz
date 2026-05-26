@@ -50,12 +50,32 @@ impl<'a> DeclarationEmitter<'a> {
         let call = self.arena.get_call_expr(expr_node)?;
         let sym_id = self.value_reference_symbol(call.expression)?;
         let binder = self.binder?;
-        let symbol = binder.symbols.get(sym_id)?;
+
+        // Resolve import aliases to the actual exported function symbol using the
+        // portability resolver, which correctly handles relative path normalization
+        // via matching_module_export_paths (unlike binder.resolve_import_symbol which
+        // uses raw module specifiers as keys and fails for relative imports).
+        let resolved_sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or(sym_id);
+        let symbol = binder.symbols.get(resolved_sym_id)?;
         let source_arena = binder
             .symbol_arenas
-            .get(&sym_id)
+            .get(&resolved_sym_id)
+            .or_else(|| self.global_symbol_arenas.get(&resolved_sym_id))
             .map(|arena| arena.as_ref())
             .unwrap_or(self.arena);
+
+        // Ambient declaration file functions (e.g. `declare function f(): T`) have no body to
+        // inspect. call_expression_declared_return_type_text handles those; return None here so
+        // the caller falls through to that handler, which preserves the full portability check
+        // path including TS4118 diagnostics for non-serializable types.
+        if self
+            .arena_source_file(source_arena)
+            .is_some_and(|sf| sf.is_declaration_file)
+        {
+            return None;
+        }
 
         let mut function_decl_count = 0usize;
         for decl_idx in symbol.declarations.iter().copied() {
@@ -123,7 +143,10 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 // Text-based reconstruction loses call-site refinements (e.g. index signatures
                 // derived from abstract constructor constraints). Prefer the checker's computed
-                // TypeId when it is non-trivial.
+                // TypeId when it is non-trivial. For functions defined in a foreign source file,
+                // the printed name may be unqualified; qualify it against the source file's
+                // imports so the emitted type uses `import("./path").Name` form.
+                let source_is_foreign = !std::ptr::eq(source_arena, self.arena);
                 if self.type_interner.is_some()
                     && self.type_cache.is_some()
                     && let Some(call_type_id) = self.get_node_type_or_names(&[expr_idx])
@@ -131,6 +154,11 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     let type_text = self.print_type_id_for_inferred_declaration(call_type_id);
                     if !type_text.is_empty() && !matches!(type_text.as_str(), "any" | "unknown") {
+                        let type_text = if source_is_foreign {
+                            self.qualify_foreign_imported_names_in_text(source_arena, &type_text)
+                        } else {
+                            type_text
+                        };
                         return Some(Self::strip_synthetic_anonymous_object_members(&type_text));
                     }
                 }
