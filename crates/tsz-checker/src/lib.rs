@@ -484,6 +484,9 @@ mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[path = "tests/conditional_break_narrowing_tests.rs"]
 mod conditional_break_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/conditional_constraint_relation_routing_arch_tests.rs"]
+mod conditional_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
