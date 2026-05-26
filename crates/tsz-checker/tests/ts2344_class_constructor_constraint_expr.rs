@@ -144,3 +144,50 @@ let Anon = class <out T> {
         "Should NOT emit TS2344 for InstanceType<typeof Anon<T>> because typeof Anon<T> is constructable.\nGot: {ts2344_errors:#?}\nAll: {diagnostics:#?}"
     );
 }
+
+/// `return this` in a method whose return type is `InstanceType<(typeof Anon<T>)>`
+/// must NOT emit TS2322. The constructor type must be preserved when evaluating
+/// `Application(TypeQuery(ClassSym), [T])` so that `InstanceType<...>` correctly
+/// reduces to the instance type rather than wrapping it again.
+#[test]
+fn instance_type_of_generic_class_expr_type_query_no_ts2322() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+let Anon = class <out T> {
+    foo(): InstanceType<(typeof Anon<T>)> {
+        return this;
+    }
+}
+"#,
+    );
+    let ts2322_errors = diagnostics_for_code(&diagnostics, 2322);
+    assert!(
+        ts2322_errors.is_empty(),
+        "Should NOT emit TS2322 for return this in InstanceType<typeof Anon<T>> context.\nGot: {ts2322_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}
+
+/// Same shape with a renamed type parameter proves the fix is structural, not name-keyed.
+#[test]
+fn instance_type_of_generic_class_expr_type_query_renamed_param_no_ts2322() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type InstanceType<T extends abstract new (...args: any) => any> =
+    T extends abstract new (...args: any) => infer R ? R : any;
+
+let Container = class <out Value> {
+    wrap(): InstanceType<(typeof Container<Value>)> {
+        return this;
+    }
+}
+"#,
+    );
+    let ts2322_errors = diagnostics_for_code(&diagnostics, 2322);
+    assert!(
+        ts2322_errors.is_empty(),
+        "Should NOT emit TS2322 regardless of type parameter name choice.\nGot: {ts2322_errors:#?}\nAll: {diagnostics:#?}"
+    );
+}

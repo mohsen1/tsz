@@ -205,6 +205,11 @@ impl<'a> ES5ClassTransformer<'a> {
                     this_capture_alias.clone(),
                 )
             };
+            if body.is_empty()
+                && let Some(block_node) = self.arena.get(accessor_data.body)
+            {
+                self.emit_empty_block_comments(&mut body, block_node);
+            }
 
             if let Some(alias) = this_capture_alias {
                 body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
@@ -269,6 +274,11 @@ impl<'a> ES5ClassTransformer<'a> {
                     this_capture_alias.clone(),
                 )
             };
+            if body.is_empty()
+                && let Some(block_node) = self.arena.get(accessor_data.body)
+            {
+                self.emit_empty_block_comments(&mut body, block_node);
+            }
 
             if let Some(alias) = this_capture_alias {
                 body.insert(0, IRNode::var_decl(alias, Some(IRNode::this())));
@@ -519,6 +529,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                             multiline_callback: false,
+                            directives: Vec::new(),
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(
@@ -666,6 +677,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             promise_constructor: self
                                 .async_method_promise_constructor(method_data.type_annotation),
                             multiline_callback: false,
+                            directives: Vec::new(),
                         }]
                     } else if is_async_generator {
                         self.async_generator_method_body(

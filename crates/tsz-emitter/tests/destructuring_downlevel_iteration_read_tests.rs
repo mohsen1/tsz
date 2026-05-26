@@ -7,11 +7,15 @@ use tsz_emitter::lowering::LoweringPass;
 use tsz_parser::parser::ParserState;
 
 fn emit_es5_downlevel_iteration(source: &str) -> String {
+    emit_es5_downlevel_iteration_with_module(source, ModuleKind::None)
+}
+
+fn emit_es5_downlevel_iteration_with_module(source: &str, module: ModuleKind) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
     let opts = PrinterOptions {
         target: ScriptTarget::ES5,
-        module: ModuleKind::None,
+        module,
         downlevel_iteration: true,
         remove_comments: true,
         ..Default::default()
@@ -68,6 +72,26 @@ fn empty_array_assignment_patterns_do_not_schedule_read_helpers() {
 }
 
 #[test]
+fn empty_assignment_patterns_commonjs_do_not_schedule_read_helpers() {
+    let output = emit_es5_downlevel_iteration_with_module(
+        "var a: any;\n\
+         ({} = a);\n\
+         ([] = a);\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        !output.contains("var __read") && !output.contains("__read("),
+        "Empty assignment patterns (CommonJS) should evaluate the source without `__read`.\nOutput:\n{output}"
+    );
+    assert_eq!(
+        output.matches("(a);").count(),
+        2,
+        "Both empty assignment patterns should emit as source evaluations.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers() {
     let output = emit_es5_downlevel_iteration(
         "(function () {\n\
@@ -81,6 +105,48 @@ fn empty_array_binding_patterns_without_initializers_still_schedule_read_helpers
         output.matches("__read(void 0, 0)").count(),
         3,
         "Each empty array binding pattern should preserve the downlevel iterable read.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_of_empty_array_assignment_target_advances_iterator_without_binding() {
+    let output = emit_es5_downlevel_iteration(
+        "var a: any;\n\
+         for ([] of a) {}\n\
+         for ({} of a) {}\n",
+    );
+
+    assert!(
+        !output.contains("[] =") && !output.contains("{} ="),
+        "Empty assignment patterns in for-of must not emit an assignment.\nOutput:\n{output}"
+    );
+    // The iterator value must still be accessed to advance the iterator.
+    assert!(
+        output.contains(".value;"),
+        "Empty for-of assignment patterns must still access .value to advance the iterator.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn for_of_sequential_empty_bindings_allocate_return_temps_before_body_temps() {
+    let output = emit_es5_downlevel_iteration(
+        "(function () {\n\
+             var ns: number[][] = [];\n\
+             for (var {} of ns) {}\n\
+             for (var {} of ns) {}\n\
+             for (var {} of ns) {}\n\
+             for (var [] of ns) {}\n\
+             for (var [] of ns) {}\n\
+             for (var [] of ns) {}\n\
+         })();\n",
+    );
+
+    // All 6 return temps must be pre-allocated before any body temps.
+    // The hoisted var declaration must contain 12 names: e_1, _a, e_2, _b,
+    // e_3, _c, e_4, _d, e_5, _e, e_6, _f in that order.
+    assert!(
+        output.contains("e_1, _a, e_2, _b, e_3, _c, e_4, _d, e_5, _e, e_6, _f"),
+        "Return temps for sequential for-of loops must be allocated before body temps.\nOutput:\n{output}"
     );
 }
 

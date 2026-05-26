@@ -542,11 +542,13 @@ impl<'a> CheckerState<'a> {
                             let elaborated_obj =
                                 self.initializer_reaches_object_literal_through_wrappers(
                                     facts.initializer,
-                                ) && !self.is_assignable_to(checked_init_type, declared_type)
-                                    && self.try_elaborate_object_literal_properties_for_var_init(
-                                        facts.initializer,
-                                        declared_type,
-                                    );
+                                ) && !self.diagnostic_relation_boolean_guard(
+                                    checked_init_type,
+                                    declared_type,
+                                ) && self.try_elaborate_object_literal_properties_for_var_init(
+                                    facts.initializer,
+                                    declared_type,
+                                );
                             if !elaborated_obj {
                                 let skip_generic_outer_error = self
                                     .ctx
@@ -600,7 +602,10 @@ impl<'a> CheckerState<'a> {
                                         declared_type,
                                     )))
                                 && !(initializer_is_function
-                                    && !self.is_assignable_to(checked_init_type, declared_type)
+                                    && !self.diagnostic_relation_boolean_guard(
+                                        checked_init_type,
+                                        declared_type,
+                                    )
                                     && self.try_elaborate_assignment_source_error(
                                         facts.initializer,
                                         declared_type,
@@ -623,13 +628,14 @@ impl<'a> CheckerState<'a> {
                                     // contextual-typing decisions (`callsOnComplexSignatures`).
                                     if !(self.initializer_reaches_object_literal_through_wrappers(
                                         facts.initializer,
-                                    ) && !self
-                                        .is_assignable_to(checked_init_type, declared_type)
-                                        && self
-                                            .try_elaborate_object_literal_properties_for_var_init(
-                                                facts.initializer,
-                                                declared_type,
-                                            ))
+                                    ) && !self.diagnostic_relation_boolean_guard(
+                                        checked_init_type,
+                                        declared_type,
+                                    ) && self
+                                        .try_elaborate_object_literal_properties_for_var_init(
+                                            facts.initializer,
+                                            declared_type,
+                                        ))
                                     {
                                         // Disable callable-with-type-params suppression
                                         // for variable declarations. The suppression is
@@ -640,8 +646,10 @@ impl<'a> CheckerState<'a> {
                                         // (e.g., (cb: (x: string, ...rest: T) => void) => void
                                         //   vs (cb: (...args: never) => void) => void)
                                         if jsdoc_new_expression_relation
-                                            && !self
-                                                .is_assignable_to(checked_init_type, declared_type)
+                                            && !self.diagnostic_relation_boolean_guard(
+                                                checked_init_type,
+                                                declared_type,
+                                            )
                                         {
                                             self.error_type_not_assignable_generic_at(
                                                 checked_init_type,
@@ -770,7 +778,18 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .preserve_destructuring_initializer_overload_diagnostics =
                 prev_preserve_overloads || preserve_initializer_overload_diagnostics;
+            // For `const` initializers that are *themselves* a logical
+            // (`&&`/`||`/`??`) expression, keep the operands' literal types in
+            // the result (tsc only widens them at mutable binding sites).
+            // Scope it to top-level logical initializers so the flag never
+            // enters nested array/object/call contexts, which keep their
+            // existing widening. `let`/`var` keep the widened operand types.
+            let prev_preserve_logical = self.ctx.preserve_logical_operand_literals;
+            self.ctx.preserve_logical_operand_literals = self
+                .is_const_variable_declaration(facts.decl_idx)
+                && self.is_logical_binary_expression(facts.initializer);
             let mut init_type = self.get_type_of_node_with_request(facts.initializer, &request);
+            self.ctx.preserve_logical_operand_literals = prev_preserve_logical;
             self.ctx
                 .preserve_destructuring_initializer_overload_diagnostics = prev_preserve_overloads;
             // TypeScript treats unannotated empty-array declaration initializers

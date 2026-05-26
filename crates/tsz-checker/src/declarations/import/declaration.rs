@@ -699,7 +699,7 @@ impl<'a> CheckerState<'a> {
 
         // Emit top-level TS2322 at the attributes object (matching tsc fingerprint
         // parity for import attribute shape mismatches).
-        if !self.is_assignable_to(source_type, import_attributes_type) {
+        if !self.diagnostic_relation_boolean_guard(source_type, import_attributes_type) {
             use crate::diagnostics::{diagnostic_codes, diagnostic_messages, format_message};
             let source_str = self.format_type(source_type);
             let message = format_message(

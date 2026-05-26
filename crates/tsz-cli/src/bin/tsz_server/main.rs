@@ -36,6 +36,7 @@ mod handlers_code_fixes_jsdoc;
 mod handlers_code_fixes_utils;
 mod handlers_completions;
 mod handlers_completions_display;
+mod handlers_completions_parameters;
 mod handlers_completions_snippets;
 mod handlers_diagnostics;
 mod handlers_editing;
@@ -47,6 +48,7 @@ mod handlers_project_info;
 mod handlers_quickinfo;
 mod handlers_quickinfo_text;
 mod handlers_structure;
+mod text_edits;
 
 use anyhow::{Context, Result};
 use clap::Parser;

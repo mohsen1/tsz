@@ -1252,8 +1252,11 @@ run_conformance_aggregate() {
   baseline="$(jq -r '.summary.passed // 0' scripts/conformance/conformance-snapshot.json)"
   baseline="$(cap_positive_baseline "$baseline" "$TSZ_CI_CONFORMANCE_ACCEPTED_FLOOR")"
   baseline_total="$(jq -r '.summary.total_tests // .summary.total // 0' scripts/conformance/conformance-snapshot.json)"
+  # Planned shard totals are drift diagnostics, but they also describe the
+  # active shard domain. Do not let a larger snapshot domain fail a complete
+  # run for a smaller planned domain.
   local coverage_baseline_total="$baseline_total"
-  if [[ "$total_expected_tests" -gt 0 ]]; then
+  if [[ "$total_expected_tests" -gt 0 && "$total_expected_tests" -lt "$coverage_baseline_total" ]]; then
     coverage_baseline_total="$total_expected_tests"
   fi
   local total_tolerance=5

@@ -591,14 +591,13 @@ impl<'a> CheckerState<'a> {
         object_type: tsz_solver::TypeId,
         property_name: &str,
     ) -> Option<String> {
-        if self.receiver_property_visibility(object_type, property_name)
-            != Some(tsz_solver::Visibility::Protected)
-        {
-            return None;
-        }
-
-        let display = self.format_type_diagnostic(object_type);
-        display.contains(" & ").then_some(display)
+        let owner_type =
+            crate::query_boundaries::property_access::protected_intersection_owner_type(
+                self.ctx.types,
+                object_type,
+                property_name,
+            )?;
+        Some(self.format_type_diagnostic(owner_type))
     }
 
     fn intersection_has_unrelated_public_property_member(

@@ -4,8 +4,7 @@
 //! file under the LOC ceiling. Pure file-organization move; no logic changes.
 
 use super::literal_widening_helpers::{
-    literal_display_appropriate_for_undefined_null_target, simple_or_namespace_member_name,
-    target_accepts_literal_primitive_kind,
+    literal_display_appropriate_for_undefined_null_target, target_accepts_literal_primitive_kind,
 };
 use crate::state::CheckerState;
 use rustc_hash::FxHashSet;
@@ -1379,16 +1378,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        let source_object_display = self.format_type_for_assignability_message(source_object);
-        let target_object_display = self.format_type_for_assignability_message(target_object);
-        let source_short = simple_or_namespace_member_name(&source_object_display)?;
-        let target_short = simple_or_namespace_member_name(&target_object_display)?;
-        if source_short != target_short {
+        if source_object != target_object {
             return None;
         }
 
+        let object_name = self.named_type_display_name(source_object)?;
         let source_index_display = self.ctx.types.resolve_atom_ref(source_index_info.name);
-        Some(format!("{source_short}[{source_index_display}]"))
+        Some(format!("{object_name}[{source_index_display}]"))
     }
 
     pub(in crate::error_reporter) fn format_nested_assignment_source_type_for_diagnostic(

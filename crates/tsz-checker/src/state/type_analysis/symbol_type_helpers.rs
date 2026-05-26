@@ -100,6 +100,46 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Detect a circular constraint hidden behind a transparent type-alias
+    /// application, e.g. `type Self<T extends Self<T>> = T`.
+    ///
+    /// tsc expands a type-alias application to its body before resolving a
+    /// parameter's base constraint, so the raw `Application` the other checks see
+    /// as opaque actually reduces to its body. When that body reduces — along the
+    /// base-constraint resolution path — back to the parameter, the constraint is
+    /// circular. Interfaces/classes and aliases with opaque bodies (object,
+    /// conditional) do not reduce to the parameter, so F-bounded polymorphism such
+    /// as `T extends C<T>` is left alone. The walk is keyed by the parameter's own
+    /// (list-unique) name, so it is independent of the chosen identifier.
+    pub(crate) fn constraint_alias_application_is_circular(
+        &mut self,
+        constraint_type: TypeId,
+        param_name: tsz_common::interner::Atom,
+    ) -> bool {
+        // Every non-application constraint is already covered by the direct /
+        // resolution-path identity checks, so only pay for the extra evaluation
+        // when there is an application that expansion could reshape.
+        if !crate::query_boundaries::type_parameter_identity::contains_application_in_constraint_resolution_path(
+            self.ctx.types,
+            constraint_type,
+        ) {
+            return false;
+        }
+        if !crate::query_boundaries::common::contains_type_parameter_named(
+            self.ctx.types,
+            constraint_type,
+            param_name,
+        ) {
+            return false;
+        }
+        let expanded = self.evaluate_type_with_env(constraint_type);
+        crate::query_boundaries::common::constraint_references_type_param_in_resolution_path(
+            self.ctx.types,
+            expanded,
+            param_name,
+        )
+    }
+
     /// Check if a constraint type creates a circular constraint for a type parameter.
     ///
     /// This detects:
@@ -110,7 +150,7 @@ impl<'a> CheckerState<'a> {
     /// But NOT safe type-argument references like `T extends Array<T>` or
     /// `S extends Foo<S>`, which are valid in TypeScript.
     pub(crate) fn is_same_type_parameter(
-        &self,
+        &mut self,
         constraint_type: TypeId,
         param_type_id: TypeId,
         param_name: &str,
@@ -191,11 +231,20 @@ impl<'a> CheckerState<'a> {
                     });
             return key_without_keyof;
         }
-        direct_resolution_path_constraint
+        if direct_resolution_path_constraint
             && self.constraint_references_type_param_identity_in_resolution_path(
                 constraint_type,
                 param_type_id,
             )
+        {
+            return true;
+        }
+
+        // A transparent type-alias application expands to its body before the base
+        // constraint resolves, which can reveal a self-reference the checks above
+        // (treating the application as opaque) miss, e.g. `type Self<T extends Self<T>> = T`.
+        let param_atom = self.ctx.types.intern_string(param_name);
+        self.constraint_alias_application_is_circular(constraint_type, param_atom)
     }
 
     pub(crate) fn type_parameter_identity_matches(

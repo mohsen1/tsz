@@ -1,0 +1,4 @@
+interface:
+  display_name: "TSZ Iteration Audit"
+  short_description: "Find and prioritize TSZ repo iteration bottlenecks."
+  default_prompt: "Use $tsz-iteration-audit to inspect this TSZ repo and propose a focused improvement PR."
