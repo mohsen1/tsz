@@ -23,23 +23,75 @@ scripts/agents/list-owned-work.sh M4-B
 
 - Initial priority: land, close, or clearly hand off existing PRs in this lane
   before claiming issue backlog.
-- `#9650` was ready earlier in the 2026-05-21 audit window, then moved back to
-  draft after CI/body blockers. Inspect it before reviving or replacing it.
-- Active relation-policy stack: `#9265`, `#9268`, `#9281`, `#9289`.
-- Current draft/new-issue cluster: `#9807`, `#9803`, `#9800`, `#9798`,
-  `#9650`, `#9230`, `#8207`, and `#8203`.
+- Current open PRs owned by `agent:M4-B`:
+  - `#10150` ready/off-auto; fixes the synthetic queue
+    `conformance-aggregate` coverage-accounting blocker by keeping summed
+    shard `expected_total` as drift diagnostics instead of promoting it to the
+    hard coverage floor. Local RED/GREEN unittest evidence is recorded on
+    `#10148` and in the PR body. Ready-review CI attempt 2 cleared
+    `project-corpus-pr-body`; leave auto-merge off until the full CI/queue
+    picture is complete and green.
+  - `#10078` ready/off-auto; this lane-doc PR is docs-only. Direct squash
+    merge is blocked by the protected-branch policy; queue runs invalidate
+    `Queue Tested` after each synchronize and report no queue-ready auto-merge
+    PR because auto-merge remains off by lane rule. Synthetic queue run
+    `26375361829` for branch `automation/merge-queue/pr-10078` completed with
+    `conformance-aggregate` incomplete coverage (`12810 < 12820`, tolerance 5);
+    M4-B left a signed handoff comment with that evidence. Do not churn this PR
+    just to update its own head SHA.
+  - `#10058` ready/off-auto on rebased head
+    `171fc3620611a4ba128b1d156f1ee8d739372bf1`; exact-head ready-review CI is
+    green, but required `Queue Tested` remains pending.
+  - `#9945` ready/off-auto; exact-head ready-review CI is green, but required
+    `Queue Tested` remains pending. If auto-merge is re-enabled while
+    `Queue Tested` is pending, disable it and leave a signed blocker comment.
+  - `#9807` ready/off-auto; follow-up head
+    `023ac1dde31e330514196d178b11d3515f832814` splits visitor predicates below
+    2000 LOC. Exact-head ready-review CI is green apart from required
+    `Queue Tested`.
+  - `#9230` ready/off-auto; exact-head draft-light CI passed and M4-B promoted
+    the PR to ready review on
+    `dd48ce95538d367106e470ac025fa0bb8bd6f141`. Ready-review rerun
+    `26373943878` attempt 2 completed successfully after the earlier
+    `conformance-aggregate` incomplete-coverage failure was rerun. Exact-head
+    ready-review CI is green, but synthetic queue run `26380248069` failed
+    `conformance-aggregate` with incomplete coverage (`12600 < 12619`,
+    tolerance 5). M4-B left signed handoff comments and opened follow-up issue
+    `#10148` for the queue coverage-accounting blocker. `#10150` is the current
+    fix path; keep auto-merge off until that fix (or an equivalent one) lands
+    and a fresh exact-head queue run is green.
+- Completed relation-policy stack state: `#9265`, `#9268`, and `#9650` are
+  merged; `#9289` is closed. Do not reopen or duplicate these without a fresh
+  reason.
+- Older draft/new-issue cluster references to inspect only after the open PRs
+  above are landed, closed, or explicitly handed off: `#9798`, `#8207`, and
+  `#8203`. `#9803` and `#9800` are closed.
 - Track: roadmap Tracks 3, 4, and 10.
-- Next concrete step: resolve why `#9650` is draft again, then collapse or
-  advance the relation-policy stack root-first. Do not start another
-  policy/cache branch until the stack has one clear next merge.
+- Next concrete step: inspect exact-head CI for the open PR set above.
+  If a PR is green and not draft/WIP/blocked, mark or keep it ready and land it
+  according to the TSZ CI rules. Do not claim issue backlog until these open
+  lane PRs have either landed, failed with a signed handoff, or reached a clear
+  external blocker.
 
 ## Existing Work To Inspect First
 
-- `#9265` is the root relation engine flag routing PR.
-- `#9268`, `#9281`, and `#9289` are stacked on top of relation policy changes.
+- `#9281` is no longer owned by `agent:M4-B`; inspect only for stack context,
+  not as an M4-B lane PR.
+- `#9807` has been advanced out of draft/WIP and is now ready/off-auto; inspect
+  ready-review CI like the rest of the open ready PR set.
+- `#10150`, `#9230`, `#9807`, `#9945`, `#10058`, and `#10078` are
+  ready/off-auto and should be landed only after exact-head required checks are
+  complete and green. For
+  `#10078` and `#9230`, the latest inspected synthetic queue runs failed in
+  `conformance-aggregate` with incomplete coverage, and auto-merge remains off;
+  do not arm either under the lane rules while queue state is not clean.
+  `#10148` tracks the synthetic queue coverage-accounting failure and `#10150`
+  is the current M4-B fix PR for that root blocker.
+  `#10058` and `#9945` have green exact-head ready-review CI but are still
+  blocked by required `Queue Tested`.
 - M1-B depends on this lane for checker relation gateway cleanup.
-- `#9803` is titled `[WIP]`; keep it WIP until the owner leaves a signed
-  status comment and removes the title prefix.
+- `#9798` is owned by `agent:M4-C`; inspect only for overlap and do not take
+  ownership unless explicitly handed off.
 
 ## Non-Overlap Rules
 

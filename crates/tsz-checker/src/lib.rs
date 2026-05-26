@@ -268,6 +268,9 @@ mod ts2320_tests;
 #[path = "../tests/ts2322_destructuring_obj_literal_tests.rs"]
 mod ts2322_destructuring_obj_literal_tests;
 #[cfg(test)]
+#[path = "../tests/ts2322_indexed_access_type_param_tests.rs"]
+mod ts2322_indexed_access_type_param_tests;
+#[cfg(test)]
 #[path = "../tests/ts2322_mode_routing_matrix.rs"]
 mod ts2322_mode_routing_matrix;
 #[cfg(test)]
@@ -373,6 +376,9 @@ mod ts7057_yield_implicit_any;
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
 #[cfg(test)]
+#[path = "../tests/typeof_operator_result_union_tests.rs"]
+mod typeof_operator_result_union_tests;
+#[cfg(test)]
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
@@ -399,6 +405,9 @@ mod architecture_contract_tests_src;
 #[cfg(test)]
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/array_literal_spread_inference_widening_tests.rs"]
+mod array_literal_spread_inference_widening_tests;
 #[cfg(test)]
 #[path = "tests/as_const_nested_literal_display_tests.rs"]
 mod as_const_nested_literal_display_tests;
@@ -472,6 +481,9 @@ mod direct_generic_return_tests;
 #[path = "tests/dispatch_tests.rs"]
 mod dispatch_tests;
 #[cfg(test)]
+#[path = "tests/do_while_exit_narrowing_tests.rs"]
+mod do_while_exit_narrowing_tests;
+#[cfg(test)]
 #[path = "../tests/dynamic_import_ts2307_per_callsite_tests.rs"]
 mod dynamic_import_ts2307_per_callsite_tests;
 #[cfg(test)]
@@ -480,6 +492,9 @@ mod enum_indexed_access_tests;
 #[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
+#[cfg(test)]
+#[path = "tests/enum_residual_narrowing_tests.rs"]
+mod enum_residual_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
@@ -631,6 +646,9 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/object_literal_computed_symbol_member_tests.rs"]
+mod object_literal_computed_symbol_member_tests;
+#[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
 #[cfg(test)]
@@ -663,6 +681,9 @@ mod recursive_alias_application_target_display_tests;
 #[cfg(test)]
 #[path = "tests/recursive_callable_infer_cycle_tests.rs"]
 mod recursive_callable_infer_cycle_tests;
+#[cfg(test)]
+#[path = "tests/recursive_generic_arrow_tests.rs"]
+mod recursive_generic_arrow_tests;
 #[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;

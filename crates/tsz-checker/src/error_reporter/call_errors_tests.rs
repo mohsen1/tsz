@@ -783,6 +783,27 @@ takes("abc");
 }
 
 #[test]
+fn ts2345_optional_callback_parameter_adds_undefined_for_identifier_containing_undefined() {
+    let source = r#"
+type UndefinedBox = { value: string };
+declare function takes(callback: (value?: UndefinedBox) => number): void;
+takes((value: number) => 0);
+"#;
+
+    let diagnostics = check_source_with_strict_null(source);
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2345)
+        .expect("expected TS2345");
+
+    assert!(
+        diag.message_text
+            .contains("value?: UndefinedBox | undefined"),
+        "optional callback parameter display should use the type structure, not the rendered identifier text, got: {diag:?}"
+    );
+}
+
+#[test]
 fn ts2345_call_argument_display_widens_boolean_literal_for_non_boolean_union_target() {
     let source = r#"
 declare function takes(...value: (number | string)[]): void;

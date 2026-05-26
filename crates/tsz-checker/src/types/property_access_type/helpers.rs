@@ -1848,7 +1848,7 @@ impl<'a> CheckerState<'a> {
         let source_type = self.get_type_of_node(source_idx);
         let target_type =
             crate::query_boundaries::common::remove_undefined(self.ctx.types, declared_type);
-        if !self.is_assignable_to(source_type, target_type) {
+        if !self.diagnostic_relation_boolean_guard(source_type, target_type) {
             let _ = self.check_assignable_or_report_at_exact_anchor(
                 source_type,
                 target_type,

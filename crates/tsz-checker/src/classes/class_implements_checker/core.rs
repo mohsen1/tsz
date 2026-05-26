@@ -38,7 +38,9 @@ impl<'a> CheckerState<'a> {
             let Some(source_index) = class_shape.string_index.as_ref() else {
                 return false;
             };
-            if !self.is_assignable_to(source_index.value_type, target_index.value_type) {
+            if !self
+                .diagnostic_relation_boolean_guard(source_index.value_type, target_index.value_type)
+            {
                 return false;
             }
         }
@@ -47,7 +49,9 @@ impl<'a> CheckerState<'a> {
             let Some(source_index) = class_shape.number_index.as_ref() else {
                 return false;
             };
-            if !self.is_assignable_to(source_index.value_type, target_index.value_type) {
+            if !self
+                .diagnostic_relation_boolean_guard(source_index.value_type, target_index.value_type)
+            {
                 return false;
             }
         }
@@ -1495,7 +1499,8 @@ impl<'a> CheckerState<'a> {
                         } else {
                             interface_type
                         };
-                        if !self.is_assignable_to(class_instance_type, target_type) {
+                        if !self.diagnostic_relation_boolean_guard(class_instance_type, target_type)
+                        {
                             let analysis = self
                                 .analyze_assignability_failure(class_instance_type, target_type);
                             let suppress_index_member_duplicate = !is_class

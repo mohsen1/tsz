@@ -2,8 +2,9 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::common::{
-    array_element_type, callable_shape_for_type, construct_signatures_for_type, has_function_shape,
-    intersection_members, is_generic_mapped_type, is_generic_type, object_shape_for_type,
+    array_element_type, callable_shape_for_type, construct_signatures_for_type,
+    contains_conditional_type, has_function_shape, intersection_members, is_generic_mapped_type,
+    is_generic_type, object_shape_for_type,
 };
 
 pub(crate) fn function_shape(

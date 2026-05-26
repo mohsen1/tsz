@@ -126,7 +126,7 @@ Assigned draft queues at the 2026-05-21 10:54 UTC audit:
 | `M1-B` | `#9595` |
 | `M1-D` | `#9630` |
 | `M4-A` | `#9826`, `#9816`, `#9804`, `#9776`, `#9656`, `#9647`, `#9644`, `#9640`, `#9638`, `#9624`, `#9586`, `#9515`, `#9205` |
-| `M4-B` | `#9807`, `#9803`, `#9800`, `#9650`, `#9289`, `#9281`, `#9268`, `#9265`, `#9230` |
+| `M4-B` | Current ready/off-auto queue: `#10150`, `#10078`, `#10058`, `#9945`, `#9807`; `#9230` queue-tested red/handoff tracked by `#10148` and fix path `#10150` |
 | `M4-C` | `#9832`, `#9814`, `#9809`, `#9801`, `#9792`, `#9508`, `#9224`, `#9200` |
 | `M4-D` | `#9810`, `#9788` |
 | `Reviewer` | `#9503`, `#9484` |
@@ -232,7 +232,7 @@ only until the PR runway is under control.
 | `M1-C` | Tracks 8 and 10 | Rendered-type/source-text decision burn-down |
 | `M1-D` | Track 6 | Narrowing and flow predicate parity |
 | `M4-A` | Track 2 | Recursive conditional/mapped evaluation identity; ready PR `#9804` |
-| `M4-B` | Tracks 3, 4, and 10 | Relation policy/cache-key stack consolidation; red/draft `#9650` |
+| `M4-B` | Tracks 3, 4, and 10 | Relation policy/cache-key ready queue: `#10058`, `#9945`, `#9807`; queue aggregate fix `#10150`; `#9230` queue-tested red/handoff; lane-doc `#10078` |
 | `M4-C` | Track 3 | Generic inference/contextual typing ready queue: `#9827`, `#9814`, `#9808`, `#9799` |
 | `M4-D` | Track 7 | Symbol, lib, module, and cross-file identity |
 | `Studio-A` | Track 1 | Project corpus dashboard and fixture truth |

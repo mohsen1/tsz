@@ -29,6 +29,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let (_, nullable_target) = self.split_nullish_type(target);
-        nullable_target.is_none_or(|nullable| !self.is_assignable_to(source, nullable))
+        nullable_target
+            .is_none_or(|nullable| !self.diagnostic_relation_boolean_guard(source, nullable))
     }
 }

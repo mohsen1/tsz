@@ -170,6 +170,10 @@ function labelNames(labels) {
     : [];
 }
 
+function agentLabel(labels) {
+  return labelNames(labels).find((label) => label.startsWith("agent:")) || "";
+}
+
 function normalize(value) {
   return String(value || "").toUpperCase();
 }
@@ -244,6 +248,33 @@ export function queueRunIsActive(run) {
   return normalize(run?.status) !== "COMPLETED";
 }
 
+function shortDateTime(value) {
+  return value ? `${String(value).slice(0, 16).replace("T", " ")}Z` : "unknown";
+}
+
+function shortDate(value) {
+  return value ? String(value).slice(0, 10) : "unknown";
+}
+
+function elapsedAge(startedAt, now) {
+  const startedMs = Date.parse(startedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(startedMs) || !Number.isFinite(nowMs)) return "unknown";
+
+  const totalMinutes = Math.max(0, Math.floor((nowMs - startedMs) / 60_000));
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+
+  const totalHours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (totalHours < 24) {
+    return minutes ? `${totalHours}h ${minutes}m` : `${totalHours}h`;
+  }
+
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+  return hours ? `${days}d ${hours}h` : `${days}d`;
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -262,6 +293,8 @@ function activePendingQueueRun(repository, pr, options) {
     return {
       ...pendingRun,
       url: run.url || pendingRun.targetUrl,
+      status: run.status || "",
+      startedAt: run.startedAt || run.createdAt || "",
     };
   }
   if (!hasPendingPlaceholderQueueStatus(pr, options.statusContext)) return null;
@@ -270,6 +303,8 @@ function activePendingQueueRun(repository, pr, options) {
   return {
     runId: String(run.databaseId || ""),
     url: run.url,
+    status: run.status || "",
+    startedAt: run.startedAt || run.createdAt || "",
   };
 }
 
@@ -308,6 +343,7 @@ function readPullRequests(repository, base, maxPrs) {
       "labels",
       "number",
       "title",
+      "updatedAt",
       "url",
     ].join(","),
   ]);
@@ -329,6 +365,7 @@ function readPullRequest(repository, number) {
       "number",
       "statusCheckRollup",
       "title",
+      "updatedAt",
       "url",
     ].join(","),
   ]);
@@ -338,7 +375,7 @@ function readWorkflowRun(repository, runId) {
   return runGhJson([
     "run", "view", runId,
     "--repo", repository,
-    "--json", "databaseId,status,conclusion,url",
+    "--json", "databaseId,status,conclusion,url,createdAt,startedAt,updatedAt",
   ]);
 }
 
@@ -348,7 +385,7 @@ function readBranchWorkflowRuns(repository, branch) {
     "--repo", repository,
     "--branch", branch,
     "--limit", "20",
-    "--json", "databaseId,status,conclusion,headSha,url",
+    "--json", "databaseId,status,conclusion,headSha,url,createdAt,startedAt,updatedAt",
   ]);
 }
 
@@ -391,8 +428,17 @@ function readPullRequestState(repository, number) {
     "api",
     `repos/${repository}/pulls/${number}`,
     "--jq",
-    "{number: .number, state: .state, merged: (.merged_at != null)}",
+    "{number: .number, state: .state, merged: (.merged_at != null), updatedAt: .updated_at}",
   ]);
+}
+
+function readPullRequestOwner(repository, number) {
+  const pr = runGhJson([
+    "pr", "view", String(number),
+    "--repo", repository,
+    "--json", "labels",
+  ]);
+  return agentLabel(pr.labels);
 }
 
 function deleteRemoteBranch(branch) {
@@ -438,6 +484,167 @@ export function failureCommentBody(agentName, reason) {
   ].join("\n");
 }
 
+export function skipReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const reason = String(skip.summaryReason || skip.reason || "(unknown)");
+    counts.set(reason, (counts.get(reason) || 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([reason, count]) => ({ reason, count }))
+    .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+export function skipOwnerCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    const current = counts.get(owner) || { count: 0, oldestUpdatedAt: null };
+    current.count += 1;
+    if (skip.updatedAt && (!current.oldestUpdatedAt || skip.updatedAt < current.oldestUpdatedAt)) {
+      current.oldestUpdatedAt = skip.updatedAt;
+    }
+    counts.set(owner, current);
+  }
+  return [...counts.entries()]
+    .map(([owner, data]) => {
+      const entry = { owner, count: data.count };
+      if (data.oldestUpdatedAt) entry.oldestUpdatedAt = data.oldestUpdatedAt;
+      return entry;
+    })
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
+export function skipOwnerReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    const reason = String(skip.summaryReason || skip.reason || "(unknown)");
+    const key = `${owner}\0${reason}`;
+    const current = counts.get(key) || { owner, reason, count: 0 };
+    current.count += 1;
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.reason.localeCompare(b.reason));
+}
+
+export function activeRunOwnerStatusCounts(runs) {
+  const counts = new Map();
+  for (const run of runs || []) {
+    const owner = String(run.owner || "(unknown)");
+    const status = String(run.status || "unknown").toLowerCase();
+    const key = `${owner}\0${status}`;
+    const current = counts.get(key) || { owner, status, count: 0, oldestStartedAt: null };
+    current.count += 1;
+    if (run.startedAt && (!current.oldestStartedAt || run.startedAt < current.oldestStartedAt)) {
+      current.oldestStartedAt = run.startedAt;
+    }
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.status.localeCompare(b.status));
+}
+
+function pushSkipOwnerCounts(lines, skips, now) {
+  const ownerSummary = skipOwnerCounts(skips);
+  const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
+  lines.push(
+    "",
+    "### Skip Owner Counts",
+    "",
+    hasOldestUpdated ? "| Count | Owner | Oldest updated | Oldest age |" : "| Count | Owner |",
+    hasOldestUpdated ? "|-------|-------|----------------|------------|" : "|-------|-------|",
+  );
+  for (const entry of ownerSummary) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    if (hasOldestUpdated) {
+      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} | ${elapsedAge(entry.oldestUpdatedAt, now)} |`);
+    } else {
+      lines.push(`| ${entry.count} | ${owner} |`);
+    }
+  }
+}
+
+function pushSkipOwnerReasonCounts(lines, skips) {
+  const ownerReasonSummary = skipOwnerReasonCounts(skips);
+  lines.push(
+    "",
+    "### Skip Owner Reason Counts",
+    "",
+    "| Count | Owner | Reason |",
+    "|-------|-------|--------|",
+  );
+  for (const entry of ownerReasonSummary) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const reason = entry.reason.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${reason} |`);
+  }
+}
+
+function pushActiveRunOwnerStatusCounts(lines, runs, now) {
+  lines.push(
+    "",
+    "### Active Queue Run Owner Status Counts",
+    "",
+    "| Count | Owner | Status | Oldest started | Oldest age |",
+    "|-------|-------|--------|----------------|------------|",
+  );
+  for (const entry of activeRunOwnerStatusCounts(runs)) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const status = entry.status.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${status} | ${shortDateTime(entry.oldestStartedAt)} | ${elapsedAge(entry.oldestStartedAt, now)} |`);
+  }
+}
+
+function pushCleanupSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| Branch | Owner | Updated | Reason |" : "| Branch | Owner | Reason |",
+    hasUpdatedAt ? "|--------|-------|---------|--------|" : "|--------|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 50)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 50) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 50} more skipped branch(es) omitted |`
+      : `| ... |  | ${skips.length - 50} more skipped branch(es) omitted |`);
+  }
+}
+
+function pushQueueSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| PR | Owner | Updated | Reason |" : "| PR | Owner | Reason |",
+    hasUpdatedAt ? "|----|-------|---------|--------|" : "|----|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 25)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 25) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 25} more skipped PR(s) omitted |`
+      : `| ... |  | ${skips.length - 25} more skipped PR(s) omitted |`);
+  }
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -449,6 +656,7 @@ function invalidatePullRequest(repository, pr, options) {
     "pending",
     options.statusContext,
     `Waiting for ${options.base} synthetic merge test`,
+    pr.url || "",
   );
   return { invalidated: true, skipped: false };
 }
@@ -472,6 +680,7 @@ function cleanupQueueBranches(repository, options) {
   let skippedActiveRuns = 0;
   let skippedUnrecognized = 0;
   let supersededOpen = 0;
+  const activeRuns = [];
   const deletions = [];
   const skips = [];
   const currentBaseOid = options.cleanupSupersededOpenQueueBranches
@@ -483,7 +692,11 @@ function cleanupQueueBranches(repository, options) {
     if (!metadata) {
       skippedUnrecognized += 1;
       if (options.verbose) {
-        skips.push({ branch: queueBranchInfo.branch, reason: "unrecognized queue branch name" });
+        skips.push({
+          branch: queueBranchInfo.branch,
+          reason: "unrecognized queue branch name",
+          summaryReason: "unrecognized queue branch name",
+        });
       }
       continue;
     }
@@ -491,13 +704,43 @@ function cleanupQueueBranches(repository, options) {
 
     const pullRequest = readPullRequestState(repository, number);
     if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
+      const owner = readPullRequestOwner(repository, number);
       const supersededReason = options.cleanupSupersededOpenQueueBranches
         ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
         : null;
       if (!supersededReason) {
+        const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
+        if (activeRun) {
+          skippedActiveRuns += 1;
+          activeRuns.push({
+            branch: queueBranchInfo.branch,
+            number,
+            owner,
+            runId: activeRun.databaseId || null,
+            url: activeRun.url || "",
+            status: activeRun.status || "",
+            startedAt: activeRun.startedAt || activeRun.createdAt || "",
+          });
+          if (options.verbose) {
+            skips.push({
+              branch: queueBranchInfo.branch,
+              owner,
+              reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
+              summaryReason: "active queue run",
+              updatedAt: pullRequest.updatedAt || "",
+            });
+          }
+          continue;
+        }
         skippedOpen += 1;
         if (options.verbose) {
-          skips.push({ branch: queueBranchInfo.branch, reason: `PR #${number} is open` });
+          skips.push({
+            branch: queueBranchInfo.branch,
+            owner,
+            reason: `PR #${number} is open`,
+            summaryReason: "open PR branch",
+            updatedAt: pullRequest.updatedAt || "",
+          });
         }
         continue;
       }
@@ -506,10 +749,21 @@ function cleanupQueueBranches(repository, options) {
     const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
     if (activeRun) {
       skippedActiveRuns += 1;
+      activeRuns.push({
+        branch: queueBranchInfo.branch,
+        number,
+        owner: "",
+        runId: activeRun.databaseId || null,
+        url: activeRun.url || "",
+        status: activeRun.status || "",
+        startedAt: activeRun.startedAt || activeRun.createdAt || "",
+      });
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
+          owner: "",
           reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
+          summaryReason: "active queue run",
         });
       }
       continue;
@@ -535,6 +789,7 @@ function cleanupQueueBranches(repository, options) {
 
   return {
     cleanupQueueBranches: true,
+    activeRuns,
     deleted,
     deletions,
     dryRun: options.dryRun,
@@ -658,7 +913,13 @@ function processOne(repository, options) {
 
   for (const { pr, skipReason } of candidates) {
     if (skipReason) {
-      if (options.verbose) skips.push({ number: pr.number, reason: skipReason, url: pr.url });
+      if (options.verbose) skips.push({
+        number: pr.number,
+        owner: agentLabel(pr.labels),
+        reason: skipReason,
+        updatedAt: pr.updatedAt,
+        url: pr.url,
+      });
       continue;
     }
 
@@ -764,11 +1025,31 @@ export function formatResult(result, options) {
         lines.push(`| \`${deletion.branch}\` | #${deletion.number} | ${state} |`);
       }
     }
-    if (options.verbose && result.skips?.length) {
-      lines.push("", "### Skips", "", "| Branch | Reason |", "|--------|--------|");
-      for (const skip of result.skips.slice(0, 50)) {
-        lines.push(`| \`${skip.branch}\` | ${skip.reason.replace(/\|/g, "\\|")} |`);
+    if (options.verbose && result.activeRuns?.length) {
+      const now = result.now || new Date().toISOString();
+      pushActiveRunOwnerStatusCounts(lines, result.activeRuns, now);
+      lines.push(
+        "",
+        "### Active Queue Runs",
+        "",
+        "| Branch | PR | Owner | Run | Status | Started | Age |",
+        "|--------|----|-------|-----|--------|---------|-----|",
+      );
+      for (const run of result.activeRuns.slice(0, 50)) {
+        const runId = run.runId || "(unknown)";
+        const runLink = run.url ? `[${runId}](${run.url})` : runId;
+        lines.push(`| \`${run.branch}\` | #${run.number} | ${run.owner || "(unknown)"} | ${runLink} | ${String(run.status || "unknown").toLowerCase()} | ${shortDateTime(run.startedAt)} | ${elapsedAge(run.startedAt, now)} |`);
       }
+    }
+    if (options.verbose && result.skips?.length) {
+      const summary = skipReasonCounts(result.skips);
+      lines.push("", "### Skip Reason Counts", "", "| Count | Reason |", "|-------|--------|");
+      for (const entry of summary) {
+        lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
+      }
+      pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
+      pushSkipOwnerReasonCounts(lines, result.skips);
+      pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
@@ -788,10 +1069,14 @@ export function formatResult(result, options) {
     lines.push(`Failed #${result.selected.number}: ${result.reason}`);
   }
   if (!result.cleanupQueueBranches && options.verbose && result.skips?.length) {
-    lines.push("", "### Skips", "", "| PR | Reason |", "|----|--------|");
-    for (const skip of result.skips.slice(0, 25)) {
-      lines.push(`| #${skip.number} | ${skip.reason.replace(/\|/g, "\\|")} |`);
+    const summary = skipReasonCounts(result.skips);
+    lines.push("", "### Skip Reason Counts", "", "| Count | Reason |", "|-------|--------|");
+    for (const entry of summary) {
+      lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
+    pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
+    pushSkipOwnerReasonCounts(lines, result.skips);
+    pushQueueSkipRows(lines, result.skips);
   }
   return `${lines.join("\n")}\n`;
 }
