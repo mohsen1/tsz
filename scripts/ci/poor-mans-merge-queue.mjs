@@ -170,6 +170,10 @@ function labelNames(labels) {
     : [];
 }
 
+function agentLabel(labels) {
+  return labelNames(labels).find((label) => label.startsWith("agent:")) || "";
+}
+
 function normalize(value) {
   return String(value || "").toUpperCase();
 }
@@ -717,7 +721,12 @@ function processOne(repository, options) {
 
   for (const { pr, skipReason } of candidates) {
     if (skipReason) {
-      if (options.verbose) skips.push({ number: pr.number, reason: skipReason, url: pr.url });
+      if (options.verbose) skips.push({
+        number: pr.number,
+        owner: agentLabel(pr.labels),
+        reason: skipReason,
+        url: pr.url,
+      });
       continue;
     }
 
@@ -868,12 +877,12 @@ export function formatResult(result, options) {
     for (const entry of summary) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
-    lines.push("", "### Skips", "", "| PR | Reason |", "|----|--------|");
+    lines.push("", "### Skips", "", "| PR | Owner | Reason |", "|----|-------|--------|");
     for (const skip of result.skips.slice(0, 25)) {
-      lines.push(`| #${skip.number} | ${skip.reason.replace(/\|/g, "\\|")} |`);
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
     }
     if (result.skips.length > 25) {
-      lines.push(`| ... | ${result.skips.length - 25} more skipped PR(s) omitted |`);
+      lines.push(`| ... |  | ${result.skips.length - 25} more skipped PR(s) omitted |`);
     }
   }
   return `${lines.join("\n")}\n`;
