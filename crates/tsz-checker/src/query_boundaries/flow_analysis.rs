@@ -73,6 +73,27 @@ pub(crate) fn enum_member_domain(db: &dyn TypeDatabase, type_id: TypeId) -> Type
         .unwrap_or(type_id)
 }
 
+pub(crate) fn enum_member_union_domain(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    let Some(members) = union_members_for_type(db, type_id) else {
+        return enum_member_domain(db, type_id);
+    };
+
+    let mut normalized: Option<Vec<TypeId>> = None;
+    for (index, member) in members.iter().copied().enumerate() {
+        let domain = enum_member_domain(db, member);
+        if let Some(normalized) = normalized.as_mut() {
+            normalized.push(domain);
+        } else if domain != member {
+            let mut changed = Vec::with_capacity(members.len());
+            changed.extend_from_slice(&members[..index]);
+            changed.push(domain);
+            normalized = Some(changed);
+        }
+    }
+
+    normalized.map_or(type_id, |members| union_types(db, members))
+}
+
 pub(crate) fn type_has_typeof_result(
     db: &dyn QueryDatabase,
     env: Option<&tsz_solver::relations::subtype::TypeEnvironment>,
@@ -764,6 +785,30 @@ mod tests {
         assert_eq!(members.len(), 2);
         assert!(members.contains(&db.literal_string("string")));
         assert!(members.contains(&db.literal_string("number")));
+    }
+
+    #[test]
+    fn enum_member_union_domain_keeps_plain_union_identity() {
+        let db = TypeInterner::new();
+        let union = db.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+        assert_eq!(enum_member_union_domain(&db, union), union);
+    }
+
+    #[test]
+    fn enum_member_union_domain_rewrites_only_enum_members() {
+        let db = TypeInterner::new();
+        let literal = db.literal_string("ready");
+        let enum_member = db.enum_type(tsz_solver::def::DefId(701), literal);
+        let union = db.union(vec![enum_member, TypeId::NUMBER]);
+
+        let domain = enum_member_union_domain(&db, union);
+        let members = union_members_for_type(&db, domain).unwrap_or_else(|| vec![domain]);
+
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&literal));
+        assert!(members.contains(&TypeId::NUMBER));
+        assert!(!members.contains(&enum_member));
     }
 
     #[test]

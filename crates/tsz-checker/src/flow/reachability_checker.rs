@@ -328,15 +328,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn normalize_enum_union_members(&self, type_id: TypeId) -> TypeId {
-        if let Some(members) = query::union_members_for_type(self.ctx.types, type_id) {
-            let normalized: Vec<TypeId> = members
-                .into_iter()
-                .map(|member| query::enum_member_domain(self.ctx.types, member))
-                .collect();
-            query::union_types(self.ctx.types, normalized)
-        } else {
-            query::enum_member_domain(self.ctx.types, type_id)
-        }
+        query::enum_member_union_domain(self.ctx.types, type_id)
     }
 
     fn typeof_switch_operand(&self, switch_expr: NodeIndex) -> Option<NodeIndex> {
