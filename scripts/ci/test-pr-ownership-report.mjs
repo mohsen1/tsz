@@ -144,6 +144,10 @@ withTempDir((dir) => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /Open PR Ownership Report/);
   assert.match(result.stdout, /AgentName\/label mismatches: 1/);
+  assert.match(
+    result.stdout,
+    /Owner Summary[\s\S]*\| agent:delta \| 2 \| 0 \| 2 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| agent:zeta \| 2 \| 1 \| 1 \| 0 \| 0 \| 0 \| 1 \| 0 \|[\s\S]*\| unowned \| 2 \| 0 \| 2 \| 0 \| 1 \| 0 \| 0 \| 0 \|[\s\S]*\| delta \| 1 \| 0 \| 1 \| 0 \| 0 \| 0 \| 0 \| 0 \|/,
+  );
   assert.match(result.stdout, /agent\/mapped-a: root #10; children #12/);
   assert.match(result.stdout, /unknown-base: unknown root; children #13/);
   assert.match(
@@ -182,6 +186,96 @@ withTempDir((dir) => {
     { base: "agent/mapped-a", prs: [12] },
     { base: "main", prs: [10, 11, 14, 15, 16, 17, 18, 19, 42] },
     { base: "unknown-base", prs: [13] },
+  ]);
+  assert.deepEqual(report.ownerSummaries, [
+    {
+      owner: "agent:delta",
+      open: 2,
+      ready: 0,
+      draft: 2,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingMain: 1,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:zeta",
+      open: 2,
+      ready: 1,
+      draft: 1,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingMain: 1,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "unowned",
+      open: 2,
+      ready: 0,
+      draft: 2,
+      wip: 0,
+      stackedChildren: 1,
+      blockedReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:alpha",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 1,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:epsilon",
+      open: 1,
+      ready: 1,
+      draft: 0,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 1,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:gamma",
+      open: 1,
+      ready: 1,
+      draft: 0,
+      wip: 0,
+      stackedChildren: 1,
+      blockedReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "agent:omega",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 1,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
+    {
+      owner: "delta",
+      open: 1,
+      ready: 0,
+      draft: 1,
+      wip: 0,
+      stackedChildren: 0,
+      blockedReadyMain: 0,
+      conflictingMain: 0,
+      autoMergeArmed: 0,
+    },
   ]);
   assert.deepEqual(report.stacks, [
     { base: "agent/mapped-a", root: 10, children: [12] },
