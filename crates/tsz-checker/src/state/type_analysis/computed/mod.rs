@@ -1441,6 +1441,11 @@ impl<'a> CheckerState<'a> {
                     overloads.push(self.call_signature_from_function(func, decl_idx));
                 } else {
                     implementation_decl = decl_idx;
+                    if overloads.is_empty() {
+                        overloads.extend(
+                            self.jsdoc_overload_call_signatures_for_function(func, decl_idx),
+                        );
+                    }
                 }
             }
 

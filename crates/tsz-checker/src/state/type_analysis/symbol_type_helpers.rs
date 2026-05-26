@@ -322,6 +322,10 @@ impl<'a> CheckerState<'a> {
                 overloads.push(sig);
             } else if implementation_sig.is_none() {
                 implementation_sig = Some(sig);
+                if overloads.is_empty() {
+                    overloads
+                        .extend(self.jsdoc_overload_call_signatures_for_function(func, decl_idx));
+                }
             }
         }
 
