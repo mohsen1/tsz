@@ -1072,6 +1072,11 @@ pub struct PerfCounters {
     /// the direct-lowering proof.
     pub direct_source_file_type_alias_type_reference_rejection_kind:
         [AtomicU64; DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT],
+    /// First nested `TypeReference` rejection seen per rejected source-file
+    /// alias body. This is one bucket per rejected alias, unlike the all-refs
+    /// counter above.
+    pub direct_source_file_type_alias_first_type_reference_rejection_kind:
+        [AtomicU64; DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT],
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     pub direct_actual_lib_intl_interface_outcome:
         [AtomicU64; DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
@@ -1215,6 +1220,10 @@ impl PerfCounters {
             direct_source_file_type_alias_body_rejection_kind: [const { AtomicU64::new(0) };
                 DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_KIND_COUNT],
             direct_source_file_type_alias_type_reference_rejection_kind: [const { AtomicU64::new(0) };
+                DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT],
+            direct_source_file_type_alias_first_type_reference_rejection_kind: [const {
+                AtomicU64::new(0)
+            };
                 DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT],
             direct_actual_lib_intl_interface_outcome: [const { AtomicU64::new(0) };
                 DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT],
@@ -2374,6 +2383,18 @@ pub fn record_direct_source_file_type_alias_type_reference_rejection_kind(
 }
 
 #[inline]
+pub fn record_direct_source_file_type_alias_first_type_reference_rejection_kind(
+    kind: DirectSourceFileTypeAliasTypeReferenceRejectionKind,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let c = counters();
+    c.direct_source_file_type_alias_first_type_reference_rejection_kind[kind.as_index()]
+        .fetch_add(1, Ordering::Relaxed);
+}
+
+#[inline]
 pub fn record_direct_actual_lib_intl_interface_outcome(
     outcome: DirectActualLibIntlInterfaceOutcome,
 ) {
@@ -2529,6 +2550,7 @@ impl PerfCounters {
             + &Self::dump_direct_source_file_type_alias_lowering_outcomes()
             + &Self::dump_direct_source_file_type_alias_body_rejection_kinds()
             + &Self::dump_direct_source_file_type_alias_type_reference_rejection_kinds()
+            + &Self::dump_direct_source_file_type_alias_first_type_reference_rejection_kinds()
             + &Self::dump_direct_actual_lib_intl_interface_outcomes()
             + &Self::dump_delegate_declaration_file_miss_residues(
                 &snap.delegate_declaration_file_miss_residues,
@@ -2967,6 +2989,33 @@ impl PerfCounters {
         out
     }
 
+    fn dump_direct_source_file_type_alias_first_type_reference_rejection_kinds() -> String {
+        let c = counters();
+        let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
+        let total: u64 = c
+            .direct_source_file_type_alias_first_type_reference_rejection_kind
+            .iter()
+            .map(load)
+            .sum();
+        if total == 0 {
+            return String::new();
+        }
+
+        let mut out =
+            String::from("\nDirect source-file type-alias first type-reference rejection kinds:\n");
+        for (idx, name) in DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES
+            .iter()
+            .enumerate()
+        {
+            let count =
+                load(&c.direct_source_file_type_alias_first_type_reference_rejection_kind[idx]);
+            if count > 0 {
+                out.push_str(&format!("  {name:<44} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
     fn dump_direct_actual_lib_intl_interface_outcomes() -> String {
         let c = counters();
         let load = |a: &AtomicU64| a.load(Ordering::Relaxed);
@@ -3257,6 +3306,15 @@ pub struct PerfCounterSnapshot {
     /// order. These buckets classify referenced symbol shape and type-argument
     /// shape without recording user-written names.
     pub direct_source_file_type_alias_type_reference_rejection_kinds: Vec<NamedCount>,
+    /// First nested `TypeReference` rejection bucket per rejected source-file
+    /// alias body.
+    ///
+    /// Always `DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT`
+    /// long, in `DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES`
+    /// order. Unlike the all-refs counter above, these buckets add up to at
+    /// most one count per `body_not_direct_lowerable` alias with a type
+    /// reference in its rejected body.
+    pub direct_source_file_type_alias_first_type_reference_rejection_kinds: Vec<NamedCount>,
     /// Outcome buckets for direct actual-lib Intl interface attempts.
     ///
     /// Always `DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT` long, in
@@ -3699,6 +3757,15 @@ impl PerfCounters {
                     ),
                 })
                 .collect(),
+            direct_source_file_type_alias_first_type_reference_rejection_kinds: (0
+                ..DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_COUNT)
+                .map(|i| NamedCount {
+                    name: DIRECT_SOURCE_FILE_TYPE_ALIAS_TYPE_REFERENCE_REJECTION_KIND_NAMES[i],
+                    count: load(
+                        &c.direct_source_file_type_alias_first_type_reference_rejection_kind[i],
+                    ),
+                })
+                .collect(),
             direct_actual_lib_intl_interface_outcomes: (0
                 ..DIRECT_ACTUAL_LIB_INTL_INTERFACE_OUTCOME_COUNT)
                 .map(|i| NamedCount {
@@ -3867,6 +3934,7 @@ mod json_tests {
             "direct_source_file_type_alias_lowering_outcomes",
             "direct_source_file_type_alias_body_rejection_kinds",
             "direct_source_file_type_alias_type_reference_rejection_kinds",
+            "direct_source_file_type_alias_first_type_reference_rejection_kinds",
             "direct_actual_lib_intl_interface_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
@@ -5097,6 +5165,55 @@ mod json_tests {
         assert!(
             read(unresolved_idx) >= before_unresolved.saturating_add(3),
             "unresolved_identifier bump not visible (before={before_unresolved}, after={})",
+            read(unresolved_idx),
+        );
+    }
+
+    #[test]
+    fn direct_source_file_type_alias_first_type_reference_rejection_snapshot() {
+        // The public recorder is gated on `TSZ_PERF_COUNTERS`; drive the
+        // atomics directly so this unit test is independent of process env.
+        let c = counters();
+
+        let alias_with_args_idx =
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasWithArguments
+                .as_index();
+        let unresolved_idx =
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::UnresolvedIdentifier.as_index();
+
+        let before_alias_with_args = c
+            .direct_source_file_type_alias_first_type_reference_rejection_kind[alias_with_args_idx]
+            .load(Ordering::Relaxed);
+        let before_unresolved = c.direct_source_file_type_alias_first_type_reference_rejection_kind
+            [unresolved_idx]
+            .load(Ordering::Relaxed);
+
+        c.direct_source_file_type_alias_first_type_reference_rejection_kind[alias_with_args_idx]
+            .fetch_add(1, Ordering::Relaxed);
+        c.direct_source_file_type_alias_first_type_reference_rejection_kind[unresolved_idx]
+            .fetch_add(2, Ordering::Relaxed);
+
+        let snap = PerfCounters::snapshot();
+        let json = serde_json::to_value(&snap).expect("serializes");
+        let rows = json["direct_source_file_type_alias_first_type_reference_rejection_kinds"]
+            .as_array()
+            .expect("direct_source_file_type_alias_first_type_reference_rejection_kinds is array");
+        let read = |idx: usize| rows[idx]["count"].as_u64().unwrap_or(0);
+
+        assert_eq!(
+            rows[alias_with_args_idx]["name"],
+            "local_type_alias_with_arguments"
+        );
+        assert!(
+            read(alias_with_args_idx) > before_alias_with_args,
+            "local_type_alias_with_arguments first-bump not visible (before={before_alias_with_args}, after={})",
+            read(alias_with_args_idx),
+        );
+
+        assert_eq!(rows[unresolved_idx]["name"], "unresolved_identifier");
+        assert!(
+            read(unresolved_idx) >= before_unresolved.saturating_add(2),
+            "unresolved_identifier first-bump not visible (before={before_unresolved}, after={})",
             read(unresolved_idx),
         );
     }

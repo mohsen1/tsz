@@ -6,6 +6,7 @@ use tsz_common::perf_counters::{
     DirectSourceFileTypeAliasBodyRejectionKind,
     DirectSourceFileTypeAliasTypeReferenceRejectionKind, enabled_fast,
     record_direct_source_file_type_alias_body_rejection_kind,
+    record_direct_source_file_type_alias_first_type_reference_rejection_kind,
     record_direct_source_file_type_alias_type_reference_rejection_kind,
 };
 use tsz_parser::NodeIndex;
@@ -22,6 +23,14 @@ pub(crate) fn record_source_alias_rejection_kinds(
     let body_kind = body_rejection_kind(arena, node_idx);
     record_direct_source_file_type_alias_body_rejection_kind(body_kind);
     if enabled_fast() {
+        if let Some(kind) = first_type_reference_rejection_kind_in_node(
+            arena,
+            delegate_binder,
+            node_idx,
+            type_param_names,
+        ) {
+            record_direct_source_file_type_alias_first_type_reference_rejection_kind(kind);
+        }
         record_type_reference_rejection_kinds_in_node(
             arena,
             delegate_binder,
@@ -150,6 +159,31 @@ fn record_type_reference_rejection_kinds_in_node(
     {
         record_direct_source_file_type_alias_type_reference_rejection_kind(kind);
     }
+}
+
+fn first_type_reference_rejection_kind_in_node(
+    arena: &NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+) -> Option<DirectSourceFileTypeAliasTypeReferenceRejectionKind> {
+    let mut stack = vec![root_idx];
+    while let Some(node_idx) = stack.pop() {
+        let Some(node) = arena.get(node_idx) else {
+            continue;
+        };
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            return Some(type_reference_rejection_kind(
+                arena,
+                delegate_binder,
+                node_idx,
+                type_param_names,
+            ));
+        }
+        let children = arena.get_children(node_idx);
+        stack.extend(children.into_iter().rev());
+    }
+    None
 }
 
 fn type_reference_rejection_kinds_in_node(
@@ -430,5 +464,30 @@ mod tests {
         assert!(kinds.contains(
             &DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeParameter,
         ));
+    }
+
+    #[test]
+    fn source_file_alias_first_type_reference_attribution_uses_source_order() {
+        let (arena, alias_body) =
+            alias_body_from_source("type Box<T> = T | null;\ntype Result<T> = Box<T> | Missing;");
+        let mut binder = BinderState::new();
+        let box_sym = binder
+            .symbols
+            .alloc(symbol_flags::TYPE_ALIAS, "Box".to_string());
+        binder.file_locals.set("Box".to_string(), box_sym);
+
+        let first = first_type_reference_rejection_kind_in_node(
+            &arena,
+            &binder,
+            alias_body,
+            &[String::from("T")],
+        )
+        .expect("first type reference");
+
+        assert_eq!(
+            first,
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::LocalTypeAliasWithArguments,
+            "first-reference attribution should classify the first source-order blocker",
+        );
     }
 }
