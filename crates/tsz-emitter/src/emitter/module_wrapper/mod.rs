@@ -1,7 +1,9 @@
 mod bang_module_reference;
 mod system_emit;
+mod system_export_star;
 mod system_helpers;
 mod system_hoist;
+mod system_import_export_order;
 mod system_legacy_class_decorators;
 #[cfg(test)]
 mod tests;
