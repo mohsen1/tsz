@@ -3,6 +3,7 @@ use std::sync::Arc;
 use tsz_binder::BinderState;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
 use tsz_checker::state::CheckerState;
+use tsz_checker::test_utils::{check_multi_file_with_libs, load_lib_files};
 use tsz_common::diagnostics::Diagnostic;
 use tsz_parser::parser::ParserState;
 use tsz_solver::construction::TypeInterner;
@@ -185,6 +186,61 @@ const u = {};
         ts2741.len(),
         1,
         "Expected imported object typedef @type to check missing initializer property, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_class_self_param_uses_instance_type_across_commonjs_file() {
+    let lib_files = load_lib_files(&["es5.d.ts", "es2015.symbol.d.ts", "es2015.iterable.d.ts"]);
+    let diagnostics = check_multi_file_with_libs(
+        &[
+            (
+                "index.js",
+                r#"
+const LazySet = require("./LazySet");
+
+/** @type {LazySet} */
+const stringSet = undefined;
+stringSet.addAll(stringSet);
+"#,
+            ),
+            (
+                "LazySet.js",
+                r#"
+/**
+ * @typedef {Object} SomeObject
+ */
+class LazySet {
+    /**
+     * @param {LazySet} iterable
+     */
+    addAll(iterable) {}
+    [Symbol.iterator]() {}
+}
+
+module.exports = LazySet;
+"#,
+            ),
+        ],
+        "index.js",
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+        &lib_files,
+    );
+
+    let codes: Vec<u32> = diagnostics
+        .iter()
+        .map(|diagnostic| diagnostic.code)
+        .collect();
+    assert_eq!(
+        codes,
+        vec![2322],
+        "JSDoc class self references should resolve to the instance type, got: {diagnostics:?}"
     );
 }
 
