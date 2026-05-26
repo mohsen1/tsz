@@ -603,6 +603,42 @@ fn direct_source_file_type_alias_lowers_renamed_generic_body_with_non_generic_lo
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_template_literal_with_type_param() {
+    with_two_file_state(
+        "export type PathPart<Key extends string | number> = `${Key}`;",
+        "import { PathPart } from './target';",
+        |state, target_binder| {
+            let path_part_sym = target_binder.file_locals.get("PathPart").expect("PathPart");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(path_part_sym, Some(1), true)
+                .expect("template literal aliases over own type params should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "PathPart should stay generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_template_literal_with_local_alias_application() {
+    with_two_file_state(
+        "type Segment<X extends string | number> = X;\nexport type Joined<P extends string, S extends string> = `${Segment<P>}.${S}`;",
+        "import { Joined } from './target';",
+        |state, target_binder| {
+            let joined_sym = target_binder.file_locals.get("Joined").expect("Joined");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(joined_sym, Some(1), true)
+                .expect(
+                    "template literals over safe local alias applications should lower directly",
+                );
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Joined should preserve both type params");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_concrete_generic_alias_cycle() {
     with_two_file_state(
         "type Loop<T> = Loop<T> | T;\nexport type Concrete = Loop<string>;",
