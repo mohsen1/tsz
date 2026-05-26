@@ -21,9 +21,41 @@ impl<'a> LoweringPass<'a> {
         })
     }
 
+    pub(super) fn class_has_decorated_member(&self, class_data: &ClassData) -> bool {
+        class_data.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                return false;
+            };
+            let modifiers = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|method| method.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|property| property.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|accessor| accessor.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            modifiers.is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+        })
+    }
+
     pub(super) fn mark_tc39_decorator_helpers(&mut self, class_data: &ClassData) {
         let needs_prop_key = self.class_has_computed_decorated_member(class_data);
         let needs_set_function_name = self.class_has_private_decorated_member(class_data);
+        let has_decorated_member = self.class_has_decorated_member(class_data);
         let has_class_decorators = class_data.modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
                 self.arena
@@ -39,6 +71,9 @@ impl<'a> LoweringPass<'a> {
         let helpers = self.transforms.helpers_mut();
         helpers.es_decorate = true;
         helpers.run_initializers = true;
+        if has_decorated_member {
+            helpers.run_initializers_before_es_decorate = true;
+        }
         if needs_prop_key {
             helpers.prop_key = true;
         }
