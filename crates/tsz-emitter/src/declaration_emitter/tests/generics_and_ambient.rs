@@ -78,6 +78,10 @@ fn test_inferred_return_preserves_mapped_parameter_annotation() {
     export function makeDictionary<T>(obj: { [x: string]: T }) {
         return obj;
     }
+
+    export function makeRecordRenamed<Value, Key extends string>(obj: { [X in Key]: Value }) {
+        return obj;
+    }
     "#,
     );
 
@@ -88,6 +92,10 @@ fn test_inferred_return_preserves_mapped_parameter_annotation() {
     assert!(
         output.contains("): {\n    [x: string]: T;\n};"),
         "Expected index signature parameter annotation to keep object return layout: {output}"
+    );
+    assert!(
+        output.contains("): { [X in Key]: Value; };"),
+        "Expected renamed mapped variables to use the same return annotation rule: {output}"
     );
 }
 
