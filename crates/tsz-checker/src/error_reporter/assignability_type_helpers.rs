@@ -1,6 +1,15 @@
 //! Small helper predicates used by assignability diagnostics.
 
+use crate::state::CheckerState;
 use tsz_solver::TypeId;
+
+pub(super) fn is_function_like_for_literal_member_widening(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    crate::query_boundaries::common::function_shape_for_type(db, type_id).is_some()
+        || crate::query_boundaries::common::callable_shape_for_type(db, type_id).is_some()
+}
 
 /// Returns true if the formatted type name matches a built-in wrapper type
 /// (Boolean, Number, String, Object). These types inherit properties from Object
@@ -79,14 +88,6 @@ pub(crate) fn is_reserved_type_name(name: &str) -> bool {
     )
 }
 
-/// Returns true if the display string looks like a function/callable type.
-/// Used as a fallback when TypeId-level detection fails due to TypeQuery/Lazy wrapping.
-/// Function types display as `(params) => ReturnType`.
-pub(super) fn is_function_type_display(name: &str) -> bool {
-    // A function type display always starts with `(` and contains `) => `.
-    name.starts_with('(') && name.contains(") => ")
-}
-
 /// Returns true if the property name is a standard Object.prototype method.
 /// These are implicitly available on all interfaces/objects through the Object
 /// prototype chain. When such a property appears as "missing" in a subtype check,
@@ -151,4 +152,16 @@ pub(super) fn has_own_signature_type_params(
         return !shape.type_params.is_empty();
     }
     false
+}
+
+impl<'a> CheckerState<'a> {
+    pub(super) fn typeof_result_source_display(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<&'static str> {
+        (!self.is_literal_sensitive_assignment_target(target)
+            && crate::query_boundaries::diagnostics::is_typeof_result_union(self.ctx.types, source))
+        .then_some("string")
+    }
 }

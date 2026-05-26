@@ -85,7 +85,7 @@ impl<'a> CheckerState<'a> {
             {
                 continue;
             }
-            if self.is_assignable_to_with_env(actual_for_check, expected) {
+            if self.diagnostic_relation_boolean_guard_with_env(actual_for_check, expected) {
                 continue;
             }
 

@@ -27,11 +27,12 @@ scripts/agents/list-owned-work.sh Studio-A
 - Related PRs to inspect: `#9277`, `#9253`, `#9251`, `#9249`, `#9237`,
   `#9235`, `#9223`, `#9215`, `#9063`, `#9034`, `#8980`, `#8912`, `#8901`.
 - Track: roadmap Track 1.
-- Next concrete step: with the fixture-metadata sync guard landed in #9538,
-  do not reclaim the type-fest reduction backlog while Studio-D owns draft
-  PR #9229 for #8774. Look next for unowned dashboard-truth gaps where a
-  project row can misreport correctness, phase, first blocker family, runner
-  identity, or fixture metadata.
+- Next concrete step: with #10035 merged and Studio-D's #9229 closed unmerged,
+  Studio-A is reclaiming the unowned #8774 type-fest reduction-fixture backlog
+  on branch `codex/studio-a-typefest-reductions-20260524`. Do not duplicate
+  that slice while the Studio-A PR is open; after it lands, look next for
+  unowned dashboard-truth gaps where a project row can misreport correctness,
+  phase, first blocker family, runner identity, or fixture metadata.
 
 ## Existing Work To Inspect First
 
@@ -39,8 +40,9 @@ scripts/agents/list-owned-work.sh Studio-A
   current assumptions instead of reopening the Cloud Build timing-shard work.
 - `#9223` surfaces project compatibility measurements.
 - `#9215`, `#9063`, `#9034`, and `#8980` touch project compile guard shape.
-- `#9229` owns the current type-fest reduction backlog for `#8774`; coordinate
-  with Studio-D instead of adding parallel fixtures.
+- `#9229` was the previous Studio-D draft for `#8774`, but it is now closed
+  unmerged. The current type-fest reduction-fixture ownership is the Studio-A
+  branch named above.
 
 ## Non-Overlap Rules
 
