@@ -546,20 +546,20 @@ export function activeRunOwnerStatusCounts(runs) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.status.localeCompare(b.status));
 }
 
-function pushSkipOwnerCounts(lines, skips) {
+function pushSkipOwnerCounts(lines, skips, now) {
   const ownerSummary = skipOwnerCounts(skips);
   const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
   lines.push(
     "",
     "### Skip Owner Counts",
     "",
-    hasOldestUpdated ? "| Count | Owner | Oldest updated |" : "| Count | Owner |",
-    hasOldestUpdated ? "|-------|-------|----------------|" : "|-------|-------|",
+    hasOldestUpdated ? "| Count | Owner | Oldest updated | Oldest age |" : "| Count | Owner |",
+    hasOldestUpdated ? "|-------|-------|----------------|------------|" : "|-------|-------|",
   );
   for (const entry of ownerSummary) {
     const owner = entry.owner.replace(/\|/g, "\\|");
     if (hasOldestUpdated) {
-      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} |`);
+      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} | ${elapsedAge(entry.oldestUpdatedAt, now)} |`);
     } else {
       lines.push(`| ${entry.count} | ${owner} |`);
     }
@@ -1047,7 +1047,7 @@ export function formatResult(result, options) {
       for (const entry of summary) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
-      pushSkipOwnerCounts(lines, result.skips);
+      pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
       pushSkipOwnerReasonCounts(lines, result.skips);
       pushCleanupSkipRows(lines, result.skips);
     }
@@ -1074,7 +1074,7 @@ export function formatResult(result, options) {
     for (const entry of summary) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
-    pushSkipOwnerCounts(lines, result.skips);
+    pushSkipOwnerCounts(lines, result.skips, result.now || new Date().toISOString());
     pushSkipOwnerReasonCounts(lines, result.skips);
     pushQueueSkipRows(lines, result.skips);
   }
