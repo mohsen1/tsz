@@ -176,3 +176,30 @@ class D { static [0] = class { @dec y: any; }; }
         "Literal computed class fields should pass literal names to __setFunctionName.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn decorated_fields_render_nested_tc39_decorated_class_initializers() {
+    let source = "\
+declare var dec: any;
+class C { @dec x = @dec class {}; }
+class D { @dec static [\"y\"] = @dec class {}; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("@dec class"),
+        "Decorated field initializers should render nested transformed class expressions, not raw source text.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = tslib_1.__runInitializers(this, _x_initializers, (() => {")
+            && output.contains(
+                "static [\"y\"] = tslib_1.__runInitializers(this, _static_member_initializers, (() => {"
+            ),
+        "Decorated fields should pass transformed nested class expressions into __runInitializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1.__setFunctionName(_classThis, \"x\")")
+            && output.contains("tslib_1.__setFunctionName(_classThis, \"y\")"),
+        "Nested anonymous decorated class expressions should use the containing field name.\nOutput:\n{output}"
+    );
+}

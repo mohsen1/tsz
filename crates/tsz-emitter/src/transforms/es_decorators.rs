@@ -119,6 +119,9 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Function body text rendered by the main emitter before this transform
     /// assembles descriptor/externalized function expressions.
     function_body_texts: FxHashMap<NodeIndex, String>,
+    /// Field initializer text rendered by the main emitter when raw source text
+    /// would miss nested transforms.
+    field_initializer_texts: FxHashMap<NodeIndex, String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -138,6 +141,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             function_name_is_expression: false,
             anonymous_class_name: None,
             function_body_texts: FxHashMap::default(),
+            field_initializer_texts: FxHashMap::default(),
             use_define_for_class_fields: false,
         }
     }
@@ -184,6 +188,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_function_body_text(&mut self, body_idx: NodeIndex, text: String) {
         self.function_body_texts.insert(body_idx, text);
+    }
+
+    pub fn set_field_initializer_text(&mut self, member_idx: NodeIndex, text: String) {
+        self.field_initializer_texts.insert(member_idx, text);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
@@ -2949,6 +2957,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
     }
 
     fn get_field_initializer_text(&self, member_idx: NodeIndex) -> String {
+        if let Some(text) = self.field_initializer_texts.get(&member_idx) {
+            return text.clone();
+        }
         let Some(member_node) = self.arena.get(member_idx) else {
             return String::new();
         };

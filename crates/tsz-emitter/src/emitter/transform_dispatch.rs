@@ -1254,7 +1254,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(in crate::emitter) fn seed_tc39_decorator_function_bodies(
-        &self,
+        &mut self,
         emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
         class_node: NodeIndex,
     ) {
@@ -1290,6 +1290,10 @@ impl<'a> Printer<'a> {
                 if is_decorated_private {
                     self.seed_tc39_decorator_function_body(emitter, accessor.body);
                 }
+                continue;
+            }
+            if let Some(prop) = self.arena.get_property_decl(member_node) {
+                self.seed_tc39_decorator_field_initializer(emitter, member_idx, prop);
             }
         }
     }
@@ -1304,6 +1308,49 @@ impl<'a> Printer<'a> {
         }
         let body = self.render_tc39_decorator_function_body(body_idx);
         emitter.set_function_body_text(body_idx, body);
+    }
+
+    fn seed_tc39_decorator_field_initializer(
+        &mut self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        member_idx: NodeIndex,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) {
+        if prop.initializer == NodeIndex::NONE
+            || !self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
+        {
+            return;
+        }
+        let Some(name) = self.tc39_class_expression_name_from_class_field_name(prop.name) else {
+            return;
+        };
+        let initializer = self.with_scoped_static_initializer_context_cleared(|this| {
+            this.capture_tc39_class_expression_with_name(prop.initializer, name)
+        });
+        emitter.set_field_initializer_text(member_idx, initializer);
+    }
+
+    fn capture_tc39_class_expression_with_name(
+        &mut self,
+        class_expr: NodeIndex,
+        name: String,
+    ) -> String {
+        let previous = self
+            .pending_tc39_class_expression_name
+            .replace((name, false));
+        let output = self.capture_emit(class_expr);
+        self.pending_tc39_class_expression_name = previous;
+        output
+    }
+
+    fn tc39_class_expression_name_from_class_field_name(&self, name: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            self.tc39_class_expression_name_from_computed_property_expr(computed.expression)
+        } else {
+            self.tc39_class_expression_name_from_property_name(name)
+        }
     }
 
     fn render_tc39_decorator_function_body(&self, body_idx: NodeIndex) -> String {
