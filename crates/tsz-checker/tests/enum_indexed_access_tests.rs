@@ -34,6 +34,14 @@ fn expect_no_type_or_property_error(source: &str) {
     );
 }
 
+fn expect_property_error(source: &str) {
+    let errors = diagnostics_for(source)
+        .into_iter()
+        .filter(|&c| c == 2339)
+        .count();
+    assert!(errors > 0, "Expected at least one TS2339 error:\n{source}");
+}
+
 fn expect_error(source: &str) {
     let errors = diagnostics_for(source)
         .into_iter()
@@ -98,6 +106,28 @@ declare const write: WriteType;
 const check: Mode.Write = write;
 "#;
     expect_no_type_or_property_error(source);
+}
+
+#[test]
+fn test_numeric_enum_typeof_alias_indexed_access_literal_member() {
+    let source = r#"
+enum Direction { Up, Down, Left, Right }
+type DirectionObject = typeof Direction;
+type UpType = DirectionObject["Up"];
+declare const up: UpType;
+const check: Direction.Up = up;
+"#;
+    expect_no_type_or_property_error(source);
+}
+
+#[test]
+fn test_numeric_enum_type_alias_indexed_access_rejects_namespace_member() {
+    let source = r#"
+enum Direction { Up, Down, Left, Right }
+type DirectionValue = Direction;
+type UpType = DirectionValue["Up"];
+"#;
+    expect_property_error(source);
 }
 
 // ---------------------------------------------------------------------------

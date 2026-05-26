@@ -2,8 +2,17 @@ use super::super::type_node::TypeNodeChecker;
 use tsz_solver::TypeId;
 
 impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
-    pub(super) fn enum_namespace_property_object(&self, type_id: TypeId) -> Option<TypeId> {
-        let sym_id = self.ctx.resolve_type_to_symbol_id(type_id)?;
+    pub(super) fn enum_namespace_property_object(
+        &self,
+        surface_type: TypeId,
+        resolved_type: TypeId,
+        surface_is_type_query_node: bool,
+    ) -> Option<TypeId> {
+        if !surface_is_type_query_node && !self.type_surface_is_type_query_alias(surface_type) {
+            return None;
+        }
+
+        let sym_id = self.ctx.resolve_type_to_symbol_id(resolved_type)?;
         let symbol = self.ctx.binder.symbols.get(sym_id)?;
         if !symbol.has_any_flags(tsz_binder::symbol_flags::ENUM)
             || symbol.has_any_flags(tsz_binder::symbol_flags::ENUM_MEMBER)
@@ -12,6 +21,40 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         self.ctx.enum_namespace_types.get(&sym_id).copied()
+    }
+
+    fn type_surface_is_type_query_alias(&self, type_id: TypeId) -> bool {
+        if crate::query_boundaries::common::is_type_query_type(self.ctx.types, type_id) {
+            return true;
+        }
+
+        let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, type_id)
+        else {
+            return false;
+        };
+        let Some(def) = self.ctx.definition_store.get(def_id) else {
+            return false;
+        };
+        if def.kind != tsz_solver::def::DefKind::TypeAlias {
+            return false;
+        }
+
+        def.symbol_id
+            .map(tsz_binder::SymbolId)
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .is_some_and(|symbol| {
+                symbol.declarations.iter().any(|&decl_idx| {
+                    let Some(node) = self.ctx.arena.get(decl_idx) else {
+                        return false;
+                    };
+                    let Some(alias) = self.ctx.arena.get_type_alias(node) else {
+                        return false;
+                    };
+                    self.ctx.arena.get(alias.type_node).is_some_and(|body| {
+                        body.kind == tsz_parser::parser::syntax_kind_ext::TYPE_QUERY
+                    })
+                })
+            })
     }
 
     pub(super) fn full_enum_member_union_parent_type(&self, type_id: TypeId) -> Option<TypeId> {

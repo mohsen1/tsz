@@ -405,7 +405,11 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                     // unevaluated mapped-alias intersection members contribute their
                     // keys (see `evaluate_type_for_property_check`).
                     let property_object = self
-                        .enum_namespace_property_object(resolved_object)
+                        .enum_namespace_property_object(
+                            object_type,
+                            resolved_object,
+                            object_is_type_query_node,
+                        )
                         .unwrap_or_else(|| self.evaluate_type_for_property_check(resolved_object));
                     let prop_result =
                         crate::query_boundaries::property_access::resolve_property_access(
