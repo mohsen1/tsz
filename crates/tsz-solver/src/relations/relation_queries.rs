@@ -560,6 +560,7 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.set_strict_function_types(policy.strict_function_types());
     checker.set_exact_optional_property_types(policy.exact_optional_property_types());
     checker.set_no_unchecked_indexed_access(policy.no_unchecked_indexed_access());
+    checker.set_allow_bivariant_rest(policy.allow_bivariant_rest());
 
     checker.subtype.strict_null_checks = policy.strict_null_checks();
     checker.subtype.strict_function_types = policy.strict_function_types();

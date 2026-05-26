@@ -34,7 +34,7 @@ use crate::relations::relation_queries::{
 };
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
-    CachedAnyMode, FunctionShape, PropertyInfo, RelationCacheConfig, RelationCacheKey,
+    CachedAnyMode, FunctionShape, ParamInfo, PropertyInfo, RelationCacheConfig, RelationCacheKey,
     RelationCacheKind, RelationFlags, TypeParamInfo,
 };
 
@@ -1016,5 +1016,98 @@ fn assignability_cache_erase_generics_policy_matches_uncached_relation_query() {
         db.lookup_assignability_cache(strict_key),
         Some(uncached_strict.is_related()),
         "strict generic slot must remain intact after the erased lookup",
+    );
+}
+
+#[test]
+fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    ));
+    let rest_any = interner.array(TypeId::ANY);
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: None,
+            type_id: rest_any,
+            optional: false,
+            rest: true,
+        }],
+        TypeId::VOID,
+    ));
+    let strict_without_rest = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+    )
+    .with_strict_any_propagation(true)
+    .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
+    let strict_with_rest = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
+            | RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST,
+    )
+    .with_strict_any_propagation(true)
+    .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
+
+    let uncached_without_rest = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_without_rest,
+        RelationContext::default(),
+    )
+    .is_related();
+    let cached_without_rest = db.is_assignable_to_with_policy(source, target, strict_without_rest);
+
+    assert_eq!(
+        cached_without_rest, uncached_without_rest,
+        "cached assignability without bivariant rest must match the uncached relation facade",
+    );
+
+    let uncached_with_rest = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_with_rest,
+        RelationContext::default(),
+    )
+    .is_related();
+    let cached_with_rest = db.is_assignable_to_with_policy(source, target, strict_with_rest);
+
+    assert_eq!(
+        cached_with_rest, uncached_with_rest,
+        "cached assignability with bivariant rest must match the uncached relation facade",
+    );
+    assert!(
+        !cached_without_rest,
+        "without ALLOW_BIVARIANT_REST, strict-any assignability must compare extra parameters normally",
+    );
+    assert!(
+        cached_with_rest,
+        "with ALLOW_BIVARIANT_REST, strict-any assignability should accept the rest-any target",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            strict_without_rest.cache_config(),
+        )),
+        Some(cached_without_rest),
+        "non-bivariant-rest policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            strict_with_rest.cache_config(),
+        )),
+        Some(cached_with_rest),
+        "bivariant-rest policy result must use its own cache slot",
     );
 }
