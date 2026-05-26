@@ -313,6 +313,44 @@ fn direct_source_file_type_alias_lowers_renamed_mapped_type_with_local_value_ali
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_indexed_type_literal_with_local_alias_values() {
+    with_two_file_state(
+        "type Is<T, U> = T extends U ? 1 : 0;\nexport type Select<T, U> = T extends unknown ? { 1: T & U, 0: never }[Is<T, U>] : never;",
+        "import { Select } from './target';",
+        |state, target_binder| {
+            let select_sym = target_binder.file_locals.get("Select").expect("Select");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(select_sym, Some(1), true)
+                .expect("indexed type literals with safe property values should lower");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(
+                params.len(),
+                2,
+                "Select should preserve its type parameters"
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_type_literal_with_computed_name() {
+    with_two_file_state(
+        "declare const key: unique symbol;\nexport type Box<T> = { [key]: T };",
+        "import { Box } from './target';",
+        |state, target_binder| {
+            let box_sym = target_binder.file_locals.get("Box").expect("Box");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(box_sym, Some(1), true)
+                    .is_none(),
+                "computed property names must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_same_binder_export_alias_symbol() {
     let (arena, binder, types) =
         parse_bound_source("type Leaf = string;\nexport type Result = Alias;");

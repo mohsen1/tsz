@@ -5,6 +5,8 @@ use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::relations::subtype::TypeResolver;
 use tsz_solver::{ObjectShape, PropertyInfo, SubtypeFailureReason, TypeId};
 
+use crate::state::CheckerState;
+
 pub(crate) use super::common::{contains_type_parameters, object_shape_for_type};
 
 pub(crate) fn are_types_structurally_identical<R: TypeResolver>(
@@ -34,6 +36,27 @@ pub(crate) fn are_types_structurally_identical_in_param_scope<R: TypeResolver>(
         right,
         param_names,
     )
+}
+
+pub(crate) fn recursive_heritage_property_types_conflict(
+    checker: &mut CheckerState<'_>,
+    member_type: TypeId,
+    constraint_type: TypeId,
+) -> bool {
+    if are_types_structurally_identical(
+        checker.ctx.types,
+        &checker.ctx,
+        member_type,
+        constraint_type,
+    ) {
+        return false;
+    }
+    if checker.is_assignable_to(member_type, constraint_type)
+        || checker.is_assignable_to(constraint_type, member_type)
+    {
+        return false;
+    }
+    true
 }
 
 /// Return the element type when `type_id` is a mutable `Array<T>` form used for

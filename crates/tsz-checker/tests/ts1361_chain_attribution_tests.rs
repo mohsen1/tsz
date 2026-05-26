@@ -120,6 +120,78 @@ new B();
 }
 
 #[test]
+fn imported_interface_used_as_value_reports_ts2693_not_ts1362() {
+    let a = r#"
+export interface Animal {
+  legs: number;
+}
+"#;
+    let b = r#"
+import { Animal } from "./a";
+const x = Animal;
+"#;
+
+    let diagnostics = compile_module_files(&[("./a.ts", a), ("./b.ts", b)], 1);
+
+    let ts2693 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2693)
+        .collect::<Vec<_>>();
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1362)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2693.len(),
+        1,
+        "Expected TS2693 for imported interface used as a value. \
+         Got TS2693={ts2693:?}, TS1362={ts1362:?}, all={diagnostics:?}",
+    );
+    assert!(
+        ts1362.is_empty(),
+        "An intrinsic type-only export should not be attributed to `export type`. \
+         Got TS1362={ts1362:?}, all={diagnostics:?}",
+    );
+}
+
+#[test]
+fn imported_type_alias_used_as_value_reports_ts2693_not_ts1362() {
+    let a = r#"
+export type Animal = {
+  legs: number;
+};
+"#;
+    let b = r#"
+import { Animal } from "./a";
+const x = Animal;
+"#;
+
+    let diagnostics = compile_module_files(&[("./a.ts", a), ("./b.ts", b)], 1);
+
+    let ts2693 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 2693)
+        .collect::<Vec<_>>();
+    let ts1362 = diagnostics
+        .iter()
+        .filter(|(code, _)| *code == 1362)
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        ts2693.len(),
+        1,
+        "Expected TS2693 for imported type alias used as a value. \
+         Got TS2693={ts2693:?}, TS1362={ts1362:?}, all={diagnostics:?}",
+    );
+    assert!(
+        ts1362.is_empty(),
+        "A type alias declaration should not be attributed to `export type`. \
+         Got TS1362={ts1362:?}, all={diagnostics:?}",
+    );
+}
+
+#[test]
 fn import_type_equals_require_value_use_reports_ts1361() {
     let foo = r#"
 class Foo {

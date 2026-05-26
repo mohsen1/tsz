@@ -111,8 +111,8 @@ impl<'a> CheckerState<'a> {
             self.ctx.types,
             substituted_expected,
         );
-        self.is_assignable_to_with_env(actual, substituted_expected)
-            || self.is_assignable_to_with_env(actual, substituted_rest_element)
+        self.diagnostic_relation_boolean_guard_with_env(actual, substituted_expected)
+            || self.diagnostic_relation_boolean_guard_with_env(actual, substituted_rest_element)
     }
 
     pub(super) fn report_checked_js_nullable_this_property_method_call(
