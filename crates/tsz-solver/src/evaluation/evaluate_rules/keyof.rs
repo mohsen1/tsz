@@ -48,6 +48,42 @@ fn index_signature_key_includes_symbol(interner: &dyn TypeDatabase, key_type: Ty
     }
 }
 
+fn extend_keyof_with_index_signature_key_type(
+    interner: &dyn TypeDatabase,
+    key_types: &mut Vec<TypeId>,
+    key_type: TypeId,
+) {
+    match interner.lookup(key_type) {
+        Some(TypeData::Union(members)) => {
+            for &member in interner.type_list(members).iter() {
+                extend_keyof_with_index_signature_key_type(interner, key_types, member);
+            }
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::String)) => {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::Number)) => {
+            key_types.push(TypeId::NUMBER);
+        }
+        Some(TypeData::Intrinsic(IntrinsicKind::Symbol)) => {
+            key_types.push(TypeId::SYMBOL);
+        }
+        Some(TypeData::TemplateLiteral(_))
+        | Some(TypeData::StringIntrinsic { .. })
+        | Some(TypeData::Literal(LiteralValue::String(_))) => {
+            key_types.push(key_type);
+        }
+        _ => {
+            key_types.push(TypeId::STRING);
+            key_types.push(TypeId::NUMBER);
+            if index_signature_key_includes_symbol(interner, key_type) {
+                key_types.push(TypeId::SYMBOL);
+            }
+        }
+    }
+}
+
 fn extend_keyof_with_index_signature_keys(
     interner: &dyn TypeDatabase,
     key_types: &mut Vec<TypeId>,
@@ -56,15 +92,7 @@ fn extend_keyof_with_index_signature_keys(
     is_enum_namespace: bool,
 ) {
     if let Some(idx) = string_or_symbol_index {
-        if idx.key_type == TypeId::SYMBOL {
-            key_types.push(TypeId::SYMBOL);
-        } else {
-            key_types.push(TypeId::STRING);
-            key_types.push(TypeId::NUMBER);
-            if index_signature_key_includes_symbol(interner, idx.key_type) {
-                key_types.push(TypeId::SYMBOL);
-            }
-        }
+        extend_keyof_with_index_signature_key_type(interner, key_types, idx.key_type);
     } else if number_index.is_some() && !is_enum_namespace {
         key_types.push(TypeId::NUMBER);
     }
