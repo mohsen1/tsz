@@ -121,6 +121,9 @@ mod control_flow_tests;
 #[path = "../tests/control_flow_type_guard_tests.rs"]
 mod control_flow_type_guard_tests;
 #[cfg(test)]
+#[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
+mod decorator_return_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
