@@ -8,7 +8,7 @@ use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
 use crate::relations::subtype::AnyPropagationMode;
-use crate::types::{PropertyInfo, TypeId};
+use crate::types::{FunctionShape, ParamInfo, PropertyInfo, RelationCacheKey, TypeId};
 
 #[test]
 fn subtype_cache_any_propagation_mode_matches_uncached_nested_any() {
@@ -93,5 +93,85 @@ fn subtype_cache_any_propagation_mode_matches_uncached_nested_any() {
     assert!(
         stats.subtype_misses >= 2,
         "all-depth and top-level-only policies should miss in separate cache slots",
+    );
+}
+
+#[test]
+fn assignability_cache_strict_function_types_matches_uncached_function_variance() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+
+    let handler_dog = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(dog)],
+        TypeId::VOID,
+    ));
+    let handler_animal = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(animal)],
+        TypeId::VOID,
+    ));
+
+    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES);
+    let loose_policy = RelationPolicy::from_flags(0);
+
+    let strict_uncached = query_relation(
+        &interner,
+        handler_dog,
+        handler_animal,
+        RelationKind::Assignable,
+        strict_policy,
+        RelationContext::default(),
+    );
+    let loose_uncached = query_relation(
+        &interner,
+        handler_dog,
+        handler_animal,
+        RelationKind::Assignable,
+        loose_policy,
+        RelationContext::default(),
+    );
+
+    let strict_cached = db.is_assignable_to_with_policy(handler_dog, handler_animal, strict_policy);
+    let loose_cached = db.is_assignable_to_with_policy(handler_dog, handler_animal, loose_policy);
+    let strict_cached_again =
+        db.is_assignable_to_with_policy(handler_dog, handler_animal, strict_policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        strict_cached,
+        strict_uncached.is_related(),
+        "cached strict function variance must match the uncached relation facade",
+    );
+    assert_eq!(
+        loose_cached,
+        loose_uncached.is_related(),
+        "cached loose function variance must match the uncached relation facade",
+    );
+    assert_eq!(
+        strict_cached_again, strict_cached,
+        "second strict function variance lookup should reuse the policy-shaped answer",
+    );
+    assert!(
+        !strict_cached,
+        "strict function parameter variance should reject `(dog) => void` where `(animal) => void` is required",
+    );
+    assert!(
+        loose_cached,
+        "loose function parameter variance should accept the bivariant parameter comparison",
+    );
+    assert!(
+        stats.assignability_hits >= 1,
+        "second strict lookup should hit the assignability cache",
+    );
+    assert!(
+        stats.assignability_misses >= 2,
+        "strict and loose variance policies should miss in separate cache slots",
     );
 }
