@@ -438,9 +438,11 @@ impl<'a> CheckerState<'a> {
                     continue;
                 }
 
-                let key_assignable = self.is_assignable_to(key_type, previous_key_type)
+                let key_assignable = self
+                    .diagnostic_relation_boolean_guard(key_type, previous_key_type)
                     || self.template_pattern_key_is_subset(key_type, previous_key_type);
-                let value_assignable = self.is_assignable_to(value_type, previous_value_type);
+                let value_assignable =
+                    self.diagnostic_relation_boolean_guard(value_type, previous_value_type);
                 if key_assignable && !value_assignable {
                     let key_type_str = self.format_type(key_type);
                     let value_type_str = self.format_type(value_type);
@@ -592,7 +594,8 @@ impl<'a> CheckerState<'a> {
         {
             // Only emit when we have own number index nodes to anchor the error,
             // OR when both signatures are inherited (anchor on container).
-            let is_assignable = self.is_assignable_to(number_idx.value_type, string_idx.value_type);
+            let is_assignable = self
+                .diagnostic_relation_boolean_guard(number_idx.value_type, string_idx.value_type);
             if !is_assignable {
                 let num_value_str = self.format_type(number_idx.value_type);
                 let str_value_str = self.format_type(string_idx.value_type);
@@ -645,7 +648,8 @@ impl<'a> CheckerState<'a> {
         if let (Some(static_num_type), Some(static_str_type)) =
             (static_number_value_type, static_string_value_type)
         {
-            let is_assignable = self.is_assignable_to(static_num_type, static_str_type);
+            let is_assignable =
+                self.diagnostic_relation_boolean_guard(static_num_type, static_str_type);
             if !is_assignable {
                 let num_value_str = self.format_type(static_num_type);
                 let str_value_str = self.format_type(static_str_type);

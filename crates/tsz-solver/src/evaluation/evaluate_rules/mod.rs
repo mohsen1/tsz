@@ -19,6 +19,7 @@ pub mod index_access;
 mod index_access_keys;
 pub mod infer_pattern;
 mod infer_pattern_helpers;
+mod infer_pattern_object_helpers;
 pub mod infer_substitutor;
 pub mod keyof;
 pub mod mapped;

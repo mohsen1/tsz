@@ -5,6 +5,7 @@ pub(crate) mod infer_candidate_kinds;
 pub(crate) mod infer_matching;
 #[allow(dead_code)]
 pub(crate) mod infer_resolve;
+pub(crate) mod infer_variance;
 mod template_anchor;
 mod template_segment_prefix;
 

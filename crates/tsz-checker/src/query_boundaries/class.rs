@@ -382,6 +382,21 @@ pub(crate) fn should_report_member_type_mismatch(
     true
 }
 
+/// Check interface trailing overload compatibility through the class relation boundary.
+///
+/// The strict path uses `no_erase_generics` to preserve overload compatibility
+/// behavior. The optional retry mirrors `tsc`'s fresh generic instantiation for
+/// equivalent method-local generic overload shapes.
+pub(crate) fn interface_overload_trailing_signature_assignable(
+    checker: &mut CheckerState<'_>,
+    source: TypeId,
+    target: TypeId,
+    allow_fresh_generic_retry: bool,
+) -> bool {
+    checker.is_assignable_to_no_erase_generics(source, target)
+        || (allow_fresh_generic_retry && checker.diagnostic_relation_boolean_guard(source, target))
+}
+
 /// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
 ///
 /// Unlike `should_report_member_type_mismatch`, this variant uses a targeted
@@ -415,7 +430,7 @@ pub(crate) fn should_report_own_member_type_mismatch(
     // source vs `IteratorResult<T, void>` target — `any` is a universal sink
     // for the standard relation but the strict path keeps the args nominally
     // distinct). tsc does not emit TS2416 here.
-    if checker.is_assignable_to(source, target) {
+    if checker.diagnostic_relation_boolean_guard(source, target) {
         return false;
     }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {
@@ -496,7 +511,9 @@ fn is_coinductive_return_type_cycle(
         }
         // Check each param for assignability
         for (sp, tp) in s_params.iter().zip(t_params.iter()) {
-            if sp.type_id != tp.type_id && !checker.is_assignable_to(tp.type_id, sp.type_id) {
+            if sp.type_id != tp.type_id
+                && !checker.diagnostic_relation_boolean_guard(tp.type_id, sp.type_id)
+            {
                 return false;
             }
         }

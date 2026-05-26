@@ -98,7 +98,6 @@ impl<'a> CheckerState<'a> {
             let canonical =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
             if member_displays.len() > 1
-                && member_displays.iter().all(|member| !member.contains(" | "))
                 && !orders
                     .iter()
                     .any(|order| same_numeric_union_members(&order.members, &member_displays))
@@ -184,29 +183,12 @@ impl<'a> CheckerState<'a> {
         if self.source_type_contains_number_literal_only_union(type_id) {
             let source_order =
                 self.format_type_for_assignability_message_with_union_origin_policy(type_id, false);
-            if !source_order.contains(" | ")
-                && self.is_number_literal_union_for_display_order(type_id)
-                && !rewrite_alias_origin
-                && self.numeric_literal_union_origin_preserves_alias(type_id)
-            {
-                return;
-            }
-            let canonical_order =
-                self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
-            let assignment_order = if !source_order.contains(" | ") {
-                None
-            } else if self.is_number_literal_union_for_display_order(type_id) {
-                self.assignment_canonical_number_literal_union_display(
-                    type_id,
-                    other_type,
-                    &source_order,
-                    &canonical_order,
-                )
-            } else if source_order != canonical_order {
-                Some(canonical_order)
-            } else {
-                None
-            };
+            let assignment_order = self.assignment_numeric_literal_union_replacement_display(
+                type_id,
+                other_type,
+                rewrite_alias_origin,
+                &source_order,
+            );
             if let Some(assignment_order) = assignment_order
                 && !replacements
                     .iter()
@@ -407,6 +389,35 @@ impl<'a> CheckerState<'a> {
             formatter = formatter.with_ignore_union_origins();
         }
         formatter.format(type_id).into_owned()
+    }
+
+    fn assignment_numeric_literal_union_replacement_display(
+        &self,
+        type_id: TypeId,
+        other_type: Option<TypeId>,
+        rewrite_alias_origin: bool,
+        source_order: &str,
+    ) -> Option<String> {
+        if self.is_number_literal_union_for_display_order(type_id) {
+            if !rewrite_alias_origin && self.numeric_literal_union_origin_preserves_alias(type_id) {
+                return None;
+            }
+
+            let canonical_order =
+                self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
+            return self
+                .assignment_canonical_number_literal_union_display(
+                    type_id,
+                    other_type,
+                    source_order,
+                    &canonical_order,
+                )
+                .filter(|assignment_order| assignment_order != source_order);
+        }
+
+        let canonical_order =
+            self.format_type_for_assignability_message_with_union_origin_policy(type_id, true);
+        (source_order != canonical_order).then_some(canonical_order)
     }
 
     fn assignment_canonical_number_literal_union_display(

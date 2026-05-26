@@ -229,7 +229,7 @@ impl<'a> CheckerState<'a> {
             let value_type = self.resolve_lazy_type(value_type);
             if value_type == TypeId::ERROR
                 || value_type == TypeId::ANY
-                || self.is_assignable_to(value_type, enum_element_type)
+                || self.diagnostic_relation_boolean_guard(value_type, enum_element_type)
             {
                 continue;
             }
@@ -2197,7 +2197,7 @@ impl<'a> CheckerState<'a> {
         // Check if the init return type is Promise<T> where T is assignable
         // to the declared return type.
         if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
-            self.is_assignable_to(unwrapped, decl_ret)
+            self.diagnostic_relation_boolean_guard(unwrapped, decl_ret)
         } else {
             false
         }

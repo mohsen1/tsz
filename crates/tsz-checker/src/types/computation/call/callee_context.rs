@@ -1,5 +1,6 @@
 use crate::context::{TypingRequest, speculation::DiagnosticSpeculationSnapshot};
 use crate::state::CheckerState;
+use tsz_binder::SymbolId;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{FunctionShape, ParamInfo, TypeId};
@@ -53,6 +54,114 @@ impl<'a> CheckerState<'a> {
         if fresh_signature.type_params.is_empty() {
             return None;
         }
+
+        Some(self.ctx.types.factory().function(FunctionShape {
+            type_params: fresh_signature.type_params,
+            params: fresh_signature.params,
+            this_type: fresh_signature.this_type,
+            return_type: fresh_signature.return_type,
+            type_predicate: fresh_signature.type_predicate,
+            is_constructor: false,
+            is_method: fresh_signature.is_method,
+        }))
+    }
+
+    pub(super) fn circular_identifier_callee_symbol(
+        &mut self,
+        callee_expression: NodeIndex,
+    ) -> Option<SymbolId> {
+        if self.ctx.symbol_resolution_set.is_empty() {
+            return None;
+        }
+
+        let sym_id = self.identifier_callee_symbol(callee_expression)?;
+        self.ctx
+            .symbol_resolution_set
+            .contains(&sym_id)
+            .then_some(sym_id)
+    }
+
+    pub(super) fn function_like_unannotated_variable_callee_symbol(
+        &mut self,
+        callee_expression: NodeIndex,
+    ) -> Option<SymbolId> {
+        let sym_id = self.identifier_callee_symbol(callee_expression)?;
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol
+            .value_declaration
+            .into_option()
+            .or_else(|| symbol.primary_declaration())?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        if decl.type_annotation.is_some() {
+            return None;
+        }
+
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        (init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
+            .then_some(sym_id)
+    }
+
+    fn identifier_callee_symbol(&mut self, callee_expression: NodeIndex) -> Option<SymbolId> {
+        let mut identifier_expression = callee_expression;
+        if let Some(callee_node) = self.ctx.arena.get(identifier_expression)
+            && callee_node.kind == syntax_kind_ext::EXPRESSION_WITH_TYPE_ARGUMENTS
+            && let Some(expr_type_args) = self.ctx.arena.get_expr_type_args(callee_node)
+        {
+            identifier_expression = expr_type_args.expression;
+        }
+
+        let callee_node = self.ctx.arena.get(identifier_expression)?;
+        if callee_node.kind != tsz_scanner::SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        self.ctx
+            .binder
+            .node_symbols
+            .get(&identifier_expression.0)
+            .copied()
+            .or_else(|| self.resolve_identifier_symbol_without_tracking(identifier_expression))
+    }
+
+    pub(super) fn fresh_function_like_variable_call_type(
+        &mut self,
+        sym_id: SymbolId,
+    ) -> Option<TypeId> {
+        let symbol = self.ctx.binder.get_symbol(sym_id)?;
+        let decl_idx = symbol
+            .value_declaration
+            .into_option()
+            .or_else(|| symbol.primary_declaration())?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        if decl_node.kind != syntax_kind_ext::VARIABLE_DECLARATION {
+            return None;
+        }
+
+        let decl = self.ctx.arena.get_variable_declaration(decl_node)?;
+        let initializer = self
+            .ctx
+            .arena
+            .skip_parenthesized_and_assertions(decl.initializer);
+        let init_node = self.ctx.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.ctx.arena.get_function(init_node).cloned()?;
+
+        let diagnostics_before = DiagnosticSpeculationSnapshot::new(&self.ctx);
+        let fresh_signature = self.call_signature_from_function(&func, initializer);
+        diagnostics_before.rollback(&mut self.ctx.diagnostic_state());
 
         Some(self.ctx.types.factory().function(FunctionShape {
             type_params: fresh_signature.type_params,

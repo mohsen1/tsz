@@ -21,110 +21,6 @@ pub(crate) struct JsxPropsCheckOpts<'a> {
 }
 
 impl<'a> CheckerState<'a> {
-    fn collect_jsx_union_resolution_attr_value_type(
-        &mut self,
-        value_idx: NodeIndex,
-        allow_function_types: bool,
-    ) -> Option<TypeId> {
-        let Some(value_node) = self.ctx.arena.get(value_idx) else {
-            return Some(TypeId::ANY);
-        };
-        if !allow_function_types
-            && matches!(
-                value_node.kind,
-                syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-            )
-        {
-            return None;
-        }
-
-        let prev = self.ctx.preserve_literal_types;
-        self.ctx.preserve_literal_types = true;
-        let ty = self.compute_type_of_node(value_idx);
-        self.ctx.preserve_literal_types = prev;
-        Some(ty)
-    }
-
-    fn collect_jsx_union_resolution_spread_attrs(
-        &mut self,
-        expr_idx: NodeIndex,
-        provided: &mut Vec<(String, Option<TypeId>)>,
-    ) -> bool {
-        let Some(expr_node) = self.ctx.arena.get(expr_idx) else {
-            return false;
-        };
-        if expr_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return false;
-        }
-        let Some(obj_lit) = self.ctx.arena.get_literal_expr(expr_node) else {
-            return false;
-        };
-
-        for &elem_idx in &obj_lit.elements.nodes {
-            let Some(elem_node) = self.ctx.arena.get(elem_idx) else {
-                continue;
-            };
-
-            match elem_node.kind {
-                syntax_kind_ext::PROPERTY_ASSIGNMENT => {
-                    let Some(prop) = self.ctx.arena.get_property_assignment(elem_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(prop.name) else {
-                        return false;
-                    };
-                    let ty =
-                        self.collect_jsx_union_resolution_attr_value_type(prop.initializer, true);
-                    provided.push((name, ty));
-                }
-                syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
-                    let Some(prop) = self.ctx.arena.get_shorthand_property(elem_node) else {
-                        continue;
-                    };
-                    let Some(name) = self.get_property_name(prop.name) else {
-                        return false;
-                    };
-                    let ty = self.collect_jsx_union_resolution_attr_value_type(prop.name, true);
-                    provided.push((name, ty));
-                }
-                syntax_kind_ext::METHOD_DECLARATION
-                | syntax_kind_ext::GET_ACCESSOR
-                | syntax_kind_ext::SET_ACCESSOR => {
-                    let name = match elem_node.kind {
-                        syntax_kind_ext::METHOD_DECLARATION => self
-                            .ctx
-                            .arena
-                            .get_method_decl(elem_node)
-                            .and_then(|method| self.get_property_name(method.name)),
-                        syntax_kind_ext::GET_ACCESSOR | syntax_kind_ext::SET_ACCESSOR => self
-                            .ctx
-                            .arena
-                            .get_accessor(elem_node)
-                            .and_then(|accessor| self.get_property_name(accessor.name)),
-                        _ => None,
-                    };
-                    let Some(name) = name else {
-                        return false;
-                    };
-                    let ty = self.collect_jsx_union_resolution_attr_value_type(elem_idx, true);
-                    provided.push((name, ty));
-                }
-                syntax_kind_ext::SPREAD_ASSIGNMENT | syntax_kind_ext::SPREAD_ELEMENT => {
-                    let Some(spread) = self.ctx.arena.get_spread(elem_node) else {
-                        return false;
-                    };
-                    if !self.collect_jsx_union_resolution_spread_attrs(spread.expression, provided)
-                    {
-                        return false;
-                    }
-                }
-                _ => return false,
-            }
-        }
-
-        true
-    }
-
     pub(in crate::checkers_domain::jsx) fn collect_jsx_union_resolution_attrs(
         &mut self,
         attributes_idx: NodeIndex,
@@ -962,14 +858,24 @@ impl<'a> CheckerState<'a> {
                     let expected_context_type =
                         self.evaluate_application_type(expected_context_type);
                     let expected_context_type = self.evaluate_type_with_env(expected_context_type);
+                    // Pre-extract before &mut self calls to release the arena borrow.
+                    let value_node_fn_span = self
+                        .ctx
+                        .arena
+                        .get(value_node_idx)
+                        .filter(|n| n.is_function_expression_or_arrow())
+                        .map(|n| (n.pos, n.end));
+
                     let mut function_param_diagnostic_span = None;
-                    if let Some(value_node) = self.ctx.arena.get(value_node_idx)
-                        && matches!(
-                            value_node.kind,
-                            syntax_kind_ext::ARROW_FUNCTION | syntax_kind_ext::FUNCTION_EXPRESSION
-                        )
-                    {
-                        let has_function_context =
+                    let contextual_expected_type = if let Some(fn_span) = value_node_fn_span {
+                        // Determine whether contextual typing applies to this arrow function.
+                        // For union props (e.g. `(e: MouseEvent) => void | undefined`),
+                        // extract callable members first — the raw union fails
+                        // `has_function_context`. For non-union non-callable types (e.g.
+                        // `ReactNode`), exit early without calling
+                        // `refine_jsx_callable_contextual_type` to avoid unnecessary
+                        // `resolve_type_for_property_access` side-effects in its fallback path.
+                        let is_directly_callable =
                             crate::query_boundaries::common::function_shape_for_type(
                                 self.ctx.types,
                                 expected_context_type,
@@ -980,6 +886,28 @@ impl<'a> CheckerState<'a> {
                                     expected_context_type,
                                 )
                                 .is_some_and(|sigs| !sigs.is_empty());
+                        let is_union = !is_directly_callable
+                            && crate::query_boundaries::common::union_members(
+                                self.ctx.types,
+                                expected_context_type,
+                            )
+                            .is_some();
+                        let refined = if is_directly_callable || is_union {
+                            self.refine_jsx_callable_contextual_type(expected_context_type)
+                        } else {
+                            expected_context_type
+                        };
+                        let has_function_context = is_directly_callable
+                            || crate::query_boundaries::common::function_shape_for_type(
+                                self.ctx.types,
+                                refined,
+                            )
+                            .is_some()
+                            || crate::query_boundaries::common::call_signatures_for_type(
+                                self.ctx.types,
+                                refined,
+                            )
+                            .is_some_and(|sigs| !sigs.is_empty());
                         if !has_function_context {
                             let actual_type = self.compute_type_of_node(value_node_idx);
                             if let Some(entry) = provided_attrs.last_mut() {
@@ -994,17 +922,11 @@ impl<'a> CheckerState<'a> {
                             .implicit_any_checked_closures
                             .insert(value_node_idx);
                         self.invalidate_function_like_for_contextual_retry(value_node_idx);
-                        function_param_diagnostic_span = Some((value_node.pos, value_node.end));
-                    }
-                    let contextual_expected_type =
-                        if self.ctx.arena.get(value_node_idx).is_some_and(|node| {
-                            node.kind == syntax_kind_ext::ARROW_FUNCTION
-                                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                        }) {
-                            self.refine_jsx_callable_contextual_type(expected_context_type)
-                        } else {
-                            expected_context_type
-                        };
+                        function_param_diagnostic_span = Some(fn_span);
+                        refined
+                    } else {
+                        expected_context_type
+                    };
                     // Set contextual type to preserve narrow literal types.
                     let is_function_attr = function_param_diagnostic_span.is_some();
                     let spec_snap = function_param_diagnostic_span
@@ -1818,354 +1740,5 @@ impl<'a> CheckerState<'a> {
                 None,
             );
         }
-    }
-
-    fn report_jsx_body_children_excess_property(
-        &mut self,
-        tag_name_idx: NodeIndex,
-        display_target: &str,
-        provided_attrs: &[(String, TypeId)],
-    ) {
-        let mut ordered_attrs: Vec<(String, TypeId)> = Vec::with_capacity(provided_attrs.len());
-        if let Some((_, children_type)) = provided_attrs.iter().find(|(name, _)| name == "children")
-        {
-            ordered_attrs.push(("children".to_string(), *children_type));
-        }
-        ordered_attrs.extend(
-            provided_attrs
-                .iter()
-                .filter(|(name, _)| name != "children")
-                .cloned(),
-        );
-
-        let properties: Vec<tsz_solver::PropertyInfo> = ordered_attrs
-            .iter()
-            .map(|(name, type_id)| {
-                let name_atom = self.ctx.types.intern_string(name);
-                let display_type = if name == "children" {
-                    self.jsx_children_display_type(*type_id)
-                } else {
-                    *type_id
-                };
-                tsz_solver::PropertyInfo {
-                    name: name_atom,
-                    type_id: display_type,
-                    write_type: display_type,
-                    optional: false,
-                    readonly: false,
-                    is_method: false,
-                    is_class_prototype: false,
-                    visibility: tsz_solver::Visibility::Public,
-                    parent_id: None,
-                    declaration_order: 0,
-                    is_string_named: false,
-                    is_symbol_named: false,
-                    single_quoted_name: false,
-                }
-            })
-            .collect();
-        let source_type = self.format_type(self.ctx.types.factory().object(properties));
-        let base = format_message(
-            diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-            &[&source_type, display_target],
-        );
-        let message =
-            format!("{base}\n  Property 'children' does not exist on type '{display_target}'.");
-        use crate::diagnostics::diagnostic_codes;
-        self.error_at_node(
-            tag_name_idx,
-            &message,
-            diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-        );
-    }
-
-    pub(crate) fn check_jsx_union_props(
-        &mut self,
-        attributes_idx: NodeIndex,
-        props_type: TypeId,
-        display_target: &str,
-        tag_name_idx: NodeIndex,
-        children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
-    ) {
-        let Some(attrs_node) = self.ctx.arena.get(attributes_idx) else {
-            return;
-        };
-        let Some(attrs) = self.ctx.arena.get_jsx_attributes(attrs_node) else {
-            return;
-        };
-
-        // Collect provided attribute name→type pairs (excluding key/ref).
-        // Skip when any attribute value is a function/arrow expression — these need
-        // contextual typing from discriminated union narrowing which we don't implement.
-        let attr_nodes = &attrs.properties.nodes;
-        let mut provided_attrs: Vec<(String, TypeId, bool)> = Vec::new();
-        let mut has_spread = false;
-
-        for &attr_idx in attr_nodes {
-            let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
-                continue;
-            };
-
-            if attr_node.kind == syntax_kind_ext::JSX_ATTRIBUTE {
-                let Some(attr_data) = self.ctx.arena.get_jsx_attribute(attr_node) else {
-                    continue;
-                };
-                let Some(name_node) = self.ctx.arena.get(attr_data.name) else {
-                    continue;
-                };
-                let Some(attr_name) = self.get_jsx_attribute_name(name_node) else {
-                    continue;
-                };
-
-                // Skip key/ref — they come from IntrinsicAttributes, not component props
-                if attr_name == "key" || attr_name == "ref" {
-                    continue;
-                }
-
-                // Check for function/arrow expressions — bail out for contextual typing
-                if attr_data.initializer.is_some() {
-                    let value_idx =
-                        if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
-                            if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
-                                self.ctx
-                                    .arena
-                                    .get_jsx_expression(init_node)
-                                    .map(|e| e.expression)
-                                    .unwrap_or(attr_data.initializer)
-                            } else {
-                                attr_data.initializer
-                            }
-                        } else {
-                            attr_data.initializer
-                        };
-                    if let Some(value_node) = self.ctx.arena.get(value_idx)
-                        && (value_node.kind == syntax_kind_ext::ARROW_FUNCTION
-                            || value_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION)
-                    {
-                        return;
-                    }
-                }
-
-                // Compute the attribute value type with literal preservation.
-                // For union props, literals like "a" and true must stay as literal types
-                // (not widen to string/boolean) so they can match discriminant properties
-                // in the union members. Shorthand booleans stay as BOOLEAN_TRUE for
-                // assignability but get widened to BOOLEAN in error message display.
-                let is_shorthand = attr_data.initializer.is_none();
-                let attr_type = if is_shorthand {
-                    TypeId::BOOLEAN_TRUE
-                } else if let Some(init_node) = self.ctx.arena.get(attr_data.initializer) {
-                    let value_idx = if init_node.kind == syntax_kind_ext::JSX_EXPRESSION {
-                        self.ctx
-                            .arena
-                            .get_jsx_expression(init_node)
-                            .map(|e| e.expression)
-                            .unwrap_or(attr_data.initializer)
-                    } else {
-                        attr_data.initializer
-                    };
-                    let prev = self.ctx.preserve_literal_types;
-                    self.ctx.preserve_literal_types = true;
-                    let t = self.compute_type_of_node(value_idx);
-                    self.ctx.preserve_literal_types = prev;
-                    t
-                } else {
-                    TypeId::ANY
-                };
-
-                provided_attrs.push((attr_name, attr_type, is_shorthand));
-            } else if attr_node.kind == syntax_kind_ext::JSX_SPREAD_ATTRIBUTE {
-                has_spread = true;
-            }
-        }
-
-        // Include synthesized children prop if body children exist
-        if let Some(children) = children_ctx {
-            provided_attrs.push((
-                self.get_jsx_children_prop_name(),
-                children.synthesized_type,
-                false,
-            ));
-        }
-
-        // Skip union check when spread attributes are involved (handled separately).
-        // When no attributes are provided, still proceed so we can detect missing required props.
-        if has_spread {
-            return;
-        }
-
-        // Get union members — bail if not a union
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, props_type)
-        else {
-            return;
-        };
-
-        // For each union member, check:
-        // 1. All provided attributes are type-compatible with the member's properties
-        // 2. All required properties in the member are provided
-        // If at least one member passes both checks, the attributes are valid.
-        // Only emit TS2322 when NO member is compatible.
-        let provided_names: rustc_hash::FxHashSet<&str> = provided_attrs
-            .iter()
-            .map(|(name, _, _)| name.as_str())
-            .collect();
-
-        let mut any_member_compatible = false;
-        for &member in &members {
-            let member_resolved = self.resolve_type_for_property_access(member);
-
-            // Check 1: All provided attribute values are assignable to member properties
-            let all_attrs_compatible = provided_attrs.iter().all(|(name, attr_type, _)| {
-                use crate::query_boundaries::common::PropertyAccessResult;
-                match self.resolve_property_access_with_env(member_resolved, name) {
-                    PropertyAccessResult::Success { type_id, .. } => {
-                        // Strip undefined from optional properties (write-position)
-                        let expected = crate::query_boundaries::common::remove_undefined(
-                            self.ctx.types,
-                            type_id,
-                        );
-                        // any/error types are always compatible
-                        if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
-                            return true;
-                        }
-                        self.diagnostic_relation_boolean_guard(*attr_type, expected)
-                    }
-                    // PropertyNotFound or other results: still compatible
-                    // (excess property checking is separate)
-                    _ => true,
-                }
-            });
-
-            if !all_attrs_compatible {
-                continue;
-            }
-
-            // Check 2: All required properties in the member are provided.
-            // Children are now included in provided_names via synthesis above.
-            let all_required_present = if let Some(shape) =
-                crate::query_boundaries::common::object_shape_for_type(
-                    self.ctx.types,
-                    member_resolved,
-                ) {
-                shape.properties.iter().all(|prop| {
-                    if prop.optional {
-                        return true;
-                    }
-                    let prop_name = self.ctx.types.resolve_atom(prop.name);
-                    provided_names.contains(prop_name.as_str())
-                })
-            } else {
-                // Can't determine shape — assume compatible
-                true
-            };
-
-            if all_required_present {
-                any_member_compatible = true;
-                break;
-            }
-        }
-
-        if !any_member_compatible {
-            // When any provided attribute type contains unresolved type parameters,
-            // skip the TS2322 error. Type parameters can't be properly checked
-            // against individual union members at this point — they'll be validated
-            // when the generic function is instantiated. This prevents false TS2322
-            // for cases like `<ListItem variant={v} />` inside a generic function
-            // where `v: MenuItemVariant` and `MenuItemVariant extends ListItemVariant`.
-            // The per-member check fails because the type parameter doesn't match any
-            // single member, but the constraint ensures correctness at instantiation.
-            let any_attr_has_type_params = provided_attrs.iter().any(|(_, attr_type, _)| {
-                crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    *attr_type,
-                )
-            });
-
-            if !any_attr_has_type_params {
-                // Build the attributes object type for the error message.
-                // tsc widens shorthand boolean `true` to `boolean` in the JSX attribute
-                // object type displayed in error messages (fresh object literal widening).
-                let properties: Vec<tsz_solver::PropertyInfo> = provided_attrs
-                    .iter()
-                    .map(|(name, type_id, is_shorthand)| {
-                        let name_atom = self.ctx.types.intern_string(name);
-                        // Widen shorthand booleans (`<Comp editable />`) to `boolean`
-                        // for error display, but preserve explicit `{true}` literals.
-                        let display_type = if *is_shorthand && *type_id == TypeId::BOOLEAN_TRUE {
-                            TypeId::BOOLEAN
-                        } else if name == "children" {
-                            self.jsx_children_display_type(*type_id)
-                        } else {
-                            *type_id
-                        };
-                        tsz_solver::PropertyInfo {
-                            name: name_atom,
-                            type_id: display_type,
-                            write_type: display_type,
-                            optional: false,
-                            readonly: false,
-                            is_method: false,
-                            is_class_prototype: false,
-                            visibility: tsz_solver::Visibility::Public,
-                            parent_id: None,
-                            declaration_order: 0,
-                            is_string_named: false,
-                            is_symbol_named: false,
-                            single_quoted_name: false,
-                        }
-                    })
-                    .collect();
-                let attrs_type = self.ctx.types.factory().object(properties);
-                if self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
-                    return;
-                }
-                // tsc anchors JSX union props errors at the tag name (e.g., <TextComponent>),
-                // not the attributes container.
-                self.report_jsx_synthesized_props_assignability_error(
-                    attrs_type,
-                    display_target,
-                    tag_name_idx,
-                );
-            }
-        }
-    }
-
-    fn jsx_props_type_is_library_managed_attributes_application(
-        &mut self,
-        type_id: TypeId,
-    ) -> bool {
-        self.jsx_library_managed_attributes_application_args(type_id)
-            .is_some()
-    }
-
-    fn jsx_library_managed_attributes_application_args(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<Vec<TypeId>> {
-        let (base, args) = crate::query_boundaries::state::type_environment::application_info(
-            self.ctx.types,
-            type_id,
-        )?;
-        let sym_id = self.ctx.resolve_type_to_symbol_id(base)?;
-        self.get_symbol_globally(sym_id)
-            .is_some_and(|symbol| symbol.escaped_name == "LibraryManagedAttributes")
-            .then_some(args)
-    }
-
-    fn jsx_library_managed_attributes_application_display(
-        &mut self,
-        type_id: TypeId,
-    ) -> Option<String> {
-        let args = self.jsx_library_managed_attributes_application_args(type_id)?;
-        if args.len() != 2 {
-            return None;
-        }
-        Some(format!(
-            "LibraryManagedAttributes<{}, {}>",
-            self.format_type(args[0]),
-            self.jsx_library_managed_structural_props_display(args[1])
-                .unwrap_or_else(|| self.format_type(args[1]))
-        ))
     }
 }
