@@ -227,10 +227,7 @@ impl<'a> CheckerState<'a> {
         for (prop_name_idx, prop_value_idx) in property_pairs {
             let value_type = self.get_type_of_node_with_request(prop_value_idx, &request);
             let value_type = self.resolve_lazy_type(value_type);
-            if value_type == TypeId::ERROR
-                || value_type == TypeId::ANY
-                || self.diagnostic_relation_boolean_guard(value_type, enum_element_type)
-            {
+            if value_type == TypeId::ERROR || value_type == TypeId::ANY {
                 continue;
             }
             // Match tsc's `elaborateElementwise`: anchor TS2322 at the property
@@ -240,9 +237,10 @@ impl<'a> CheckerState<'a> {
             // variable declaration and reformats the source as the whole
             // object-literal type — emitting one merged `{ … }` vs `T` error
             // at the binding name. tsc instead reports per-member.
-            self.error_type_not_assignable_at_with_anchor_elaboration(
+            self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                 value_type,
                 enum_element_type,
+                prop_value_idx,
                 prop_name_idx,
             );
         }
