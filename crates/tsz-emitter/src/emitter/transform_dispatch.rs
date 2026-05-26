@@ -1241,7 +1241,9 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
-        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node);
+        let outer_this_var = self.tc39_decorator_outer_this_var(class_node);
+        emitter.set_outer_this_var(outer_this_var.clone());
+        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node, &outer_this_var);
         let output = emitter.emit_class(class_node);
         if output.is_empty() {
             // No transform needed (e.g., all decorated members are abstract).
@@ -1271,10 +1273,188 @@ impl<'a> Printer<'a> {
         }
     }
 
+    pub(in crate::emitter) fn tc39_decorator_outer_this_var(
+        &mut self,
+        class_node: NodeIndex,
+    ) -> String {
+        let Some(node) = self.arena.get(class_node) else {
+            return "_outerThis".to_string();
+        };
+        let class_span_text = self
+            .source_text_for_map()
+            .map(|src| {
+                let start = node.pos as usize;
+                let end = (node.end as usize).min(src.len());
+                if start <= end { &src[start..end] } else { "" }
+            })
+            .unwrap_or("");
+        let candidate = hygienic_temp_name("_outerThis", class_span_text);
+        let Some(class_data) = self.arena.get_class(node) else {
+            return candidate;
+        };
+        if self.tc39_class_needs_outer_this_capture(class_data) {
+            return self.reserve_tc39_generated_name(&candidate, "_outerThis");
+        }
+        candidate
+    }
+
+    fn reserve_tc39_generated_name(&mut self, candidate: &str, base: &str) -> String {
+        if self.tc39_generated_name_is_available(candidate) {
+            self.generated_temp_names.insert(candidate.to_string());
+            return candidate.to_string();
+        }
+
+        for suffix in 1..=1000 {
+            let candidate = format!("{base}_{suffix}");
+            if self.tc39_generated_name_is_available(&candidate) {
+                self.generated_temp_names.insert(candidate.clone());
+                return candidate;
+            }
+        }
+
+        self.make_unique_name_from_base(base)
+    }
+
+    fn tc39_generated_name_is_available(&self, name: &str) -> bool {
+        !self.file_identifiers.contains(name)
+            && !self.generated_temp_names.contains(name)
+            && !self.reserved_nested_temp_names.contains(name)
+            && !self.ctx.block_scope_state.is_reserved_name(name)
+    }
+
+    fn tc39_class_needs_outer_this_capture(
+        &self,
+        class_data: &tsz_parser::parser::node::ClassData,
+    ) -> bool {
+        let source_order_decorator_members =
+            self.tc39_source_order_decorator_assignment_members(&class_data.members);
+        for &member_idx in &class_data.members.nodes {
+            if source_order_decorator_members.contains(&member_idx) {
+                continue;
+            }
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let modifiers = match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                    .arena
+                    .get_method_decl(member_node)
+                    .and_then(|method| method.modifiers.as_ref()),
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                    .arena
+                    .get_property_decl(member_node)
+                    .and_then(|prop| prop.modifiers.as_ref()),
+                k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
+                    self.arena
+                        .get_accessor(member_node)
+                        .and_then(|accessor| accessor.modifiers.as_ref())
+                }
+                _ => None,
+            };
+            let Some(modifiers) = modifiers else {
+                continue;
+            };
+            for &mod_idx in &modifiers.nodes {
+                let Some(mod_node) = self.arena.get(mod_idx) else {
+                    continue;
+                };
+                if mod_node.kind != syntax_kind_ext::DECORATOR {
+                    continue;
+                }
+                let Some(dec) = self.arena.get_decorator(mod_node) else {
+                    continue;
+                };
+                if self.tc39_member_decorator_expression_needs_seed(dec.expression) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn tc39_source_order_decorator_assignment_members(
+        &self,
+        members: &tsz_parser::parser::NodeList,
+    ) -> std::collections::HashSet<NodeIndex> {
+        let mut result = std::collections::HashSet::new();
+        let mut pending_decorated_members = Vec::new();
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if self.tc39_class_member_name_is_computed(member_node)
+                && !pending_decorated_members.is_empty()
+            {
+                result.extend(pending_decorated_members.drain(..));
+            }
+            if self.tc39_class_member_has_runtime_decorator(member_node)
+                && !self.tc39_class_member_name_is_computed(member_node)
+            {
+                pending_decorated_members.push(member_idx);
+            }
+        }
+        result
+    }
+
+    fn tc39_class_member_has_runtime_decorator(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let modifiers = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .map(|method| &method.modifiers),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .map(|prop| &prop.modifiers),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .map(|accessor| &accessor.modifiers),
+            _ => None,
+        };
+        let Some(modifiers) = modifiers else {
+            return false;
+        };
+        self.modifiers_have_decorator(modifiers)
+            && !self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::AbstractKeyword)
+            && !self
+                .arena
+                .has_modifier(modifiers, SyntaxKind::DeclareKeyword)
+    }
+
+    fn tc39_class_member_name_is_computed(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let name = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .map(|method| method.name),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .map(|prop| prop.name),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .map(|accessor| accessor.name),
+            _ => None,
+        };
+        name.and_then(|name| self.arena.get(name))
+            .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
     pub(in crate::emitter) fn seed_tc39_decorator_function_bodies(
         &mut self,
         emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
         class_node: NodeIndex,
+        outer_this_var: &str,
     ) {
         let Some(node) = self.arena.get(class_node) else {
             return;
@@ -1293,7 +1473,6 @@ impl<'a> Printer<'a> {
             .unwrap_or("");
         let class_this_var =
             class_has_decorators.then(|| hygienic_temp_name("_classThis", class_span_text));
-        let outer_this_var = hygienic_temp_name("_outerThis", class_span_text);
         let extends_expression =
             get_extends_expression_index(self.arena, &class_data.heritage_clauses);
         if let Some(expr_idx) = extends_expression {
@@ -1320,7 +1499,7 @@ impl<'a> Printer<'a> {
                 self.seed_tc39_member_decorator_expressions(
                     emitter,
                     &prop.modifiers,
-                    &outer_this_var,
+                    outer_this_var,
                     class_super_var.as_deref(),
                 );
                 if self.arena.is_static(&prop.modifiers) && prop.initializer != NodeIndex::NONE {
@@ -1350,7 +1529,7 @@ impl<'a> Printer<'a> {
                 self.seed_tc39_member_decorator_expressions(
                     emitter,
                     &method.modifiers,
-                    &outer_this_var,
+                    outer_this_var,
                     class_super_var.as_deref(),
                 );
                 let is_private = self.arena.get(method.name).is_some_and(|name| {
@@ -1369,7 +1548,7 @@ impl<'a> Printer<'a> {
                 self.seed_tc39_member_decorator_expressions(
                     emitter,
                     &accessor.modifiers,
-                    &outer_this_var,
+                    outer_this_var,
                     class_super_var.as_deref(),
                 );
                 let is_decorated_private = self.modifiers_have_decorator(&accessor.modifiers)

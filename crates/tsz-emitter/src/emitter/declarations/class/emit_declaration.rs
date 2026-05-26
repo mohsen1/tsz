@@ -852,7 +852,9 @@ impl<'a> Printer<'a> {
         if let Some(text) = self.source_text_for_map() {
             emitter.set_source_text(text);
         }
-        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node);
+        let outer_this_var = self.tc39_decorator_outer_this_var(class_node);
+        emitter.set_outer_this_var(outer_this_var.clone());
+        self.seed_tc39_decorator_function_bodies(&mut emitter, class_node, &outer_this_var);
 
         let output = emitter.emit_class(class_node);
         if output.is_empty() {

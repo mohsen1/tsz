@@ -31,6 +31,7 @@ struct ClassDecoratorVars<'a> {
 struct DecoratorApplicationCtx<'a> {
     decorated_members: &'a [DecoratedMember],
     member_vars: &'a [MemberVarInfo],
+    source_order_decorator_members: &'a std::collections::HashSet<NodeIndex>,
     class_decorators: &'a [String],
     class_name: &'a str,
     ctor_ref: &'a str,
@@ -46,6 +47,7 @@ struct ClassBodyCtx<'a> {
     class_data: &'a tsz_parser::parser::node::ClassData,
     decorated_members: &'a [DecoratedMember],
     member_vars: &'a [MemberVarInfo],
+    source_order_decorator_members: &'a std::collections::HashSet<NodeIndex>,
     computed_key_vars: &'a [(usize, String)],
     class_decorator_static_private_methods: &'a [ClassDecoratorStaticPrivateMethodInfo],
     class_decorator_auto_accessor_infos: &'a [ClassDecoratorAutoAccessorInfo],
@@ -93,6 +95,7 @@ struct CtorMembersCtx<'a> {
     auto_accessor_infos: &'a [DecoratedAutoAccessorInfo],
     decorated_members: &'a [DecoratedMember],
     member_vars: &'a [MemberVarInfo],
+    source_order_decorator_members: &'a std::collections::HashSet<NodeIndex>,
 }
 
 struct CtorInitFlags {
@@ -155,6 +158,8 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Extends expression text rendered by the main emitter when raw source
     /// text would preserve type-only syntax or named-evaluation-sensitive forms.
     extends_text: Option<String>,
+    /// File-level reserved temp used when member decorators capture lexical `this`.
+    outer_this_var: Option<String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -179,6 +184,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             static_block_texts: FxHashMap::default(),
             static_member_texts: FxHashMap::default(),
             extends_text: None,
+            outer_this_var: None,
             use_define_for_class_fields: false,
         }
     }
@@ -247,6 +253,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         self.extends_text = Some(text);
     }
 
+    pub fn set_outer_this_var(&mut self, name: String) {
+        self.outer_this_var = Some(name);
+    }
+
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
         self.use_define_for_class_fields = use_define;
     }
@@ -295,7 +305,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             next_temp_var(&mut temp_counter) // _a
         };
-        let outer_this_var = hygienic_temp_name("_outerThis", class_span_text);
+        let outer_this_var = self
+            .outer_this_var
+            .clone()
+            .unwrap_or_else(|| hygienic_temp_name("_outerThis", class_span_text));
         let mut decorator_receiver_temp_vars = Vec::new();
         let mut needs_outer_this_capture = false;
         let class_decorators = self.collect_class_decorator_exprs(
@@ -317,6 +330,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             class_name
         };
+        let source_order_decorator_members = if self.use_define_for_class_fields {
+            self.source_order_decorator_assignment_members(&class_data.members)
+        } else {
+            std::collections::HashSet::new()
+        };
         let decorated_members = self.collect_decorated_members(
             &class_data.members,
             &mut DecoratorReceiverState {
@@ -325,6 +343,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 needs_outer_this_capture: &mut needs_outer_this_capture,
                 outer_this_var: &outer_this_var,
             },
+            &source_order_decorator_members,
         );
         let has_extends = self.has_extends_clause(&class_data.heritage_clauses);
 
@@ -781,6 +800,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
             if !self.use_define_for_class_fields && has_computed_field_keys {
                 let mut assign_parts: Vec<String> = Vec::new();
                 for (i, member) in decorated_members.iter().enumerate() {
+                    if source_order_decorator_members.contains(&member.member_idx) {
+                        continue;
+                    }
                     let var_info = &member_vars[i];
                     let dec_exprs = member.captured_decorator_exprs.join(", ");
                     assign_parts.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
@@ -806,6 +828,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &DecoratorApplicationCtx {
                     decorated_members: &decorated_members,
                     member_vars: &member_vars,
+                    source_order_decorator_members: &source_order_decorator_members,
                     class_decorators: &class_decorators,
                     class_name: &class_name,
                     ctor_ref: &ctor_ref,
@@ -852,6 +875,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_data,
                 decorated_members: &decorated_members,
                 member_vars: &member_vars,
+                source_order_decorator_members: &source_order_decorator_members,
                 computed_key_vars: &computed_key_vars,
                 class_decorator_static_private_methods: &class_decorator_static_private_methods,
                 class_decorator_auto_accessor_infos: &class_decorator_auto_accessor_infos,
@@ -920,6 +944,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &DecoratorApplicationCtx {
                     decorated_members: &decorated_members,
                     member_vars: &member_vars,
+                    source_order_decorator_members: &source_order_decorator_members,
                     class_decorators: &class_decorators,
                     class_name: &class_name,
                     ctor_ref: &ctor_ref,
@@ -971,6 +996,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &DecoratorApplicationCtx {
                     decorated_members: &decorated_members,
                     member_vars: &member_vars,
+                    source_order_decorator_members: &source_order_decorator_members,
                     class_decorators: &class_decorators,
                     class_name: &class_name,
                     ctor_ref: &ctor_ref,
@@ -1034,6 +1060,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let DecoratorApplicationCtx {
             decorated_members,
             member_vars,
+            source_order_decorator_members,
             class_decorators,
             class_name,
             ctor_ref,
@@ -1092,6 +1119,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
         };
         if emit_assignments_here {
             for (i, member) in decorated_members.iter().enumerate() {
+                if source_order_decorator_members.contains(&member.member_idx) {
+                    continue;
+                }
                 let var_info = &member_vars[i];
                 let dec_exprs = member.captured_decorator_exprs.join(", ");
                 out.push_str(&format!(
@@ -1189,6 +1219,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             class_data,
             decorated_members,
             member_vars,
+            source_order_decorator_members,
             computed_key_vars,
             class_decorator_static_private_methods,
             class_decorator_auto_accessor_infos,
@@ -1299,6 +1330,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     auto_accessor_infos: &auto_accessor_infos,
                     decorated_members,
                     member_vars,
+                    source_order_decorator_members,
                 },
                 &CtorInitFlags {
                     fields_in_class_body,
@@ -1412,6 +1444,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let mut assignment_queue: Vec<String> = Vec::new();
         let mut injected_assignments: std::collections::HashMap<NodeIndex, Vec<String>> =
             std::collections::HashMap::new();
+        let mut computed_key_passthrough_sinks: std::collections::HashSet<NodeIndex> =
+            std::collections::HashSet::new();
+        let mut computed_key_sink_value_initializers: std::collections::HashMap<
+            NodeIndex,
+            Vec<String>,
+        > = std::collections::HashMap::new();
         let instance_auto_accessor_storage_sink = if !self.use_static_blocks {
             auto_accessor_infos.iter().find_map(|info| {
                 let member = &decorated_members[info.member_var_index];
@@ -1453,25 +1491,62 @@ impl<'a> TC39DecoratorEmitter<'a> {
             );
         }
 
-        for (i, member) in decorated_members.iter().enumerate() {
-            let var_info = &member_vars[i];
-            let dec_exprs = member.decorator_exprs.join(", ");
-            assignment_queue.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
-
-            let is_field_being_removed = !fields_in_class_body && member.kind == MemberKind::Field;
-            if propkey_map.contains_key(&member.member_idx) {
-                if let MemberName::Computed(expr_idx) = &member.name
-                    && let Some((_, var_name)) = computed_key_vars.iter().find(|(mi, _)| *mi == i)
+        let decorated_member_indices: std::collections::HashMap<NodeIndex, usize> =
+            decorated_members
+                .iter()
+                .enumerate()
+                .map(|(i, member)| (member.member_idx, i))
+                .collect();
+        let mut pending_value_initializers: Vec<String> = Vec::new();
+        for (member_idx, member_node) in &all_members {
+            if let Some(&i) = decorated_member_indices.get(member_idx) {
+                let member = &decorated_members[i];
+                let var_info = &member_vars[i];
+                let dec_exprs = member.decorator_exprs.join(", ");
+                assignment_queue.push(format!("{} = [{}]", var_info.decorators_var, dec_exprs));
+                if source_order_decorator_members.contains(&member.member_idx)
+                    && let Some(extra_var) = var_info.extra_initializers_var.as_deref()
                 {
-                    assignment_queue.push(format!(
-                        "{var_name} = {}({})",
-                        self.helper("__propKey"),
-                        self.node_text(*expr_idx)
-                    ));
+                    let receiver = if member.is_static {
+                        *_class_alias
+                    } else {
+                        "this"
+                    };
+                    pending_value_initializers.push(format!("{run_init}({receiver}, {extra_var})"));
                 }
-                if !is_field_being_removed {
-                    injected_assignments
-                        .insert(member.member_idx, std::mem::take(&mut assignment_queue));
+
+                let is_field_being_removed =
+                    !fields_in_class_body && member.kind == MemberKind::Field;
+                if propkey_map.contains_key(&member.member_idx) {
+                    if let MemberName::Computed(expr_idx) = &member.name
+                        && let Some((_, var_name)) =
+                            computed_key_vars.iter().find(|(mi, _)| *mi == i)
+                    {
+                        assignment_queue.push(format!(
+                            "{var_name} = {}({})",
+                            self.helper("__propKey"),
+                            self.node_text(*expr_idx)
+                        ));
+                    }
+                    if !is_field_being_removed {
+                        injected_assignments
+                            .insert(member.member_idx, std::mem::take(&mut assignment_queue));
+                    }
+                }
+                continue;
+            }
+
+            if !assignment_queue.is_empty()
+                && self.class_member_name_is_computed(member_node)
+                && source_order_decorator_members
+                    .iter()
+                    .any(|member_idx| decorated_member_indices.contains_key(member_idx))
+            {
+                injected_assignments.insert(*member_idx, std::mem::take(&mut assignment_queue));
+                computed_key_passthrough_sinks.insert(*member_idx);
+                if !pending_value_initializers.is_empty() {
+                    computed_key_sink_value_initializers
+                        .insert(*member_idx, std::mem::take(&mut pending_value_initializers));
                 }
             }
         }
@@ -1804,8 +1879,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     let before = &member_text[..bracket_start + 1];
                     let after = &member_text[bracket_start + 1..];
                     if let Some(bracket_end) = self.find_matching_bracket(after) {
+                        let key = &after[..bracket_end];
                         let rest = &after[bracket_end + 1..];
-                        push_indented_lines(out, indent, &format!("{before}({injected})]{rest}"));
+                        let injected_key = if computed_key_passthrough_sinks.contains(&member_idx) {
+                            format!("({injected}, {})", key.trim())
+                        } else {
+                            format!("({injected})")
+                        };
+                        let member_text = if let Some(value_initializers) =
+                            computed_key_sink_value_initializers.get(&member_idx)
+                        {
+                            self.member_text_with_value_initializers(
+                                &format!("{before}{injected_key}]{rest}"),
+                                value_initializers,
+                            )
+                        } else {
+                            format!("{before}{injected_key}]{rest}")
+                        };
+                        push_indented_lines(out, indent, &member_text);
                     } else {
                         push_indented_lines(out, indent, &format!("{before}({injected})]() {{ }}"));
                     }
@@ -2242,6 +2333,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             auto_accessor_infos,
             decorated_members,
             member_vars,
+            source_order_decorator_members,
         } = members;
         let CtorInitFlags {
             fields_in_class_body,
@@ -2374,12 +2466,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 ctor_init_calls.push(assignment);
             }
             // Last instance field's extra-initializers
-            if let Some(last_fi) = field_infos
-                .iter()
-                .rev()
-                .find(|f| !decorated_members[f.member_var_index].is_static)
-                && let Some(ref extra_var) =
-                    member_vars[last_fi.member_var_index].extra_initializers_var
+            if let Some(last_fi) = field_infos.iter().rev().find(|f| {
+                let member = &decorated_members[f.member_var_index];
+                !member.is_static && !source_order_decorator_members.contains(&member.member_idx)
+            }) && let Some(ref extra_var) =
+                member_vars[last_fi.member_var_index].extra_initializers_var
                 && !self.has_following_decorated_auto_accessor(
                     decorated_members,
                     last_fi.member_var_index,
@@ -2389,12 +2480,11 @@ impl<'a> TC39DecoratorEmitter<'a> {
             }
         } else if fields_in_class_body && has_instance_fields {
             // Fields in class body: only last instance field's extra-initializers in constructor
-            if let Some(last_fi) = field_infos
-                .iter()
-                .rev()
-                .find(|f| !decorated_members[f.member_var_index].is_static)
-                && let Some(ref extra_var) =
-                    member_vars[last_fi.member_var_index].extra_initializers_var
+            if let Some(last_fi) = field_infos.iter().rev().find(|f| {
+                let member = &decorated_members[f.member_var_index];
+                !member.is_static && !source_order_decorator_members.contains(&member.member_idx)
+            }) && let Some(ref extra_var) =
+                member_vars[last_fi.member_var_index].extra_initializers_var
                 && !self.has_following_decorated_auto_accessor(
                     decorated_members,
                     last_fi.member_var_index,
@@ -2492,6 +2582,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     ctor_init_calls.push(format!("{inner_indent}{run_init}(this, {extra_var});\n"));
                 }
             }
+        }
+
+        if source_ctor.is_none() && !has_extends && ctor_init_calls.is_empty() {
+            return output;
         }
 
         output.push_str(&format!("{indent}constructor("));
@@ -3132,6 +3226,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
     }
 
+    fn member_text_with_value_initializers(
+        &self,
+        member_text: &str,
+        value_initializers: &[String],
+    ) -> String {
+        if value_initializers.is_empty() {
+            return member_text.to_string();
+        }
+        let Some(eq_pos) = member_text.rfind(" = ") else {
+            return member_text.to_string();
+        };
+        let before_value = &member_text[..eq_pos + 3];
+        let value = &member_text[eq_pos + 3..];
+        let value = value.trim();
+        let value = value.strip_suffix(';').unwrap_or(value).trim();
+        let mut parts = value_initializers.to_vec();
+        parts.push(value.to_string());
+        format!("{before_value}({});", parts.join(", "))
+    }
+
     fn leading_member_comment_block(&self, member_idx: NodeIndex, indent: &str) -> Option<String> {
         self.leading_member_comment(member_idx)
             .map(|comment| format!("{comment}\n{indent}"))
@@ -3616,10 +3730,95 @@ impl<'a> TC39DecoratorEmitter<'a> {
         result
     }
 
+    fn source_order_decorator_assignment_members(
+        &self,
+        members: &NodeList,
+    ) -> std::collections::HashSet<NodeIndex> {
+        let mut result = std::collections::HashSet::new();
+        let mut pending_decorated_members: Vec<NodeIndex> = Vec::new();
+
+        for &member_idx in &members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if self.class_member_name_is_computed(member_node)
+                && !pending_decorated_members.is_empty()
+            {
+                result.extend(pending_decorated_members.drain(..));
+            }
+            if self.class_member_has_runtime_decorator(member_node)
+                && !self.class_member_name_is_computed(member_node)
+            {
+                pending_decorated_members.push(member_idx);
+            }
+        }
+
+        result
+    }
+
+    fn class_member_has_runtime_decorator(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> bool {
+        let modifiers = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .and_then(|method| method.modifiers.as_ref()),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .and_then(|prop| prop.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .and_then(|accessor| accessor.modifiers.as_ref()),
+            _ => None,
+        };
+        let Some(modifiers) = modifiers else {
+            return false;
+        };
+        if self
+            .arena
+            .has_modifier(&Some(modifiers.clone()), SyntaxKind::AbstractKeyword)
+            || self
+                .arena
+                .has_modifier(&Some(modifiers.clone()), SyntaxKind::DeclareKeyword)
+        {
+            return false;
+        }
+        modifiers.nodes.iter().any(|&mod_idx| {
+            self.arena
+                .get(mod_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+        })
+    }
+
+    fn class_member_name_is_computed(&self, member_node: &tsz_parser::parser::node::Node) -> bool {
+        let name = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .map(|method| method.name),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .map(|prop| prop.name),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .map(|accessor| accessor.name),
+            _ => None,
+        };
+        name.and_then(|name| self.arena.get(name))
+            .is_some_and(|name_node| name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME)
+    }
+
     fn collect_decorated_members(
         &self,
         members: &NodeList,
         receiver_state: &mut DecoratorReceiverState<'_>,
+        source_order_decorator_members: &std::collections::HashSet<NodeIndex>,
     ) -> Vec<DecoratedMember> {
         let mut result = Vec::new();
 
@@ -3689,17 +3888,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     {
                         let decorator_expr =
                             self.render_decorator_expression(dec.expression, receiver_state);
-                        let captured_decorator_expr = if self
-                            .decorator_expression_texts
-                            .contains_key(&dec.expression)
-                        {
-                            self.render_captured_decorator_expression(
-                                dec.expression,
-                                receiver_state,
-                            )
-                        } else {
-                            decorator_expr.clone()
-                        };
+                        let captured_decorator_expr =
+                            if source_order_decorator_members.contains(&member_idx) {
+                                decorator_expr.clone()
+                            } else if self
+                                .decorator_expression_texts
+                                .contains_key(&dec.expression)
+                            {
+                                self.render_captured_decorator_expression(
+                                    dec.expression,
+                                    receiver_state,
+                                )
+                            } else {
+                                decorator_expr.clone()
+                            };
                         decorator_exprs.push(decorator_expr);
                         captured_decorator_exprs.push(captured_decorator_expr);
                     }

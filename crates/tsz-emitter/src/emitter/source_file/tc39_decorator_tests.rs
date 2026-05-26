@@ -182,6 +182,56 @@ class C {
 }
 
 #[test]
+fn tc39_class_decorated_field_decorator_sinks_before_following_computed_field() {
+    let source = "\
+declare let dec: any;
+declare let f: any;
+
+@dec(this)
+class A {
+    @dec(this)
+    a = 1;
+}
+
+@dec(this)
+class B {
+    [f(this)] = 1;
+
+    @dec(this)
+    b = 2;
+
+    [f(this)] = 3;
+}
+
+@dec(this)
+class C {
+    #a = 1;
+
+    @dec(this, (x: C) => x.#a)
+    b = 2;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("[(_b_decorators = [dec(this)], f(this))] = (__runInitializers(this, _b_extraInitializers), 3);")
+            && !output.contains("_b_decorators = [dec(_outerThis)];")
+            && output.contains("let _outerThis = this;")
+            && output.contains("let _outerThis_1 = this;")
+            && output.contains("_b_decorators = [dec(_outerThis_1, (x) => x.#a)];"),
+        "Class-decorated field decorators before a computed field should evaluate through the computed key sink, while later captured member decorators reserve unique outer-this temps.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn esnext_parenthesized_decorated_class_expression_breaks_after_open_paren() {
     let source = "\
 declare const dec: any;
