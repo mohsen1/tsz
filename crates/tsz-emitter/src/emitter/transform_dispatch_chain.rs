@@ -564,6 +564,7 @@ impl<'a> Printer<'a> {
     }
 
     pub(super) fn commonjs_export_name_strings(&self, names: &[IdentifierId]) -> Vec<String> {
+        let mut seen = rustc_hash::FxHashSet::default();
         names
             .iter()
             .filter_map(|name_id| {
@@ -573,6 +574,7 @@ impl<'a> Printer<'a> {
                     .map(|ident| ident.escaped_text.clone())
             })
             .filter(|name| !name.is_empty())
+            .filter(|name| seen.insert(name.clone()))
             .collect()
     }
 
