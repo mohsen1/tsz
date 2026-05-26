@@ -1214,6 +1214,29 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return None;
         }
 
+        // `{ [K in Keys]: F<K> }[Keys]` is a per-key union, not `F<Keys>`.
+        // The normal mapped visitor already applies this rule after object
+        // evaluation; mirror it here so the pre-evaluation substitution path
+        // preserves correlated mapped/indexed access behavior.
+        if index_type == mapped.constraint {
+            let mut visitor = IndexAccessVisitor {
+                evaluator: self,
+                object_type,
+                index_type,
+            };
+            if visitor.index_is_symbolic_key_space(mapped.constraint) {
+                if let Some(per_key_result) =
+                    super::mapped_template_index::try_evaluate_mapped_template_per_concrete_key(
+                        visitor.evaluator,
+                        &mapped,
+                    )
+                {
+                    return Some(per_key_result);
+                }
+                return Some(visitor.instantiate_mapped_template_with_constraint_param(&mapped));
+            }
+        }
+
         // Substitute K into the mapped template
         let substitution_index = generic_covering_index.unwrap_or(index_type);
         let subst = TypeSubstitution::single(mapped.type_param.name, substitution_index);

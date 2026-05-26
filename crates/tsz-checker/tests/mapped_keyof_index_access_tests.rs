@@ -164,6 +164,33 @@ function f<T>(obj: Box<T>, key: keyof T): void {
     );
 }
 
+/// `{ [P in K]: F<P> }[K]` with a concrete key-space must distribute per key.
+/// Substituting `K` as one whole key-space collapses the correlation and
+/// produces a false TS2345 for the `correlatedUnions.ts` pattern.
+#[test]
+fn mapped_keyof_index_access_preserves_per_key_union_correlation() {
+    let source = r#"
+type RecordMap = { n: number, s: string, b: boolean };
+type UnionRecord<K extends keyof RecordMap = keyof RecordMap> = { [P in K]: {
+    kind: P,
+    v: RecordMap[P],
+    f: (v: RecordMap[P]) => void
+}}[K];
+
+declare const r: UnionRecord;
+function processRecord<K extends keyof RecordMap>(rec: UnionRecord<K>): void {
+    rec.f(rec.v);
+}
+processRecord(r);
+"#;
+
+    let diags = check_strict(source);
+    assert!(
+        no_errors(&diags),
+        "UnionRecord should remain a per-key correlated union, got: {diags:#?}"
+    );
+}
+
 // ============================================================================
 // Assignability mismatch: value type mismatch must produce TS2322
 // ============================================================================
