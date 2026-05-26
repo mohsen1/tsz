@@ -529,6 +529,23 @@ export function skipOwnerReasonCounts(skips) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.reason.localeCompare(b.reason));
 }
 
+export function activeRunOwnerStatusCounts(runs) {
+  const counts = new Map();
+  for (const run of runs || []) {
+    const owner = String(run.owner || "(unknown)");
+    const status = String(run.status || "unknown").toLowerCase();
+    const key = `${owner}\0${status}`;
+    const current = counts.get(key) || { owner, status, count: 0, oldestStartedAt: null };
+    current.count += 1;
+    if (run.startedAt && (!current.oldestStartedAt || run.startedAt < current.oldestStartedAt)) {
+      current.oldestStartedAt = run.startedAt;
+    }
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.status.localeCompare(b.status));
+}
+
 function pushSkipOwnerCounts(lines, skips) {
   const ownerSummary = skipOwnerCounts(skips);
   const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
@@ -562,6 +579,21 @@ function pushSkipOwnerReasonCounts(lines, skips) {
     const owner = entry.owner.replace(/\|/g, "\\|");
     const reason = entry.reason.replace(/\|/g, "\\|");
     lines.push(`| ${entry.count} | ${owner} | ${reason} |`);
+  }
+}
+
+function pushActiveRunOwnerStatusCounts(lines, runs, now) {
+  lines.push(
+    "",
+    "### Active Queue Run Owner Status Counts",
+    "",
+    "| Count | Owner | Status | Oldest started | Oldest age |",
+    "|-------|-------|--------|----------------|------------|",
+  );
+  for (const entry of activeRunOwnerStatusCounts(runs)) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const status = entry.status.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${status} | ${shortDateTime(entry.oldestStartedAt)} | ${elapsedAge(entry.oldestStartedAt, now)} |`);
   }
 }
 
@@ -995,6 +1027,7 @@ export function formatResult(result, options) {
     }
     if (options.verbose && result.activeRuns?.length) {
       const now = result.now || new Date().toISOString();
+      pushActiveRunOwnerStatusCounts(lines, result.activeRuns, now);
       lines.push(
         "",
         "### Active Queue Runs",
