@@ -875,6 +875,10 @@ pub struct Printer<'a> {
     /// When true, async-method `super[expr]` capture emits through `.value`.
     pub(crate) scoped_static_super_index_value_access: bool,
 
+    /// When true, scoped static `super` property/element access is being emitted
+    /// as a destructuring assignment target and should become a writable setter.
+    pub(crate) scoped_static_super_assignment_target: bool,
+
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
@@ -1265,6 +1269,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_base_alias: None,
             scoped_static_super_index_alias: None,
             scoped_static_super_index_value_access: false,
+            scoped_static_super_assignment_target: false,
             scoped_class_expression_self_alias: None,
             pending_tc39_class_expression_name: None,
             tagged_template_var_map: FxHashMap::default(),
@@ -1682,12 +1687,14 @@ impl<'a> Printer<'a> {
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
         let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
         let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_super_assignment_target = self.scoped_static_super_assignment_target;
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = super_direct_access;
         self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
         self.scoped_static_super_index_alias = None;
         self.scoped_static_super_index_value_access = false;
+        self.scoped_static_super_assignment_target = false;
 
         self.emit_expression(idx);
         self.scoped_static_this_alias = prev_this_alias;
@@ -1695,6 +1702,7 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.scoped_static_super_assignment_target = prev_super_assignment_target;
     }
 
     /// Enter the CommonJS-export-body mask while emitting `f`: clear
@@ -1726,14 +1734,17 @@ impl<'a> Printer<'a> {
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_index_alias = self.scoped_static_super_index_alias.take();
         let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_super_assignment_target = self.scoped_static_super_assignment_target;
         self.scoped_static_super_direct_access = false;
         self.scoped_static_super_index_value_access = false;
+        self.scoped_static_super_assignment_target = false;
         let result = f(self);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.scoped_static_super_assignment_target = prev_super_assignment_target;
         result
     }
 

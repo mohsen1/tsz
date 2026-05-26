@@ -1389,20 +1389,25 @@ impl<'a> Printer<'a> {
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
         let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
         let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_super_assignment_target = self.scoped_static_super_assignment_target;
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = false;
         self.scoped_static_super_base_alias = Some(Arc::from(super_alias));
         self.scoped_static_super_index_alias = None;
         self.scoped_static_super_index_value_access = false;
+        self.scoped_static_super_assignment_target = false;
 
+        self.push_temp_scope();
         let output = self.capture_emit(member_idx);
+        self.pop_temp_scope();
 
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.scoped_static_super_assignment_target = prev_super_assignment_target;
 
         emitter.set_static_block_text(member_idx, output);
     }

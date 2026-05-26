@@ -240,6 +240,59 @@ class C extends Base {
 }
 
 #[test]
+fn decorated_class_static_blocks_rewrite_super_member_writes() {
+    let source = "\
+declare var dec: any;
+declare class Base { static x: number; }
+const key = \"x\";
+
+@dec
+class C extends Base {
+    static {
+        super.x = 1;
+        super.x += 1;
+        super.x++;
+        ++super.x;
+        ({ x: super.x } = { x: 1 });
+        super[key] += 1;
+        super[key]--;
+        ({ x: super[key] } = { x: 1 });
+    }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"x\", 1, _classThis);")
+            && output.contains(
+                "Reflect.set(_classSuper, \"x\", Reflect.get(_classSuper, \"x\", _classThis) + 1, _classThis);"
+            ),
+        "Decorated class static blocks should rewrite static super assignments through Reflect.set.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"x\", (_a = Reflect.get(_classSuper, \"x\", _classThis), _a++, _a), _classThis);")
+            && output.contains("Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), ++_b), _classThis);"),
+        "Decorated class static blocks should rewrite static super updates through Reflect.set.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "({ x: ({ set value(_a) { Reflect.set(_classSuper, \"x\", _a, _classThis); } }).value } = { x: 1 });"
+        ) && output.contains(
+            "({ x: ({ set value(_a) { Reflect.set(_classSuper, key, _a, _classThis); } }).value } = { x: 1 });"
+        ),
+        "Decorated class static block destructuring targets should use writable static super setters.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "Reflect.set(_classSuper, _c = key, Reflect.get(_classSuper, _c, _classThis) + 1, _classThis);"
+        ) && output.contains(
+            "Reflect.set(_classSuper, _d = key, (_e = Reflect.get(_classSuper, _d, _classThis), _e--, _e), _classThis);"
+        ),
+        "Decorated class static blocks should evaluate computed static super write keys once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn decorated_class_extends_expression_suppresses_named_evaluation() {
     let source = "\
 declare var dec: any;
