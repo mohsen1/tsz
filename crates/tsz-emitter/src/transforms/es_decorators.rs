@@ -1188,6 +1188,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         member,
                         info,
                         var_info,
+                        self.previous_auto_accessor_extra_initializers(
+                            &auto_accessor_infos,
+                            decorated_members,
+                            member_vars,
+                            info,
+                        ),
                         injected_assignments.get(&member_idx).map(Vec::as_slice),
                         &AutoAccessorClassCtx {
                             class_name,
@@ -1331,30 +1337,45 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         if !self.use_static_blocks {
-            for info in auto_accessor_infos
+            let static_auto_accessors: Vec<&DecoratedAutoAccessorInfo> = auto_accessor_infos
                 .iter()
                 .filter(|info| decorated_members[info.member_var_index].is_static)
-            {
+                .collect();
+            for (static_accessor_idx, info) in static_auto_accessors.iter().enumerate() {
                 let member = &decorated_members[info.member_var_index];
                 let var_info = &member_vars[info.member_var_index];
                 let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                 let init_arg = self.auto_accessor_initializer_arg(info);
                 let storage_name = self.auto_accessor_weakmap_storage_name(class_name, info);
+                let value = if static_accessor_idx == 0 {
+                    format!("{run_init}({_class_alias}, {init_var}{init_arg})")
+                } else {
+                    let prev_info = static_auto_accessors[static_accessor_idx - 1];
+                    let prev_extra = member_vars[prev_info.member_var_index]
+                        .extra_initializers_var
+                        .as_deref()
+                        .unwrap_or("_extra");
+                    format!(
+                        "({run_init}({_class_alias}, {prev_extra}), {run_init}({_class_alias}, {init_var}{init_arg}))"
+                    )
+                };
                 let mut assignment = String::new();
                 if let Some(comment) = self.leading_member_comments(member.member_idx, indent) {
                     assignment.push_str(&comment);
                     assignment.push('\n');
                     assignment.push_str(indent);
                 }
-                assignment.push_str(&format!(
-                    "{storage_name} = {{ value: {run_init}({_class_alias}, {init_var}{init_arg}) }}"
-                ));
+                assignment.push_str(&format!("{storage_name} = {{ value: {value} }}"));
                 post_iife_assignments.push(assignment);
-                if let Some(extra_var) = var_info.extra_initializers_var.as_deref() {
-                    post_iife_assignments.push(format!(
-                        "__EXTRA_INIT_IIFE__:{run_init}({_class_alias}, {extra_var})"
-                    ));
-                }
+            }
+            if let Some(info) = static_auto_accessors.last()
+                && let Some(extra_var) = member_vars[info.member_var_index]
+                    .extra_initializers_var
+                    .as_deref()
+            {
+                post_iife_assignments.push(format!(
+                    "__EXTRA_INIT_IIFE__:{run_init}({_class_alias}, {extra_var})"
+                ));
             }
         }
 
@@ -1711,11 +1732,36 @@ impl<'a> TC39DecoratorEmitter<'a> {
         output
     }
 
+    fn previous_auto_accessor_extra_initializers<'b>(
+        &self,
+        auto_accessor_infos: &'b [DecoratedAutoAccessorInfo],
+        decorated_members: &[DecoratedMember],
+        member_vars: &'b [MemberVarInfo],
+        current_info: &DecoratedAutoAccessorInfo,
+    ) -> Option<&'b str> {
+        let current_member = &decorated_members[current_info.member_var_index];
+        let mut previous: Option<&DecoratedAutoAccessorInfo> = None;
+        for info in auto_accessor_infos {
+            if std::ptr::eq(info, current_info) {
+                break;
+            }
+            if decorated_members[info.member_var_index].is_static == current_member.is_static {
+                previous = Some(info);
+            }
+        }
+        previous.and_then(|info| {
+            member_vars[info.member_var_index]
+                .extra_initializers_var
+                .as_deref()
+        })
+    }
+
     fn emit_decorated_auto_accessor_member(
         &self,
         member: &DecoratedMember,
         info: &DecoratedAutoAccessorInfo,
         var_info: &MemberVarInfo,
+        previous_extra_initializers: Option<&str>,
         injected_assignments: Option<&[String]>,
         class_ctx: &AutoAccessorClassCtx<'_>,
         indent: &str,
@@ -1737,8 +1783,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
         if self.use_static_blocks {
             let storage_name = self.native_auto_accessor_storage_name(info);
+            let value = if let Some(prev_extra) = previous_extra_initializers {
+                format!("({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))")
+            } else {
+                format!("{run_init}(this, {init_var}{init_arg})")
+            };
             out.push_str(&format!(
-                "{indent}{static_prefix}{storage_name} = {run_init}(this, {init_var}{init_arg});\n"
+                "{indent}{static_prefix}{storage_name} = {value};\n"
             ));
 
             if let Some(comment) = self.leading_member_comments(member.member_idx, indent) {
