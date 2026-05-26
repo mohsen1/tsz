@@ -19,6 +19,7 @@ pub(super) struct SimpleLocalInterfaceFacts {
     pub(super) has_local_interface_heritage_extends: bool,
     pub(super) has_local_computed_property_name: bool,
     pub(super) suppress_missing_interface_decl_reject: bool,
+    pub(super) allow_actual_lib_type_references: bool,
 }
 
 impl<'a> CheckerState<'a> {
@@ -152,7 +153,12 @@ impl<'a> CheckerState<'a> {
             };
             let name_atom = self.ctx.types.intern_string(&property_name);
             let type_id = if sig.type_annotation.is_some() {
-                if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
+                if let Some(type_id) = self.try_lower_simple_actual_lib_type_reference(
+                    sig.type_annotation,
+                    facts.allow_actual_lib_type_references,
+                ) {
+                    type_id
+                } else if !self.is_simple_local_interface_fastpath_type(sig.type_annotation) {
                     tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_outcome(
                         Outcome::RejectNonPrimitiveAnnotation,
                     );
@@ -188,8 +194,9 @@ impl<'a> CheckerState<'a> {
                         }
                     }
                     return None;
+                } else {
+                    self.get_type_from_type_node_in_type_literal(sig.type_annotation)
                 }
-                self.get_type_from_type_node_in_type_literal(sig.type_annotation)
             } else {
                 TypeId::ANY
             };
@@ -282,6 +289,50 @@ impl<'a> CheckerState<'a> {
         }
 
         self.is_simple_local_interface_primitive_type_reference(node)
+    }
+
+    fn try_lower_simple_actual_lib_type_reference(
+        &mut self,
+        type_idx: NodeIndex,
+        allow_actual_lib_type_references: bool,
+    ) -> Option<TypeId> {
+        if !allow_actual_lib_type_references {
+            return None;
+        }
+        let node = self.ctx.arena.get(type_idx)?;
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        let type_name_node = self.ctx.arena.get(type_ref.type_name)?;
+        let ident = self.ctx.arena.get_identifier(type_name_node)?;
+        let name = ident.escaped_text.as_str();
+        if crate::query_boundaries::common::is_compiler_managed_type(name)
+            || self.ctx.file_local_type_shadow_for_lib_name(name)
+        {
+            return None;
+        }
+        let TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        let actual_lib_def_id = self.resolve_actual_lib_name_to_def_id_for_lowering(name);
+        if !self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) && actual_lib_def_id.is_none() {
+            return None;
+        }
+        if !self.get_type_params_for_symbol(sym_id).is_empty() {
+            return None;
+        }
+        let def_id = actual_lib_def_id.unwrap_or_else(|| self.ctx.get_or_create_def_id(sym_id));
+        Some(self.ctx.types.lazy(def_id))
     }
 
     fn is_simple_local_interface_primitive_type_reference(
@@ -476,6 +527,94 @@ impl<'a> CheckerState<'a> {
             outcome,
             symbol_name,
             declarations.len(),
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::context::{CheckerContext, CheckerOptions, LibContext};
+    use crate::query_boundaries::common::TypeInterner;
+    use crate::query_boundaries::common::{lazy_def_id, raw_property_type};
+    use crate::test_utils::load_lib_files;
+    use std::sync::Arc;
+
+    #[test]
+    fn simple_actual_lib_interface_lowers_bare_lib_type_reference_property() {
+        let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
+        let dom = lib_files
+            .iter()
+            .find(|lib| {
+                lib.arena
+                    .source_files
+                    .first()
+                    .is_some_and(|source_file| source_file.file_name.ends_with("dom.d.ts"))
+            })
+            .expect("dom lib should be loaded");
+        let types = TypeInterner::new();
+        let ctx = CheckerContext::new(
+            dom.arena.as_ref(),
+            dom.binder.as_ref(),
+            &types,
+            "dom.d.ts".to_string(),
+            CheckerOptions::default(),
+        );
+        let mut state = CheckerState { ctx };
+        let lib_contexts: Vec<LibContext> = lib_files
+            .iter()
+            .map(|lib| LibContext {
+                arena: Arc::clone(&lib.arena),
+                binder: Arc::clone(&lib.binder),
+            })
+            .collect();
+        state.ctx.set_lib_contexts(lib_contexts);
+        state.ctx.set_actual_lib_file_count(lib_files.len());
+
+        let sym_id = state
+            .ctx
+            .binder
+            .file_locals
+            .get("SVGURIReference")
+            .expect("SVGURIReference should be a DOM lib interface");
+        assert!(
+            state
+                .resolve_actual_lib_name_to_def_id_for_lowering("SVGURIReference")
+                .is_some()
+        );
+        let declarations = state
+            .ctx
+            .binder
+            .get_symbol(sym_id)
+            .expect("SVGURIReference symbol should exist")
+            .declarations
+            .clone();
+
+        let interface_type = state
+            .try_lower_simple_local_interface_object(
+                sym_id,
+                &declarations,
+                SimpleLocalInterfaceFacts {
+                    has_out_of_arena_decl: false,
+                    has_cross_file_same_index: false,
+                    has_local_interface_decl: true,
+                    has_local_interface_heritage_extends: false,
+                    has_local_computed_property_name: false,
+                    suppress_missing_interface_decl_reject: false,
+                    allow_actual_lib_type_references: true,
+                },
+            )
+            .expect("simple DOM interface should lower with a bare lib type reference");
+        let href = state.ctx.types.intern_string("href");
+        let href_type = raw_property_type(state.ctx.types.as_type_database(), interface_type, href)
+            .expect("href property should be present");
+        let expected_def_id = state
+            .resolve_actual_lib_name_to_def_id_for_lowering("SVGAnimatedString")
+            .expect("SVGAnimatedString should have actual-lib identity");
+
+        assert_eq!(
+            lazy_def_id(state.ctx.types.as_type_database(), href_type),
+            Some(expected_def_id),
         );
     }
 }
