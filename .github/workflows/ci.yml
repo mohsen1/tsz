@@ -921,7 +921,7 @@ jobs:
             --project=tsz-ci \
             --region=us-central1 \
             --polling-interval=10 \
-            --config=cloudbuild-unit.yaml \
+            --config=scripts/cloudbuild/cloudbuild-unit.yaml \
             --gcs-source-staging-dir=gs://tsz-ci_cloudbuild/cb-source-staging \
             .
 
