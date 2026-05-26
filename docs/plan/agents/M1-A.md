@@ -173,6 +173,11 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue dry runs now add `Oldest updated` to `Skip Owner Counts`
     when skipped PR timestamp data is available, so owner-level handoffs show
     both volume and stale age without opening each PR.
+  - `#10219` merged on 2026-05-26 as
+    `ff982c14b0 ci: show cleanup skip owner staleness (#10219)`.
+    Verbose queue-branch cleanup dry runs now carry open PR `updated_at` into
+    preserved branch skips, so cleanup `Skip Owner Counts` can also show
+    oldest-update dates for lane-level stale branch handoffs.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -225,9 +230,9 @@ node scripts/ci/pr-ownership-report.mjs
     branches and group the six preserved branches as open PR branch skips or
     active queue runs with owner labels and status/start time; the exact
     active-run subset changes as synthetic runs complete, so re-run the
-    cleanup dry-run for current owner counts, run ids, and ages. The stale
-    merged-PR queue branches for `#9848`, `#9889`, `#10160`, and `#10163` were
-    deleted.
+    cleanup dry-run for current owner counts, oldest-update dates, run ids, and
+    ages. The stale merged-PR queue branches for `#9848`, `#9889`, `#10160`,
+    and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.

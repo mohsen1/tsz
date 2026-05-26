@@ -409,7 +409,7 @@ function readPullRequestState(repository, number) {
     "api",
     `repos/${repository}/pulls/${number}`,
     "--jq",
-    "{number: .number, state: .state, merged: (.merged_at != null)}",
+    "{number: .number, state: .state, merged: (.merged_at != null), updatedAt: .updated_at}",
   ]);
 }
 
@@ -516,6 +516,54 @@ function pushSkipOwnerCounts(lines, skips) {
   }
 }
 
+function pushCleanupSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| Branch | Owner | Updated | Reason |" : "| Branch | Owner | Reason |",
+    hasUpdatedAt ? "|--------|-------|---------|--------|" : "|--------|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 50)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 50) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 50} more skipped branch(es) omitted |`
+      : `| ... |  | ${skips.length - 50} more skipped branch(es) omitted |`);
+  }
+}
+
+function pushQueueSkipRows(lines, skips) {
+  const hasUpdatedAt = (skips || []).some((skip) => skip.updatedAt);
+  lines.push(
+    "",
+    "### Skips",
+    "",
+    hasUpdatedAt ? "| PR | Owner | Updated | Reason |" : "| PR | Owner | Reason |",
+    hasUpdatedAt ? "|----|-------|---------|--------|" : "|----|-------|--------|",
+  );
+  for (const skip of skips.slice(0, 25)) {
+    const reason = skip.reason.replace(/\|/g, "\\|");
+    if (hasUpdatedAt) {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${shortDate(skip.updatedAt)} | ${reason} |`);
+    } else {
+      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${reason} |`);
+    }
+  }
+  if (skips.length > 25) {
+    lines.push(hasUpdatedAt
+      ? `| ... |  |  | ${skips.length - 25} more skipped PR(s) omitted |`
+      : `| ... |  | ${skips.length - 25} more skipped PR(s) omitted |`);
+  }
+}
+
 function invalidatePullRequest(repository, pr, options) {
   if (options.dryRun) return { invalidated: false, skipped: false };
   const detailed = pr.statusCheckRollup ? pr : readPullRequest(repository, pr.number);
@@ -598,6 +646,7 @@ function cleanupQueueBranches(repository, options) {
               owner,
               reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
               summaryReason: "active queue run",
+              updatedAt: pullRequest.updatedAt || "",
             });
           }
           continue;
@@ -609,6 +658,7 @@ function cleanupQueueBranches(repository, options) {
             owner,
             reason: `PR #${number} is open`,
             summaryReason: "open PR branch",
+            updatedAt: pullRequest.updatedAt || "",
           });
         }
         continue;
@@ -909,13 +959,7 @@ export function formatResult(result, options) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
       pushSkipOwnerCounts(lines, result.skips);
-      lines.push("", "### Skips", "", "| Branch | Owner | Reason |", "|--------|-------|--------|");
-      for (const skip of result.skips.slice(0, 50)) {
-        lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
-      }
-      if (result.skips.length > 50) {
-        lines.push(`| ... |  | ${result.skips.length - 50} more skipped branch(es) omitted |`);
-      }
+      pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
     lines.push("No queue-ready auto-merge PR found.");
@@ -941,13 +985,7 @@ export function formatResult(result, options) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
     pushSkipOwnerCounts(lines, result.skips);
-    lines.push("", "### Skips", "", "| PR | Owner | Reason |", "|----|-------|--------|");
-    for (const skip of result.skips.slice(0, 25)) {
-      lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
-    }
-    if (result.skips.length > 25) {
-      lines.push(`| ... |  | ${result.skips.length - 25} more skipped PR(s) omitted |`);
-    }
+    pushQueueSkipRows(lines, result.skips);
   }
   return `${lines.join("\n")}\n`;
 }
