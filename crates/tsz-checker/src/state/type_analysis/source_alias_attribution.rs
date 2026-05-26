@@ -42,6 +42,14 @@ pub(crate) fn record_source_alias_rejection_kinds(
             type_param_names,
             global_type_is_lowerable,
         );
+        let first_non_lowerable_leaf_type_reference =
+            first_non_lowerable_leaf_type_reference_in_node(
+                arena,
+                delegate_binder,
+                node_idx,
+                type_param_names,
+                global_type_is_lowerable,
+            );
         record_direct_source_file_type_alias_body_rejection_residue(
             type_alias_name(arena, type_alias).unwrap_or("<unknown>"),
             body_kind,
@@ -49,6 +57,8 @@ pub(crate) fn record_source_alias_rejection_kinds(
             first_type_reference_name_in_node(arena, node_idx),
             first_non_lowerable_type_reference.map(|reference| reference.kind),
             first_non_lowerable_type_reference.and_then(|reference| reference.name),
+            first_non_lowerable_leaf_type_reference.map(|reference| reference.kind),
+            first_non_lowerable_leaf_type_reference.and_then(|reference| reference.name),
             arena
                 .source_files
                 .first()
@@ -272,6 +282,42 @@ fn first_non_lowerable_type_reference_in_node<'a>(
         stack.extend(children.into_iter().rev());
     }
     None
+}
+
+fn first_non_lowerable_leaf_type_reference_in_node<'a>(
+    arena: &'a NodeArena,
+    delegate_binder: &BinderState,
+    root_idx: NodeIndex,
+    type_param_names: &[String],
+    global_type_is_lowerable: &dyn Fn(&str) -> bool,
+) -> Option<TypeReferenceAttribution<'a>> {
+    if type_reference_subtree_is_lowerable(
+        arena,
+        delegate_binder,
+        root_idx,
+        type_param_names,
+        global_type_is_lowerable,
+    ) {
+        return None;
+    }
+
+    let node = arena.get(root_idx)?;
+    for child in arena.get_children(root_idx) {
+        if let Some(reference) = first_non_lowerable_leaf_type_reference_in_node(
+            arena,
+            delegate_binder,
+            child,
+            type_param_names,
+            global_type_is_lowerable,
+        ) {
+            return Some(reference);
+        }
+    }
+
+    (node.kind == syntax_kind_ext::TYPE_REFERENCE).then(|| TypeReferenceAttribution {
+        kind: type_reference_rejection_kind(arena, delegate_binder, root_idx, type_param_names),
+        name: type_reference_name(arena, root_idx),
+    })
 }
 
 fn type_reference_subtree_is_lowerable(
@@ -634,5 +680,38 @@ mod tests {
             "non-lowerable attribution should skip the lowerable Array<T> subtree",
         );
         assert_eq!(first.name, Some("Missing"));
+    }
+
+    #[test]
+    fn source_file_alias_non_lowerable_leaf_type_reference_descends_into_outer_failure() {
+        let (arena, alias_body) =
+            alias_body_from_source("type Result<T> = Pick<T, Missing<keyof T>>;");
+        let binder = BinderState::new();
+        let global_type_is_lowerable = |name: &str| name == "Pick";
+
+        let first = first_non_lowerable_type_reference_in_node(
+            &arena,
+            &binder,
+            alias_body,
+            &[String::from("T")],
+            &global_type_is_lowerable,
+        )
+        .expect("first non-lowerable type reference");
+        let leaf = first_non_lowerable_leaf_type_reference_in_node(
+            &arena,
+            &binder,
+            alias_body,
+            &[String::from("T")],
+            &global_type_is_lowerable,
+        )
+        .expect("first non-lowerable leaf type reference");
+
+        assert_eq!(first.name, Some("Pick"));
+        assert_eq!(
+            leaf.kind,
+            DirectSourceFileTypeAliasTypeReferenceRejectionKind::UnresolvedIdentifier,
+            "leaf attribution should identify the nested type reference that makes Pick fail",
+        );
+        assert_eq!(leaf.name, Some("Missing"));
     }
 }
