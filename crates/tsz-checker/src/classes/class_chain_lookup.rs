@@ -95,6 +95,7 @@ impl<'a> CheckerState<'a> {
                                 is_method: false,
                                 is_static: false,
                                 is_accessor: false,
+                                is_setter: false,
                                 is_abstract: false,
                                 has_override: self.has_override_modifier(&param.modifiers)
                                     || self.has_jsdoc_override_tag(param_idx),

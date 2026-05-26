@@ -52,45 +52,4 @@ impl<'a> CheckerState<'a> {
             );
         }
     }
-
-    /// Collect the names of a symbol's namespace exports (merged `namespace X { ... }`
-    /// declarations). Used to decide whether a class-namespace merge could
-    /// shadow or conflict with a base class's static members for the TS2417
-    /// static-side compatibility check.
-    fn collect_namespace_export_names_for_symbol(
-        &self,
-        sym_id: tsz_binder::SymbolId,
-    ) -> rustc_hash::FxHashSet<String> {
-        let mut names = rustc_hash::FxHashSet::default();
-        if let Some(symbol) = self.ctx.binder.get_symbol(sym_id)
-            && let Some(exports) = symbol.exports.as_ref()
-        {
-            for (name, _sym_id) in exports.iter() {
-                if !name.is_empty() {
-                    names.insert(name.clone());
-                }
-            }
-        }
-        names
-    }
-
-    /// Collect all property names from a type via the solver query boundary API.
-    /// Used for type-level override checking when the base class is a complex
-    /// expression (function call, intersection constructor).
-    pub(super) fn collect_property_names_from_type(
-        &mut self,
-        type_id: TypeId,
-    ) -> rustc_hash::FxHashSet<String> {
-        let resolved = self.resolve_lazy_type(type_id);
-        let atoms =
-            crate::query_boundaries::diagnostics::collect_property_name_atoms_for_diagnostics(
-                self.ctx.types,
-                resolved,
-                5,
-            );
-        atoms
-            .into_iter()
-            .map(|atom| self.ctx.types.resolve_atom_ref(atom).to_string())
-            .collect()
-    }
 }

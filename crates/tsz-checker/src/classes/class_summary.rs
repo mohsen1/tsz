@@ -230,6 +230,67 @@ impl<'a> CheckerState<'a> {
             .initialization
     }
 
+    /// For each `(name, is_static)` declared with BOTH a `GET_ACCESSOR` and a
+    /// `SET_ACCESSOR` in this class body, return the getter's return type.
+    /// This is the canonical accessor-pair property type per tsc: override-compat
+    /// (TS2416/TS2417) uses the getter return type as the pair's property type,
+    /// not the setter parameter type. Setter-only or getter-only accessors
+    /// (no paired sibling) get no entry — they keep their own declared type.
+    pub(crate) fn class_accessor_pair_getter_types(
+        &mut self,
+        class: &tsz_parser::parser::node::ClassData,
+    ) -> FxHashMap<(String, bool), TypeId> {
+        let mut getter_types: FxHashMap<(String, bool), TypeId> = FxHashMap::default();
+        let mut has_setter: FxHashSet<(String, bool)> = FxHashSet::default();
+
+        for &member_idx in &class.members.nodes {
+            let Some(member_node) = self.ctx.arena.get(member_idx) else {
+                continue;
+            };
+            let is_getter = match member_node.kind {
+                k if k == syntax_kind_ext::GET_ACCESSOR => true,
+                k if k == syntax_kind_ext::SET_ACCESSOR => false,
+                _ => continue,
+            };
+            let Some(accessor) = self.ctx.arena.get_accessor(member_node) else {
+                continue;
+            };
+            let Some(name) = self.accessor_pair_lookup_name(accessor.name) else {
+                continue;
+            };
+            let key = (name, self.has_static_modifier(&accessor.modifiers));
+            if is_getter {
+                // Source-order independent: the first declared getter wins.
+                // Duplicate getters for the same name are a separate parser
+                // diagnostic, not our concern here.
+                let getter_type = if accessor.type_annotation.is_some() {
+                    self.get_type_from_type_node(accessor.type_annotation)
+                } else {
+                    self.infer_getter_return_type(accessor.body)
+                };
+                getter_types.entry(key).or_insert(getter_type);
+            } else {
+                has_setter.insert(key);
+            }
+        }
+
+        getter_types.retain(|key, _| has_setter.contains(key));
+        getter_types
+    }
+
+    /// Look up an accessor's property name, applying the same late-binding
+    /// resolution as `extract_class_member_info` so accessor pairs declared
+    /// with computed names (e.g. `[k]` where `const k = "key"`) match.
+    fn accessor_pair_lookup_name(&mut self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.ctx.arena.get(name_idx)?;
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            self.get_property_name_resolved(name_idx)
+                .or_else(|| self.get_property_name(name_idx))
+        } else {
+            self.get_property_name(name_idx)
+        }
+    }
+
     /// Collect only member info (names, types, visibility, kinds) for a class.
     /// Uses a single unified map per axis (instance/static) instead of 6 separate maps.
     fn collect_class_members_for_chain(
@@ -241,12 +302,25 @@ impl<'a> CheckerState<'a> {
 
         let mut summary = ClassOwnMemberSummary::default();
 
+        // For each accessor pair (a name with both GET_ACCESSOR and SET_ACCESSOR
+        // declared in this class for the same static-ness), the accessor's
+        // property type per tsc is the getter return type. Override-compat must
+        // see this canonical type so source order doesn't decide which accessor
+        // wins. We canonicalize the setter's entry to the getter's type.
+        let accessor_pair_getter_types = self.class_accessor_pair_getter_types(class);
+
         for &member_idx in &class.members.nodes {
             let Some(member_node) = self.ctx.arena.get(member_idx) else {
                 continue;
             };
 
-            if let Some(info) = self.extract_class_member_info(member_idx, false) {
+            if let Some(mut info) = self.extract_class_member_info(member_idx, false) {
+                if info.is_setter
+                    && let Some(&getter_type) =
+                        accessor_pair_getter_types.get(&(info.name.clone(), info.is_static))
+                {
+                    info.type_id = getter_type;
+                }
                 let is_visible = info.visibility != MemberVisibility::Private;
                 Self::record_unified_member(info, is_visible, &mut summary, self);
             }
@@ -1014,6 +1088,7 @@ impl<'a> CheckerState<'a> {
             is_method: false,
             is_static: false,
             is_accessor: false,
+            is_setter: false,
             is_abstract: false,
             has_override: self.has_override_modifier(&param.modifiers)
                 || self.has_jsdoc_override_tag(param_idx),
@@ -1131,6 +1206,7 @@ impl<'a> CheckerState<'a> {
             is_method: prop.is_method,
             is_static: false,
             is_accessor: false,
+            is_setter: false,
             is_abstract: false,
             has_override: false,
             is_jsdoc_override: false,
@@ -1309,6 +1385,7 @@ impl<'a> CheckerState<'a> {
                 is_method: false,
                 is_static,
                 is_accessor: false,
+                is_setter: false,
                 is_abstract: false,
                 has_override: false,
                 is_jsdoc_override: false,
