@@ -31,6 +31,10 @@ pub(in crate::error_reporter) enum DiagnosticTypeDisplayRole {
         argument: TypeId,
         argument_idx: NodeIndex,
     },
+    WeakCallParameter {
+        argument: TypeId,
+        argument_idx: NodeIndex,
+    },
     PropertyReceiver,
 }
 
@@ -85,6 +89,7 @@ impl<'a> CheckerState<'a> {
         let ty = match role {
             DiagnosticTypeDisplayRole::CallArgument { .. }
             | DiagnosticTypeDisplayRole::CallParameter { .. }
+            | DiagnosticTypeDisplayRole::WeakCallParameter { .. }
             | DiagnosticTypeDisplayRole::Assignability => {
                 self.resolve_indexed_access_alias_for_display(ty)
             }
@@ -113,8 +118,29 @@ impl<'a> CheckerState<'a> {
                 argument,
                 argument_idx,
             } => {
-                let display =
-                    self.format_call_parameter_type_for_diagnostic(ty, argument, argument_idx);
+                let display = self.format_call_parameter_type_for_diagnostic(
+                    ty,
+                    argument,
+                    argument_idx,
+                    true,
+                );
+                if crate::query_boundaries::common::array_element_type(self.ctx.types, ty).is_some()
+                {
+                    Self::normalize_array_generic_to_shorthand(&display)
+                } else {
+                    display
+                }
+            }
+            DiagnosticTypeDisplayRole::WeakCallParameter {
+                argument,
+                argument_idx,
+            } => {
+                let display = self.format_call_parameter_type_for_diagnostic(
+                    ty,
+                    argument,
+                    argument_idx,
+                    false,
+                );
                 if crate::query_boundaries::common::array_element_type(self.ctx.types, ty).is_some()
                 {
                     Self::normalize_array_generic_to_shorthand(&display)
