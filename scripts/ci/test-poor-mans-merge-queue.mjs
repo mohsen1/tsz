@@ -5,6 +5,7 @@ import {
   activeRunOwnerStatusCounts,
   activeSyntheticQueueRun,
   failureCommentBody,
+  forceWithLeaseArgForOid,
   formatResult,
   hasPendingPlaceholderQueueStatus,
   normalizeRestPullRequest,
@@ -79,6 +80,14 @@ assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 1
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
 assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", "a".repeat(40)),
+  `--force-with-lease=refs/heads/automation/merge-queue/pr-123:${"a".repeat(40)}`,
+);
+assert.equal(
+  forceWithLeaseArgForOid("automation/merge-queue/pr-123", ""),
+  "--force-with-lease=refs/heads/automation/merge-queue/pr-123:",
+);
 assert.deepEqual(
   queueBranchMetadata("automation/merge-queue/pr-123-a56115a-m4c"),
   { number: 123, suffix: "a56115a-m4c" },
