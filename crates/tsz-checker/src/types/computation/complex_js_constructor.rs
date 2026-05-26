@@ -407,8 +407,6 @@ impl<'a> CheckerState<'a> {
             // Non-generic: use standard property collection
             self.collect_js_constructor_this_properties(body_idx, &mut properties, sym_id, true);
         }
-        let constructor_property_names: rustc_hash::FxHashSet<_> =
-            properties.keys().copied().collect();
         let mut prototype_concretized_implicit_any = rustc_hash::FxHashSet::default();
 
         for (name, previous) in scope_restore {
@@ -440,35 +438,39 @@ impl<'a> CheckerState<'a> {
                 properties.entry(name).or_insert(prop);
             }
 
-            // Add this-properties from prototype methods (with | undefined)
-            for (name, mut prop) in this_props {
-                let factory = self.ctx.types.factory();
-                let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
-                if let Some(existing) = properties.get_mut(&name) {
-                    if existing.write_type == TypeId::ANY {
-                        if prop.type_id != TypeId::ANY
-                            && prop.type_id != TypeId::NULL
-                            && prop.type_id != TypeId::UNDEFINED
-                            && crate::query_boundaries::common::array_element_type(
-                                self.ctx.types,
-                                prop.type_id,
-                            ) != Some(TypeId::ANY)
-                        {
-                            let prop_name = self.ctx.types.resolve_atom(name);
-                            prototype_concretized_implicit_any.insert(format!(
-                                "Member '{prop_name}' implicitly has an 'any' type."
-                            ));
+            // Add this-properties from prototype methods (with | undefined).
+            if !this_props.is_empty() {
+                let constructor_property_names: rustc_hash::FxHashSet<_> =
+                    properties.keys().copied().collect();
+                for (name, mut prop) in this_props {
+                    let factory = self.ctx.types.factory();
+                    let widened_prop_type = factory.union2(prop.type_id, TypeId::UNDEFINED);
+                    if let Some(existing) = properties.get_mut(&name) {
+                        if existing.write_type == TypeId::ANY {
+                            if prop.type_id != TypeId::ANY
+                                && prop.type_id != TypeId::NULL
+                                && prop.type_id != TypeId::UNDEFINED
+                                && crate::query_boundaries::common::array_element_type(
+                                    self.ctx.types,
+                                    prop.type_id,
+                                ) != Some(TypeId::ANY)
+                            {
+                                let prop_name = self.ctx.types.resolve_atom(name);
+                                prototype_concretized_implicit_any.insert(format!(
+                                    "Member '{prop_name}' implicitly has an 'any' type."
+                                ));
+                            }
+                            existing.type_id = factory.union2(existing.type_id, widened_prop_type);
+                        } else if !constructor_property_names.contains(&name) {
+                            let merged = factory.union2(existing.type_id, widened_prop_type);
+                            existing.type_id = merged;
+                            existing.write_type = merged;
                         }
-                        existing.type_id = factory.union2(existing.type_id, widened_prop_type);
-                    } else if !constructor_property_names.contains(&name) {
-                        let merged = factory.union2(existing.type_id, widened_prop_type);
-                        existing.type_id = merged;
-                        existing.write_type = merged;
+                    } else {
+                        prop.type_id = widened_prop_type;
+                        prop.write_type = prop.type_id;
+                        properties.insert(name, prop);
                     }
-                } else {
-                    prop.type_id = widened_prop_type;
-                    prop.write_type = prop.type_id;
-                    properties.insert(name, prop);
                 }
             }
 
