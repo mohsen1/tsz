@@ -11,6 +11,7 @@ impl<'a> CheckerState<'a> {
         binder: &BinderState,
         node_idx: NodeIndex,
         type_param_names: &[String],
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         let mut seen = AliasCycleTracker::new();
         Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
@@ -19,6 +20,7 @@ impl<'a> CheckerState<'a> {
             node_idx,
             type_param_names,
             &mut seen,
+            global_type_is_lowerable,
         )
     }
 
@@ -26,10 +28,15 @@ impl<'a> CheckerState<'a> {
         arena: &NodeArena,
         binder: &BinderState,
         node_idx: NodeIndex,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         let mut seen = AliasCycleTracker::new();
         Self::source_file_type_node_is_local_alias_chain_lowerable(
-            arena, binder, node_idx, &mut seen,
+            arena,
+            binder,
+            node_idx,
+            &mut seen,
+            global_type_is_lowerable,
         )
     }
 
@@ -39,6 +46,7 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
         type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         if Self::source_file_type_node_is_generic_scope_independent(
             arena,
@@ -57,12 +65,20 @@ impl<'a> CheckerState<'a> {
                 };
                 let Some(args) = type_ref.type_arguments.as_ref() else {
                     return Self::source_file_type_node_is_local_alias_chain_lowerable(
-                        arena, binder, node_idx, seen,
+                        arena,
+                        binder,
+                        node_idx,
+                        seen,
+                        global_type_is_lowerable,
                     );
                 };
                 if args.nodes.is_empty() {
                     return Self::source_file_type_node_is_local_alias_chain_lowerable(
-                        arena, binder, node_idx, seen,
+                        arena,
+                        binder,
+                        node_idx,
+                        seen,
+                        global_type_is_lowerable,
                     );
                 }
                 let Some(name) = arena
@@ -73,7 +89,17 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 let Some(raw_sym_id) = binder.file_locals.get(name) else {
-                    return false;
+                    return global_type_is_lowerable(name)
+                        && args.nodes.iter().copied().all(|arg| {
+                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                                arena,
+                                binder,
+                                arg,
+                                type_param_names,
+                                seen,
+                                global_type_is_lowerable,
+                            )
+                        });
                 };
                 let Some(sym_id) =
                     Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
@@ -110,6 +136,7 @@ impl<'a> CheckerState<'a> {
                         type_alias,
                         args.nodes.len(),
                         seen,
+                        global_type_is_lowerable,
                     )
                 else {
                     return false;
@@ -121,6 +148,7 @@ impl<'a> CheckerState<'a> {
                         arg,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 }) {
                     return false;
@@ -142,6 +170,7 @@ impl<'a> CheckerState<'a> {
                         type_alias.type_node,
                         &target_param_names,
                         seen,
+                        global_type_is_lowerable,
                     );
                 seen.pop(sym_id);
                 result
@@ -160,24 +189,28 @@ impl<'a> CheckerState<'a> {
                         conditional.check_type,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
                         binder,
                         conditional.extends_type,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
                         binder,
                         conditional.true_type,
                         &true_branch_names,
                         seen,
+                        global_type_is_lowerable,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
                         binder,
                         conditional.false_type,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -188,6 +221,7 @@ impl<'a> CheckerState<'a> {
                     array.element_type,
                     type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             }),
             k if k == syntax_kind_ext::TUPLE_TYPE => arena.get_tuple_type(node).is_some_and(|tuple| {
@@ -198,6 +232,7 @@ impl<'a> CheckerState<'a> {
                         element,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }),
@@ -210,6 +245,7 @@ impl<'a> CheckerState<'a> {
                             member,
                             type_param_names,
                             seen,
+                            global_type_is_lowerable,
                         )
                     })
                 })
@@ -225,6 +261,7 @@ impl<'a> CheckerState<'a> {
                         wrapped.type_node,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -236,19 +273,26 @@ impl<'a> CheckerState<'a> {
                         operator.type_node,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
             k if k == syntax_kind_ext::INDEXED_ACCESS_TYPE => {
                 arena.get_indexed_access_type(node).is_some_and(|indexed| {
                     Self::source_file_indexed_access_object_is_generic_local_alias_application_lowerable(
-                        arena, binder, indexed.object_type, type_param_names, seen,
+                        arena,
+                        binder,
+                        indexed.object_type,
+                        type_param_names,
+                        seen,
+                        global_type_is_lowerable,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
                         arena,
                         binder,
                         indexed.index_type,
                         type_param_names,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -259,6 +303,7 @@ impl<'a> CheckerState<'a> {
                     node,
                     type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -275,6 +320,7 @@ impl<'a> CheckerState<'a> {
                     node,
                     type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             }
             _ => false,
@@ -286,6 +332,7 @@ impl<'a> CheckerState<'a> {
         binder: &BinderState,
         node_idx: NodeIndex,
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
             return true;
@@ -310,7 +357,19 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 let Some(raw_sym_id) = binder.file_locals.get(name) else {
-                    return false;
+                    return global_type_is_lowerable(name)
+                        && (!has_type_arguments
+                            || type_ref.type_arguments.as_ref().is_some_and(|args| {
+                                args.nodes.iter().copied().all(|arg| {
+                                    Self::source_file_type_node_is_local_alias_chain_lowerable(
+                                        arena,
+                                        binder,
+                                        arg,
+                                        seen,
+                                        global_type_is_lowerable,
+                                    )
+                                })
+                            }));
                 };
                 let Some(sym_id) =
                     Self::source_file_resolve_alias_symbol_for_lowering(binder, raw_sym_id)
@@ -351,13 +410,18 @@ impl<'a> CheckerState<'a> {
                             type_alias,
                             args.nodes.len(),
                             seen,
+                            global_type_is_lowerable,
                         )
                     else {
                         return false;
                     };
                     if !args.nodes.iter().copied().all(|arg| {
                         Self::source_file_type_node_is_local_alias_chain_lowerable(
-                            arena, binder, arg, seen,
+                            arena,
+                            binder,
+                            arg,
+                            seen,
+                            global_type_is_lowerable,
                         )
                     }) {
                         return false;
@@ -377,6 +441,7 @@ impl<'a> CheckerState<'a> {
                             type_alias.type_node,
                             &target_param_names,
                             seen,
+                            global_type_is_lowerable,
                         );
                     seen.pop(sym_id);
                     if !result {
@@ -401,6 +466,7 @@ impl<'a> CheckerState<'a> {
                     binder,
                     type_alias.type_node,
                     seen,
+                    global_type_is_lowerable,
                 );
                 seen.pop(sym_id);
                 result
@@ -409,7 +475,11 @@ impl<'a> CheckerState<'a> {
                 arena.get_composite_type(node).is_some_and(|composite| {
                     composite.types.nodes.iter().copied().all(|member| {
                         Self::source_file_type_node_is_local_alias_chain_lowerable(
-                            arena, binder, member, seen,
+                            arena,
+                            binder,
+                            member,
+                            seen,
+                            global_type_is_lowerable,
                         )
                     })
                 })
@@ -421,6 +491,7 @@ impl<'a> CheckerState<'a> {
                         binder,
                         array.element_type,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -428,7 +499,11 @@ impl<'a> CheckerState<'a> {
                 arena.get_tuple_type(node).is_some_and(|tuple| {
                     tuple.elements.nodes.iter().copied().all(|element| {
                         Self::source_file_type_node_is_local_alias_chain_lowerable(
-                            arena, binder, element, seen,
+                            arena,
+                            binder,
+                            element,
+                            seen,
+                            global_type_is_lowerable,
                         )
                     })
                 })
@@ -443,6 +518,7 @@ impl<'a> CheckerState<'a> {
                         binder,
                         wrapped.type_node,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -453,6 +529,7 @@ impl<'a> CheckerState<'a> {
                         binder,
                         operator.type_node,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -463,11 +540,13 @@ impl<'a> CheckerState<'a> {
                         binder,
                         indexed.object_type,
                         seen,
+                        global_type_is_lowerable,
                     ) && Self::source_file_type_node_is_local_alias_chain_lowerable(
                         arena,
                         binder,
                         indexed.index_type,
                         seen,
+                        global_type_is_lowerable,
                     )
                 })
             }
@@ -478,6 +557,7 @@ impl<'a> CheckerState<'a> {
                     node,
                     &[],
                     seen,
+                    global_type_is_lowerable,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -494,6 +574,7 @@ impl<'a> CheckerState<'a> {
                     node,
                     &[],
                     seen,
+                    global_type_is_lowerable,
                 )
             }
             _ => false,
@@ -527,6 +608,7 @@ impl<'a> CheckerState<'a> {
         type_alias: &tsz_parser::parser::node::TypeAliasData,
         arg_count: usize,
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> Option<Vec<String>> {
         let Some(params) = type_alias.type_parameters.as_ref() else {
             return (arg_count == 0).then(Vec::new);
@@ -553,6 +635,7 @@ impl<'a> CheckerState<'a> {
                     param.default,
                     &target_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             {
                 return None;
@@ -568,6 +651,7 @@ impl<'a> CheckerState<'a> {
         node: &tsz_parser::parser::node::Node,
         type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -599,6 +683,7 @@ impl<'a> CheckerState<'a> {
                 type_param.constraint,
                 type_param_names,
                 seen,
+                global_type_is_lowerable,
             )
         {
             return false;
@@ -610,6 +695,7 @@ impl<'a> CheckerState<'a> {
                 type_param.default,
                 type_param_names,
                 seen,
+                global_type_is_lowerable,
             )
         {
             return false;
@@ -630,6 +716,7 @@ impl<'a> CheckerState<'a> {
                 mapped.name_type,
                 &mapped_param_names,
                 seen,
+                global_type_is_lowerable,
             ))
             && (mapped.type_node.is_none()
                 || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
@@ -638,6 +725,7 @@ impl<'a> CheckerState<'a> {
                     mapped.type_node,
                     &mapped_param_names,
                     seen,
+                    global_type_is_lowerable,
                 ))
     }
 
@@ -647,6 +735,7 @@ impl<'a> CheckerState<'a> {
         node_idx: NodeIndex,
         type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -657,6 +746,7 @@ impl<'a> CheckerState<'a> {
                 node,
                 type_param_names,
                 seen,
+                global_type_is_lowerable,
             );
         }
         Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
@@ -665,6 +755,7 @@ impl<'a> CheckerState<'a> {
             node_idx,
             type_param_names,
             seen,
+            global_type_is_lowerable,
         )
     }
 
@@ -673,6 +764,7 @@ impl<'a> CheckerState<'a> {
         binder: &BinderState,
         node_idx: NodeIndex,
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -683,9 +775,16 @@ impl<'a> CheckerState<'a> {
                 node,
                 &[],
                 seen,
+                global_type_is_lowerable,
             );
         }
-        Self::source_file_type_node_is_local_alias_chain_lowerable(arena, binder, node_idx, seen)
+        Self::source_file_type_node_is_local_alias_chain_lowerable(
+            arena,
+            binder,
+            node_idx,
+            seen,
+            global_type_is_lowerable,
+        )
     }
 
     fn source_file_type_literal_has_generic_scope_independent_properties(
@@ -708,6 +807,7 @@ impl<'a> CheckerState<'a> {
         node: &tsz_parser::parser::node::Node,
         type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
             Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
@@ -716,6 +816,7 @@ impl<'a> CheckerState<'a> {
                 type_node,
                 type_param_names,
                 seen,
+                global_type_is_lowerable,
             )
         })
     }
@@ -726,6 +827,7 @@ impl<'a> CheckerState<'a> {
         node: &tsz_parser::parser::node::Node,
         type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> bool {
         let Some(function_type) = arena.get_function_type(node) else {
             return false;
@@ -737,6 +839,7 @@ impl<'a> CheckerState<'a> {
                 function_type.type_parameters.as_ref(),
                 type_param_names,
                 seen,
+                global_type_is_lowerable,
             )
         else {
             return false;
@@ -760,6 +863,7 @@ impl<'a> CheckerState<'a> {
                     param.type_annotation,
                     &active_type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
         }) && function_type.type_annotation.is_some()
             && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
@@ -768,6 +872,7 @@ impl<'a> CheckerState<'a> {
                 function_type.type_annotation,
                 &active_type_param_names,
                 seen,
+                global_type_is_lowerable,
             )
     }
 
@@ -777,6 +882,7 @@ impl<'a> CheckerState<'a> {
         params: Option<&NodeList>,
         outer_type_param_names: &[String],
         seen: &mut AliasCycleTracker,
+        global_type_is_lowerable: &dyn Fn(&str) -> bool,
     ) -> Option<Vec<String>> {
         let Some(params) = params else {
             return Some(Vec::new());
@@ -805,6 +911,7 @@ impl<'a> CheckerState<'a> {
                     param.constraint,
                     &active_type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             {
                 return None;
@@ -816,6 +923,7 @@ impl<'a> CheckerState<'a> {
                     param.default,
                     &active_type_param_names,
                     seen,
+                    global_type_is_lowerable,
                 )
             {
                 return None;

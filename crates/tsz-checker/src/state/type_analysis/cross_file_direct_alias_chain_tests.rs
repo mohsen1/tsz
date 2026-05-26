@@ -1,6 +1,7 @@
-use crate::context::{CheckerContext, CheckerOptions};
+use crate::context::{CheckerContext, CheckerOptions, LibContext};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
+use crate::test_utils::load_lib_files;
 use std::sync::Arc;
 use tsz_binder::{BinderState, SymbolTable, symbol_flags};
 use tsz_parser::parser::ParserState;
@@ -46,6 +47,46 @@ where
         Arc::clone(&requester_binder),
         Arc::clone(&target_binder),
     ]));
+    test(&mut state, &target_binder)
+}
+
+fn with_two_file_state_with_libs<F, R>(
+    target_source: &str,
+    requester_source: &str,
+    libs: &[&str],
+    test: F,
+) -> R
+where
+    F: FnOnce(&mut CheckerState<'_>, &Arc<BinderState>) -> R,
+{
+    let lib_files = load_lib_files(libs);
+    let (target_arena, target_binder, types) = parse_bound_source(target_source);
+    let (requester_arena, requester_binder, _) = parse_bound_source(requester_source);
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    state.ctx.set_all_arenas(Arc::new(vec![
+        Arc::clone(&requester_arena),
+        Arc::clone(&target_arena),
+    ]));
+    state.ctx.set_all_binders(Arc::new(vec![
+        Arc::clone(&requester_binder),
+        Arc::clone(&target_binder),
+    ]));
+    let lib_contexts: Vec<LibContext> = lib_files
+        .iter()
+        .map(|lib| LibContext {
+            arena: Arc::clone(&lib.arena),
+            binder: Arc::clone(&lib.binder),
+        })
+        .collect();
+    state.ctx.set_lib_contexts(lib_contexts);
+    state.ctx.set_actual_lib_file_count(lib_files.len());
     test(&mut state, &target_binder)
 }
 
@@ -808,6 +849,66 @@ fn direct_source_file_type_alias_rejects_chain_containing_typeof() {
                     .direct_source_file_type_alias_result(alias_sym, Some(1), true)
                     .is_none(),
                 "chain with typeof in a referenced alias must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_unshadowed_global_function_reference() {
+    with_two_file_state_with_libs(
+        "export type FunctionKeys<T> = { [K in keyof T]-?: T[K] extends Function ? K : never }[keyof T];",
+        "import { FunctionKeys } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let function_keys_sym = target_binder
+                .file_locals
+                .get("FunctionKeys")
+                .expect("FunctionKeys");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(function_keys_sym, Some(1), true)
+                .expect("unshadowed global Function references should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "FunctionKeys should expose T");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_unshadowed_global_generic_reference() {
+    with_two_file_state_with_libs(
+        "export type Keep<Obj, Key extends keyof Obj> = Pick<Obj, Key>;",
+        "import { Keep } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let keep_sym = target_binder.file_locals.get("Keep").expect("Keep");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(keep_sym, Some(1), true)
+                .expect("unshadowed global generic type references should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 2, "Keep should expose Obj and Key");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_shadowed_global_function_reference() {
+    with_two_file_state_with_libs(
+        "interface Function { local: string }\nexport type FunctionKeys<T> = { [K in keyof T]-?: T[K] extends Function ? K : never }[keyof T];",
+        "import { FunctionKeys } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let function_keys_sym = target_binder
+                .file_locals
+                .get("FunctionKeys")
+                .expect("FunctionKeys");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(function_keys_sym, Some(1), true)
+                    .is_none(),
+                "local shadows of global lib names must stay on the child-checker path",
             );
         },
     );

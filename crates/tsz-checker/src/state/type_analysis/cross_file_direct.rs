@@ -1540,19 +1540,53 @@ impl<'a> CheckerState<'a> {
             return None;
         }
         let body_is_direct_lowerable = if type_param_names.is_empty() {
+            let lib_binders = self.get_lib_binders();
+            let global_type_is_lowerable = |type_name: &str| {
+                if delegate_binder.file_locals.get(type_name).is_some() {
+                    return false;
+                }
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(type_name, &lib_binders)
+                    .or_else(|| {
+                        lib_binders
+                            .iter()
+                            .find_map(|lib| lib.file_locals.get(type_name))
+                    })
+                    .and_then(|sym_id| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+            };
             Self::source_file_type_node_is_scope_independent(symbol_arena, type_alias.type_node)
                 || (direct_source_file_arena
                     && Self::source_file_type_node_is_non_generic_local_alias_chain_lowerable(
                         symbol_arena,
                         delegate_binder,
                         type_alias.type_node,
+                        &global_type_is_lowerable,
                     ))
         } else if direct_source_file_arena {
+            let lib_binders = self.get_lib_binders();
+            let global_type_is_lowerable = |type_name: &str| {
+                if delegate_binder.file_locals.get(type_name).is_some() {
+                    return false;
+                }
+                self.ctx
+                    .binder
+                    .get_global_type_with_libs(type_name, &lib_binders)
+                    .or_else(|| {
+                        lib_binders
+                            .iter()
+                            .find_map(|lib| lib.file_locals.get(type_name))
+                    })
+                    .and_then(|sym_id| self.ctx.binder.get_symbol_with_libs(sym_id, &lib_binders))
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+            };
             Self::source_file_type_node_is_generic_local_alias_application_lowerable(
                 symbol_arena,
                 delegate_binder,
                 type_alias.type_node,
                 &type_param_names,
+                &global_type_is_lowerable,
             )
         } else {
             Self::source_file_type_node_is_generic_scope_independent(
