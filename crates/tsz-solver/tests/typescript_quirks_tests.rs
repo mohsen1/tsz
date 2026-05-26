@@ -366,19 +366,9 @@ fn test_method_bivariance_disabled() {
         "With method bivariance disabled, methods should be contravariant in strict mode"
     );
 
-    // NOTE: The reverse direction currently also passes due to how method comparison
-    // works (is_method = source.is_method || target.is_method).
-    // This is a known behavior - methods are treated as a group where if either
-    // source or target is a method, both get method handling.
-    // This test documents the current behavior; full contravariance for methods
-    // may require additional solver refinements.
-    //
-    // TODO: Track known limitation - disable_method_bivariance doesn't fully prevent
-    // bivariance because method comparison treats source and target as a group.
-    // Consider tracking as an issue for future solver enhancement.
     assert!(
-        checker.is_subtype_of(obj_with_cat_method, obj_with_animal_method),
-        "Current behavior: reverse also passes (method comparison treats both as methods)"
+        !checker.is_subtype_of(obj_with_cat_method, obj_with_animal_method),
+        "With method bivariance disabled, reverse contravariance should be rejected"
     );
 }
 

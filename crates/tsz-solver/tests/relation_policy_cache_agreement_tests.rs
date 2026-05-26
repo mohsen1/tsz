@@ -377,3 +377,89 @@ fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
         "strict and permissive readonly policies should miss in separate cache slots",
     );
 }
+
+#[test]
+fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let run = interner.intern_string("run");
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+    let dog_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(dog)],
+        TypeId::VOID,
+    ));
+    let animal_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(animal)],
+        TypeId::VOID,
+    ));
+
+    let source = interner.object(vec![PropertyInfo::method(run, dog_method)]);
+    let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
+
+    let bivariant_policy =
+        RelationPolicy::from_flags(RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16);
+    let sound_policy = RelationPolicy::from_flags(
+        (RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::DISABLE_METHOD_BIVARIANCE).bits()
+            as u16,
+    );
+
+    let bivariant_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_policy,
+        RelationContext::default(),
+    );
+    let sound_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        sound_policy,
+        RelationContext::default(),
+    );
+
+    let bivariant_cached = db.is_assignable_to_with_policy(source, target, bivariant_policy);
+    let sound_cached = db.is_assignable_to_with_policy(source, target, sound_policy);
+    let bivariant_cached_again = db.is_assignable_to_with_policy(source, target, bivariant_policy);
+    let stats = db.relation_cache_stats();
+
+    assert_eq!(
+        bivariant_cached,
+        bivariant_uncached.is_related(),
+        "cached method-bivariant assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        sound_cached,
+        sound_uncached.is_related(),
+        "cached sound method assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        bivariant_cached_again, bivariant_cached,
+        "second method-bivariant lookup should reuse the policy-shaped answer",
+    );
+    assert!(
+        bivariant_cached,
+        "strict function types should still allow method parameter bivariance by default",
+    );
+    assert!(
+        !sound_cached,
+        "disabling method bivariance should reject `(dog) => void` where `(animal) => void` is required",
+    );
+    assert!(
+        stats.assignability_hits >= 1,
+        "second method-bivariant lookup should hit the assignability cache",
+    );
+    assert!(
+        stats.assignability_misses >= 2,
+        "method-bivariant and sound-method policies should miss in separate cache slots",
+    );
+}
