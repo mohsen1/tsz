@@ -62,6 +62,7 @@ struct ClassBodyFlags<'a> {
 struct EsDecorateMemberCtx<'a> {
     member_index: usize,
     class_alias: &'a str,
+    class_name: &'a str,
     computed_key_vars: &'a [(usize, String)],
 }
 
@@ -365,6 +366,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             Vec::new()
         };
+        let decorated_static_private_field_storage_decls: Vec<String> = if !self.use_static_blocks {
+            decorated_members
+                .iter()
+                .filter(|member| {
+                    member.is_static && member.is_private && member.kind == MemberKind::Field
+                })
+                .map(|member| {
+                    self.static_private_field_storage_name(&class_name, member, class_span_text)
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let auto_accessor_storage_decls: Vec<String> = if self.use_static_blocks {
             class_decorator_auto_accessor_infos
                 .iter()
@@ -407,12 +421,25 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if !self.use_static_blocks && !has_class_decorators {
             let mut var_names = vec![class_alias.as_str()];
             var_names.extend(auto_accessor_storage_decls.iter().map(String::as_str));
+            var_names.extend(
+                decorated_static_private_field_storage_decls
+                    .iter()
+                    .map(String::as_str),
+            );
             out.push_str(&format!("{i1}var {};\n", var_names.join(", ")));
-        } else if !auto_accessor_storage_decls.is_empty() {
-            out.push_str(&format!(
-                "{i1}var {};\n",
-                auto_accessor_storage_decls.join(", ")
-            ));
+        } else if !auto_accessor_storage_decls.is_empty()
+            || !decorated_static_private_field_storage_decls.is_empty()
+        {
+            let mut var_names: Vec<&str> = auto_accessor_storage_decls
+                .iter()
+                .map(String::as_str)
+                .collect();
+            var_names.extend(
+                decorated_static_private_field_storage_decls
+                    .iter()
+                    .map(String::as_str),
+            );
+            out.push_str(&format!("{i1}var {};\n", var_names.join(", ")));
         }
         if !computed_key_vars.is_empty() {
             let key_names: Vec<&str> = computed_key_vars.iter().map(|(_, v)| v.as_str()).collect();
@@ -898,6 +925,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 &EsDecorateMemberCtx {
                     member_index: i,
                     class_alias: member_class_ref,
+                    class_name,
                     computed_key_vars,
                 },
                 indent,
@@ -1073,17 +1101,51 @@ impl<'a> TC39DecoratorEmitter<'a> {
             std::collections::HashSet::new();
         let mut plain_static_field_assignments: Vec<String> = Vec::new();
         if !self.use_static_blocks {
-            for (member_idx, member_node) in &all_members {
-                if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
-                    && let Some(text) = self.static_block_texts.get(member_idx)
-                {
+            for (member_i, (member_idx, member_node)) in all_members.iter().enumerate() {
+                if member_node.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION {
+                    let has_class_decorator_private_rewrites =
+                        !class_decorator_static_private_methods.is_empty()
+                            || !class_decorator_static_private_fields.is_empty()
+                            || class_decorator_auto_accessor_infos
+                                .iter()
+                                .any(|info| info.member.is_private);
+                    let next_boundary = if member_i + 1 < all_members.len() {
+                        all_members[member_i + 1].1.pos as usize
+                    } else {
+                        class_close
+                    };
+                    let text = if has_class_decorator_private_rewrites {
+                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                    } else if let Some(text) = self.static_block_texts.get(member_idx) {
+                        text.clone()
+                    } else {
+                        self.emit_member_bounded(member_node, next_boundary.min(class_close))
+                    };
+                    let text = self.rewrite_class_decorator_static_private_accesses(
+                        &text,
+                        class_decorator_static_private_methods,
+                        class_decorator_auto_accessor_infos,
+                        class_decorator_static_private_fields,
+                        class_this_var,
+                    );
                     let statement = self
-                        .lower_static_block_text_to_iife(text)
+                        .lower_static_block_text_to_iife(&text)
                         .unwrap_or_else(|| text.trim().trim_end_matches(';').to_string());
                     if !statement.is_empty() {
                         plain_static_field_idx_set.insert(*member_idx);
                         plain_static_field_assignments.push(statement);
                     }
+                    continue;
+                }
+                if let Some(info) = class_decorator_static_private_field_map.get(member_idx) {
+                    let value = if info.initializer_text.is_empty() {
+                        "void 0".to_string()
+                    } else {
+                        info.initializer_text.clone()
+                    };
+                    plain_static_field_idx_set.insert(*member_idx);
+                    plain_static_field_assignments
+                        .push(format!("{} = {{ value: {value} }}", info.storage_name));
                     continue;
                 }
                 if let Some(info) = class_decorator_auto_accessor_map.get(member_idx)
@@ -1490,6 +1552,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 // ES2015: static field inits as comma expressions (post-IIFE)
                 let class_ref = _class_alias;
                 for (sf_idx, fi) in static_fields.iter().enumerate() {
+                    let member = &decorated_members[fi.member_var_index];
                     let var_info = &member_vars[fi.member_var_index];
                     let init_var = var_info.initializers_var.as_deref().unwrap_or("_init");
                     let init_arg = if fi.initializer_text.is_empty() {
@@ -1508,6 +1571,29 @@ impl<'a> TC39DecoratorEmitter<'a> {
                             "({run_init}({class_ref}, {prev_extra}), {run_init}({class_ref}, {init_var}{init_arg}))"
                         )
                     };
+                    if member.is_private {
+                        let storage_name = self.static_private_field_storage_name(
+                            class_name,
+                            member,
+                            class_node
+                                .pos
+                                .try_into()
+                                .ok()
+                                .and_then(|start: usize| {
+                                    self.source_text.map(|source| {
+                                        let end = (class_node.end as usize).min(source.len());
+                                        if start <= end {
+                                            &source[start..end]
+                                        } else {
+                                            ""
+                                        }
+                                    })
+                                })
+                                .unwrap_or(""),
+                        );
+                        post_iife_assignments.push(format!("{storage_name} = {{ value: {rhs} }}"));
+                        continue;
+                    }
                     if self.use_define_for_class_fields {
                         let key_expr = if fi.is_bracket_access {
                             fi.access_expr.clone()
@@ -2084,22 +2170,27 @@ impl<'a> TC39DecoratorEmitter<'a> {
             let leading = &line[..line.len() - trimmed.len()];
             let mut rewritten = None;
             for (member_name, storage_name) in &fields {
-                let access = format!("{class_ref}.{member_name}");
-                let read_stmt = format!("{access};");
-                if trimmed == read_stmt {
-                    rewritten = Some(format!(
-                        "{leading}{get_helper}({class_ref}, {class_ref}, \"f\", {storage_name});"
-                    ));
-                    break;
+                for receiver in [class_ref, "this"] {
+                    let access = format!("{receiver}.{member_name}");
+                    let read_stmt = format!("{access};");
+                    if trimmed == read_stmt {
+                        rewritten = Some(format!(
+                            "{leading}{get_helper}({class_ref}, {class_ref}, \"f\", {storage_name});"
+                        ));
+                        break;
+                    }
+                    let assign_prefix = format!("{access} = ");
+                    if let Some(value) = trimmed.strip_prefix(&assign_prefix)
+                        && let Some(value) = value.strip_suffix(';')
+                    {
+                        rewritten = Some(format!(
+                            "{leading}{set_helper}({class_ref}, {class_ref}, {}, \"f\", {storage_name});",
+                            value.trim()
+                        ));
+                        break;
+                    }
                 }
-                let assign_prefix = format!("{access} = ");
-                if let Some(value) = trimmed.strip_prefix(&assign_prefix)
-                    && let Some(value) = value.strip_suffix(';')
-                {
-                    rewritten = Some(format!(
-                        "{leading}{set_helper}({class_ref}, {class_ref}, {}, \"f\", {storage_name});",
-                        value.trim()
-                    ));
+                if rewritten.is_some() {
                     break;
                 }
             }
@@ -2947,6 +3038,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let EsDecorateMemberCtx {
             member_index,
             class_alias,
+            class_name,
             computed_key_vars,
         } = member_ctx;
         let EsDecorateVars {
@@ -2963,7 +3055,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
         };
 
         let name_str = self.member_name_for_context(member, computed_key_vars, *member_index);
-        let access_str = self.member_access_for_context(member, computed_key_vars, *member_index);
+        let access_str = self.member_access_for_context(
+            member,
+            computed_key_vars,
+            *member_index,
+            class_alias,
+            class_name,
+        );
 
         let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
 
@@ -3276,7 +3374,23 @@ impl<'a> TC39DecoratorEmitter<'a> {
         member: &DecoratedMember,
         computed_key_vars: &[(usize, String)],
         member_index: usize,
+        class_alias: &str,
+        class_name: &str,
     ) -> String {
+        if !self.use_static_blocks
+            && member.is_static
+            && member.is_private
+            && member.kind == MemberKind::Field
+        {
+            let storage_name = self.static_private_field_storage_name(class_name, member, "");
+            let get_helper = self.helper("__classPrivateFieldGet");
+            let set_helper = self.helper("__classPrivateFieldSet");
+            let has_helper = self.helper("__classPrivateFieldIn");
+            return format!(
+                "has: obj => {has_helper}({class_alias}, obj), get: obj => {get_helper}(obj, {class_alias}, \"f\", {storage_name}), set: (obj, value) => {{ {set_helper}(obj, {class_alias}, value, \"f\", {storage_name}); }}"
+            );
+        }
+
         let key_expr = match &member.name {
             MemberName::Identifier(name) | MemberName::StringLiteral(name) => {
                 format!("\"{name}\"")
@@ -3590,6 +3704,24 @@ impl<'a> TC39DecoratorEmitter<'a> {
         }
 
         result
+    }
+
+    fn static_private_field_storage_name(
+        &self,
+        class_name: &str,
+        member: &DecoratedMember,
+        class_span_text: &str,
+    ) -> String {
+        let MemberName::Private(name) = &member.name else {
+            return hygienic_temp_name("_class_field", class_span_text);
+        };
+        let private_name = name.trim_start_matches('#');
+        let temp_base = if class_name.is_empty() {
+            "class".to_string()
+        } else {
+            class_name.to_string()
+        };
+        hygienic_temp_name(&format!("_{temp_base}_{private_name}"), class_span_text)
     }
 
     fn collect_class_decorator_static_private_methods(

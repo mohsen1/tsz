@@ -275,3 +275,48 @@ class C {
         "Class-decorated static blocks should not keep direct static private field syntax after capture.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es2015_static_private_fields_use_storage_temps() {
+    let source = "\
+declare var dec: any;
+
+class C {
+    @dec
+    static #value = 0;
+}
+
+@dec
+class D {
+    static #value = 0;
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _a, _C_value;")
+            && output.contains("has: obj => __classPrivateFieldIn(_a, obj), get: obj => __classPrivateFieldGet(obj, _a, \"f\", _C_value), set: (obj, value) => { __classPrivateFieldSet(obj, _a, value, \"f\", _C_value); }")
+            && output.contains("_C_value = { value: __runInitializers(_a, _static_private_value_initializers, 0) }")
+            && output.contains("var _D_value;")
+            && output.contains("_D_value = { value: 0 };")
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"f\", _D_value);")
+            && output.contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"f\", _D_value);"),
+        "ES2015 decorated static private fields should use generated storage descriptors for decorator access and class-decorator static-block capture.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".#value"),
+        "ES2015 decorated static private field output must not keep native private-field access.\nOutput:\n{output}"
+    );
+}
