@@ -35,6 +35,41 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    pub(in crate::declaration_emitter) fn function_body_parameter_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let type_text = self.function_parameter_type_text(func, returned_identifier)?;
+        let type_text =
+            Self::compact_single_member_mapped_type_literal_text(&type_text).unwrap_or(type_text);
+        (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn compact_single_member_mapped_type_literal_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        if !Self::type_text_contains_mapped_type_literal(trimmed) {
+            return None;
+        }
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        let member = if inner.contains('\n') {
+            let mut lines = inner.lines().map(str::trim).filter(|line| !line.is_empty());
+            let member = lines.next()?;
+            if lines.next().is_some() {
+                return None;
+            }
+            member
+        } else {
+            inner
+        };
+        let member = member.trim_end_matches(';').trim();
+        if !member.contains(" in ") || !member.contains("]:") {
+            return None;
+        }
+        Some(format!("{{ {member}; }}"))
+    }
+
     pub(in crate::declaration_emitter) fn function_body_single_spread_object_literal_type_text(
         &self,
         body_idx: NodeIndex,

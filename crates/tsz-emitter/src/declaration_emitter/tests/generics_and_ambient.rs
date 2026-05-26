@@ -67,6 +67,30 @@ fn test_multiple_type_parameters() {
     );
 }
 
+#[test]
+fn test_inferred_return_preserves_mapped_parameter_annotation() {
+    let output = emit_dts(
+        r#"
+    export function makeRecord<T, K extends string>(obj: { [P in K]: T }) {
+        return obj;
+    }
+
+    export function makeDictionary<T>(obj: { [x: string]: T }) {
+        return obj;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("): { [P in K]: T; };"),
+        "Expected mapped parameter annotation to drive inferred return type: {output}"
+    );
+    assert!(
+        output.contains("): {\n    [x: string]: T;\n};"),
+        "Expected index signature parameter annotation to keep object return layout: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================
