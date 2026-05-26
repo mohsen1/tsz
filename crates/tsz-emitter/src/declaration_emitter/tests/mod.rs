@@ -290,6 +290,7 @@ pub(super) fn find_class_extends_expression(
 }
 
 mod class_features;
+mod commonjs_exports;
 mod comprehensive_parity;
 mod computed_properties;
 mod enum_template_and_advanced;
