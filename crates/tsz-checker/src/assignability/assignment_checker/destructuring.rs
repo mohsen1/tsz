@@ -428,7 +428,7 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(spread_expr, spread_expr) {
             return;
         }
-        if self.is_assignable_to(source, rest_target_type) {
+        if self.diagnostic_relation_boolean_guard(source, rest_target_type) {
             return;
         }
 
@@ -554,7 +554,10 @@ impl<'a> CheckerState<'a> {
                                             || target_type == TypeId::ERROR
                                             || default_type == TypeId::ANY
                                             || default_type == TypeId::ERROR
-                                            || self.is_assignable_to(default_type, target_type);
+                                            || self.diagnostic_relation_boolean_guard(
+                                                default_type,
+                                                target_type,
+                                            );
                                         if default_assignable {
                                             // Default is fine but property type might not be.
                                             self.check_destructuring_leaf_assignability_with_default(
@@ -736,7 +739,7 @@ impl<'a> CheckerState<'a> {
                         {
                             self.ensure_relation_input_ready(check_type);
                             self.ensure_relation_input_ready(target_type);
-                            if !self.is_assignable_to(check_type, target_type) {
+                            if !self.diagnostic_relation_boolean_guard(check_type, target_type) {
                                 // Emit TS2322 directly with pre-resolved types.
                                 // The standard error pipeline would re-derive
                                 // the source type from the anchor node's parent
@@ -850,7 +853,7 @@ impl<'a> CheckerState<'a> {
                 .unwrap_or_else(|| self.get_type_of_node(default_expr));
             if default_type != TypeId::ANY
                 && default_type != TypeId::ERROR
-                && !self.is_assignable_to(default_type, target_type)
+                && !self.diagnostic_relation_boolean_guard(default_type, target_type)
             {
                 if self.try_report_object_default_property_mismatch(
                     default_expr,
@@ -932,7 +935,7 @@ impl<'a> CheckerState<'a> {
         // Ensure both types are fully resolved before relation checking.
         self.ensure_relation_input_ready(prop_type);
         self.ensure_relation_input_ready(target_type);
-        if self.is_assignable_to(prop_type, target_type) {
+        if self.diagnostic_relation_boolean_guard(prop_type, target_type) {
             return;
         }
         // Emit TS2322 directly. Format source type from the TypeId rather
@@ -998,7 +1001,7 @@ impl<'a> CheckerState<'a> {
             else {
                 continue;
             };
-            if self.is_assignable_to(source_type, target_prop_type) {
+            if self.diagnostic_relation_boolean_guard(source_type, target_prop_type) {
                 continue;
             }
             let source_for_display = {

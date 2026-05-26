@@ -235,6 +235,47 @@ impl<'a> CheckerState<'a> {
         );
     }
 
+    pub(in crate::checkers_domain::jsx) fn report_jsx_class_props_overload_failure_if_needed(
+        &mut self,
+        component_type: TypeId,
+        props_type: TypeId,
+        attributes_idx: NodeIndex,
+        tag_name_idx: NodeIndex,
+        children_ctx: Option<crate::checkers_domain::JsxChildrenContext>,
+    ) -> bool {
+        let snap = FullSpeculationSnapshot::new(&self.ctx);
+        let mut attrs_info = self.collect_jsx_provided_attrs(attributes_idx);
+
+        let children_prop_name = self.get_jsx_children_prop_name();
+        if let Some(children) = children_ctx {
+            attrs_info.attrs.push(JsxAttrInfo {
+                name: children_prop_name,
+                type_id: children.synthesized_type,
+                from_spread: false,
+                name_node_idx: None,
+            });
+        }
+
+        let default_props_keys = self.collect_jsx_default_props_keys(component_type);
+        if self.jsx_attrs_match_overload(&attrs_info, props_type, &default_props_keys, true) {
+            snap.rollback(&mut self.ctx.speculation_state());
+            return false;
+        }
+
+        let anchor_idx = self
+            .jsx_overload_failure_anchor(&attrs_info, props_type, tag_name_idx)
+            .unwrap_or(tag_name_idx);
+        snap.rollback(&mut self.ctx.speculation_state());
+
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+        self.error_at_node(
+            anchor_idx,
+            diagnostic_messages::NO_OVERLOAD_MATCHES_THIS_CALL,
+            diagnostic_codes::NO_OVERLOAD_MATCHES_THIS_CALL,
+        );
+        true
+    }
+
     /// Instantiate a props type by substituting type parameters with their
     /// constraints, defaults, or `any` (for unconstrained params).
     ///
@@ -574,6 +615,24 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    fn jsx_overload_failure_anchor(
+        &mut self,
+        info: &JsxAttrsInfo,
+        props_type: TypeId,
+        fallback: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let shared_name = self.jsx_overload_explicit_failure_attr(info, props_type)?;
+        info.attrs
+            .iter()
+            .find(|attr| {
+                !attr.from_spread
+                    && attr.name_node_idx.is_some()
+                    && attr.name.as_str() == shared_name.as_str()
+            })
+            .and_then(|attr| attr.name_node_idx)
+            .or(Some(fallback))
     }
 
     /// Check JSX attribute assignability, including source-constraint fallback

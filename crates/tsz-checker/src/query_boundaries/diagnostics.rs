@@ -1,9 +1,11 @@
 use super::state::checking as state_checking;
-use tsz_solver::TypeId;
+use tsz_solver::{TypeId, construction::TypeDatabase};
 
 pub(crate) use super::common::{
-    application_info, array_element_type, callable_shape_for_type, intersection_members,
-    lazy_def_id, union_members,
+    application_info, array_element_type, callable_shape_for_type, enum_def_id,
+    intersection_list_id, intersection_members, is_symbol_or_unique_symbol,
+    is_template_literal_type, lazy_def_id, literal_value, no_infer_inner_type, union_list_id,
+    union_members, widen_literal_to_primitive,
 };
 pub(crate) use tsz_solver::type_queries::AssignmentNumericDisplayChildren;
 
@@ -12,6 +14,46 @@ pub(crate) fn assignment_numeric_display_children(
     type_id: TypeId,
 ) -> AssignmentNumericDisplayChildren {
     tsz_solver::type_queries::assignment_numeric_display_children(db, type_id)
+}
+
+pub(crate) fn is_typeof_result_union(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    const STRING: u8 = 1 << 0;
+    const NUMBER: u8 = 1 << 1;
+    const BIGINT: u8 = 1 << 2;
+    const BOOLEAN: u8 = 1 << 3;
+    const SYMBOL: u8 = 1 << 4;
+    const UNDEFINED: u8 = 1 << 5;
+    const OBJECT: u8 = 1 << 6;
+    const FUNCTION: u8 = 1 << 7;
+    const ALL: u8 = STRING | NUMBER | BIGINT | BOOLEAN | SYMBOL | UNDEFINED | OBJECT | FUNCTION;
+
+    let Some(members) = tsz_solver::type_queries::get_union_members(db, type_id) else {
+        return false;
+    };
+    if members.len() != 8 {
+        return false;
+    }
+
+    let mut seen = 0u8;
+    for member in members {
+        let Some(atom) = tsz_solver::type_queries::get_string_literal_value(db, member) else {
+            return false;
+        };
+        let bit = match db.resolve_atom_ref(atom).as_ref() {
+            "string" => STRING,
+            "number" => NUMBER,
+            "bigint" => BIGINT,
+            "boolean" => BOOLEAN,
+            "symbol" => SYMBOL,
+            "undefined" => UNDEFINED,
+            "object" => OBJECT,
+            "function" => FUNCTION,
+            _ => return false,
+        };
+        seen |= bit;
+    }
+
+    seen == ALL
 }
 
 pub(crate) fn object_shape_for_assignment_numeric_display(
@@ -92,6 +134,89 @@ pub(crate) fn type_application(
     tsz_solver::type_queries::get_type_application(db, type_id)
 }
 
+pub(crate) fn same_non_class_nominal_application_surface<R: tsz_solver::resolver::TypeResolver>(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    resolver: &R,
+    def_store: &tsz_solver::def::DefinitionStore,
+    source_candidates: &[TypeId],
+    target_candidates: &[TypeId],
+) -> bool {
+    source_candidates.iter().any(|&source_candidate| {
+        let Some(source) = non_class_nominal_application_surface(db, def_store, source_candidate)
+        else {
+            return false;
+        };
+
+        target_candidates
+            .iter()
+            .filter_map(|&candidate| {
+                non_class_nominal_application_surface(db, def_store, candidate)
+            })
+            .any(|target| nominal_application_surfaces_match(db, resolver, &source, &target))
+    })
+}
+
+struct NominalApplicationSurface {
+    def_id: tsz_solver::DefId,
+    args: Vec<TypeId>,
+}
+
+fn nominal_application_surfaces_match<R: tsz_solver::resolver::TypeResolver>(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    resolver: &R,
+    source: &NominalApplicationSurface,
+    target: &NominalApplicationSurface,
+) -> bool {
+    source.def_id == target.def_id
+        && source.args.len() == target.args.len()
+        && source
+            .args
+            .iter()
+            .zip(&target.args)
+            .all(|(&source, &target)| {
+                tsz_solver::relations::subtype::are_types_structurally_identical(
+                    db, resolver, source, target,
+                )
+            })
+}
+
+fn non_class_nominal_application_surface(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+) -> Option<NominalApplicationSurface> {
+    if is_type_query_surface(db, type_id) {
+        return None;
+    }
+
+    let app = type_application(db, type_id).or_else(|| {
+        db.get_display_alias(type_id)
+            .filter(|&alias| !is_type_query_surface(db, alias))
+            .and_then(|alias| type_application(db, alias))
+    })?;
+    if app.args.is_empty() || is_type_query_surface(db, app.base) {
+        return None;
+    }
+
+    let def_id = lazy_def_id(db, app.base)?;
+    let def = def_store.get(def_id)?;
+    (!matches!(
+        def.kind,
+        tsz_solver::def::DefKind::Class | tsz_solver::def::DefKind::ClassConstructor
+    ))
+    .then(|| NominalApplicationSurface {
+        def_id,
+        args: app.args.clone(),
+    })
+}
+
+fn is_type_query_surface(db: &dyn tsz_solver::construction::TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::is_type_query_type(db, type_id)
+        || db
+            .get_display_alias(type_id)
+            .is_some_and(|alias| tsz_solver::is_type_query_type(db, alias))
+}
+
 pub(crate) fn is_index_access_type(
     db: &dyn tsz_solver::construction::TypeDatabase,
     type_id: TypeId,
@@ -104,6 +229,15 @@ pub(crate) fn contains_index_access_type(
     type_id: TypeId,
 ) -> bool {
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
+}
+
+pub(crate) fn contains_never_index_access_surface(
+    db: &dyn tsz_solver::construction::TypeDatabase,
+    def_store: &tsz_solver::def::DefinitionStore,
+    type_id: TypeId,
+    max_depth: usize,
+) -> bool {
+    tsz_solver::type_queries::contains_never_index_access_surface(db, def_store, type_id, max_depth)
 }
 
 pub(crate) fn application_base_has_conditional_alias_body(
@@ -123,4 +257,80 @@ pub(crate) fn preserves_named_application_base(
             tsz_solver::type_queries::classify_type_query(db, type_id),
             tsz_solver::type_queries::TypeQueryKind::Other
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::def::{DefinitionInfo, DefinitionStore};
+    use tsz_solver::{PropertyInfo, SymbolRef, TypeParamInfo};
+
+    fn register_interface_base(db: &TypeInterner, store: &DefinitionStore, name: &str) -> TypeId {
+        let def_id = store.register(DefinitionInfo::interface(
+            db.intern_string(name),
+            vec![TypeParamInfo::simple(db.intern_string("T"))],
+            vec![PropertyInfo::new(db.intern_string("value"), TypeId::STRING)],
+        ));
+        db.lazy(def_id)
+    }
+
+    #[test]
+    fn non_class_nominal_application_surface_matches_by_def_id_for_renamed_interfaces() {
+        for name in ["Carrier", "RenamedCarrier"] {
+            let db = TypeInterner::new();
+            let store = DefinitionStore::new();
+            let base = register_interface_base(&db, &store, name);
+            let source = db.application(base, vec![TypeId::STRING]);
+            let target = db.application(base, vec![TypeId::STRING]);
+
+            assert!(
+                same_non_class_nominal_application_surface(&db, &db, &store, &[source], &[target],),
+                "same interface application surface should match structurally for {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_class_nominal_application_surface_rejects_different_type_args() {
+        let db = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let base = register_interface_base(&db, &store, "Carrier");
+        let source = db.application(base, vec![TypeId::STRING]);
+        let target = db.application(base, vec![TypeId::NUMBER]);
+
+        assert!(
+            !same_non_class_nominal_application_surface(&db, &db, &store, &[source], &[target]),
+            "same generic base with different type arguments must not suppress TS2345"
+        );
+    }
+
+    #[test]
+    fn class_and_type_query_application_surfaces_do_not_match() {
+        let db = TypeInterner::new();
+        let store = DefinitionStore::new();
+        let class_def = store.register(DefinitionInfo::class(
+            db.intern_string("Box"),
+            vec![TypeParamInfo::simple(db.intern_string("T"))],
+            vec![PropertyInfo::new(db.intern_string("value"), TypeId::STRING)],
+            vec![],
+        ));
+        let class_app = db.application(db.lazy(class_def), vec![TypeId::STRING]);
+        assert!(!same_non_class_nominal_application_surface(
+            &db,
+            &db,
+            &store,
+            &[class_app],
+            &[class_app]
+        ));
+
+        let query_app = db.application(db.type_query(SymbolRef(7)), vec![TypeId::STRING]);
+        assert!(!same_non_class_nominal_application_surface(
+            &db,
+            &db,
+            &store,
+            &[query_app],
+            &[query_app]
+        ));
+    }
 }

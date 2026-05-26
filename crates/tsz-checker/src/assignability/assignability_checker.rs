@@ -2053,6 +2053,7 @@ impl<'a> CheckerState<'a> {
 
         if self
             .homomorphic_mapped_display_source_assignable_to_target(request.source, request.target)
+            || self.callable_source_satisfies_union_callable_arm(request.source, request.target)
         {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
@@ -2407,6 +2408,10 @@ impl<'a> CheckerState<'a> {
         } else {
             target_eval
         };
+
+        if self.callable_source_satisfies_union_callable_arm(source, target) {
+            return true;
+        }
 
         if let (Some(s_elem), Some(t_elem)) = (
             crate::query_boundaries::common::array_element_type(self.ctx.types, source),

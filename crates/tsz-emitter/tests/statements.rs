@@ -77,6 +77,21 @@ fn invalid_jsx_closing_fragment_drops_recovered_slash() {
 }
 
 #[test]
+fn invalid_let_for_headers_preserve_tsc_recovery_emit() {
+    let source = "var let = 10;\nfor (let of [1,2,3]) {}\nfor (let in [1,2,3]) {}\n";
+    let output = parse_and_print(source);
+
+    assert!(
+        output.contains("for (let of, []; 1, 2, 3; )\n    ;\n{ }"),
+        "`for (let of [...])` recovery should preserve tsc's split regular-for shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("for (let  in [1, 2, 3]) { }"),
+        "`for (let in ...)` recovery should preserve tsc's missing-binding spacing.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn js_satisfies_binary_expression_is_erased() {
     let output = parse_and_emit_strict_es2015("var v = undefined satisfies 1;", "a.js");
     assert_eq!(output.trim_end(), "\"use strict\";\nvar v = undefined;");

@@ -2,8 +2,9 @@ use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
 pub(crate) use super::common::{
-    array_element_type, callable_shape_for_type, construct_signatures_for_type, has_function_shape,
-    intersection_members, is_generic_mapped_type, is_generic_type, object_shape_for_type,
+    array_element_type, callable_shape_for_type, construct_signatures_for_type,
+    contains_conditional_type, has_function_shape, intersection_members, is_generic_mapped_type,
+    is_generic_type, object_shape_for_type,
 };
 
 pub(crate) fn function_shape(
@@ -11,6 +12,15 @@ pub(crate) fn function_shape(
     type_id: TypeId,
 ) -> Option<std::sync::Arc<tsz_solver::FunctionShape>> {
     tsz_solver::type_queries::get_function_shape(db, type_id)
+}
+
+/// Boundary for [`tsz_solver::type_queries::callable_requires_explicit_receiver`].
+/// See the solver query for the structural rule.
+pub(crate) fn callable_requires_explicit_receiver(
+    db: &dyn TypeDatabase,
+    callee_type: TypeId,
+) -> bool {
+    tsz_solver::type_queries::callable_requires_explicit_receiver(db, callee_type)
 }
 
 pub(crate) fn type_includes_undefined(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
