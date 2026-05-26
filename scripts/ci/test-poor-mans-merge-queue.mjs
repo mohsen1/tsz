@@ -13,6 +13,7 @@ import {
   queueRunIsActive,
   queueSkipReason,
   requiredCheckState,
+  skipOwnerCounts,
   skipReasonCounts,
   supersededOpenQueueBranchReason,
 } from "./poor-mans-merge-queue.mjs";
@@ -209,6 +210,17 @@ assert.deepEqual(
     { reason: "active queue run", count: 1 },
   ],
 );
+assert.deepEqual(
+  skipOwnerCounts([
+    { owner: "agent:M4-A", reason: "draft PR" },
+    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+  ]),
+  [
+    { owner: "agent:M4-A", count: 2 },
+    { owner: "agent:M4-B", count: 1 },
+  ],
+);
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
@@ -299,6 +311,9 @@ assert.match(
 assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
 assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);
 assert.match(cleanupActiveRunFormat, /\| 1 \| active queue run \|/);
+assert.match(cleanupActiveRunFormat, /### Skip Owner Counts/);
+assert.match(cleanupActiveRunFormat, /\| 2 \| agent:M4-A \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| agent:M4-C \|/);
 assert.match(cleanupActiveRunFormat, /\| Branch \| Owner \| Reason \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| agent:M4-A \| active queue run 26423420117 \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9912` \| agent:M4-C \| PR #9912 is open \|/);
@@ -314,6 +329,9 @@ const queueSkipFormat = formatResult({
 assert.match(queueSkipFormat, /### Skip Reason Counts/);
 assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
 assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
+assert.match(queueSkipFormat, /### Skip Owner Counts/);
+assert.match(queueSkipFormat, /\| 14 \| agent:M1-A \|/);
+assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
 assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
 assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| \.\.\. \|  \| 2 more skipped PR\(s\) omitted \|/);
