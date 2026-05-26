@@ -257,6 +257,8 @@ const cleanupActiveRunFormat = formatResult({
       number: 9515,
       runId: 26423420117,
       url: "https://github.example/runs/26423420117",
+      status: "in_progress",
+      startedAt: "2026-05-26T03:35:21Z",
     },
   ],
   deletions: [],
@@ -280,7 +282,7 @@ assert.match(cleanupActiveRunFormat, /Preserved 1 branch\(es\) with active queue
 assert.match(cleanupActiveRunFormat, /### Active Queue Runs/);
 assert.match(
   cleanupActiveRunFormat,
-  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \|/,
+  /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \| in_progress \| 2026-05-26 03:35Z \|/,
 );
 assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
 assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);
