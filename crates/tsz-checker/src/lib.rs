@@ -169,6 +169,9 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
+mod interface_heritage_index_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
 #[cfg(test)]
@@ -639,6 +642,9 @@ mod jsx_element_type_constraint_tests;
 #[cfg(test)]
 #[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
 mod jsx_excess_attr_with_spread_display_tests;
+#[cfg(test)]
+#[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
+mod jsx_react_hoc_spread_props_tests;
 #[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
