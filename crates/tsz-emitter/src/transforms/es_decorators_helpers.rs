@@ -290,6 +290,7 @@ pub(super) struct DecoratedAutoAccessorInfo {
 
 pub(super) struct ClassDecoratorStaticPrivateMethodInfo {
     pub(super) member_idx: NodeIndex,
+    pub(super) kind: MemberKind,
     pub(super) member_name: String,
     pub(super) needs_wrapper: bool,
     pub(super) temp_var: String,

@@ -157,3 +157,43 @@ class C {
         "Lowered class-decorated static members must not keep raw TypeScript syntax.\nOutput:\n{es2015_output}"
     );
 }
+
+#[test]
+fn tc39_class_decorated_static_private_accessors_use_helper_temps() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C {
+    static get #value() { return 0; }
+    static set #value(value) {}
+    static {
+        this.#value;
+        this.#value = 1;
+    }
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("var _C_value_get, _C_value_set;")
+            && output.contains(
+                "static { _C_value_get = function _C_value_get() { return 0; }, _C_value_set = function _C_value_set(value) { }; }"
+            )
+            && output.contains("__classPrivateFieldGet(_classThis, _classThis, \"a\", _C_value_get);")
+            && output.contains("__classPrivateFieldSet(_classThis, _classThis, 1, \"a\", _C_value_set);"),
+        "Class-decorated static private accessors should be extracted into helper temps used by static blocks.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_classThis.#value"),
+        "Class-decorated static blocks should not keep direct static private accessor syntax after capture.\nOutput:\n{output}"
+    );
+}
