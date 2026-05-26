@@ -39,7 +39,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if !self
-                .diagnostic_relation_boolean_guard(source_index.value_type, target_index.value_type)
+                .assign_relation_outcome(source_index.value_type, target_index.value_type)
+                .related
             {
                 return false;
             }
@@ -50,7 +51,8 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             if !self
-                .diagnostic_relation_boolean_guard(source_index.value_type, target_index.value_type)
+                .assign_relation_outcome(source_index.value_type, target_index.value_type)
+                .related
             {
                 return false;
             }
