@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "array_element_naked_inference_tests"
+path = "tests/array_element_naked_inference_tests.rs"
+
+[[test]]
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 
@@ -248,6 +252,10 @@ path = "tests/ts2802_downlevel_iteration_tests.rs"
 [[test]]
 name = "ts2871_always_nullish_tests"
 path = "tests/ts2871_always_nullish_tests.rs"
+
+[[test]]
+name = "ts2871_through_assertions_tests"
+path = "tests/ts2871_through_assertions_tests.rs"
 
 [[test]]
 name = "ts1239_parameter_decorator_tests"
@@ -762,6 +770,10 @@ name = "enum_nominality_tests"
 path = "tests/enum_nominality_tests.rs"
 
 [[test]]
+name = "enum_equality_narrowing_tests"
+path = "tests/enum_equality_narrowing_tests.rs"
+
+[[test]]
 name = "ts2367_comparison_overlap_tests"
 path = "tests/ts2367_comparison_overlap_tests.rs"
 
@@ -844,6 +856,10 @@ path = "tests/mapped_type_errors_conformance_tests.rs"
 [[test]]
 name = "mapped_type_interface_tests"
 path = "tests/mapped_type_interface_tests.rs"
+
+[[test]]
+name = "homomorphic_mapped_empty_keyspace_tests"
+path = "tests/homomorphic_mapped_empty_keyspace_tests.rs"
 
 [[test]]
 name = "homomorphic_mapped_union_distribution_tests"
@@ -956,6 +972,10 @@ path = "tests/infer_extends_constraint_substitution_tests.rs"
 [[test]]
 name = "fresh_intersection_display_tests"
 path = "tests/fresh_intersection_display_tests.rs"
+
+[[test]]
+name = "rendered_decision_debt_tests"
+path = "tests/rendered_decision_debt_tests.rs"
 
 [[test]]
 name = "protected_intersection_owner_display_tests"
@@ -1314,6 +1334,10 @@ name = "template_literal_bigint_placeholder_tests"
 path = "tests/template_literal_bigint_placeholder_tests.rs"
 
 [[test]]
+name = "template_literal_any_unknown_placeholder_tests"
+path = "tests/template_literal_any_unknown_placeholder_tests.rs"
+
+[[test]]
 name = "template_literal_empty_placeholder_tests"
 path = "tests/template_literal_empty_placeholder_tests.rs"
 
@@ -1406,6 +1430,10 @@ name = "generic_property_mismatch_display_tests"
 path = "tests/generic_property_mismatch_display_tests.rs"
 
 [[test]]
+name = "nominal_application_call_suppression_tests"
+path = "tests/nominal_application_call_suppression_tests.rs"
+
+[[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
 
@@ -1448,6 +1476,10 @@ path = "tests/recursive_type_references_tests.rs"
 [[test]]
 name = "template_literal_record_key_tests"
 path = "tests/template_literal_record_key_tests.rs"
+
+[[test]]
+name = "template_literal_generic_call_indexed_keyof_constraint_tests"
+path = "tests/template_literal_generic_call_indexed_keyof_constraint_tests.rs"
 
 [[test]]
 name = "ts7053_template_mapped_tests"
@@ -1592,6 +1624,10 @@ path = "tests/arbitrary_ext_decl_module_resolution_tests.rs"
 [[test]]
 name = "mixin_any_base_index_sig_tests"
 path = "tests/mixin_any_base_index_sig_tests.rs"
+
+[[test]]
+name = "ts2545_mixin_constructor_shape_tests"
+path = "tests/ts2545_mixin_constructor_shape_tests.rs"
 
 [[test]]
 name = "stage3_lib_namespace_resolution_tests"

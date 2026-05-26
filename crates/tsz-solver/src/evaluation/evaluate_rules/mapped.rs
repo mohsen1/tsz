@@ -3,6 +3,8 @@
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
+mod key_types;
+
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving,
@@ -25,32 +27,7 @@ mod array_tuple;
 #[cfg(test)]
 mod tests;
 
-/// One iteration step of a mapped type: the property-name atom plus the
-/// `TypeId` that should be substituted for the iteration variable.
-///
-/// `LiteralValue::String("1")` and `LiteralValue::Number(1)` intern to the
-/// same atom `"1"`, so the atom alone cannot disambiguate the substitution.
-/// Storing the literal `TypeId` keeps that distinction and avoids re-parsing
-/// the atom back to `f64` on every iteration — `[K in 1]: K` evaluates with
-/// `K → Literal(Number(1))` instead of `K → Literal(String("1"))`.
-#[derive(Clone, Copy)]
-pub(crate) struct MappedKey {
-    pub name: Atom,
-    pub key_literal: TypeId,
-}
-
-pub(crate) struct MappedKeys {
-    pub keys: Vec<MappedKey>,
-    pub has_string: bool,
-    pub has_number: bool,
-    /// Template literal types used as mapped-type key constraints (e.g. `` `on${string}` ``).
-    /// When non-empty and `has_string` is false, the object gets a template-literal index
-    /// signature instead of a plain string index signature.
-    pub template_literals: Vec<TypeId>,
-    /// Unique-symbol keys (e.g. `typeof sym1`) that appear in `keyof T` when T has
-    /// symbol-keyed properties.  Each element is a `TypeData::UniqueSymbol` `TypeId`.
-    pub symbol_keys: Vec<TypeId>,
-}
+pub(crate) use key_types::{MappedKey, MappedKeys};
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Partition `properties` from `collect_properties` into string, numeric, and symbol key buckets.
@@ -146,6 +123,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             source_mods.0,
             source_mods.1,
         )
+    }
+
+    /// Strip the top-level `undefined` that an originally-optional property
+    /// contributes when `-?` removes its optionality, mirroring tsc's
+    /// `removeMissingOrUndefinedType` in `getTypeOfMappedSymbol`.
+    ///
+    /// With `exactOptionalPropertyTypes`, an explicit `| undefined` is not the
+    /// missing marker and must be preserved. tsz does not model that marker
+    /// separately yet, so only the non-exact path can safely remove
+    /// `undefined`.
+    fn strip_removed_optional_undefined(&self, ty: TypeId, strip: bool) -> TypeId {
+        if strip && !self.interner().exact_optional_property_types() {
+            crate::narrowing::utils::remove_undefined(self.interner(), ty)
+        } else {
+            ty
+        }
     }
 
     /// Evaluate a mapped type: { [K in Keys]: Template }
@@ -602,6 +595,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 evaluated
             };
 
+            let property_type = self.strip_removed_optional_undefined(
+                property_type,
+                remove_optional_with_declared && source_optional,
+            );
+
             for remapped_name in remapped_names {
                 let is_string_named = source_info
                     .is_some_and(|(_, _, _, source_is_string_named, _, _)| *source_is_string_named)
@@ -712,6 +710,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
                 evaluated
             };
+
+            let property_type = self.strip_removed_optional_undefined(
+                property_type,
+                remove_optional_with_declared && source_optional,
+            );
 
             for remapped_sym_id in remapped_syms {
                 // Reuse source_atom when remapped symbol is the identity (no `as` remapping).

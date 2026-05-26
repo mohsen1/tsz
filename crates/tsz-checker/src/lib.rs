@@ -376,6 +376,9 @@ mod ts7057_yield_implicit_any;
 #[path = "../tests/tuple_index_access_tests.rs"]
 mod tuple_index_access_tests;
 #[cfg(test)]
+#[path = "../tests/typeof_operator_result_union_tests.rs"]
+mod typeof_operator_result_union_tests;
+#[cfg(test)]
 #[path = "../tests/typeof_unique_symbol_source_display_tests.rs"]
 mod typeof_unique_symbol_source_display_tests;
 #[cfg(test)]
@@ -489,6 +492,9 @@ mod enum_indexed_access_tests;
 #[cfg(test)]
 #[path = "../tests/enum_nominality_tests.rs"]
 mod enum_nominality_tests;
+#[cfg(test)]
+#[path = "tests/enum_residual_narrowing_tests.rs"]
+mod enum_residual_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
@@ -640,6 +646,9 @@ mod new_typeof_property_tests;
 #[path = "tests/nonunique_symbol_property_access_tests.rs"]
 mod nonunique_symbol_property_access_tests;
 #[cfg(test)]
+#[path = "tests/object_literal_computed_symbol_member_tests.rs"]
+mod object_literal_computed_symbol_member_tests;
+#[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
 #[cfg(test)]
@@ -669,6 +678,9 @@ mod property_alias_display_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
+#[cfg(test)]
+#[path = "tests/recursive_generic_arrow_tests.rs"]
+mod recursive_generic_arrow_tests;
 #[cfg(test)]
 #[path = "tests/recursive_path_default_type_param_tests.rs"]
 mod recursive_path_default_type_param_tests;
