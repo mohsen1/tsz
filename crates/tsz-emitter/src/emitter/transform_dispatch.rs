@@ -1276,9 +1276,13 @@ impl<'a> Printer<'a> {
             .unwrap_or("");
         let class_this_var =
             class_has_decorators.then(|| hygienic_temp_name("_classThis", class_span_text));
+        let extends_expression =
+            get_extends_expression_index(self.arena, &class_data.heritage_clauses);
+        if let Some(expr_idx) = extends_expression {
+            self.seed_tc39_decorator_extends_text(emitter, expr_idx);
+        }
         let class_super_var =
-            get_extends_expression_index(self.arena, &class_data.heritage_clauses)
-                .map(|_| hygienic_temp_name("_classSuper", class_span_text));
+            extends_expression.map(|_| hygienic_temp_name("_classSuper", class_span_text));
         for &member_idx in &class_data.members.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -1383,6 +1387,64 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_index_value_access = prev_super_index_value;
 
         emitter.set_static_block_text(member_idx, output);
+    }
+
+    fn seed_tc39_decorator_extends_text(
+        &mut self,
+        emitter: &mut crate::transforms::es_decorators::TC39DecoratorEmitter<'a>,
+        expr_idx: NodeIndex,
+    ) {
+        let runtime_expr = self.tc39_decorator_extends_runtime_expression(expr_idx);
+        let needs_named_eval_suppression =
+            self.tc39_decorator_extends_needs_named_eval_suppression(runtime_expr);
+        let is_arrow = self
+            .arena
+            .get(runtime_expr)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARROW_FUNCTION);
+
+        let previous_name = self.pending_tc39_class_expression_name.take();
+        let mut output = self.capture_emit(runtime_expr);
+        self.pending_tc39_class_expression_name = previous_name;
+
+        if is_arrow {
+            output = format!("({output})");
+        }
+        if needs_named_eval_suppression {
+            output = format!("(0, {output})");
+        }
+        emitter.set_extends_text(output);
+    }
+
+    fn tc39_decorator_extends_runtime_expression(&self, mut idx: NodeIndex) -> NodeIndex {
+        loop {
+            let Some(node) = self.arena.get(idx) else {
+                return idx;
+            };
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                && let Some(paren) = self.arena.get_parenthesized(node)
+                && !paren.expression.is_none()
+            {
+                idx = paren.expression;
+                continue;
+            }
+            if (node.kind == syntax_kind_ext::TYPE_ASSERTION
+                || node.kind == syntax_kind_ext::AS_EXPRESSION
+                || node.kind == syntax_kind_ext::SATISFIES_EXPRESSION)
+                && let Some(assertion) = self.arena.get_type_assertion(node)
+            {
+                idx = assertion.expression;
+                continue;
+            }
+            return idx;
+        }
+    }
+
+    fn tc39_decorator_extends_needs_named_eval_suppression(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| {
+            node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || node.kind == syntax_kind_ext::ARROW_FUNCTION
+        })
     }
 
     fn capture_tc39_class_expression_with_name(

@@ -238,3 +238,37 @@ class C extends Base {
         "Decorated class static blocks should not copy raw static super member access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn decorated_class_extends_expression_suppresses_named_evaluation() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C1 extends class { } {
+    static { super.name; }
+}
+
+@dec
+class C2 extends (function() {} as any) {
+    static { super.name; }
+}
+
+@dec
+class C3 extends ((() => {}) as any) {
+    static { super.name; }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("let _classSuper = (0, class")
+            && output.contains("let _classSuper = (0, function")
+            && output.contains("let _classSuper = (0, (() =>"),
+        "Decorator superclass capture should render expression bases with named-evaluation suppression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("as any") && !output.contains("class { } {;"),
+        "Decorator superclass capture should use emitted JS expression text, not raw heritage source.\nOutput:\n{output}"
+    );
+}

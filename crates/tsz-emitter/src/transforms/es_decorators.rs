@@ -125,6 +125,9 @@ pub struct TC39DecoratorEmitter<'a> {
     /// Static block text rendered by the main emitter when raw source text
     /// would miss scoped static `super` rewrites.
     static_block_texts: FxHashMap<NodeIndex, String>,
+    /// Extends expression text rendered by the main emitter when raw source
+    /// text would preserve type-only syntax or named-evaluation-sensitive forms.
+    extends_text: Option<String>,
     /// When true, decorated fields stay as class field declarations (ES2022+).
     /// When false, decorated fields move to constructor assignments.
     use_define_for_class_fields: bool,
@@ -146,6 +149,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             function_body_texts: FxHashMap::default(),
             field_initializer_texts: FxHashMap::default(),
             static_block_texts: FxHashMap::default(),
+            extends_text: None,
             use_define_for_class_fields: false,
         }
     }
@@ -200,6 +204,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
 
     pub fn set_static_block_text(&mut self, member_idx: NodeIndex, text: String) {
         self.static_block_texts.insert(member_idx, text);
+    }
+
+    pub fn set_extends_text(&mut self, text: String) {
+        self.extends_text = Some(text);
     }
 
     pub const fn set_use_define_for_class_fields(&mut self, use_define: bool) {
@@ -2334,6 +2342,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
     }
 
     fn get_extends_text(&self, class_data: &tsz_parser::parser::node::ClassData) -> Option<String> {
+        if let Some(text) = self.extends_text.as_ref() {
+            return Some(text.clone());
+        }
         let clauses = class_data.heritage_clauses.as_ref()?;
         for &clause_idx in &clauses.nodes {
             let clause_node = self.arena.get(clause_idx)?;
