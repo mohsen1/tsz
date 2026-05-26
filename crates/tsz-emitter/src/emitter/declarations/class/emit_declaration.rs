@@ -222,6 +222,7 @@ impl<'a> Printer<'a> {
 
             if class_name.is_empty() {
                 self.emit_class_es6_with_options(node, idx, false, None, None, None, false);
+                self.legacy_decorator_computed_name_temp_map.clear();
                 return;
             }
 
@@ -351,6 +352,7 @@ impl<'a> Printer<'a> {
 
             // Clear type parameter names after decorator emission
             self.metadata_class_type_params = None;
+            self.legacy_decorator_computed_name_temp_map.clear();
 
             return;
         }

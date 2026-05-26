@@ -1128,14 +1128,51 @@ impl<'a> Printer<'a> {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                // Only property declarations participate in computed property hoisting
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
-                    continue;
+                let (modifiers, name_idx, property_is_erased) = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        let is_erased = if self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            true
+                        } else {
+                            let is_private = self
+                                .arena
+                                .get(prop.name)
+                                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                            let has_accessor = self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                            prop.initializer.is_none() && !is_private && !has_accessor
+                        };
+                        (&prop.modifiers, prop.name, Some(is_erased))
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if !method.body.is_some() {
+                            continue;
+                        }
+                        (&method.modifiers, method.name, None)
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        let Some(accessor) = self.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        (&accessor.modifiers, accessor.name, None)
+                    }
+                    _ => continue,
                 };
-                let Some(name_node) = self.arena.get(prop.name) else {
+                let Some(name_node) = self.arena.get(name_idx) else {
                     continue;
                 };
                 if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -1154,37 +1191,26 @@ impl<'a> Printer<'a> {
                 if is_constant {
                     continue;
                 }
-                // Check if this property is erased (type-only, abstract, declared).
-                // `declare` fields have no runtime effect even when an
-                // initializer is present (the initializer is part of the
-                // declaration and is dropped). tsc still emits the computed
-                // expression for its side effects, but does not allocate a
-                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
-                // baseline where `static declare [field3] = 3;` produces
-                // no `var _a; _a = field3;` pair.
-                let is_erased = if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                    || self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    true
-                } else {
-                    let is_private = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-                    let has_accessor = self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    prop.initializer.is_none() && !is_private && !has_accessor
-                };
-                if is_erased {
+                let has_legacy_decorators = self.ctx.options.legacy_decorators
+                    && !self.collect_class_decorators(modifiers).is_empty();
+                if property_is_erased.is_none() {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp);
+                    }
+                    continue;
+                }
+                if property_is_erased == Some(true) {
                     // Side-effect only: expression is emitted for its effects but no temp.
-                    let is_side_effect_free =
-                        self.is_computed_name_expr_side_effect_free(computed.expression);
-                    if !is_side_effect_free {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.computed_prop_temp_map
+                            .insert(computed.expression, temp.clone());
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                        computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                    } else if !self.is_computed_name_expr_side_effect_free(computed.expression) {
                         computed_prop_entries.push((None, computed.expression, member_idx));
                     }
                 } else {
@@ -1192,6 +1218,10 @@ impl<'a> Printer<'a> {
                     let temp = self.make_unique_name_hoisted();
                     self.computed_prop_temp_map
                         .insert(computed.expression, temp.clone());
+                    if has_legacy_decorators {
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                    }
                     computed_prop_entries.push((Some(temp), computed.expression, member_idx));
                 }
             }
@@ -1374,7 +1404,11 @@ impl<'a> Printer<'a> {
                 let Some(computed) = self.arena.get_computed_property(computed_name) else {
                     continue;
                 };
-                if pending_computed_entries.is_empty() {
+                let decorated_key_temp = self
+                    .legacy_decorator_computed_name_temp_map
+                    .get(&computed.expression)
+                    .cloned();
+                if pending_computed_entries.is_empty() && decorated_key_temp.is_none() {
                     continue;
                 }
 
@@ -1389,9 +1423,19 @@ impl<'a> Printer<'a> {
                     }
                     computed_prop_entries_consumed_by_member_name.push(entry_idx);
                 }
-                comma_parts.push(self.capture_emit(computed.expression));
+                let expr_text = self.capture_emit(computed.expression);
+                if let Some(temp) = decorated_key_temp {
+                    comma_parts.push(format!("{temp} = {expr_text}"));
+                } else {
+                    comma_parts.push(expr_text);
+                }
+                let replacement = if comma_parts.len() == 1 {
+                    comma_parts.pop().unwrap_or_default()
+                } else {
+                    format!("({})", comma_parts.join(", "))
+                };
                 self.computed_prop_temp_map
-                    .insert(computed.expression, format!("({})", comma_parts.join(", ")));
+                    .insert(computed.expression, replacement);
             }
         }
         if let Some(member_idx) = auto_accessor_computed_storage_key_member

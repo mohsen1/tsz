@@ -14,6 +14,8 @@ mod class_expression_decorator_tests;
 mod decorator_metadata_tests;
 #[cfg(test)]
 mod es5_object_rest_tests;
+#[cfg(test)]
+mod legacy_decorator_computed_tests;
 
 #[cfg(test)]
 mod es5_emit_tests;

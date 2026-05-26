@@ -857,6 +857,10 @@ pub struct Printer<'a> {
     /// to a temp variable and the class body uses the temp instead of the expression.
     pub(crate) computed_prop_temp_map: FxHashMap<NodeIndex, String>,
 
+    /// Mapping from legacy-decorated computed member name expression to the temp
+    /// used as the later `__decorate` property key.
+    pub(crate) legacy_decorator_computed_name_temp_map: FxHashMap<NodeIndex, String>,
+
     /// Temporary alias for outer static `this` while emitting a static field initializer.
     /// This must not flow into nested non-arrow function or class scopes.
     pub(crate) scoped_static_this_alias: Option<Arc<str>>,
@@ -1264,6 +1268,7 @@ impl<'a> Printer<'a> {
             jsx_legacy_cjs_runtime_var: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
+            legacy_decorator_computed_name_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
