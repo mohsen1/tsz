@@ -3880,6 +3880,26 @@ fn test_call_arg_diagnostic_uses_canonical_relation_path() {
     );
 }
 
+/// Object-literal property diagnostics must route declared-property
+/// assignability through the canonical relation diagnostic helper instead of a
+/// raw boolean relation plus manual TS2322 reporting.
+#[test]
+fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
+    let source = fs::read_to_string("src/types/computation/object_literal/computation.rs")
+        .expect("failed to read object_literal/computation.rs");
+
+    assert!(
+        source.contains("check_assignable_or_report_at_exact_anchor_without_source_elaboration("),
+        "object literal declared-property diagnostics must use the canonical \
+         relation diagnostic helper"
+    );
+    assert!(
+        !source.contains("error_type_not_assignable_at_with_anchor("),
+        "object literal declared-property diagnostics must not bypass relation \
+         outcome handling with the manual TS2322 reporter"
+    );
+}
+
 /// `analyze_assignability_failure` should stay aligned with the canonical
 /// checker gate path and preserve the array/tuple weak-type suppression
 /// that prevents false TS2559 diagnostics.

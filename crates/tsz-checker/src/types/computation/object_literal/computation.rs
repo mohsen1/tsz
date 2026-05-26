@@ -1190,13 +1190,13 @@ impl<'a> CheckerState<'a> {
                             })
                             .map(|_| TypeId::UNDEFINED)
                             .unwrap_or(value_type);
-                        if !self.is_assignable_to(check_value_type, declared_type) {
-                            self.error_type_not_assignable_at_with_anchor(
+                        let _ = self
+                            .check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                                 check_value_type,
                                 declared_type,
                                 elem_idx,
+                                elem_idx,
                             );
-                        }
                         declared_type
                     } else {
                         // Apply bidirectional type inference and widen (same as named properties)
