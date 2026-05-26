@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import pathlib
 import sys
 import tempfile
@@ -79,6 +80,14 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
         self.assertEqual(report["findings"][0]["category"], "UNALLOWLISTED")
         self.assertEqual(report["findings"][1]["category"], "semantic-output-surgery")
+
+    def test_write_json_report_creates_parent_and_writes_json(self):
+        with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
+            report_path = pathlib.Path(temp_dir) / "nested" / "report.json"
+            self.audit.write_json_report(report_path, {"ok": True, "value": 42})
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+
+        self.assertEqual(payload, {"ok": True, "value": 42})
 
     def test_scan_ignores_data_cleanup_but_finds_output_surgery(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:

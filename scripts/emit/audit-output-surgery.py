@@ -197,7 +197,9 @@ def build_json_report(
 
 def write_json_report(path: pathlib.Path, report: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp_path.replace(path)
 
 
 def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> None:
