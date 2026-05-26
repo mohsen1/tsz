@@ -3944,6 +3944,34 @@ fn test_mapped_object_literal_property_diagnostics_use_display_relation_helper()
     );
 }
 
+/// Union index-signature property value mismatches need local index-signature
+/// acceptance policy, but the final TS2322 diagnostic should still route
+/// through the canonical exact-anchor helper.
+#[test]
+fn test_union_index_signature_property_mismatch_uses_relation_helper() {
+    let source = fs::read_to_string("src/state/state_checking/property.rs")
+        .expect("failed to read property.rs");
+    let block = source
+        .split("fn try_union_index_signature_value_check")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("fn try_emit_nested_discriminated_union_assignability_error")
+                .next()
+        })
+        .expect("failed to locate union index-signature property diagnostic block");
+
+    assert!(
+        block.contains("check_assignable_or_report_at_exact_anchor_without_source_elaboration("),
+        "union index-signature property mismatches must use the canonical \
+         exact-anchor relation helper for final TS2322 emission"
+    );
+    assert!(
+        !block.contains("error_type_not_assignable_at_with_anchor("),
+        "union index-signature property mismatches must not bypass relation outcome \
+         handling with the manual TS2322 reporter"
+    );
+}
+
 /// Object-literal property diagnostics must route declared-property and
 /// contextual-property assignability through canonical relation diagnostic
 /// helpers instead of raw boolean relations plus manual TS2322 reporting.

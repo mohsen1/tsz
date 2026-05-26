@@ -2181,9 +2181,10 @@ impl<'a> CheckerState<'a> {
                 );
                 continue;
             }
-            self.error_type_not_assignable_at_with_anchor(
+            let _ = self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
                 source_prop.type_id,
                 target_value_type,
+                report_idx,
                 report_idx,
             );
         }
