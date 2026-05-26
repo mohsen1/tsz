@@ -77,11 +77,11 @@ cleanup as complete.
 This section is intentionally short and current. Replace it when a fresher audit
 changes the picture.
 
-1. Active PR state is no longer the launch bottleneck. A 2026-05-26 live
-   orientation found only `2` open PRs, `0` drafts, clean canonical
-   `agent:*` label state, and no stacked children. Future launches should still
-   inspect live PRs first, but the plan should not preserve static PR queue
-   inventories.
+1. Active PR state is intentionally a live query, not a copied roadmap metric.
+   Every launch should inspect open PRs, draft/WIP state, stacked children, and
+   canonical `agent:*` label hygiene with `gh pr list` plus
+   `scripts/agents/ensure-agent-labels.sh --audit`; this plan should not
+   preserve static PR queue inventories.
 2. Multi-computer coordination is now explicit. Fourteen implementation-session
    labels exist:
    `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and

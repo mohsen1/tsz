@@ -33,8 +33,8 @@ Recent local/live evidence on 2026-05-26:
 
 | Surface | Current read |
 | --- | ---: |
-| Open PRs | 2 |
-| Draft PRs | 0 |
+| Open PRs | live query: `gh pr list --state open` |
+| Draft/WIP PRs | live query: `gh pr list --state open` plus WIP labels/titles |
 | PR label hygiene | clean |
 | Diagnostic conformance detail | `12,582 / 12,582` |
 | Accepted-regression list | 30 tests |
