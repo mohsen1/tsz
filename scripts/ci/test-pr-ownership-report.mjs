@@ -103,6 +103,7 @@ withTempDir((dir) => {
       number: 17,
       title: "fix(checker): ready but blocked",
       isDraft: false,
+      updatedAt: "2026-05-23T09:15:00Z",
       baseRefName: "main",
       headRefName: "agent/blocked-ready",
       mergeStateStatus: "BLOCKED",
@@ -167,7 +168,7 @@ withTempDir((dir) => {
   assert.match(result.stdout, /#11: AgentName beta; label agent:omega/);
   assert.match(
     result.stdout,
-    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
+    /Blocked Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:epsilon: 1[\s\S]*PRs:[\s\S]*#17: agent:epsilon; updated 2026-05-23; MERGEABLE; auto-merge off; fix\(checker\): ready but blocked/,
   );
   assert.match(
     result.stdout,
@@ -328,6 +329,7 @@ withTempDir((dir) => {
       agentName: "epsilon",
       agentLabel: "agent:epsilon",
       autoMergeArmed: false,
+      updatedAt: "2026-05-23T09:15:00Z",
       mergeable: "MERGEABLE",
       title: "fix(checker): ready but blocked",
     },
