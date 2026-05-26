@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 00:43 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10179` merged.
+- 2026-05-26 01:12 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10183` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -79,6 +79,22 @@ node scripts/ci/pr-ownership-report.mjs
     `duplicateDraftCleanupTargets`, so follow-up automation can consume the
     unstacked/mixed duplicate-draft target list without recomputing the
     markdown filter.
+  - `#10181` merged on 2026-05-26 as
+    `352ccabeef ci: distinguish claimed issue refs in ownership report
+    (#10181)`. `scripts/ci/pr-ownership-report.mjs` now keeps raw
+    `issueRefs` for audit context but groups duplicate issue work by
+    `claimedIssueRefs` from PR titles plus `Addresses`/`Fixes`/`Closes`/
+    `Resolves` body claims. The latest live report still shows 64 open PRs,
+    20 drafts, 44 ready PRs, 4 stacked children, zero missing `AgentName`
+    entries, and zero AgentName/label mismatches, and now reports no duplicate
+    draft cleanup targets because the previous five were incidental
+    coordination references rather than duplicate issue claims.
+  - `#10183` merged on 2026-05-26 as
+    `0495520fb1 ci: summarize merge queue skip reasons (#10183)`.
+    Verbose `scripts/ci/poor-mans-merge-queue.mjs --dry-run` output now shows
+    a full `Skip Reason Counts` table before the capped per-PR details. The
+    latest live dry run reports 44 PRs skipped because auto-merge is not armed
+    and 16 skipped as draft PRs, with no queue-ready auto-merge candidate.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue

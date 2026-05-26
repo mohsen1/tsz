@@ -81,6 +81,24 @@ withTempDir((dir) => {
       labels: [],
       body: "AgentName:\n\n## Track\ncoordination\n",
     },
+    {
+      number: 15,
+      title: "fix(solver): strip optional tuple undefined",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/optional-tuple",
+      labels: ["agent:delta"],
+      body: "AgentName: delta\n\nFixes #9712\n\nCoordination Notes: PR #9826 (Issue #9694) touches the same helper.\n",
+    },
+    {
+      number: 16,
+      title: "fix(solver): preserve variadic tuple shape",
+      isDraft: true,
+      baseRefName: "main",
+      headRefName: "agent/variadic-tuple",
+      labels: ["agent:zeta"],
+      body: "AgentName: zeta\n\nAddresses #9694\n",
+    },
   ]);
 
   const result = spawnSync(process.execPath, [SCRIPT, "--fixture", fixture, "--json", output], {
@@ -109,8 +127,8 @@ withTempDir((dir) => {
 
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.deepEqual(report.counts, {
-    open: 6,
-    draft: 5,
+    open: 8,
+    draft: 7,
     ready: 1,
     stacked: 2,
     missingAgentName: 2,
@@ -118,7 +136,7 @@ withTempDir((dir) => {
   });
   assert.deepEqual(report.byBase, [
     { base: "agent/mapped-a", prs: [12] },
-    { base: "main", prs: [10, 11, 14, 42] },
+    { base: "main", prs: [10, 11, 14, 15, 16, 42] },
     { base: "unknown-base", prs: [13] },
   ]);
   assert.deepEqual(report.stacks, [
@@ -150,6 +168,10 @@ withTempDir((dir) => {
   ]);
   assert.deepEqual(report.agentLabelMismatches, [{ number: 11, agentName: "beta", label: "agent:omega" }]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 42).issueRefs, []);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 15).issueRefs, [9694, 9712, 9826]);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 15).claimedIssueRefs, [9712]);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 16).issueRefs, [9694]);
+  assert.deepEqual(report.prs.find((pr) => pr.number === 16).claimedIssueRefs, [9694]);
   assert.deepEqual(report.prs.find((pr) => pr.number === 10).agentLabels, ["alpha"]);
   assert.equal(report.prs.find((pr) => pr.number === 13).agentName, null);
   assert.equal(report.prs.find((pr) => pr.number === 14).agentName, null);
