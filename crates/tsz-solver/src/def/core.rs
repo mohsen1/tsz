@@ -709,6 +709,14 @@ impl DefinitionStore {
         self.definitions.get(&id).as_deref().cloned()
     }
 
+    /// Snapshot all definition names for consumers that need stable display names.
+    pub fn all_definition_names(&self) -> Vec<(DefId, Atom)> {
+        self.definitions
+            .iter()
+            .map(|entry| (*entry.key(), entry.value().name))
+            .collect()
+    }
+
     /// Get the binder SymbolId for a `DefId`.
     ///
     /// Returns the `SymbolId` (as raw u32) that this `DefId` was created from.
