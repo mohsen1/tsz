@@ -198,6 +198,17 @@ assert.deepEqual(
     { reason: "auto-merge is not armed", count: 1 },
   ],
 );
+assert.deepEqual(
+  skipReasonCounts([
+    { reason: "PR #1 is open", summaryReason: "open PR branch" },
+    { reason: "PR #2 is open", summaryReason: "open PR branch" },
+    { reason: "active queue run 123", summaryReason: "active queue run" },
+  ]),
+  [
+    { reason: "open PR branch", count: 2 },
+    { reason: "active queue run", count: 1 },
+  ],
+);
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
@@ -255,7 +266,13 @@ const cleanupActiveRunFormat = formatResult({
   skippedUnrecognized: 0,
   supersededOpen: 0,
   skips: [
-    { branch: "automation/merge-queue/pr-9515", reason: "active queue run 26423420117" },
+    {
+      branch: "automation/merge-queue/pr-9515",
+      reason: "active queue run 26423420117",
+      summaryReason: "active queue run",
+    },
+    { branch: "automation/merge-queue/pr-9632", reason: "PR #9632 is open", summaryReason: "open PR branch" },
+    { branch: "automation/merge-queue/pr-9912", reason: "PR #9912 is open", summaryReason: "open PR branch" },
   ],
   wouldDelete: 0,
 }, parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches", "--dry-run", "--verbose"]));
@@ -265,6 +282,9 @@ assert.match(
   cleanupActiveRunFormat,
   /\| `automation\/merge-queue\/pr-9515` \| #9515 \| \[26423420117\]\(https:\/\/github\.example\/runs\/26423420117\) \|/,
 );
+assert.match(cleanupActiveRunFormat, /### Skip Reason Counts/);
+assert.match(cleanupActiveRunFormat, /\| 2 \| open PR branch \|/);
+assert.match(cleanupActiveRunFormat, /\| 1 \| active queue run \|/);
 assert.match(cleanupActiveRunFormat, /\| `automation\/merge-queue\/pr-9515` \| active queue run 26423420117 \|/);
 
 const queueSkipFormat = formatResult({
