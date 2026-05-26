@@ -206,7 +206,12 @@
         let program = merged_program_from_owned_files(files);
         let work_items: Vec<usize> = (0..program.files.len()).collect();
 
-        assert!(has_large_wildcard_barrel(&program, &work_items));
+        assert!(has_large_wildcard_barrel(WildcardBarrelAnalysisInput {
+            files: &program.files,
+            wildcard_reexports: &program.wildcard_reexports,
+            work_items: &work_items,
+            large_export_threshold: LARGE_WILDCARD_BARREL_EXPORTS,
+        }));
     }
 
     fn checker_lib_set_for_test(libs: &[(&str, &str)]) -> CheckerLibSet {
