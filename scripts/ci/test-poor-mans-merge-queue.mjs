@@ -16,6 +16,7 @@ import {
   queueBranchPrNumber,
   queueRunIsActive,
   queueSkipReason,
+  readPaginatedObjectArray,
   requiredCheckState,
   skipOwnerCounts,
   skipOwnerReasonCounts,
@@ -107,12 +108,44 @@ assert.equal(
   null,
 );
 
+const paginatedObjectArrayUrls = [];
+assert.deepEqual(
+  readPaginatedObjectArray("repos/owner/repo/commits/abc/check-runs", "check_runs", {
+    perPage: 2,
+    readJson: (url) => {
+      paginatedObjectArrayUrls.push(url);
+      if (url.endsWith("page=1")) return { check_runs: [{ name: "CI Summary" }, { name: "lint" }] };
+      if (url.endsWith("page=2")) return { check_runs: [{ name: "GitGuardian Security Checks" }] };
+      return { check_runs: [] };
+    },
+  }).map((item) => item.name),
+  ["CI Summary", "lint", "GitGuardian Security Checks"],
+);
+assert.deepEqual(paginatedObjectArrayUrls, [
+  "repos/owner/repo/commits/abc/check-runs?per_page=2&page=1",
+  "repos/owner/repo/commits/abc/check-runs?per_page=2&page=2",
+]);
+assert.throws(
+  () => readPaginatedObjectArray("repos/owner/repo/commits/abc/check-runs", "check_runs", {
+    readJson: () => ({ not_check_runs: [] }),
+  }),
+  /expected GitHub API object array check_runs/,
+);
+
 assert.equal(requiredCheckState([check()], ["CI Summary"]).kind, "passed");
 assert.equal(requiredCheckState([check({ status: "IN_PROGRESS", conclusion: "" })], ["CI Summary"]).kind, "pending");
 assert.equal(requiredCheckState([check({ conclusion: "FAILURE" })], ["CI Summary"]).kind, "failed");
 assert.equal(requiredCheckState([], ["CI Summary"]).kind, "missing");
 assert.equal(requiredCheckState([{ context: "Queue Tested", state: "SUCCESS" }], ["Queue Tested"]).kind, "passed");
 assert.equal(requiredCheckState([{ context: "Queue Tested", state: "PENDING" }], ["Queue Tested"]).kind, "pending");
+assert.equal(requiredCheckState([
+  check({ conclusion: "SUCCESS", completedAt: "2026-05-26T12:00:00Z" }),
+  check({ conclusion: "FAILURE", completedAt: "2026-05-26T11:00:00Z" }),
+], ["CI Summary"]).kind, "passed");
+assert.equal(requiredCheckState([
+  { context: "Queue Tested", state: "SUCCESS", createdAt: "2026-05-26T11:00:00Z" },
+  { context: "Queue Tested", state: "PENDING", createdAt: "2026-05-26T12:00:00Z" },
+], ["Queue Tested"]).kind, "pending");
 assert.deepEqual(
   pendingQueueRun(pr({
     statusCheckRollup: [
