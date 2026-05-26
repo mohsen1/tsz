@@ -16,12 +16,14 @@ impl<'a> CheckerState<'a> {
             self.resolve_lazy_type(prop_type),
         ) {
             let members: Vec<TypeId> = self.ctx.types.type_list(list_id).to_vec();
-            return members
-                .into_iter()
-                .all(|member| self.diagnostic_relation_boolean_guard(member, index_value_type));
+            return members.into_iter().all(|member| {
+                self.assign_relation_outcome(member, index_value_type)
+                    .related
+            });
         }
 
-        self.diagnostic_relation_boolean_guard(prop_type, index_value_type)
+        self.assign_relation_outcome(prop_type, index_value_type)
+            .related
     }
 
     pub(crate) fn format_ts2411_type(&mut self, type_id: TypeId) -> String {
