@@ -1120,11 +1120,13 @@ impl<'a> AstToIr<'a> {
                     .iter()
                     .map(|&s| self.convert_statement(s))
                     .collect(),
+                inline: false,
             }
         } else {
             IRSwitchCase {
                 test: None,
                 statements: vec![],
+                inline: false,
             }
         }
     }

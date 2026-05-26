@@ -174,6 +174,14 @@ pub(crate) struct DtsCacheResolver<'a> {
     pub(crate) cache: &'a crate::type_cache_view::TypeCacheView,
 }
 
+/// Resolver used only when declaration emit needs a structural answer from the
+/// solver, not a printable named surface. It resolves every cached `DefId` body,
+/// including object/interface lazies, so `keyof` and remapped-key evaluation can
+/// reduce concrete aliases to finite literal sets.
+pub(crate) struct DtsStructuralResolver<'a> {
+    pub(crate) cache: &'a crate::type_cache_view::TypeCacheView,
+}
+
 impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     fn resolve_ref(
         &self,
@@ -202,6 +210,31 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
             _ if tsz_solver::visitor::literal_value(interner, type_id).is_some() => Some(type_id),
             _ => None,
         }
+    }
+
+    fn get_lazy_type_params(
+        &self,
+        def_id: tsz_solver::DefId,
+    ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
+        self.cache.def_type_params.get(&def_id.0).cloned()
+    }
+}
+
+impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
+    fn resolve_ref(
+        &self,
+        _symbol: tsz_solver::types::SymbolRef,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        None
+    }
+
+    fn resolve_lazy(
+        &self,
+        def_id: tsz_solver::DefId,
+        _interner: &dyn tsz_solver::construction::TypeDatabase,
+    ) -> Option<tsz_solver::types::TypeId> {
+        self.cache.def_types.get(&def_id.0).copied()
     }
 
     fn get_lazy_type_params(

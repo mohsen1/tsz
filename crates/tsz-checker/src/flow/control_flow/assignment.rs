@@ -322,17 +322,27 @@ impl<'a> FlowAnalyzer<'a> {
                         //   x ??= y  -> NonNullable<x> | typeof y
                         //   x ||= y  -> Truthy<x> | typeof y
                         //   x &&= y  -> Falsy<x> | typeof y
+                        // Prefer the cached whole-expression type when the assignment
+                        // statement has already been checked.
                         if let Some(node_types) = self.node_types
                             && let Some(&expr_type) = node_types.get(&assignment_node.0)
                         {
                             return Some(expr_type);
                         }
-                        if let Some(node_types) = self.node_types
-                            && let Some(&rhs_type) = node_types.get(&bin.right.0)
-                        {
-                            return Some(rhs_type);
-                        }
-                        return None;
+                        // Otherwise recompute the whole-expression result
+                        // (`x ?? y` / `x || y` / `x && y`) structurally from the operand
+                        // types using the same binary evaluator the value-position path
+                        // caches. This happens when a `typeof x` type query is resolved
+                        // before the statement that performs `x ??= y` is checked. Do NOT
+                        // fall back to the cached RHS type alone: for these operators the
+                        // LHS does not simply become `typeof y` (the short-circuit branch
+                        // contributes the narrowed original `x`), so a bare-RHS result
+                        // would diverge from the value-position flow type.
+                        return self.logical_compound_assignment_fallback_type(
+                            bin.left,
+                            bin.right,
+                            bin.operator_token,
+                        );
                     }
 
                     if let Some(node_types) = self.node_types
@@ -359,12 +369,7 @@ impl<'a> FlowAnalyzer<'a> {
                         return None;
                     };
                     let op_str = map_compound_assignment_to_binary(bin.operator_token)?;
-                    let evaluator =
-                        crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
-                    return match evaluator.evaluate(left_type, right_type, op_str) {
-                        BinaryOpResult::Success(result) => Some(result),
-                        BinaryOpResult::TypeError { .. } => Some(TypeId::ANY),
-                    };
+                    return Some(self.evaluate_binary_op(left_type, right_type, op_str));
                 }
             }
         }
@@ -642,6 +647,44 @@ impl<'a> FlowAnalyzer<'a> {
         }
 
         None
+    }
+
+    /// Recompute the whole-expression result of a logical compound assignment
+    /// (`x ??= y`, `x ||= y`, `x &&= y`) from the operand types.
+    ///
+    /// Used by flow narrowing when the assignment expression node has not been
+    /// typed yet — e.g. a `typeof x` type query resolved before the statement
+    /// that performs the assignment is checked. Mirrors the value-position
+    /// computation in `compound_assignment_result_type` (the same binary
+    /// evaluator on `??`/`||`/`&&`) so type-query and value-position flow types
+    /// agree for all three logical-assignment operators.
+    fn logical_compound_assignment_fallback_type(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        operator: u16,
+    ) -> Option<TypeId> {
+        let left_type = self.resolve_operand_type(left)?;
+        let right_type = self.resolve_operand_type(right)?;
+        let op_str = map_compound_assignment_to_binary(operator)?;
+        Some(self.evaluate_binary_op(left_type, right_type, op_str))
+    }
+
+    /// Evaluate `left <op> right` through the shared binary-operation boundary,
+    /// mapping a type error to `any` to avoid cascading diagnostics. Shared by
+    /// the compound-assignment result paths so both route through a single
+    /// `query_boundaries::common` call site.
+    fn evaluate_binary_op(
+        &self,
+        left_type: TypeId,
+        right_type: TypeId,
+        op_str: &'static str,
+    ) -> TypeId {
+        let evaluator = crate::query_boundaries::common::new_binary_op_evaluator(self.interner);
+        match evaluator.evaluate(left_type, right_type, op_str) {
+            BinaryOpResult::Success(result) => result,
+            BinaryOpResult::TypeError { .. } => TypeId::ANY,
+        }
     }
 
     fn annotation_type_allows_nullish(

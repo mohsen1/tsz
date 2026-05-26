@@ -52,7 +52,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if self.type_contains_error(prop_type)
-                || self.is_assignable_to(prop_type, string_index_value)
+                || self.diagnostic_relation_boolean_guard(prop_type, string_index_value)
             {
                 continue;
             }

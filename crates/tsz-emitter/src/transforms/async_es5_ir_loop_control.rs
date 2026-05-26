@@ -421,6 +421,17 @@ impl<'a> AsyncES5Transformer<'a> {
             && candidate.as_ref() == placeholder_label.to_string()
         {
             *candidate = target_label.to_string().into();
+            return;
+        }
+        // Recurse into dispatch `switch` statements emitted by the suspending
+        // switch lowering, whose case bodies hold `return [3 /*break*/, L]`
+        // jumps to placeholder clause-body labels.
+        if let IRNode::SwitchStatement { cases, .. } = node {
+            for case in cases {
+                for statement in &mut case.statements {
+                    Self::patch_if_break_target_in_node(statement, placeholder_label, target_label);
+                }
+            }
         }
     }
 }
