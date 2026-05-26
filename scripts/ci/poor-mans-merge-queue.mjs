@@ -252,6 +252,10 @@ function shortDateTime(value) {
   return value ? `${String(value).slice(0, 16).replace("T", " ")}Z` : "unknown";
 }
 
+function shortDate(value) {
+  return value ? String(value).slice(0, 10) : "unknown";
+}
+
 export function activeBranchQueueRun(runs) {
   return (runs || []).find((run) => queueRunIsActive(run)) || null;
 }
@@ -320,6 +324,7 @@ function readPullRequests(repository, base, maxPrs) {
       "labels",
       "number",
       "title",
+      "updatedAt",
       "url",
     ].join(","),
   ]);
@@ -341,6 +346,7 @@ function readPullRequest(repository, number) {
       "number",
       "statusCheckRollup",
       "title",
+      "updatedAt",
       "url",
     ].join(","),
   ]);
@@ -468,6 +474,46 @@ export function skipReasonCounts(skips) {
   return [...counts.entries()]
     .map(([reason, count]) => ({ reason, count }))
     .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+}
+
+export function skipOwnerCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    const current = counts.get(owner) || { count: 0, oldestUpdatedAt: null };
+    current.count += 1;
+    if (skip.updatedAt && (!current.oldestUpdatedAt || skip.updatedAt < current.oldestUpdatedAt)) {
+      current.oldestUpdatedAt = skip.updatedAt;
+    }
+    counts.set(owner, current);
+  }
+  return [...counts.entries()]
+    .map(([owner, data]) => {
+      const entry = { owner, count: data.count };
+      if (data.oldestUpdatedAt) entry.oldestUpdatedAt = data.oldestUpdatedAt;
+      return entry;
+    })
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
+}
+
+function pushSkipOwnerCounts(lines, skips) {
+  const ownerSummary = skipOwnerCounts(skips);
+  const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
+  lines.push(
+    "",
+    "### Skip Owner Counts",
+    "",
+    hasOldestUpdated ? "| Count | Owner | Oldest updated |" : "| Count | Owner |",
+    hasOldestUpdated ? "|-------|-------|----------------|" : "|-------|-------|",
+  );
+  for (const entry of ownerSummary) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    if (hasOldestUpdated) {
+      lines.push(`| ${entry.count} | ${owner} | ${shortDate(entry.oldestUpdatedAt)} |`);
+    } else {
+      lines.push(`| ${entry.count} | ${owner} |`);
+    }
+  }
 }
 
 function invalidatePullRequest(repository, pr, options) {
@@ -740,6 +786,7 @@ function processOne(repository, options) {
         number: pr.number,
         owner: agentLabel(pr.labels),
         reason: skipReason,
+        updatedAt: pr.updatedAt,
         url: pr.url,
       });
       continue;
@@ -861,6 +908,7 @@ export function formatResult(result, options) {
       for (const entry of summary) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
+      pushSkipOwnerCounts(lines, result.skips);
       lines.push("", "### Skips", "", "| Branch | Owner | Reason |", "|--------|-------|--------|");
       for (const skip of result.skips.slice(0, 50)) {
         lines.push(`| \`${skip.branch}\` | ${skip.owner || "(unknown)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
@@ -892,6 +940,7 @@ export function formatResult(result, options) {
     for (const entry of summary) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
+    pushSkipOwnerCounts(lines, result.skips);
     lines.push("", "### Skips", "", "| PR | Owner | Reason |", "|----|-------|--------|");
     for (const skip of result.skips.slice(0, 25)) {
       lines.push(`| #${skip.number} | ${skip.owner || "(none)"} | ${skip.reason.replace(/\|/g, "\\|")} |`);
