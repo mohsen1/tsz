@@ -599,7 +599,7 @@ impl<'a> CheckerState<'a> {
             if var_type != TypeId::STRING
                 && var_type != TypeId::ANY
                 && var_type != TypeId::UNKNOWN
-                && !self.diagnostic_relation_boolean_guard(element_type, var_type)
+                && !self.assign_relation_outcome(element_type, var_type).related
             {
                 self.error_at_node(
                     initializer,
