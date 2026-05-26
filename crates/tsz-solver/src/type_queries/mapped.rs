@@ -9,7 +9,7 @@
 
 use super::data::ExactLiteralPropertyKey;
 use crate::construction::TypeDatabase;
-use crate::types::{MappedModifier, PropertyInfo, TypeData, TypeId};
+use crate::types::{MappedModifier, MappedType, PropertyInfo, TypeData, TypeId};
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_common::Atom;
 
@@ -1025,6 +1025,74 @@ pub fn evaluate_identity_mapped_passthrough(
     None
 }
 
+/// Return the public declaration surface for an inferred mapped type whose
+/// source is a constrained type parameter.
+///
+/// Declaration emit needs the type that `tsc` exposes for an inferred public
+/// variable, not the deferred implementation form `{ [K in keyof T]: ... }`
+/// when `T` only survives as a generic constraint. This query keeps that
+/// reduction structural: primitive constraints pass through, while object-like
+/// constraints are substituted into the mapped source and evaluated normally.
+pub fn inferred_declaration_mapped_constraint_surface(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<TypeId> {
+    inferred_declaration_mapped_constraint_surface_with(db, type_id, |ty| {
+        crate::evaluation::evaluate::evaluate_type(db, ty)
+    })
+}
+
+pub fn inferred_declaration_mapped_constraint_surface_with(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+    mut evaluate: impl FnMut(TypeId) -> TypeId,
+) -> Option<TypeId> {
+    let mapped_id = crate::mapped_type_id(db, type_id)?;
+    let mapped = db.mapped_type(mapped_id);
+    let source = crate::keyof_inner_type(db, mapped.constraint)?;
+    let source_param = crate::type_param_info(db, source)?;
+    let constraint = source_param.constraint?;
+    let constraint = evaluate(constraint);
+
+    if is_primitive_or_primitive_union_for_mapped_surface(db, constraint) {
+        return Some(constraint);
+    }
+
+    use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type_preserving};
+
+    let subst = TypeSubstitution::single(source_param.name, constraint);
+    let substituted = MappedType {
+        type_param: mapped.type_param,
+        constraint: instantiate_type_preserving(db, mapped.constraint, &subst),
+        name_type: mapped
+            .name_type
+            .map(|name_type| instantiate_type_preserving(db, name_type, &subst)),
+        template: instantiate_type_preserving(db, mapped.template, &subst),
+        readonly_modifier: mapped.readonly_modifier,
+        optional_modifier: mapped.optional_modifier,
+    };
+    let substituted_type = db.mapped(substituted);
+    let evaluated = evaluate(substituted_type);
+    (evaluated != type_id && !matches!(db.lookup(evaluated), Some(TypeData::Mapped(_))))
+        .then_some(evaluated)
+}
+
+fn is_primitive_or_primitive_union_for_mapped_surface(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    if crate::is_primitive_type(db, type_id) {
+        return true;
+    }
+    let Some(TypeData::Union(list_id)) = db.lookup(type_id) else {
+        return false;
+    };
+    db.type_list(list_id)
+        .iter()
+        .copied()
+        .all(|member| crate::is_primitive_type(db, member))
+}
+
 /// Check if a mapped type's template is callable (has call/construct signatures).
 ///
 /// This is used for TS2344 constraint checking: when an indexed access into a
@@ -1423,6 +1491,63 @@ pub fn collect_homomorphic_source_property_infos(
         Some(TypeData::Array(element_type)) => collect_array_property_infos(db, element_type),
         _ => Vec::new(),
     }
+}
+
+pub fn sort_homomorphic_source_properties_for_display(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    resolved_source: TypeId,
+    props: &mut [PropertyInfo],
+) {
+    if sort_number_wrapper_properties_for_display(db, props) {
+        return;
+    }
+
+    let display_props = db
+        .get_display_properties(source)
+        .or_else(|| db.get_display_properties(resolved_source));
+    if let Some(display_props) = display_props {
+        let mut display_props = display_props.as_ref().clone();
+        if display_props.iter().any(|prop| prop.declaration_order != 0) {
+            display_props.sort_by_key(|prop| prop.declaration_order);
+        }
+        let order_map: FxHashMap<Atom, usize> = display_props
+            .iter()
+            .enumerate()
+            .map(|(idx, prop)| (prop.name, idx))
+            .collect();
+        props.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
+    } else if props.iter().any(|prop| prop.declaration_order != 0) {
+        props.sort_by_key(|prop| prop.declaration_order);
+    }
+}
+
+pub fn sort_number_wrapper_properties_for_display(
+    db: &dyn TypeDatabase,
+    props: &mut [PropertyInfo],
+) -> bool {
+    if props.len() == 6
+        && props
+            .iter()
+            .all(|prop| number_wrapper_rank(db, prop.name).is_some())
+    {
+        props.sort_by_key(|prop| number_wrapper_rank(db, prop.name));
+        return true;
+    }
+    false
+}
+
+fn number_wrapper_rank(db: &dyn TypeDatabase, name: Atom) -> Option<usize> {
+    ([
+        "toString",
+        "toFixed",
+        "toExponential",
+        "toPrecision",
+        "valueOf",
+        "toLocaleString",
+    ])
+    .iter()
+    .position(|candidate| db.resolve_atom_ref(name).as_ref() == *candidate)
 }
 
 pub fn collect_homomorphic_source_properties(

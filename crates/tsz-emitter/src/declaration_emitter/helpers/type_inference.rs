@@ -1745,6 +1745,7 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             }
+            let has_call_site_type_param_substitutions = !type_param_substitutions.is_empty();
             for (name_text, fallback_text) in &type_param_fallbacks {
                 if type_param_substitutions
                     .iter()
@@ -1801,6 +1802,14 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
             {
                 return Some(self.print_type_id_expanded_for_inferred_declaration(type_id));
+            }
+            if explicit_type_args.is_empty()
+                && !has_call_site_type_param_substitutions
+                && std::ptr::eq(source_arena, self.arena)
+                && let Some(type_id) = self.get_node_type_or_names(&[callable.type_annotation])
+                && let Some(surface) = self.inferred_declaration_mapped_constraint_surface(type_id)
+            {
+                return Some(self.print_type_id_for_inferred_declaration(surface));
             }
             if let Some(expanded) =
                 self.event_like_correlated_alias_return_text(source_arena, &type_text, call)
