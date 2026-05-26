@@ -440,6 +440,11 @@ impl<'a> CheckerState<'a> {
                 }
                 let jsdoc_object_initializer_relation = jsdoc_declared_type.is_some()
                     && facts.annotation.is_none()
+                    && self.jsdoc_type_annotation_is_import_type(facts.decl_idx)
+                    && !crate::query_boundaries::common::is_union_type(
+                        self.ctx.types,
+                        evaluated_type,
+                    )
                     && self.initializer_reaches_object_literal_through_wrappers(facts.initializer);
                 if jsdoc_object_initializer_relation {
                     let raw_init_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
@@ -899,5 +904,20 @@ impl<'a> CheckerState<'a> {
             }
             (declared_type, jsdoc_declared_type)
         }
+    }
+
+    fn jsdoc_type_annotation_is_import_type(&self, decl_idx: NodeIndex) -> bool {
+        let Some((start, length)) = self.jsdoc_type_expression_span_for_node(decl_idx) else {
+            return false;
+        };
+        let Some(source_file) = self.ctx.arena.source_files.first() else {
+            return false;
+        };
+        let start = start as usize;
+        let end = start.saturating_add(length as usize);
+        source_file
+            .text
+            .get(start..end)
+            .is_some_and(|expr| expr.trim_start().starts_with("import("))
     }
 }

@@ -217,6 +217,64 @@ const u = { id: 1, extra: true };
 }
 
 #[test]
+fn non_import_jsdoc_object_union_preserves_contextual_literal_initializer() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        "",
+        "consumer.js",
+        r#"
+/** @type {({ type: 'foo' } | { type: 'bar' }) & { prop: number }} */
+const obj1 = { type: "foo", prop: 10 };
+
+/** @type {({ type: 'foo' } | { type: 'bar' }) & { prop: number }} */
+const obj2 = { type: "other", prop: 10 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        1,
+        "Expected only the invalid union discriminant to report TS2322, got: {diagnostics:?}"
+    );
+}
+
+#[test]
+fn jsdoc_import_type_union_typedef_preserves_contextual_literal_initializer() {
+    let diagnostics = check_js_file_with_types_diagnostics(
+        "types.js",
+        r#"
+/** @typedef {{ type: "a", x: 1 }} A */
+/** @typedef {{ type: "b", y: 1 }} B */
+/** @typedef {A | B} Both */
+module.exports = {};
+"#,
+        "consumer.js",
+        r#"
+/** @type {import('./types.js').Both} */
+const both = { type: "a", x: 1 };
+"#,
+        CheckerOptions {
+            allow_js: true,
+            check_js: true,
+            strict: true,
+            ..CheckerOptions::default()
+        },
+    );
+    let ts2322: Vec<&Diagnostic> = diagnostics.iter().filter(|d| d.code == 2322).collect();
+    assert_eq!(
+        ts2322.len(),
+        0,
+        "Expected imported union typedef to preserve contextual discriminant typing, got: {diagnostics:?}"
+    );
+}
+
+#[test]
 fn jsdoc_type_assignment_binds_interface_this_to_source_instance() {
     let codes = check_js_file_with_types(
         "types.ts",
