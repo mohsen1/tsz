@@ -8,6 +8,7 @@
 
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
 use tsz_parser::parser::NodeIndex;
@@ -172,7 +173,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // Flow node doesn't exist - mark as assigned
                 local_cache.insert(current_flow, true);
                 // Notify any nodes waiting for this one
-                let ready: Vec<_> = waiting_for
+                let ready: SmallVec<[FlowNodeId; 4]> = waiting_for
                     .iter()
                     .filter(|(_, ants)| ants.contains(&current_flow))
                     .map(|(&node, _)| node)
@@ -214,7 +215,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     // Check if all antecedents have results
                     let mut all_ready = true;
-                    let mut results = Vec::new();
+                    let mut results: SmallVec<[bool; 4]> = SmallVec::new();
 
                     for &ant in &flow.antecedent {
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant)
@@ -278,7 +279,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     // Similar to BRANCH_LABEL - check all antecedents
                     let mut all_ready = true;
-                    let mut results = Vec::new();
+                    let mut results: SmallVec<[bool; 4]> = SmallVec::new();
 
                     for &ant in &flow.antecedent {
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant)
@@ -321,7 +322,7 @@ impl<'a> FlowAnalyzer<'a> {
             local_cache.insert(current_flow, result);
 
             // Notify any nodes waiting for this one
-            let ready: Vec<_> = waiting_for
+            let ready: SmallVec<[FlowNodeId; 4]> = waiting_for
                 .iter()
                 .filter(|(_, ants)| ants.contains(&current_flow))
                 .map(|(&node, _)| node)
