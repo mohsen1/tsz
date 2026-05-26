@@ -443,6 +443,10 @@ impl<'a> CheckerState<'a> {
             if let Some(exports) = self
                 .ctx
                 .module_exports_for_module(source_binder, source_file_name)
+                .or_else(|| {
+                    self.ctx
+                        .module_exports_for_module(source_binder, source_module)
+                })
                 && exports.has(export_name)
             {
                 return true;
