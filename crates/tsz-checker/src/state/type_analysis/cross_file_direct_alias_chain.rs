@@ -268,7 +268,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                 )
             }
-            k if k == syntax_kind_ext::FUNCTION_TYPE => {
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
                 Self::source_file_function_type_is_generic_local_alias_application_lowerable(
                     arena,
                     binder,
@@ -487,7 +487,7 @@ impl<'a> CheckerState<'a> {
                     &[],
                 )
             }
-            k if k == syntax_kind_ext::FUNCTION_TYPE => {
+            k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
                 Self::source_file_function_type_is_generic_local_alias_application_lowerable(
                     arena,
                     binder,

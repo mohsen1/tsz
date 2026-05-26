@@ -614,6 +614,27 @@ fn direct_source_file_type_alias_lowers_function_type_own_type_params() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_constructor_type_body() {
+    with_two_file_state(
+        "export type Class<T> = new (...args: any[]) => T;",
+        "import { Class } from './target';",
+        |state, target_binder| {
+            let class_sym = target_binder.file_locals.get("Class").expect("Class");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(class_sym, Some(1), true)
+                .expect("constructor type alias bodies should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(
+                params.len(),
+                1,
+                "generic alias parameter should be preserved"
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_generic_body_with_non_generic_local_alias_leaf() {
     with_two_file_state(
         "type Leaf = string;\nexport type Result<T> = T | Leaf;",
@@ -682,6 +703,26 @@ fn direct_source_file_type_alias_rejects_function_type_param_typeof_constraint()
                     .direct_source_file_type_alias_result(result_sym, Some(1), true)
                     .is_none(),
                 "flow-sensitive function type parameter constraints must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_constructor_type_typeof_param() {
+    with_two_file_state(
+        "const v = 1;\nexport type FromValue<T> = new (arg: typeof v) => T;",
+        "import { FromValue } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder
+                .file_locals
+                .get("FromValue")
+                .expect("FromValue");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                    .is_none(),
+                "flow-sensitive constructor type parameters must stay on the child-checker path",
             );
         },
     );
