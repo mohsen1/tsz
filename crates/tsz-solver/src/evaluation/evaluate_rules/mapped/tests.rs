@@ -521,6 +521,82 @@ fn non_identity_homomorphic_mapped_over_trailing_rest_tuple_applies_per_element(
     );
 }
 
+/// Opaque variadic rests like `...T` are not the same as concrete `...E[]`
+/// rests. Mapping `[string, number, ...T]` through
+/// `{ [K in keyof T]: T[K][] }` must preserve the tuple-position indexed access
+/// for the opaque rest; collapsing it to `T[number][]` loses reverse-inference
+/// provenance for `T`.
+#[test]
+fn non_identity_homomorphic_mapped_over_opaque_variadic_rest_keeps_positional_access() {
+    let interner = TypeInterner::new();
+
+    let iter_atom = interner.intern_string("K");
+    let t_param = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(interner.array(TypeId::UNKNOWN)),
+        default: None,
+        is_const: false,
+    });
+    let original_constraint = interner.keyof(t_param);
+    let iter_param = interner.type_param(TypeParamInfo {
+        name: iter_atom,
+        constraint: Some(original_constraint),
+        default: None,
+        is_const: false,
+    });
+
+    let source = interner.tuple(vec![
+        TupleElement {
+            type_id: TypeId::STRING,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: TypeId::NUMBER,
+            name: None,
+            optional: false,
+            rest: false,
+        },
+        TupleElement {
+            type_id: t_param,
+            name: None,
+            optional: false,
+            rest: true,
+        },
+    ]);
+
+    let template = interner.array(interner.index_access(source, iter_param));
+    let mapped = MappedType {
+        type_param: TypeParamInfo {
+            name: iter_atom,
+            constraint: Some(original_constraint),
+            default: None,
+            is_const: false,
+        },
+        constraint: interner.keyof(source),
+        name_type: None,
+        template,
+        readonly_modifier: None,
+        optional_modifier: None,
+    };
+
+    let mut evaluator = TypeEvaluator::new(&interner);
+    let result = evaluator.evaluate_mapped(&mapped);
+    let Some(TypeData::Tuple(tuple_id)) = interner.lookup(result) else {
+        panic!("expected mapped tuple, got {:?}", interner.lookup(result));
+    };
+    let elements = interner.tuple_list(tuple_id);
+    assert_eq!(elements.len(), 3);
+    assert!(elements[2].rest, "opaque variadic rest must stay a rest");
+
+    let collapsed = interner.array(interner.index_access(t_param, TypeId::NUMBER));
+    assert_ne!(
+        elements[2].type_id, collapsed,
+        "opaque variadic rest must not collapse to `T[number][]`"
+    );
+}
+
 /// Verifies that re-entering the same TypeId within the chain is detected and does
 /// not loop forever. The `keyof_constraint_guard` keeps all intermediate types
 /// entered until the chain terminates; if the same TypeId appears again (cycle),

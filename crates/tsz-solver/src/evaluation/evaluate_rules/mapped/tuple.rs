@@ -129,8 +129,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let tuple_elements = self.interner().tuple_list(tuple_id);
         let mut mapped_elements = Vec::with_capacity(tuple_elements.len());
 
-        for elem in tuple_elements.iter().copied() {
-            mapped_elements.push(self.evaluate_mapped_tuple_element(mapped, source, elem));
+        for (index, elem) in tuple_elements.iter().copied().enumerate() {
+            mapped_elements.push(self.evaluate_mapped_tuple_element(mapped, source, index, elem));
         }
 
         self.interner().tuple(mapped_elements)
@@ -152,6 +152,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         &mut self,
         mapped: &MappedType,
         source: TypeId,
+        index: usize,
         elem: TupleElement,
     ) -> TupleElement {
         let rest_inner_kind = elem.rest.then(|| self.interner().lookup(elem.type_id));
@@ -173,22 +174,36 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             };
         }
 
-        // Per-element source rebinding:
-        // - Rest: T -> the rest's type as-is (e.g. `Array<E>`, type parameter,
-        //   lazy ref); K -> number. For an `Array<E>` rest this makes `T[K]`
-        //   evaluate to E rather than the union of all tuple element types -
-        //   the bug we are fixing.
-        // - Fixed element `T_i`: T -> the singleton tuple `[T_i]`; K -> 0.
+        // Opaque variadic rests (`...T`) must keep the source tuple in the
+        // indexed access. Rewriting to `T[number]` loses the relationship that
+        // reverse inference uses to infer `T` from mapped tuple rest elements.
+        if elem.rest && !matches!(rest_inner_kind, Some(Some(TypeData::Array(_)))) {
+            let key = self.interner().literal_number(index as f64);
+            let mut inner = self.evaluate_mapped_template_with_source_rebind(
+                mapped.template,
+                source,
+                source,
+                mapped.type_param.name,
+                key,
+            );
+            if matches!(mapped.optional_modifier, Some(MappedModifier::Add)) {
+                inner = self.interner().union2(inner, TypeId::UNDEFINED);
+            }
+            return TupleElement {
+                type_id: inner,
+                name: elem.name,
+                optional: elem.optional,
+                rest: true,
+            };
+        }
+
+        // Per-element source rebinding for concrete array rests:
+        // T -> `Array<E>`, K -> number. This makes `T[K]` evaluate to E rather
+        // than the union of every tuple element type - the bug we are fixing.
         let (new_source, key) = if elem.rest {
             (elem.type_id, TypeId::NUMBER)
         } else {
-            let singleton = self.interner().tuple(vec![TupleElement {
-                type_id: elem.type_id,
-                name: None,
-                optional: false,
-                rest: false,
-            }]);
-            (singleton, self.interner().literal_number(0.0))
+            (source, self.interner().literal_number(index as f64))
         };
         let mut inner = self.evaluate_mapped_template_with_source_rebind(
             mapped.template,
