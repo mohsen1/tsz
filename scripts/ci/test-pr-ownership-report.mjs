@@ -174,6 +174,10 @@ withTempDir((dir) => {
   );
   assert.match(
     result.stdout,
+    /Conflicting Ready Main PRs[\s\S]*Owner counts:[\s\S]*agent:zeta: 1[\s\S]*PRs:[\s\S]*#18: agent:zeta; DIRTY; CONFLICTING; auto-merge off; fix\(solver\): conflicting ready branch/,
+  );
+  assert.match(
+    result.stdout,
     /WIP PRs[\s\S]*Owner counts:[\s\S]*agent:alpha: 1[\s\S]*agent:omega: 1[\s\S]*PRs:[\s\S]*#10: agent:alpha; draft; label; stack root; fix\(checker\): preserve mapped access \(#42\)[\s\S]*#11: agent:omega; draft; label\+title; \[WIP\] fix\(checker\): preserve mapped access \(#42\)/,
   );
 
@@ -346,6 +350,19 @@ withTempDir((dir) => {
     { owner: "agent:delta", count: 1 },
     { owner: "agent:zeta", count: 1 },
   ]);
+  assert.deepEqual(report.conflictingReadyMainPrs, [
+    {
+      number: 18,
+      draft: false,
+      agentName: "zeta",
+      agentLabel: "agent:zeta",
+      autoMergeArmed: false,
+      mergeStateStatus: "DIRTY",
+      mergeable: "CONFLICTING",
+      title: "fix(solver): conflicting ready branch",
+    },
+  ]);
+  assert.deepEqual(report.conflictingReadyMainOwnerCounts, [{ owner: "agent:zeta", count: 1 }]);
   assert.deepEqual(report.wipPrs, [
     {
       number: 10,
