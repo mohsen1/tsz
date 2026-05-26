@@ -1052,7 +1052,17 @@ pub fn inferred_declaration_mapped_constraint_surface_with(
     let mapped_id = crate::mapped_type_id(db, type_id)?;
     let mapped = db.mapped_type(mapped_id);
     let source = crate::keyof_inner_type(db, mapped.constraint)?;
-    let source_param = crate::type_param_info(db, source)?;
+    let Some(source_param) = crate::type_param_info(db, source) else {
+        let source = evaluate(source);
+        if is_primitive_or_primitive_union_for_mapped_surface(db, source) {
+            return Some(source);
+        }
+        let evaluated = mapped_surface_with_optional_undefined(db, evaluate(type_id));
+        return (evaluated != type_id
+            && !matches!(db.lookup(evaluated), Some(TypeData::Mapped(_)))
+            && is_concrete_object_like_mapped_surface_source(db, evaluated))
+        .then_some(evaluated);
+    };
     let declared_constraint = source_param.constraint?;
     let constraint = evaluate(declared_constraint);
 
@@ -1083,8 +1093,60 @@ pub fn inferred_declaration_mapped_constraint_surface_with(
     {
         evaluated = sorted;
     }
+    evaluated = mapped_surface_with_optional_undefined(db, evaluated);
     (evaluated != type_id && !matches!(db.lookup(evaluated), Some(TypeData::Mapped(_))))
         .then_some(evaluated)
+}
+
+fn mapped_surface_with_optional_undefined(db: &dyn TypeDatabase, surface: TypeId) -> TypeId {
+    let Some(TypeData::Object(shape_id)) = db.lookup(surface) else {
+        return surface;
+    };
+    let shape = db.object_shape(shape_id);
+    let mut changed = false;
+    let mut properties = shape.properties.clone();
+    for prop in &mut properties {
+        if !prop.optional || super::type_includes_undefined(db, prop.type_id) {
+            continue;
+        }
+        let original_type = prop.type_id;
+        prop.type_id = db.union2(prop.type_id, TypeId::UNDEFINED);
+        if prop.write_type == original_type {
+            prop.write_type = prop.type_id;
+        }
+        changed = true;
+    }
+    if changed {
+        db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+    } else {
+        surface
+    }
+}
+
+fn is_concrete_object_like_mapped_surface_source(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(
+            TypeData::Object(_)
+            | TypeData::ObjectWithIndex(_)
+            | TypeData::Array(_)
+            | TypeData::Tuple(_)
+            | TypeData::Mapped(_)
+            | TypeData::Function(_)
+            | TypeData::Callable(_),
+        ) => true,
+        Some(TypeData::ReadonlyType(inner)) => {
+            is_concrete_object_like_mapped_surface_source(db, inner)
+        }
+        Some(TypeData::Intersection(list_id)) => db
+            .type_list(list_id)
+            .iter()
+            .copied()
+            .all(|member| is_concrete_object_like_mapped_surface_source(db, member)),
+        _ => false,
+    }
 }
 
 fn is_primitive_or_primitive_union_for_mapped_surface(
