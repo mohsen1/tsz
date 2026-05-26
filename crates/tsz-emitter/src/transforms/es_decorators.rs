@@ -57,6 +57,8 @@ struct ClassBodyFlags<'a> {
     class_this_var: &'a str,
     class_extra_initializers_var: &'a str,
     instance_extra_initializers_var: &'a str,
+    static_extra_initializers_var: &'a str,
+    has_static_method: bool,
     instance_private_brand_var: Option<&'a str>,
 }
 
@@ -577,17 +579,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let has_static_method = decorated_members
             .iter()
             .any(|m| m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        if has_static_method {
+            out.push_str(&format!("{i1}let {static_extra_initializers_var} = [];\n"));
+        }
         if has_instance_method {
             out.push_str(&format!(
                 "{i1}let {instance_extra_initializers_var} = [];\n"
             ));
         }
-        if has_static_method {
-            out.push_str(&format!("{i1}let {static_extra_initializers_var} = [];\n"));
-        }
 
         // Per-member decorator and initializer variables
-        for var_info in &member_vars {
+        for member_index in self.member_var_declaration_order(&decorated_members) {
+            let var_info = &member_vars[member_index];
             out.push_str(&format!("{i1}let {};\n", var_info.decorators_var));
             if var_info.has_initializers {
                 out.push_str(&format!(
@@ -795,6 +798,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                 class_this_var: &class_this_var,
                 class_extra_initializers_var: &class_extra_initializers_var,
                 instance_extra_initializers_var: &instance_extra_initializers_var,
+                static_extra_initializers_var: &static_extra_initializers_var,
+                has_static_method,
                 instance_private_brand_var: instance_private_brand_var.as_deref(),
             },
             member_indent,
@@ -1018,7 +1023,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
         } else {
             ctor_ref
         };
-        for (i, member) in decorated_members.iter().enumerate() {
+        for i in self.decorator_application_order(decorated_members) {
+            let member = &decorated_members[i];
             let var_info = &member_vars[i];
             self.emit_es_decorate_call(
                 member,
@@ -1056,7 +1062,10 @@ impl<'a> TC39DecoratorEmitter<'a> {
         let has_static_method_decorators = decorated_members
             .iter()
             .any(|m| m.is_static && !matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
-        if has_static_method_decorators {
+        let has_static_field_initializers = decorated_members
+            .iter()
+            .any(|m| m.is_static && matches!(m.kind, MemberKind::Field | MemberKind::Accessor));
+        if has_static_method_decorators && !has_static_field_initializers {
             out.push_str(&format!(
                 "{indent}{run_initializers}({ctor_ref}, {static_extra_initializers_var});\n"
             ));
@@ -1099,10 +1108,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
             class_this_var,
             class_extra_initializers_var,
             instance_extra_initializers_var,
+            static_extra_initializers_var,
+            has_static_method,
             instance_private_brand_var,
         } = flags;
         let has_any_instance = *has_any_instance;
         let defer_class_extra_init = *defer_class_extra_init;
+        let has_static_method = *has_static_method;
         let run_init = self.helper("__runInitializers");
         let fields_in_class_body = self.use_static_blocks && self.use_define_for_class_fields;
 
@@ -1507,8 +1519,20 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         format!(", {}", fi.initializer_text)
                     };
 
+                    let init_receiver = if is_static { *_class_alias } else { "this" };
+                    let group_extra_initializers = if is_static {
+                        has_static_method.then_some(*static_extra_initializers_var)
+                    } else {
+                        has_instance_method.then_some(*instance_extra_initializers_var)
+                    };
                     let run_init_expr = if group_idx == 0 {
-                        format!("{run_init}(this, {init_var}{init_arg})")
+                        if let Some(extra_var) = group_extra_initializers {
+                            format!(
+                                "({run_init}({init_receiver}, {extra_var}), {run_init}({init_receiver}, {init_var}{init_arg}))"
+                            )
+                        } else {
+                            format!("{run_init}({init_receiver}, {init_var}{init_arg})")
+                        }
                     } else {
                         let prev_fi = &field_infos[same_group[group_idx - 1]];
                         let prev_extra = member_vars[prev_fi.member_var_index]
@@ -1516,7 +1540,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
                             .as_deref()
                             .unwrap_or("_extra");
                         format!(
-                            "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                            "({run_init}({init_receiver}, {prev_extra}), {run_init}({init_receiver}, {init_var}{init_arg}))"
                         )
                     };
 
@@ -1674,6 +1698,12 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .iter()
             .filter(|fi| decorated_members[fi.member_var_index].is_static)
             .collect();
+        let static_field_extra_handles_class_extra = defer_class_extra_init
+            && static_fields.last().is_some_and(|last_fi| {
+                member_vars[last_fi.member_var_index]
+                    .extra_initializers_var
+                    .is_some()
+            });
 
         if !static_fields.is_empty() {
             if self.use_static_blocks && !self.use_define_for_class_fields {
@@ -1686,21 +1716,28 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     } else {
                         format!(", {}", fi.initializer_text)
                     };
+                    let static_init_receiver = *_class_alias;
                     let rhs = if sf_idx == 0 {
-                        format!("{run_init}(this, {init_var}{init_arg})")
+                        if has_static_method {
+                            format!(
+                                "({run_init}({static_init_receiver}, {static_extra_initializers_var}), {run_init}({static_init_receiver}, {init_var}{init_arg}))"
+                            )
+                        } else {
+                            format!("{run_init}({static_init_receiver}, {init_var}{init_arg})")
+                        }
                     } else {
                         let prev_extra = member_vars[static_fields[sf_idx - 1].member_var_index]
                             .extra_initializers_var
                             .as_deref()
                             .unwrap_or("_extra");
                         format!(
-                            "({run_init}(this, {prev_extra}), {run_init}(this, {init_var}{init_arg}))"
+                            "({run_init}({static_init_receiver}, {prev_extra}), {run_init}({static_init_receiver}, {init_var}{init_arg}))"
                         )
                     };
                     let lhs = if fi.is_bracket_access {
-                        format!("this[{}]", fi.access_expr)
+                        format!("{static_init_receiver}[{}]", fi.access_expr)
                     } else {
-                        format!("this.{}", fi.access_expr)
+                        format!("{static_init_receiver}.{}", fi.access_expr)
                     };
                     out.push_str(&format!("{indent}static {{ {lhs} = {rhs}; }}\n"));
                 }
@@ -1708,7 +1745,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
                 {
-                    out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
+                    let static_init_receiver = *_class_alias;
+                    out.push_str(&format!(
+                        "{indent}static {{\n{inner_indent}{run_init}({static_init_receiver}, {extra_var});\n"
+                    ));
+                    if defer_class_extra_init {
+                        out.push_str(&format!(
+                            "{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n"
+                        ));
+                    }
+                    out.push_str(&format!("{indent}}}\n"));
                 }
             } else if self.use_static_blocks && self.use_define_for_class_fields {
                 // ES2022 + useDefine=true: last static field's extra-initializers in static block
@@ -1716,7 +1762,16 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
                 {
-                    out.push_str(&format!("{indent}static {{\n{inner_indent}{run_init}(this, {extra_var});\n{indent}}}\n"));
+                    let static_init_receiver = *_class_alias;
+                    out.push_str(&format!(
+                        "{indent}static {{\n{inner_indent}{run_init}({static_init_receiver}, {extra_var});\n"
+                    ));
+                    if defer_class_extra_init {
+                        out.push_str(&format!(
+                            "{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n"
+                        ));
+                    }
+                    out.push_str(&format!("{indent}}}\n"));
                 }
             } else {
                 // ES2015: static field inits as comma expressions (post-IIFE)
@@ -1731,7 +1786,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         format!(", {}", fi.initializer_text)
                     };
                     let rhs = if sf_idx == 0 {
-                        format!("{run_init}({class_ref}, {init_var}{init_arg})")
+                        if has_static_method {
+                            format!(
+                                "({run_init}({class_ref}, {static_extra_initializers_var}), {run_init}({class_ref}, {init_var}{init_arg}))"
+                            )
+                        } else {
+                            format!("{run_init}({class_ref}, {init_var}{init_arg})")
+                        }
                     } else {
                         let prev_extra = member_vars[static_fields[sf_idx - 1].member_var_index]
                             .extra_initializers_var
@@ -1786,15 +1847,19 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     && let Some(ref extra_var) =
                         member_vars[last_fi.member_var_index].extra_initializers_var
                 {
-                    post_iife_assignments.push(format!(
-                        "__EXTRA_INIT_IIFE__:{run_init}({class_ref}, {extra_var})"
-                    ));
+                    let mut expr = format!("{run_init}({class_ref}, {extra_var})");
+                    if defer_class_extra_init {
+                        expr.push_str(&format!(
+                            ";\n{indent}{run_init}({class_this_var}, {class_extra_initializers_var})"
+                        ));
+                    }
+                    post_iife_assignments.push(format!("__EXTRA_INIT_IIFE__:{expr}"));
                 }
             }
         }
 
         // ES2022 + class decorators: deferred __runInitializers static block
-        if defer_class_extra_init {
+        if defer_class_extra_init && !static_field_extra_handles_class_extra {
             if self.use_static_blocks {
                 out.push_str(&format!(
                     "{indent}static {{\n{inner_indent}{run_init}({class_this_var}, {class_extra_initializers_var});\n{indent}}}\n"
@@ -1913,7 +1978,13 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     .count();
 
                 let rhs = if instance_field_idx == 0 {
-                    format!("{run_init}(this, {init_var}{init_arg})")
+                    if has_instance_method {
+                        format!(
+                            "({run_init}(this, {instance_extra_initializers_var}), {run_init}(this, {init_var}{init_arg}))"
+                        )
+                    } else {
+                        format!("{run_init}(this, {init_var}{init_arg})")
+                    }
                 } else {
                     let prev_fi = field_infos[..fi_idx]
                         .iter()
@@ -3238,6 +3309,22 @@ impl<'a> TC39DecoratorEmitter<'a> {
             .iter()
             .map(|m| self.compute_member_var_info(m, &mut counter, &mut last_computed_name))
             .collect()
+    }
+
+    fn member_var_declaration_order(&self, members: &[DecoratedMember]) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..members.len()).collect();
+        order.sort_by_key(|&idx| (!members[idx].is_static, idx));
+        order
+    }
+
+    fn decorator_application_order(&self, members: &[DecoratedMember]) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..members.len()).collect();
+        order.sort_by_key(|&idx| {
+            let member = &members[idx];
+            let field_bucket = matches!(member.kind, MemberKind::Field);
+            (field_bucket, !member.is_static, idx)
+        });
+        order
     }
 
     fn compute_member_var_info(

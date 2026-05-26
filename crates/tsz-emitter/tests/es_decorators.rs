@@ -276,6 +276,68 @@ class C {
 }
 
 #[test]
+fn class_decorator_member_application_orders_static_before_instance_fields() {
+    let source = "\
+@dec
+class C {
+    @dec
+    method() {}
+    @dec
+    y;
+    @dec
+    static method() {}
+    @dec
+    static y;
+}";
+    let output = emit_decorator_with(source, true, true);
+
+    let static_extra = output
+        .find("let _staticExtraInitializers = [];")
+        .expect("expected static extra initializer declaration");
+    let instance_extra = output
+        .find("let _instanceExtraInitializers = [];")
+        .expect("expected instance extra initializer declaration");
+    assert!(
+        static_extra < instance_extra,
+        "Static extra initializer declarations should precede instance ones.\nOutput:\n{output}"
+    );
+
+    let static_method = output
+        .find("__esDecorate(this, null, _static_method_decorators")
+        .expect("expected static method decorator application");
+    let instance_method = output
+        .find("__esDecorate(this, null, _method_decorators")
+        .expect("expected instance method decorator application");
+    let static_field = output
+        .find("__esDecorate(null, null, _static_y_decorators")
+        .expect("expected static field decorator application");
+    let instance_field = output
+        .find("__esDecorate(null, null, _y_decorators")
+        .expect("expected instance field decorator application");
+    assert!(
+        static_method < instance_method
+            && instance_method < static_field
+            && static_field < instance_field,
+        "Decorator applications should run static methods, instance methods, static fields, then instance fields.\nOutput:\n{output}"
+    );
+
+    assert!(
+        output.contains(
+            "y = (__runInitializers(this, _instanceExtraInitializers), __runInitializers(this, _y_initializers, void 0));"
+        ) && output.contains(
+            "static y = (__runInitializers(_classThis, _staticExtraInitializers), __runInitializers(_classThis, _static_y_initializers, void 0));"
+        ),
+        "First decorated fields should consume method extra initializers in their field initializer.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static {\n            __runInitializers(_classThis, _static_y_extraInitializers);\n            __runInitializers(_classThis, _classExtraInitializers);\n        }"
+        ),
+        "Static field and class extra initializers should share the final static block.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_static_blocks_private_method_descriptor_body_is_not_brace_scanned() {
     let source = r#"
 class C {
