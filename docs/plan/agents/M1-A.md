@@ -24,8 +24,8 @@ node scripts/ci/pr-ownership-report.mjs
 ## Current Assignment
 
 - Primary lane: PR readiness, stale-WIP cleanup, and ownership label hygiene.
-- 2026-05-26 00:10 UTC lane refresh:
-  - Direct `agent:M1-A` PR queue is empty after `#10173` merged.
+- 2026-05-26 00:22 UTC lane refresh:
+  - Direct `agent:M1-A` PR queue is empty after `#10175` merged.
   - `#9465` landed on 2026-05-25 as
     `839abb594d test(checker): pin Record<TemplateLiteralPattern,V>
     excess-property check (#8725)`. Its synthetic queue branch
@@ -60,6 +60,13 @@ node scripts/ci/pr-ownership-report.mjs
     stacked PRs as `stack root`, `stack middle`, or `stack child`; the latest
     live report shows 64 open PRs, 20 drafts, 44 ready PRs, 4 stacked children,
     zero missing `AgentName` entries, and zero AgentName/label mismatches.
+  - `#10175` merged on 2026-05-26 as
+    `98a8bc656c ci: classify duplicate issue draft stacks (#10175)`.
+    The duplicate-issue section now classifies draft clusters as
+    `stacked-only drafts`, `mixed stacked/unstacked drafts`, or
+    `unstacked drafts`; the latest live report shows unstacked duplicate-draft
+    cleanup targets on `#9694`, `#9809`, and `#9886`, plus mixed clusters on
+    `#9634` and `#9904`.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`; the latest dry run reports zero stale queue
