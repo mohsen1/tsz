@@ -178,6 +178,12 @@ node scripts/ci/pr-ownership-report.mjs
     Verbose queue-branch cleanup dry runs now carry open PR `updated_at` into
     preserved branch skips, so cleanup `Skip Owner Counts` can also show
     oldest-update dates for lane-level stale branch handoffs.
+  - `#10221` merged on 2026-05-26 as
+    `90748de316 ci: show queue skip updated dates (#10221)`.
+    Verbose queue and queue-branch cleanup dry runs now include conditional
+    `Updated` columns in capped skip detail tables when timestamp data is
+    available, so individual stale rows can be handed off without opening each
+    PR.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -210,7 +216,8 @@ node scripts/ci/pr-ownership-report.mjs
     either drafts, not auto-merge armed, or already handed off. Use
     `--verbose` when triaging this surface; `Skip Owner Counts` gives the full
     lane summary with oldest-update dates when available, and skipped PR rows
-    include owner labels for direct handoff.
+    include owner labels plus per-row updated dates for direct handoff when
+    timestamp data is available.
   - Use the ownership report's `Blocked Ready Main PRs` section for the current
     ready main-based `mergeStateStatus=BLOCKED` surface. GitHub refreshes this
     state asynchronously, so do not freeze the count in the lane note; re-run
@@ -231,8 +238,9 @@ node scripts/ci/pr-ownership-report.mjs
     active queue runs with owner labels and status/start time; the exact
     active-run subset changes as synthetic runs complete, so re-run the
     cleanup dry-run for current owner counts, oldest-update dates, run ids, and
-    ages. The stale merged-PR queue branches for `#9848`, `#9889`, `#10160`,
-    and `#10163` were deleted.
+    ages. Detailed cleanup skip rows also include per-row updated dates when
+    timestamp data is available. The stale merged-PR queue branches for
+    `#9848`, `#9889`, `#10160`, and `#10163` were deleted.
   - Queue branch cleanup dry runs should use
     `--cleanup-superseded-open-queue-branches` so obsolete suffixed open-PR
     branches do not accumulate.
