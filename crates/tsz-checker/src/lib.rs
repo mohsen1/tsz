@@ -547,6 +547,9 @@ mod intersection_callable_constraint_ts2344_tests;
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
 #[cfg(test)]
+#[path = "tests/issue_9762_literal_init_callback_inference.rs"]
+mod issue_9762_literal_init_callback_inference;
+#[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
 #[cfg(test)]
