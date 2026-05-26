@@ -280,6 +280,23 @@ function fmtWarningFields(warning) {
     : "metadata mismatch";
 }
 
+function measurementProfileReportWarnings(profile, validationWarnings) {
+  const warnings = [];
+  if (profile?.warning) {
+    warnings.push({
+      file: "artifact measurement_profile",
+      message: profile.warning,
+    });
+  }
+  for (const warning of validationWarnings.measurement_profile) {
+    warnings.push({
+      file: warning.file ?? "unknown input",
+      message: fmtWarningFields(warning),
+    });
+  }
+  return warnings;
+}
+
 function artifactAge(generatedAt) {
   if (!generatedAt) return "unknown age";
   const h = Math.round((Date.now() - new Date(generatedAt).getTime()) / 3_600_000);
@@ -296,6 +313,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, rows, m
   const profileLabel = profile.present
     ? `${profile.mode ?? "unknown"}${profile.warning ? ` (${profile.warning})` : ""}`
     : profile.warning;
+  const measurementWarnings = measurementProfileReportWarnings(profile, validationWarnings);
 
   const lines = [
     `## Benchmark artifact readiness — ${new Date().toUTCString()}`,
@@ -316,7 +334,7 @@ function buildReport({ artifact, measurementProfile, validationWarnings, rows, m
     `| 🚫 missing | ${missing.length} |`,
     `| Duplicate rows | ${duplicates.length} |`,
     `| Runner metadata warnings | ${validationWarnings.runner_environment.length} |`,
-    `| Measurement profile warnings | ${validationWarnings.measurement_profile.length} |`,
+    `| Measurement profile warnings | ${measurementWarnings.length} |`,
     "",
   ];
 
@@ -340,10 +358,10 @@ function buildReport({ artifact, measurementProfile, validationWarnings, rows, m
     lines.push("");
   }
 
-  if (validationWarnings.measurement_profile.length > 0) {
-    lines.push(`### Measurement profile warnings (${validationWarnings.measurement_profile.length})`, "");
-    for (const warning of validationWarnings.measurement_profile) {
-      lines.push(`- \`${mdCell(warning.file ?? "unknown input")}\`: ${mdCell(fmtWarningFields(warning))}`);
+  if (measurementWarnings.length > 0) {
+    lines.push(`### Measurement profile warnings (${measurementWarnings.length})`, "");
+    for (const warning of measurementWarnings) {
+      lines.push(`- \`${mdCell(warning.file)}\`: ${mdCell(warning.message)}`);
     }
     lines.push("");
   }
