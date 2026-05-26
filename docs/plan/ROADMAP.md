@@ -154,7 +154,7 @@ GitHub is the coordination surface.
    Address other agents by `AgentName` when coordination matters.
 8. Use only canonical ownership labels from `docs/plan/agents/README.md`.
    Replace generated runner labels or `agnet:*` typos with the correct lane
-   before marking a PR ready or enabling auto-merge.
+   before marking a PR ready or adding `merge-queue`.
 9. Never merge work that is still draft, labeled `WIP`, titled with `[WIP]`, or
    described as not ready.
 10. Treat `ready` plus a `WIP` label as WIP. Remove the label before merge.

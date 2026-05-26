@@ -41,7 +41,7 @@ function pr(overrides = {}) {
     headRefOid: "a".repeat(40),
     isCrossRepository: false,
     isDraft: false,
-    labels: [],
+    labels: ["merge-queue"],
     number: 42,
     statusCheckRollup: [check(), check({ name: "GitGuardian Security Checks" })],
     title: "fix(ci): sample",
@@ -60,6 +60,7 @@ if (originalAgentName === undefined) {
   process.env.AGENT_NAME = originalAgentName;
 }
 assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
+assert.equal(parseArgs(["--repository", "owner/repo", "--queue-label", "ready-to-merge"]).queueLabel, "ready-to-merge");
 assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.equal(
   parseArgs(["--repository", "owner/repo", "--cleanup-superseded-open-queue-branches"]).cleanupSupersededOpenQueueBranches,
@@ -196,7 +197,8 @@ assert.equal(
 );
 
 assert.equal(queueSkipReason(pr({ isDraft: true }), { kind: "passed" }, "main"), "draft PR");
-assert.equal(queueSkipReason(pr({ autoMergeRequest: null }), { kind: "passed" }, "main"), "auto-merge is not armed");
+assert.equal(queueSkipReason(pr({ labels: [] }), { kind: "passed" }, "main"), "missing merge-queue label");
+assert.equal(queueSkipReason(pr({ labels: ["ready-to-merge"] }), { kind: "passed" }, "main", "ready-to-merge"), null);
 assert.equal(queueSkipReason(pr({ labels: ["WIP"] }), { kind: "passed" }, "main"), "ready-state WIP marker: WIP label");
 assert.equal(queueSkipReason(pr(), { kind: "pending", reason: "pending checks" }, "main"), "pending checks");
 assert.equal(queueSkipReason(pr(), { kind: "passed" }, "main"), null);
@@ -262,12 +264,12 @@ assert.deepEqual(
 assert.deepEqual(
   skipReasonCounts([
     { number: 1, reason: "draft PR" },
-    { number: 2, reason: "auto-merge is not armed" },
+    { number: 2, reason: "missing merge-queue label" },
     { number: 3, reason: "draft PR" },
   ]),
   [
     { reason: "draft PR", count: 2 },
-    { reason: "auto-merge is not armed", count: 1 },
+    { reason: "missing merge-queue label", count: 1 },
   ],
 );
 assert.deepEqual(
@@ -284,8 +286,8 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerCounts([
     { owner: "agent:M4-A", reason: "draft PR" },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
   ]),
   [
     { owner: "agent:M4-A", count: 2 },
@@ -295,15 +297,15 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerReasonCounts([
     { owner: "agent:M4-A", reason: "draft PR" },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", reason: "missing merge-queue label" },
     { owner: "agent:M4-B", reason: "PR #10084 is open", summaryReason: "open PR branch" },
   ]),
   [
-    { owner: "agent:M4-A", reason: "auto-merge is not armed", count: 2 },
+    { owner: "agent:M4-A", reason: "missing merge-queue label", count: 2 },
     { owner: "agent:M4-A", reason: "draft PR", count: 1 },
-    { owner: "agent:M4-B", reason: "auto-merge is not armed", count: 1 },
+    { owner: "agent:M4-B", reason: "missing merge-queue label", count: 1 },
     { owner: "agent:M4-B", reason: "open PR branch", count: 1 },
   ],
 );
@@ -323,8 +325,8 @@ assert.deepEqual(
 assert.deepEqual(
   skipOwnerCounts([
     { owner: "agent:M4-A", updatedAt: "2026-05-25T10:00:00Z", reason: "draft PR" },
-    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "auto-merge is not armed" },
-    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "auto-merge is not armed" },
+    { owner: "agent:M4-B", updatedAt: "2026-05-24T09:00:00Z", reason: "missing merge-queue label" },
+    { owner: "agent:M4-A", updatedAt: "2026-05-23T08:00:00Z", reason: "missing merge-queue label" },
   ]),
   [
     { owner: "agent:M4-A", count: 2, oldestUpdatedAt: "2026-05-23T08:00:00Z" },
@@ -494,17 +496,17 @@ const queueSkipFormat = formatResult({
   skips: Array.from({ length: 27 }, (_, index) => ({
     number: index + 1,
     owner: index % 2 === 0 ? "agent:M1-A" : "agent:M4-B",
-    reason: index % 3 === 0 ? "draft PR" : "auto-merge is not armed",
+    reason: index % 3 === 0 ? "draft PR" : "missing merge-queue label",
   })),
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipFormat, /### Skip Reason Counts/);
-assert.match(queueSkipFormat, /\| 18 \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 18 \| missing merge-queue label \|/);
 assert.match(queueSkipFormat, /\| 9 \| draft PR \|/);
 assert.match(queueSkipFormat, /### Skip Owner Counts/);
 assert.match(queueSkipFormat, /\| 14 \| agent:M1-A \|/);
 assert.match(queueSkipFormat, /\| 13 \| agent:M4-B \|/);
 assert.match(queueSkipFormat, /### Skip Owner Reason Counts/);
-assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| auto-merge is not armed \|/);
+assert.match(queueSkipFormat, /\| 9 \| agent:M4-B \| missing merge-queue label \|/);
 assert.match(queueSkipFormat, /\| 5 \| agent:M1-A \| draft PR \|/);
 assert.match(queueSkipFormat, /\| PR \| Owner \| Reason \|/);
 assert.match(queueSkipFormat, /\| #1 \| agent:M1-A \| draft PR \|/);
@@ -515,15 +517,15 @@ const queueSkipOwnerDateFormat = formatResult({
   selected: null,
   skips: [
     { number: 1, owner: "agent:M1-A", reason: "draft PR", updatedAt: "2026-05-25T10:00:00Z" },
-    { number: 2, owner: "agent:M1-A", reason: "auto-merge is not armed", updatedAt: "2026-05-23T08:00:00Z" },
-    { number: 3, owner: "agent:M4-B", reason: "auto-merge is not armed", updatedAt: "2026-05-24T09:00:00Z" },
+    { number: 2, owner: "agent:M1-A", reason: "missing merge-queue label", updatedAt: "2026-05-23T08:00:00Z" },
+    { number: 3, owner: "agent:M4-B", reason: "missing merge-queue label", updatedAt: "2026-05-24T09:00:00Z" },
   ],
 }, parseArgs(["--repository", "owner/repo", "--dry-run", "--verbose"]));
 assert.match(queueSkipOwnerDateFormat, /\| Count \| Owner \| Oldest updated \| Oldest age \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 2 \| agent:M1-A \| 2026-05-23 \| 3d 3h \|/);
 assert.match(queueSkipOwnerDateFormat, /\| 1 \| agent:M4-B \| 2026-05-24 \| 2d 2h \|/);
 assert.match(queueSkipOwnerDateFormat, /\| PR \| Owner \| Updated \| Reason \|/);
-assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| auto-merge is not armed \|/);
+assert.match(queueSkipOwnerDateFormat, /\| #2 \| agent:M1-A \| 2026-05-23 \| missing merge-queue label \|/);
 
 assert.match(
   formatResult({
