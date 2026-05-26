@@ -41,6 +41,35 @@ pub(super) fn strip_param_types(text: &str) -> String {
     )
 }
 
+/// Strip TypeScript annotations from member text copied from source.
+pub(super) fn strip_member_type_annotations(text: &str) -> String {
+    let text = strip_param_types(text);
+    strip_method_return_type(&text)
+}
+
+fn strip_method_return_type(text: &str) -> String {
+    let Some(body_start) = text.find('{') else {
+        return text.to_string();
+    };
+    let header = &text[..body_start];
+    let Some(paren_close) = header.rfind(')') else {
+        return text.to_string();
+    };
+    let after_params = &header[paren_close + 1..];
+    let Some(colon_rel) = after_params.find(':') else {
+        return text.to_string();
+    };
+    if !after_params[..colon_rel].trim().is_empty() {
+        return text.to_string();
+    }
+
+    format!(
+        "{} {}",
+        text[..paren_close + 1].trim_end(),
+        &text[body_start..]
+    )
+}
+
 pub(super) fn normalize_member_indentation(text: &str) -> String {
     let lines: Vec<&str> = text.lines().collect();
     if lines.len() <= 1 {

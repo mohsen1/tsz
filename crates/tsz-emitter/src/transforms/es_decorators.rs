@@ -1985,8 +1985,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     text = trimmed;
                 }
             }
-            // Strip TS type annotations from setter/method params: `(v: number)` → `(v)`
-            let text = strip_param_types(text);
+            // Strip TS type annotations from copied member syntax.
+            let text = strip_member_type_annotations(text);
             let text = normalize_member_indentation(&text);
             let text = text.as_str();
             // Normalize empty method bodies: `{}` -> `{ }`
