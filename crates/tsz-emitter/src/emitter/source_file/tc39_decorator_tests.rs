@@ -422,3 +422,61 @@ class D {
         "ES2015 decorated static private auto-accessor output must not keep native private access.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn tc39_es2015_nonstatic_private_members_use_storage_and_descriptor_temps() {
+    let source = "\
+declare var dec: any;
+
+class C {
+    @dec
+    #field = 0;
+    @dec
+    #method() {}
+    @dec
+    get #value() { return 1; }
+    @dec
+    set #value(value) {}
+    @dec
+    accessor #acc = 2;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2015,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_C_instances")
+            && output.contains("_C_field = new WeakMap()")
+            && output.contains("_C_acc_accessor_storage = new WeakMap()")
+            && output.contains("_C_instances = new WeakSet()")
+            && output.contains("_C_instances.add(this);")
+            && output.contains("_C_field.set(this, __runInitializers(this, _private_field_initializers, 0));")
+            && output.contains("_C_acc_accessor_storage.set(this, __runInitializers(this, _private_acc_initializers, 2));")
+            && output.contains("has: obj => __classPrivateFieldIn(_C_field, obj), get: obj => __classPrivateFieldGet(obj, _C_field, \"f\"), set: (obj, value) => { __classPrivateFieldSet(obj, _C_field, value, \"f\"); }")
+            && output.contains("_C_method_get = function _C_method_get() { return _private_method_descriptor.value; }")
+            && output.contains("get: obj => __classPrivateFieldGet(obj, _C_instances, \"a\", _C_method_get)")
+            && output.contains("_C_value_get = function _C_value_get() { return _private_get_value_descriptor.get.call(this); }")
+            && output.contains("_C_value_set = function _C_value_set(value) { return _private_set_value_descriptor.set.call(this, value); }")
+            && output.contains("_C_acc_get = function _C_acc_get() { return _private_acc_descriptor.get.call(this); }")
+            && output.contains("_C_acc_set = function _C_acc_set(value) { return _private_acc_descriptor.set.call(this, value); }")
+            && output.contains("__classPrivateFieldGet(this, _C_acc_accessor_storage, \"f\")")
+            && output.contains("__classPrivateFieldSet(this, _C_acc_accessor_storage, value, \"f\")"),
+        "ES2015 decorated non-static private members should lower through storage/brand descriptor temps.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(".#field")
+            && !output.contains(".#method")
+            && !output.contains(".#value")
+            && !output.contains(".#acc")
+            && !output.contains("get #")
+            && !output.contains("set #"),
+        "ES2015 decorated non-static private member output must not keep native private syntax.\nOutput:\n{output}"
+    );
+}
