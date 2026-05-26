@@ -1,6 +1,13 @@
 use super::*;
 use tsz_parser::parser::node::ClassData;
 
+#[derive(Default)]
+struct PrivateAccessHelperNeeds {
+    has: bool,
+    get: bool,
+    set: bool,
+}
+
 impl<'a> LoweringPass<'a> {
     pub(super) fn class_has_static_private_method(&self, class_data: &ClassData) -> bool {
         class_data.members.nodes.iter().any(|&member_idx| {
@@ -27,6 +34,7 @@ impl<'a> LoweringPass<'a> {
         let has_decorated_member = self.class_has_decorated_member(class_data);
         let has_decorated_field_and_auto_accessor =
             self.class_has_decorated_field_and_auto_accessor(class_data);
+        let private_helper_needs = self.decorated_static_private_member_helper_needs(class_data);
         let has_class_decorators = class_data.modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
                 self.arena
@@ -45,7 +53,8 @@ impl<'a> LoweringPass<'a> {
         let helpers = self.transforms.helpers_mut();
         helpers.es_decorate = true;
         helpers.run_initializers = true;
-        if has_decorated_member && !has_decorated_field_and_auto_accessor {
+        if has_decorated_member && (!has_decorated_field_and_auto_accessor || has_class_decorators)
+        {
             helpers.run_initializers_before_es_decorate = true;
         }
         if needs_prop_key {
@@ -57,6 +66,17 @@ impl<'a> LoweringPass<'a> {
         if needs_class_auto_accessor_helpers {
             helpers.mark_class_private_field_get();
             helpers.mark_class_private_field_set();
+        }
+        if has_class_decorators {
+            if private_helper_needs.has {
+                helpers.mark_class_private_field_in();
+            }
+            if private_helper_needs.get {
+                helpers.mark_class_private_field_get();
+            }
+            if private_helper_needs.set {
+                helpers.mark_class_private_field_set();
+            }
         }
     }
 
@@ -119,6 +139,95 @@ impl<'a> LoweringPass<'a> {
         };
 
         modifiers.is_some_and(|mods| {
+            mods.nodes.iter().any(|&mod_idx| {
+                self.arena
+                    .get(mod_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+            })
+        })
+    }
+
+    fn decorated_static_private_member_helper_needs(
+        &self,
+        class_data: &ClassData,
+    ) -> PrivateAccessHelperNeeds {
+        let mut needs = PrivateAccessHelperNeeds::default();
+        for &member_idx in &class_data.members.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            match member_node.kind {
+                k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                    let Some(method) = self.arena.get_method_decl(member_node) else {
+                        continue;
+                    };
+                    if self.member_shape_is_decorated_static_private(&method.modifiers, method.name)
+                    {
+                        needs.has = true;
+                        needs.get = true;
+                    }
+                }
+                k if k == syntax_kind_ext::GET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.member_shape_is_decorated_static_private(
+                        &accessor.modifiers,
+                        accessor.name,
+                    ) {
+                        needs.has = true;
+                        needs.get = true;
+                    }
+                }
+                k if k == syntax_kind_ext::SET_ACCESSOR => {
+                    let Some(accessor) = self.arena.get_accessor(member_node) else {
+                        continue;
+                    };
+                    if self.member_shape_is_decorated_static_private(
+                        &accessor.modifiers,
+                        accessor.name,
+                    ) {
+                        needs.has = true;
+                        needs.set = true;
+                    }
+                }
+                k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let Some(property) = self.arena.get_property_decl(member_node) else {
+                        continue;
+                    };
+                    if self.member_shape_is_decorated_static_private(
+                        &property.modifiers,
+                        property.name,
+                    ) {
+                        needs.has = true;
+                        needs.get = true;
+                        needs.set = true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        needs
+    }
+
+    fn member_shape_is_decorated_static_private(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+        name: NodeIndex,
+    ) -> bool {
+        self.arena.is_static(modifiers)
+            && self
+                .arena
+                .get(name)
+                .is_some_and(|name_node| name_node.kind == SyntaxKind::PrivateIdentifier as u16)
+            && self.modifiers_contain_decorator(modifiers)
+    }
+
+    fn modifiers_contain_decorator(
+        &self,
+        modifiers: &Option<tsz_parser::parser::NodeList>,
+    ) -> bool {
+        modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
                 self.arena
                     .get(mod_idx)

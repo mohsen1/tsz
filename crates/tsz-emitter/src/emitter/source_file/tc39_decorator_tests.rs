@@ -460,6 +460,58 @@ class C {
 }
 
 #[test]
+fn class_decorated_static_private_members_request_access_helpers_in_tsc_order() {
+    let source = "\
+declare const dec: any;
+
+@dec
+class C {
+    @dec
+    static #m() {}
+
+    @dec
+    static get #x() { return 1; }
+
+    @dec
+    static set #x(value) {}
+
+    @dec
+    static #y = 1;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES2022,
+            use_define_for_class_fields: true,
+            ..Default::default()
+        },
+    );
+
+    let run_initializers = output
+        .find("var __runInitializers")
+        .expect("expected __runInitializers helper");
+    let es_decorate = output
+        .find("var __esDecorate")
+        .expect("expected __esDecorate helper");
+    let private_in = output
+        .find("var __classPrivateFieldIn")
+        .expect("expected __classPrivateFieldIn helper");
+    let private_get = output
+        .find("var __classPrivateFieldGet")
+        .expect("expected __classPrivateFieldGet helper");
+    let private_set = output
+        .find("var __classPrivateFieldSet")
+        .expect("expected __classPrivateFieldSet helper");
+
+    assert!(
+        run_initializers < es_decorate && private_in < private_get && private_get < private_set,
+        "Class-decorated static private member access helpers should follow tsc helper order.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;
