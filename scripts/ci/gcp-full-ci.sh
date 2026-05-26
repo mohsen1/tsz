@@ -387,6 +387,7 @@ run_lint() {
   node scripts/ci/test-pr-ready-state.mjs || return $?
   node scripts/ci/test-refresh-green-prs.mjs || return $?
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
+  node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?

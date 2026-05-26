@@ -95,7 +95,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         self.resolve_computed_property_symbol(computed.expression)
-            .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
+            .is_some_and(|sym_id| {
+                self.symbol_refers_to_unique_symbol(sym_id)
+                    || self.symbol_has_nonunique_symbol_annotation(sym_id)
+            })
     }
 
     pub(super) fn computed_property_expression_name_atom(
@@ -107,7 +110,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         }
 
         let sym_id = self.resolve_computed_property_symbol(expr_idx)?;
-        self.symbol_refers_to_unique_symbol(sym_id).then(|| {
+        (self.symbol_refers_to_unique_symbol(sym_id)
+            || self.symbol_has_nonunique_symbol_annotation(sym_id))
+        .then(|| {
             self.ctx
                 .types
                 .intern_string(&format!("__unique_{}", sym_id.0))
@@ -118,7 +123,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         self.get_well_known_symbol_property_name(expr_idx).is_some()
             || self
                 .resolve_computed_property_symbol(expr_idx)
-                .is_some_and(|sym_id| self.symbol_refers_to_unique_symbol(sym_id))
+                .is_some_and(|sym_id| {
+                    self.symbol_refers_to_unique_symbol(sym_id)
+                        || self.symbol_has_nonunique_symbol_annotation(sym_id)
+                })
     }
 
     fn get_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
