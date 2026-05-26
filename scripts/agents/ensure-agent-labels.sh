@@ -20,8 +20,9 @@ usage: scripts/agents/ensure-agent-labels.sh [--audit]
 Create or refresh the GitHub labels used by multi-agent sessions.
 
 With --audit, list noncanonical agent ownership labels and open PRs whose
-agent ownership labels are missing, duplicated, or noncanonical. The audit
-does not edit labels.
+agent ownership labels are missing, duplicated, or noncanonical. Open PRs whose
+body explicitly says no canonical agent lane was assigned are reported
+separately. The audit does not edit labels.
 USAGE
 }
 
@@ -56,7 +57,7 @@ is_canonical_agent_label() {
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
 
 if [[ "$AUDIT" == true ]]; then
-  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels)"
+  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels,body)"
   agents_json="$(
     printf '%s\n' "${AGENTS[@]}" | node -e '
       const fs = require("fs");
@@ -75,11 +76,16 @@ const noncanonicalLabels = labels
 const missingCanonicalLabels = [...canonical].filter((label) => !labels.includes(label)).sort();
 
 const missingPrs = [];
+const intentionallyUnassignedPrs = [];
 const multiplePrs = [];
 const noncanonicalPrs = [];
 for (const pr of prs) {
   const agentLabels = pr.labels.map((label) => label.name).filter(ownershipLabel);
   if (agentLabels.length === 0) {
+    if (/\bno canonical agent lane was assigned\b/i.test(pr.body ?? "")) {
+      intentionallyUnassignedPrs.push(pr);
+      continue;
+    }
     missingPrs.push(pr);
     continue;
   }
@@ -108,12 +114,18 @@ console.log("");
 console.log(`missing_canonical_labels=${missingCanonicalLabels.length}`);
 console.log(`noncanonical_agent_labels=${noncanonicalLabels.length}`);
 console.log(`open_prs_missing_agent_label=${missingPrs.length}`);
+console.log(`open_prs_intentionally_unassigned=${intentionallyUnassignedPrs.length}`);
 console.log(`open_prs_multiple_agent_labels=${multiplePrs.length}`);
 console.log(`open_prs_noncanonical_agent_label=${noncanonicalPrs.length}`);
 
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
 printRows("Open PRs Missing Agent Label", missingPrs, (pr) => `- #${pr.number} ${pr.title}`);
+printRows(
+  "Open PRs Intentionally Unassigned",
+  intentionallyUnassignedPrs,
+  (pr) => `- #${pr.number} ${pr.title}`,
+);
 printRows(
   "Open PRs With Multiple Agent Labels",
   multiplePrs,

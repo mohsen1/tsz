@@ -10,7 +10,7 @@ use crate::evaluation::evaluate::evaluate_type;
 use crate::intern::TypeInterner;
 use crate::types::{
     CallSignature, CallableShape, FunctionShape, IndexSignature, ObjectFlags, ObjectShape,
-    ParamInfo, TypeData,
+    ParamInfo, TemplateSpan, TypeData,
 };
 
 /// Helper to check if a type is a union containing specific literals
@@ -458,6 +458,112 @@ fn test_keyof_object_with_collapsed_string_symbol_index_includes_symbol() {
     assert!(member_list.contains(&TypeId::STRING));
     assert!(member_list.contains(&TypeId::NUMBER));
     assert!(member_list.contains(&TypeId::SYMBOL));
+}
+
+#[test]
+fn test_keyof_template_index_signature_preserves_template_key() {
+    let interner = TypeInterner::new();
+    let template_key = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix_")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: template_key,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+
+    assert_eq!(
+        result, template_key,
+        "keyof a template-literal index signature must preserve the template key type"
+    );
+}
+
+#[test]
+fn test_keyof_template_index_signature_with_fixed_property_excludes_plain_string_number() {
+    let interner = TypeInterner::new();
+    let template_key = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("env:")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let fixed_key = interner.literal_string("fixed");
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![PropertyInfo::new(
+            interner.intern_string("fixed"),
+            TypeId::STRING,
+        )],
+        string_index: Some(IndexSignature {
+            key_type: template_key,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!(
+            "Expected union for fixed property plus template index, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let member_list = interner.type_list(members);
+
+    assert!(member_list.contains(&fixed_key));
+    assert!(member_list.contains(&template_key));
+    assert!(!member_list.contains(&TypeId::STRING));
+    assert!(!member_list.contains(&TypeId::NUMBER));
+}
+
+#[test]
+fn test_keyof_template_and_number_index_signature_includes_number() {
+    let interner = TypeInterner::new();
+    let template_key = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("prefix_")),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+    let obj = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: template_key,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::BOOLEAN,
+            readonly: false,
+            param_name: None,
+        }),
+    });
+
+    let result = evaluate_type(&interner, interner.keyof(obj));
+    let Some(TypeData::Union(members)) = interner.lookup(result) else {
+        panic!(
+            "Expected union for template plus number index signature, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let member_list = interner.type_list(members);
+
+    assert!(member_list.contains(&template_key));
+    assert!(member_list.contains(&TypeId::NUMBER));
+    assert!(!member_list.contains(&TypeId::STRING));
 }
 
 #[test]

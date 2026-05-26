@@ -570,6 +570,44 @@ var c: MyNumberArray = [...strs];
 }
 
 #[test]
+fn test_array_spread_ts2488_preserves_literal_operand_display() {
+    let source = r#"
+const a = [...5];
+const b = [...true];
+const c = [...{ value: 1 }];
+declare let n: number;
+const d = [...n];
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let messages = diagnostic_messages_with_code(&diagnostics, 2488);
+
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type '5' must have")),
+        "numeric spread literal should stay literal in TS2488; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type 'true' must have")),
+        "boolean spread literal should stay literal in TS2488; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type '{ value: number; }' must have")),
+        "object spread operand should keep widened property display; got {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Type 'number' must have")),
+        "non-literal number spread operand should still display number; got {messages:?}"
+    );
+}
+
+#[test]
 fn test_destructuring_index_signature_only_emits_ts2488_in_es2015() {
     // Pinned by `destructuringArrayBindingPatternAndAssignment2.ts`. tsc emits
     // TS2488 for `var [c4, c5, c6] = foo(1)` when `foo` returns an interface

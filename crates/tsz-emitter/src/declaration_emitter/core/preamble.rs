@@ -87,12 +87,19 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn normalize_preserved_reference_path(directive: &str) -> String {
+        const LIB_PREFIX: &str = "/.lib/";
+        const RELATIVE_LIB_PREFIX: &str = "../../.lib/";
+
         let Some(path_start) = directive.find("path=\"/.lib/") else {
             return directive.to_string();
         };
         let value_start = path_start + "path=\"".len();
-        let mut normalized = directive.to_string();
-        normalized.replace_range(value_start..value_start + "/.lib/".len(), "../../.lib/");
-        normalized
+        let value_end = value_start + LIB_PREFIX.len();
+        format!(
+            "{}{}{}",
+            &directive[..value_start],
+            RELATIVE_LIB_PREFIX,
+            &directive[value_end..]
+        )
     }
 }

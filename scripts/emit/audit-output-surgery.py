@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import pathlib
 import re
 import sys
@@ -37,6 +38,13 @@ class AllowEntry:
     category: str
     max_count: int
     reason: str
+
+
+@dataclasses.dataclass(frozen=True)
+class FailureSummary:
+    unallowlisted: int = 0
+    over_allowlist: int = 0
+    stale_allowlist: int = 0
 
 
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
@@ -147,6 +155,86 @@ def audit(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> list[str
     return failures
 
 
+def summarize_failures(failures: list[str]) -> FailureSummary:
+    summary = FailureSummary()
+    for failure in failures:
+        if "unallowlisted output-surgery call(s)" in failure:
+            summary = dataclasses.replace(summary, unallowlisted=summary.unallowlisted + 1)
+        elif "allowlist entry is stale" in failure:
+            summary = dataclasses.replace(summary, stale_allowlist=summary.stale_allowlist + 1)
+        elif "allowlist max is" in failure:
+            summary = dataclasses.replace(summary, over_allowlist=summary.over_allowlist + 1)
+    return summary
+
+
+def file_status(path: str, count: int, allowlist: dict[str, AllowEntry]) -> str:
+    entry = allowlist.get(path)
+    if entry is None:
+        return "unallowlisted"
+    if count == 0:
+        return "stale_allowlist"
+    if count > entry.max_count:
+        return "over_allowlist"
+    return "allowlisted"
+
+
+def build_file_summaries(
+    counts: Counter[str],
+    allowlist: dict[str, AllowEntry],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for path in sorted(set(counts) | set(allowlist)):
+        entry = allowlist.get(path)
+        count = counts.get(path, 0)
+        summaries.append(
+            {
+                "path": path,
+                "count": count,
+                "category": entry.category if entry else "UNALLOWLISTED",
+                "max_count": entry.max_count if entry else None,
+                "reason": entry.reason if entry else None,
+                "status": file_status(path, count, allowlist),
+            }
+        )
+    return summaries
+
+
+def build_json_report(
+    findings: list[Finding],
+    allowlist: dict[str, AllowEntry],
+    failures: list[str],
+) -> dict[str, object]:
+    counts = grouped_counts(findings)
+    summary = summarize_failures(failures)
+    return {
+        "ok": not failures,
+        "total_findings": len(findings),
+        "files_with_findings": len(counts),
+        "failure_summary": dataclasses.asdict(summary),
+        "failures": failures,
+        "files": build_file_summaries(counts, allowlist),
+        "findings": [
+            {
+                "path": finding.path,
+                "line_no": finding.line_no,
+                "call": finding.call,
+                "category": allowlist[finding.path].category
+                if finding.path in allowlist
+                else "UNALLOWLISTED",
+                "text": finding.text,
+            }
+            for finding in findings
+        ],
+    }
+
+
+def write_json_report(path: pathlib.Path, report: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f".{path.name}.tmp")
+    temp_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    temp_path.replace(path)
+
+
 def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> None:
     by_path: dict[str, list[Finding]] = defaultdict(list)
     for finding in findings:
@@ -163,16 +251,32 @@ def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> N
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print all tracked findings")
+    parser.add_argument(
+        "--json-report",
+        type=pathlib.Path,
+        help="write a machine-readable report before exiting",
+    )
     args = parser.parse_args(argv)
 
     findings = scan()
     allowlist = load_allowlist()
     failures = audit(findings, allowlist)
 
+    if args.json_report is not None:
+        write_json_report(args.json_report, build_json_report(findings, allowlist, failures))
+
     if args.list or failures:
         print_report(findings, allowlist)
 
     if failures:
+        summary = summarize_failures(failures)
+        print(
+            "\nOutput-surgery audit summary: "
+            f"unallowlisted={summary.unallowlisted}, "
+            f"over_allowlist={summary.over_allowlist}, "
+            f"stale_allowlist={summary.stale_allowlist}",
+            file=sys.stderr,
+        )
         print("\nOutput-surgery audit failed:", file=sys.stderr)
         for failure in failures:
             print(f"  - {failure}", file=sys.stderr)
