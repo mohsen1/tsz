@@ -140,7 +140,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// per-element singleton, then substituting the iteration variable.
     ///
     /// Mirrors the per-element switch in tsc's `instantiateMappedTupleType`:
-    /// - Required/Optional fixed element `T_i`: rebind T -> `[T_i]`, K -> 0.
+    /// - Required/Optional fixed element `T_i`: keep T, K -> `"0"`.
     /// - Rest of `Array<E>`: rebind T -> `Array<E>`, K -> number; wrap the
     ///   result in `Array<>` to keep the rest's "array of element type" shape.
     /// - Variadic spread of a tuple: rebind T -> the inner tuple and recurse
@@ -203,7 +203,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let (new_source, key) = if elem.rest {
             (elem.type_id, TypeId::NUMBER)
         } else {
-            (source, self.interner().literal_number(index as f64))
+            (source, self.interner().literal_string(&index.to_string()))
         };
         let mut inner = self.evaluate_mapped_template_with_source_rebind(
             mapped.template,
