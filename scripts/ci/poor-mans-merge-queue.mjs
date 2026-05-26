@@ -515,6 +515,20 @@ export function skipOwnerCounts(skips) {
     .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner));
 }
 
+export function skipOwnerReasonCounts(skips) {
+  const counts = new Map();
+  for (const skip of skips || []) {
+    const owner = String(skip.owner || "(unknown)");
+    const reason = String(skip.summaryReason || skip.reason || "(unknown)");
+    const key = `${owner}\0${reason}`;
+    const current = counts.get(key) || { owner, reason, count: 0 };
+    current.count += 1;
+    counts.set(key, current);
+  }
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.owner.localeCompare(b.owner) || a.reason.localeCompare(b.reason));
+}
+
 function pushSkipOwnerCounts(lines, skips) {
   const ownerSummary = skipOwnerCounts(skips);
   const hasOldestUpdated = ownerSummary.some((entry) => entry.oldestUpdatedAt);
@@ -532,6 +546,22 @@ function pushSkipOwnerCounts(lines, skips) {
     } else {
       lines.push(`| ${entry.count} | ${owner} |`);
     }
+  }
+}
+
+function pushSkipOwnerReasonCounts(lines, skips) {
+  const ownerReasonSummary = skipOwnerReasonCounts(skips);
+  lines.push(
+    "",
+    "### Skip Owner Reason Counts",
+    "",
+    "| Count | Owner | Reason |",
+    "|-------|-------|--------|",
+  );
+  for (const entry of ownerReasonSummary) {
+    const owner = entry.owner.replace(/\|/g, "\\|");
+    const reason = entry.reason.replace(/\|/g, "\\|");
+    lines.push(`| ${entry.count} | ${owner} | ${reason} |`);
   }
 }
 
@@ -985,6 +1015,7 @@ export function formatResult(result, options) {
         lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
       }
       pushSkipOwnerCounts(lines, result.skips);
+      pushSkipOwnerReasonCounts(lines, result.skips);
       pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
@@ -1011,6 +1042,7 @@ export function formatResult(result, options) {
       lines.push(`| ${entry.count} | ${entry.reason.replace(/\|/g, "\\|")} |`);
     }
     pushSkipOwnerCounts(lines, result.skips);
+    pushSkipOwnerReasonCounts(lines, result.skips);
     pushQueueSkipRows(lines, result.skips);
   }
   return `${lines.join("\n")}\n`;
