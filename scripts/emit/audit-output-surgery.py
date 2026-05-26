@@ -167,6 +167,38 @@ def summarize_failures(failures: list[str]) -> FailureSummary:
     return summary
 
 
+def file_status(path: str, count: int, allowlist: dict[str, AllowEntry]) -> str:
+    entry = allowlist.get(path)
+    if entry is None:
+        return "unallowlisted"
+    if count == 0:
+        return "stale_allowlist"
+    if count > entry.max_count:
+        return "over_allowlist"
+    return "allowlisted"
+
+
+def build_file_summaries(
+    counts: Counter[str],
+    allowlist: dict[str, AllowEntry],
+) -> list[dict[str, object]]:
+    summaries: list[dict[str, object]] = []
+    for path in sorted(set(counts) | set(allowlist)):
+        entry = allowlist.get(path)
+        count = counts.get(path, 0)
+        summaries.append(
+            {
+                "path": path,
+                "count": count,
+                "category": entry.category if entry else "UNALLOWLISTED",
+                "max_count": entry.max_count if entry else None,
+                "reason": entry.reason if entry else None,
+                "status": file_status(path, count, allowlist),
+            }
+        )
+    return summaries
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -180,6 +212,7 @@ def build_json_report(
         "files_with_findings": len(counts),
         "failure_summary": dataclasses.asdict(summary),
         "failures": failures,
+        "files": build_file_summaries(counts, allowlist),
         "findings": [
             {
                 "path": finding.path,

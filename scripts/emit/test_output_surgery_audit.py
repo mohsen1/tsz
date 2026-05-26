@@ -69,6 +69,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         ]
         allowlist = {
             "b.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "existing debt"),
+            "c.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "stale debt"),
         }
         failures = ["a.rs: 1 unallowlisted output-surgery call(s)"]
 
@@ -80,6 +81,14 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
         self.assertEqual(report["findings"][0]["category"], "UNALLOWLISTED")
         self.assertEqual(report["findings"][1]["category"], "semantic-output-surgery")
+        self.assertEqual(
+            [(entry["path"], entry["status"]) for entry in report["files"]],
+            [
+                ("a.rs", "unallowlisted"),
+                ("b.rs", "allowlisted"),
+                ("c.rs", "stale_allowlist"),
+            ],
+        )
 
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
