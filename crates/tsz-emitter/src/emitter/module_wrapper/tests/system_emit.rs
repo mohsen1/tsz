@@ -2251,3 +2251,92 @@ fn system_amd_module_directive_overrides_bundled_module_name() {
         "bundled_module_name should be suppressed when amd-module directive is present.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn system_module_export_destructuring_baseline_check() {
+    // Reproduces tests/cases/compiler/systemModule13.ts
+    let output = emit_system_es2015(
+        r#"export let [x,y,z] = [1, 2, 3];
+export const {a: z0, b: {c: z1}} = {a: true, b: {c: "123"}};
+for ([x] of [[1]]) {}
+"#,
+    );
+    println!("systemModule13 output:\n{output}");
+
+    let expected = r#"System.register([], function (exports_1, context_1) {
+    "use strict";
+    var _a, x, y, z, _b, z0, z1;
+    var __moduleName = context_1 && context_1.id;
+    return {
+        setters: [],
+        execute: function () {
+            _a = [1, 2, 3], exports_1("x", x = _a[0]), exports_1("y", y = _a[1]), exports_1("z", z = _a[2]);
+            _b = { a: true, b: { c: "123" } }, exports_1("z0", z0 = _b.a), exports_1("z1", z1 = _b.b.c);
+            for ([x] of [[1]]) { }
+        }
+    };
+});
+"#;
+    assert_eq!(
+        output, expected,
+        "System module destructuring exports should match tsc baseline.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_module_array_export_destructuring_uses_temp() {
+    // Minimal test: single exported array binding pattern
+    let output = emit_system_es2015("export let [x, y] = [1, 2];\n");
+    println!("minimal array destructuring output:\n{output}");
+    assert!(
+        output.contains("var _a, x, y;"),
+        "System module should hoist temp before bound names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_a = [1, 2], exports_1(\"x\", x = _a[0]), exports_1(\"y\", y = _a[1])"),
+        "System module should use temp to publish each element via exports_1.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_module_array_export_destructuring_reuses_identifier_source() {
+    let output = emit_system_es2015("declare const arr: any;\nexport let [x, y] = arr;\n");
+    let expected = r#"System.register([], function (exports_1, context_1) {
+    "use strict";
+    var x, y;
+    var __moduleName = context_1 && context_1.id;
+    return {
+        setters: [],
+        execute: function () {
+            exports_1("x", x = arr[0]), exports_1("y", y = arr[1]);
+        }
+    };
+});
+"#;
+    assert_eq!(
+        output, expected,
+        "Reusable System module destructuring sources should not allocate an RHS temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_module_nested_object_export_destructuring_reuses_identifier_source() {
+    let output =
+        emit_system_es2015("declare const obj: any;\nexport const {a: {c}, b: d} = obj;\n");
+    let expected = r#"System.register([], function (exports_1, context_1) {
+    "use strict";
+    var c, d;
+    var __moduleName = context_1 && context_1.id;
+    return {
+        setters: [],
+        execute: function () {
+            exports_1("c", c = obj.a.c), exports_1("d", d = obj.b);
+        }
+    };
+});
+"#;
+    assert_eq!(
+        output, expected,
+        "Nested System module destructuring should publish direct reusable source paths.\nOutput:\n{output}"
+    );
+}
