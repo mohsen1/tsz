@@ -121,11 +121,17 @@ mod control_flow_tests;
 #[path = "../tests/control_flow_type_guard_tests.rs"]
 mod control_flow_type_guard_tests;
 #[cfg(test)]
+#[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
+mod decorator_return_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/definite_assignment_tests.rs"]
 mod definite_assignment_tests;
 #[cfg(test)]
 #[path = "../tests/dynamic_import_defer_tests.rs"]
 mod dynamic_import_defer_tests;
+#[cfg(test)]
+#[path = "tests/enum_computed_relation_routing_arch_tests.rs"]
+mod enum_computed_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/enum_member_cache_tests.rs"]
 mod enum_member_cache_tests;
@@ -558,6 +564,9 @@ mod intersection_callable_constraint_ts2344_tests;
 #[cfg(test)]
 #[path = "../tests/intersection_signatures.rs"]
 mod intersection_signatures;
+#[cfg(test)]
+#[path = "tests/issue_9762_literal_init_callback_inference.rs"]
+mod issue_9762_literal_init_callback_inference;
 #[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
