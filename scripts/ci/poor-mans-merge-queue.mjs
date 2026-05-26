@@ -496,6 +496,17 @@ function cleanupQueueBranches(repository, options) {
         ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
         : null;
       if (!supersededReason) {
+        const activeRun = activeBranchQueueRun(readBranchWorkflowRuns(repository, queueBranchInfo.branch));
+        if (activeRun) {
+          skippedActiveRuns += 1;
+          if (options.verbose) {
+            skips.push({
+              branch: queueBranchInfo.branch,
+              reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
+            });
+          }
+          continue;
+        }
         skippedOpen += 1;
         if (options.verbose) {
           skips.push({ branch: queueBranchInfo.branch, reason: `PR #${number} is open` });
