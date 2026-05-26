@@ -1,7 +1,7 @@
 use super::{ParamTransformPlan, Printer};
-use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{FunctionData, Node};
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_new_target_reference;
 
 impl<'a> Printer<'a> {
@@ -570,8 +570,14 @@ impl<'a> Printer<'a> {
                     }
                 }
 
+                let preserves_native_parameter_decorators =
+                    self.should_preserve_native_parameter_decorators(param);
                 if !first {
-                    self.write(", ");
+                    if preserves_native_parameter_decorators {
+                        self.write(",");
+                    } else {
+                        self.write(", ");
+                    }
                 }
                 first = false;
 
@@ -583,6 +589,9 @@ impl<'a> Printer<'a> {
                     self.write_line();
                 }
                 self.emit_comments_before_pos(param_node.pos);
+                if preserves_native_parameter_decorators {
+                    self.emit_native_parameter_decorators(param.modifiers.as_ref());
+                }
 
                 // ES2018 object rest lowering: replace destructuring param with a temp
                 if needs_rest_lowering && self.param_has_object_rest(param_idx) {
@@ -785,6 +794,40 @@ impl<'a> Printer<'a> {
         // scanning from name_node.end would place these comments INSIDE the
         // parameter list. The caller (statement-level comment emission) handles
         // trailing comments after the whole function declaration.
+    }
+
+    fn should_preserve_native_parameter_decorators(
+        &self,
+        param: &tsz_parser::parser::node::ParameterData,
+    ) -> bool {
+        self.ctx.options.target == tsz_common::ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && param.modifiers.as_ref().is_some_and(|modifiers| {
+                modifiers.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
+    }
+
+    fn emit_native_parameter_decorators(&mut self, modifiers: Option<&NodeList>) {
+        let Some(modifiers) = modifiers else {
+            return;
+        };
+        if !self.writer.is_at_line_start() {
+            self.write_line();
+        }
+        for &mod_idx in &modifiers.nodes {
+            let Some(mod_node) = self.arena.get(mod_idx) else {
+                continue;
+            };
+            if mod_node.kind != syntax_kind_ext::DECORATOR {
+                continue;
+            }
+            self.emit_decorator(mod_node);
+            self.write_line();
+        }
     }
 
     fn pending_parameter_leading_comment_starts_line(&self, pos: u32) -> bool {

@@ -182,6 +182,45 @@ declare const dec: any;
 }
 
 #[test]
+fn esnext_native_parameter_decorators_preserve_syntax_without_types() {
+    let source = "\
+declare const dec: any;
+
+class C {
+    constructor(@dec x: any) {}
+    method(@dec x: any) {}
+    set value(@dec x: any) {}
+}
+
+(class C {
+    constructor(@dec x: any) {}
+    method(@dec x: any) {}
+    static set value(@dec x: any) {}
+});
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ESNext,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("constructor(\n    @dec\n    x) { }")
+            && output.contains("method(\n    @dec\n    x) { }")
+            && output.contains("set value(\n    @dec\n    x) { }")
+            && output.contains("static set value(\n    @dec\n    x) { }"),
+        "Native ESNext parameter decorators should be preserved on their own lines.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("x: any"),
+        "Native parameter-decorator emit should still erase TypeScript-only parameter types.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_class_decorated_static_this_members_use_class_capture() {
     let source = "\
 declare var dec: any;
