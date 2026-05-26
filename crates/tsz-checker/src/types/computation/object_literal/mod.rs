@@ -6,9 +6,15 @@
 //!
 //! Split into submodules:
 //! - `computation` — the main `get_type_of_object_literal_with_request` function
+//! - `accessor_element` / `spread_element` — element handlers split out of the
+//!   main loop to keep shards reviewable
+//! - `computation_support` — shared helper methods for object literal assembly
 
+mod accessor_element;
 mod computation;
+mod computation_support;
 mod conditional_mapped_annotation;
+mod spread_element;
 mod symbol_key_routing;
 
 use crate::context::TypingRequest;

@@ -297,10 +297,21 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down by 5 after literal alias / literal widening
         # diagnostic display probes moved through query_boundaries::diagnostics.
         #
-        # Main ratcheted down by 14 after branch refresh removed stale direct
-        # common references. #9681 then intentionally raises the merged live
-        # count for contextual wrapper excess-property diagnostics.
-        3371,
+        # Ratcheted down by 14 after branch refresh removed stale direct
+        # common references.
+        #
+        # Ratcheted down by 1 during the #9281 current-main refresh after
+        # the split guard tests caught slack in the live count.
+        #
+        # Ratcheted down by 1 after the interface heritage `this`-type helper
+        # moved to `query_boundaries::type_predicates`.
+        #
+        # Ratcheted down by 8 after rebasing on main removed additional direct
+        # common references.
+        #
+        # Refreshed #9852 on current main for contextual-wrapper excess-property
+        # diagnostics; this records the merged live count.
+        3440,
     ),
 ]
 
@@ -453,8 +464,346 @@ REGEX_LINE_COUNT_CHECKS = [
             / "src"
             / "assignability"
             / "assignability_diagnostics.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignment_checker"
+            / "destructuring.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "assignment_checker"
+            / "assignment_ops.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "assignability" / "nullish_error_targets.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "assignability"
+            / "polymorphic_this_diagnostics.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "decorator_signature_checks.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "index_signature_checks.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "index_signature_key_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "overload_compatibility.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking_members"
+            / "statement_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking"
+            / "mapped_object_literals.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking"
+            / "class.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "class_checker_compat.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "class_checker_compat_overloads.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "class_implements_checker"
+            / "core.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "class_implements_checker"
+            / "jsdoc_heritage.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "classes"
+            / "interface_heritage_index_compat.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "classes" / "interface_heritage_index.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "types" / "computation" / "access.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "access_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "type_checking"
+            / "core_statement_checks.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "type_checking"
+            / "indexed_access.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "type_checking"
+            / "indexed_access"
+            / "indexed_access_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "type_checking"
+            / "indexed_access"
+            / "mapped_key_check.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "property_access_type"
+            / "helpers.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "jsdoc" / "lookup.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "declarations" / "dynamic_import_checker.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "declarations"
+            / "import"
+            / "declaration.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "error_reporter",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "call_context.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "promise_checker.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "explicit_alias_constraint_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "array_like_constraint_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "merged_interface_constraints.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "constraint_syntax_instantiation.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "infer_conditional_constraints.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "conditional_constraint_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "mapped_constraint_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "mod.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "recursive_heritage_constraint.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "union_constraint_helpers.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "iterable_checker.rs",
+            ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "parameter_checker.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "variable_checking"
+            / "core.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "variable_checking"
+            / "initializer_policy.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "variable_checking"
+            / "for_loop.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "call_checker"
+            / "diagnostics.rs",
             ROOT / "crates" / "tsz-checker" / "src" / "checkers" / "jsx",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "call"
+            / "nominal_lib_object_callbacks.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "call_finalize.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "call_result.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "call"
+            / "tail_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "type_analysis"
+            / "computed_helpers_private.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "type_analysis"
+            / "core.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "type_analysis"
+            / "type_param_defaults.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "state"
+            / "state_checking"
+            / "property.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "constraint_indexed_access_helpers.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "checkers"
+            / "generic_checker"
+            / "constraint_validation.rs",
+            ROOT
+            / "crates"
+            / "tsz-checker"
+            / "src"
+            / "types"
+            / "computation"
+            / "complex_contextual_new.rs",
         ],
         re.compile(
             r"\b(?:self|self\.ctx\.types|self\.interner)"

@@ -88,7 +88,7 @@ pub(crate) fn types_are_assignable(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    checker.is_assignable_to(source, target)
+    checker.diagnostic_relation_boolean_guard(source, target)
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {

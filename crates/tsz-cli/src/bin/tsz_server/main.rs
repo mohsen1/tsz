@@ -47,6 +47,7 @@ mod handlers_project_info;
 mod handlers_quickinfo;
 mod handlers_quickinfo_text;
 mod handlers_structure;
+mod text_edits;
 
 use anyhow::{Context, Result};
 use clap::Parser;

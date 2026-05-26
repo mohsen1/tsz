@@ -48,6 +48,31 @@ function f<T extends number, U extends 0 | 1 | 2>(t: T & U) {
 }
 
 #[test]
+fn numeric_literal_union_alias_source_preserves_alias_display() {
+    let diagnostics = diagnostics_for(
+        r#"
+type NumericAlias = 1 | 2;
+declare const value: NumericAlias;
+const target: 3 = value;
+"#,
+    );
+
+    let diag = diagnostics
+        .iter()
+        .find(|d| d.code == 2322)
+        .expect("expected TS2322");
+    assert!(
+        diag.message_text
+            .contains("Type 'NumericAlias' is not assignable to type '3'."),
+        "numeric literal union alias source should preserve alias display, got: {diag:?}"
+    );
+    assert!(
+        !diag.message_text.contains("Type '1 | 2'"),
+        "numeric literal union alias source should not be expanded, got: {diag:?}"
+    );
+}
+
+#[test]
 fn typed_array_cross_assignment_preserves_generic_display() {
     let diagnostics = diagnostics_for(
         r#"

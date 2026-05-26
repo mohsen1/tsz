@@ -22,7 +22,7 @@ impl<'a> CheckerState<'a> {
                 }
                 let member = self.resolve_lazy_type(member);
                 let member = self.evaluate_type_for_assignability(member);
-                self.is_assignable_to(member, constraint)
+                self.diagnostic_relation_boolean_guard(member, constraint)
                     || self.satisfies_array_like_constraint(member, constraint)
             })
     }
