@@ -57,6 +57,11 @@ Record the following in the PR body when the PR is performance-motivated:
 For red/yellow rows, record the first correctness blocker and leave timing
 claims blank unless runtime, OOM, timeout, or residency is the blocker.
 
+The benchmark `*.tsgo-winners.json` companion report is also the 2x-target
+gap report. Its `two_x_target` summary and `target_gaps` rows are the canonical
+artifact fields for green rows where `tsz` is not at least `2x` faster than
+`tsgo`.
+
 ## Preferred Commands
 
 Use the narrowest command that answers the question:

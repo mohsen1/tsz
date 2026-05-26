@@ -3,6 +3,7 @@
 use crate::context::TypingRequest;
 use crate::query_boundaries::common::OptionalPropertyChainKey;
 use crate::state::CheckerState;
+use smallvec::SmallVec;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -27,7 +28,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut current = idx;
-        let mut reversed_properties: Vec<(Atom, bool)> = Vec::with_capacity(6);
+        let mut reversed_properties: SmallVec<[(Atom, bool); 6]> = SmallVec::new();
         let mut saw_optional = false;
         let root = loop {
             if reversed_properties.len() >= u64::BITS as usize {
