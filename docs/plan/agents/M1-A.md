@@ -133,6 +133,10 @@ node scripts/ci/pr-ownership-report.mjs
     `0b7d82391b ci: summarize conflicting ready ownership (#10201)`.
     The ownership report's `Owner Summary` now includes a `Conflicting ready`
     column and `ownerSummaries[].conflictingReadyMain` JSON field.
+  - `#10203` merged on 2026-05-26 as
+    `f66f66cef0 ci: show conflicting ready update dates (#10203)`.
+    `Conflicting Ready Main PRs` rows now show `updated YYYY-MM-DD`, and
+    conflicting-main JSON rows include `updatedAt` for stale-handoff triage.
   - `#10156` merged the queue-cleanup improvement. The cleanup tool may now
     delete superseded suffixed queue branches for open PRs when the suffix no
     longer matches current `main`.
@@ -173,6 +177,7 @@ node scripts/ci/pr-ownership-report.mjs
     branches without an explicit request or stale-branch handoff comment.
   - Use the ownership report's `Conflicting Ready Main PRs` section when
     deciding which non-draft branch blockers need owner handoff before queueing.
+    The `updated` date in each row is the quick staleness signal.
   - Queue branch cleanup currently skips open PR branches
     `automation/merge-queue/pr-10078`, `pr-10084`, `pr-10147`, `pr-9515`,
     `pr-9632`, and `pr-9912`. Recent cleanup dry runs report zero stale
