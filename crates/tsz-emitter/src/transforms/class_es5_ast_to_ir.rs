@@ -1957,13 +1957,10 @@ impl<'a> AstToIr<'a> {
 
             let needs_computed_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::GET_ACCESSOR
-                            || n.kind == syntax_kind_ext::SET_ACCESSOR
-                    })
             });
             if needs_computed_es5_lowering {
-                return self.lower_object_literal_es5(&obj.elements.nodes);
+                return self
+                    .lower_object_literal_es5(&obj.elements.nodes, Some((node.pos, node.end)));
             }
 
             let props: Vec<IRProperty> = obj
@@ -2170,7 +2167,11 @@ impl<'a> AstToIr<'a> {
 
     /// Lower an object literal with computed properties to ES5 comma expression:
     /// `{ [expr]: val, static: 1 }` -> `(_a = { static: 1 }, _a[expr] = val, _a)`
-    fn lower_object_literal_es5(&self, elements: &[NodeIndex]) -> IRNode {
+    fn lower_object_literal_es5(
+        &self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) -> IRNode {
         let temp = self.generate_hoisted_temp();
 
         // Split: static props go in the initial object, computed props become assignments
@@ -2178,10 +2179,6 @@ impl<'a> AstToIr<'a> {
             .iter()
             .position(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::GET_ACCESSOR
-                            || n.kind == syntax_kind_ext::SET_ACCESSOR
-                    })
             })
             .unwrap_or(elements.len());
 
@@ -2193,7 +2190,11 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&p| self.convert_object_property(p))
                 .collect();
-            IRNode::object(props)
+            IRNode::ObjectLiteral {
+                properties: props,
+                source_range,
+                extra_indent: 0,
+            }
         } else {
             IRNode::ObjectLiteral {
                 properties: Vec::new(),
@@ -2435,6 +2436,15 @@ impl<'a> AstToIr<'a> {
                 value,
                 kind: IRPropertyKind::Init,
             })
+        } else if let Some(accessor) = self.arena.get_accessor(node) {
+            let key = self.get_property_key(accessor.name)?;
+            let value = self.convert_accessor_to_function_expr(node)?;
+            let kind = if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                IRPropertyKind::Get
+            } else {
+                IRPropertyKind::Set
+            };
+            Some(IRProperty { key, value, kind })
         } else {
             None
         }

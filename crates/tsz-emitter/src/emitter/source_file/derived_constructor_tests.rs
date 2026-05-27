@@ -106,6 +106,24 @@ fn pre_super_nested_class_emits_legacy_decorators() {
 }
 
 #[test]
+fn pre_super_object_literal_accessors_stay_native_when_keys_are_static() {
+    let source = "class Base {}\nclass Derived extends Base {\n    prop = true;\n    constructor() {\n        const obj = {\n            get prop() {\n                return true;\n            },\n            set prop(param) {\n                this._prop = param;\n            }\n        };\n        super();\n    }\n}\n";
+
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains(
+            "var obj = {\n            get prop() {\n                return true;\n            },\n            set prop(param) {\n                this._prop = param;\n            }\n        };"
+        ),
+        "Static object-literal accessors should stay as native ES5 accessors instead of Object.defineProperty lowering.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Object.defineProperty("),
+        "Static object-literal accessors should not introduce Object.defineProperty calls.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn pre_super_this_capture_stops_at_ordinary_functions() {
     let source = "class Base {}\nclass FnDecl extends Base {\n    prop = true;\n    constructor() {\n        function declaration(param = this) {\n            return this;\n        }\n        super();\n    }\n}\nclass FnExpr extends Base {\n    prop = true;\n    constructor() {\n        (function () {\n            return this;\n        })();\n        super();\n    }\n}\nclass Arrow extends Base {\n    prop = true;\n    constructor() {\n        (() => this)();\n        super();\n    }\n}\nclass ClassDecl extends Base {\n    memberClass = class {};\n    constructor() {\n        class Inner extends this.memberClass {\n            method() {\n                return this;\n            }\n        }\n        super();\n    }\n}\nclass ClassExpr extends Base {\n    memberClass = class {};\n    constructor() {\n        console.log(class extends this.memberClass {});\n        super();\n    }\n}\n";
 

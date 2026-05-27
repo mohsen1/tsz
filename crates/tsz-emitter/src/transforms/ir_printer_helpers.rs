@@ -319,7 +319,39 @@ impl<'a> IRPrinter<'a> {
             return;
         }
 
-        match &prop.key {
+        if matches!(prop.kind, IRPropertyKind::Get | IRPropertyKind::Set) {
+            self.write(if prop.kind == IRPropertyKind::Get {
+                "get "
+            } else {
+                "set "
+            });
+            self.emit_property_key(&prop.key);
+            if let IRNode::FunctionExpr {
+                parameters,
+                body,
+                body_source_range,
+                ..
+            } = &prop.value
+            {
+                self.write("(");
+                self.emit_parameters(parameters);
+                self.write(") ");
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range, false);
+            } else {
+                self.write(" ");
+                self.emit_node(&prop.value);
+            }
+            return;
+        }
+
+        self.emit_property_key(&prop.key);
+
+        self.write(": ");
+        self.emit_node(&prop.value);
+    }
+
+    fn emit_property_key(&mut self, key: &IRPropertyKey) {
+        match key {
             IRPropertyKey::Identifier(name) => self.write(name),
             IRPropertyKey::StringLiteral(s) => {
                 self.write("\"");
@@ -331,17 +363,6 @@ impl<'a> IRPrinter<'a> {
                 self.write("[");
                 self.emit_node(expr);
                 self.write("]");
-            }
-        }
-
-        match prop.kind {
-            IRPropertyKind::Init => {
-                self.write(": ");
-                self.emit_node(&prop.value);
-            }
-            IRPropertyKind::Get | IRPropertyKind::Set => {
-                self.write(" ");
-                self.emit_node(&prop.value);
             }
         }
     }
