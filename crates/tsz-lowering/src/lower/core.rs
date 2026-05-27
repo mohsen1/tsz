@@ -9,6 +9,7 @@ use indexmap::IndexMap;
 use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
+use std::sync::Arc;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeList;
 use tsz_parser::parser::base::NodeIndex;
@@ -33,7 +34,13 @@ pub const MAX_LOWERING_OPERATIONS: u32 = 100_000;
 pub(super) type NodeIndexResolver<'a, T> = dyn Fn(NodeIndex) -> Option<T> + 'a;
 pub(super) type TypeIdResolver<'a> = dyn Fn(&str) -> Option<DefId> + 'a;
 pub(super) type LazyTypeParamsResolver<'a> = dyn Fn(DefId) -> Option<Vec<TypeParamInfo>> + 'a;
-pub(super) type TypeParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
+#[derive(Clone)]
+pub(super) struct TypeParamBinding {
+    type_id: TypeId,
+}
+
+pub(super) type TypeParamScope = IndexMap<Arc<str>, TypeParamBinding>;
+pub(super) type TypeParamScopeStack = RefCell<Vec<TypeParamScope>>;
 pub(super) type TypeofParamScopeStack = RefCell<Vec<Vec<(Atom, TypeId)>>>;
 pub type LoweredInterfaceMemberTypes = (Vec<TypeParamInfo>, Vec<(NodeIndex, TypeId)>);
 
@@ -743,7 +750,16 @@ impl<'a> TypeLowering<'a> {
     /// These are added to a new scope that persists for the lifetime of the `TypeLowering`.
     pub fn with_type_param_bindings(self, bindings: Vec<(Atom, TypeId)>) -> Self {
         if !bindings.is_empty() {
-            *self.type_param_scopes.borrow_mut() = vec![bindings];
+            let scope = bindings
+                .into_iter()
+                .map(|(name, type_id)| {
+                    (
+                        self.interner.resolve_atom_ref(name),
+                        TypeParamBinding { type_id },
+                    )
+                })
+                .collect();
+            *self.type_param_scopes.borrow_mut() = vec![scope];
         }
         self
     }
@@ -976,7 +992,7 @@ impl<'a> TypeLowering<'a> {
     }
 
     pub(super) fn push_type_param_scope(&self) {
-        self.type_param_scopes.borrow_mut().push(Vec::new());
+        self.type_param_scopes.borrow_mut().push(IndexMap::new());
     }
 
     pub(super) fn pop_type_param_scope(&self) {
@@ -985,18 +1001,26 @@ impl<'a> TypeLowering<'a> {
 
     pub(super) fn add_type_param_binding(&self, name: Atom, type_id: TypeId) {
         if let Some(scope) = self.type_param_scopes.borrow_mut().last_mut() {
-            scope.push((name, type_id));
+            scope.insert(
+                self.interner.resolve_atom_ref(name),
+                TypeParamBinding { type_id },
+            );
+        }
+    }
+
+    pub(super) fn update_type_param_binding(&self, name: Atom, type_id: TypeId) {
+        if let Some(scope) = self.type_param_scopes.borrow_mut().last_mut()
+            && let Some(existing) = scope.get_mut(self.interner.resolve_atom_ref(name).as_ref())
+        {
+            existing.type_id = type_id;
         }
     }
 
     pub(super) fn lookup_type_param(&self, name: &str) -> Option<TypeId> {
-        let atom = self.interner.intern_string(name);
         let scopes = self.type_param_scopes.borrow();
         for scope in scopes.iter().rev() {
-            for (scope_name, type_id) in scope.iter().rev() {
-                if *scope_name == atom {
-                    return Some(*type_id);
-                }
+            if let Some(binding) = scope.get(name) {
+                return Some(binding.type_id);
             }
         }
         None
@@ -1383,7 +1407,7 @@ impl<'a> TypeLowering<'a> {
                 info.name = name;
                 info.is_const = is_const;
                 let type_id = self.interner.type_param(info);
-                self.add_type_param_binding(info.name, type_id);
+                self.update_type_param_binding(info.name, type_id);
                 params.push(info);
             }
         }
