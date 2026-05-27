@@ -1657,6 +1657,58 @@ fn test_mapped_type_in_declaration() {
 }
 
 #[test]
+fn type_parameter_constraint_mapped_type_stays_inline() {
+    let output = emit_dts(
+        r#"
+export const cf = <T extends { [P in K]: string; } & { cool: string }, K extends keyof T>(t: T, k: K) => {};
+"#,
+    );
+    assert!(
+        output.contains("cf: <T extends { [P in K]: string; } & {\n    cool: string;"),
+        "Mapped type in a type-parameter constraint should stay inline: {output}"
+    );
+}
+
+#[test]
+fn type_parameter_constraint_mapped_type_stays_inline_with_renamed_key() {
+    let output = emit_dts(
+        r#"
+export const pick = <Shape extends { [Key in Field | "extra"]: number; }, Field extends keyof Shape>(shape: Shape, field: Field) => {};
+"#,
+    );
+    assert!(
+        output.contains(
+            "pick: <Shape extends { [Key in Field | \"extra\"]: number; }, Field extends keyof Shape>"
+        ),
+        "Mapped type constraint formatting must not depend on iteration variable names: {output}"
+    );
+}
+
+#[test]
+fn object_valued_type_parameter_constraint_mapped_type_stays_multiline() {
+    let output = emit_dts(
+        r#"
+export type Example<T extends { [Key in keyof T]: { prop: any; } }> = {
+    [Key in keyof T]: T[Key]["prop"];
+};
+"#,
+    );
+    assert!(
+        output.contains("T extends {\n    [Key in keyof T]: {\n        prop: any;\n    };\n}"),
+        "Object-valued mapped type constraints should keep structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn top_level_mapped_type_alias_stays_multiline() {
+    let output = emit_dts("export type Names<K extends string> = { [Key in K]: string; };");
+    assert!(
+        output.contains("{\n    [Key in K]: string;\n}"),
+        "Top-level mapped type aliases should keep structured multiline formatting: {output}"
+    );
+}
+
+#[test]
 fn test_indexed_access_type() {
     let output = emit_dts("export type Name = Person['name'];");
     assert!(

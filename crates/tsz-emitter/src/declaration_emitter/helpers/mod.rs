@@ -252,6 +252,7 @@ mod default_import_alias_rewrite;
 mod emit_node;
 mod function_analysis;
 mod generic_call_literal;
+mod generic_call_mapped_inference;
 mod js_exports;
 mod jsdoc;
 mod jsdoc_function_signature;

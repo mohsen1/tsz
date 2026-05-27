@@ -151,6 +151,177 @@ fn test_inferred_return_preserves_mapped_parameter_annotation() {
     );
 }
 
+#[test]
+fn generic_call_returned_function_object_widens_callback_literals() {
+    let output = emit_dts_with_binding(
+        r#"
+type Func<Value> = (...args: any[]) => Value;
+type Spec<Shape> = {
+    [Field in keyof Shape]: Func<Shape[Field]> | Spec<Shape[Field]>;
+};
+declare function applySpec<Shape>(obj: Spec<Shape>): (...args: any[]) => Shape;
+
+export var g1 = applySpec({
+    sum: (a: any) => 3,
+    nested: {
+        mul: (b: any) => "n"
+    }
+});
+
+type Rule<Result> = {
+    [Name in keyof Result]: (() => Result[Name]) | Rule<Result[Name]>;
+};
+declare function makeRuleResult<Result>(rule: Rule<Result>): () => Result;
+
+export var g2 = makeRuleResult({
+    flag: () => true,
+    child: {
+        text: () => "ok"
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare var g1: (...args: any[]) => {\n    sum: number;\n    nested: {\n        mul: string;\n    };\n};"
+        ),
+        "Expected callback literal returns to widen inside returned function object: {output}"
+    );
+    assert!(
+        output.contains(
+            "export declare var g2: () => {\n    flag: boolean;\n    child: {\n        text: string;\n    };\n};"
+        ),
+        "Expected renamed generic/mapped callback spec to use the same source-call rule: {output}"
+    );
+}
+
+#[test]
+fn generic_call_returned_function_object_requires_callback_leaves() {
+    let output = emit_dts(
+        r#"
+type Spec<Shape> = {
+    [Field in keyof Shape]: (() => Shape[Field]) | Spec<Shape[Field]>;
+};
+declare function applySpec<Shape>(obj: Spec<Shape>): () => Shape;
+
+export var g = applySpec({
+    value: 3
+});
+"#,
+    );
+
+    assert!(
+        !output.contains("export declare var g: () => {\n    value: number;\n};"),
+        "Non-callback leaves should fall back to the normal inferred call surface: {output}"
+    );
+}
+
+#[test]
+fn generic_call_pick_mapped_arguments_preserve_public_inference_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+type Pick<T, K extends keyof T> = {
+    [P in K]: T[P];
+};
+type Box<T> = {
+    value: T;
+};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+declare function f20<T, K extends keyof T>(obj: Pick<T, K>): T;
+declare function f21<T, K extends keyof T>(obj: Pick<T, K>): K;
+declare function f22<T, K extends keyof T>(obj: Boxified<Pick<T, K>>): T;
+declare function f24<T, U, K extends keyof T | keyof U>(obj: Pick<T & U, K>): T & U;
+
+let x0 = f20({ foo: 42, bar: "hello" });
+let x1 = f21({ foo: 42, bar: "hello" });
+let x2 = f22({ foo: { value: 42 }, bar: { value: "hello" } });
+let x4 = f24({ foo: 42, bar: "hello" });
+
+function getProps<T, K extends keyof T>(obj: T, list: K[]): Pick<T, K> {
+    return {} as any;
+}
+const myAny: any = {};
+const o1 = getProps(myAny, ["foo", "bar"]);
+"#,
+    );
+
+    assert!(
+        output.contains("declare let x0: {\n    foo: number;\n    bar: string;\n};"),
+        "Expected Pick<T, K> object argument to infer the returned object surface: {output}"
+    );
+    assert!(
+        output.contains("declare let x1: \"foo\" | \"bar\";"),
+        "Expected Pick<T, K> object keys to infer K as a literal-key union: {output}"
+    );
+    assert!(
+        output.contains("declare let x2: {\n    foo: number;\n    bar: string;\n};"),
+        "Expected mapped wrapper over Pick<T, K> to unwrap one-property member values: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare let x4: {\n    foo: number;\n    bar: string;\n} & {\n    foo: number;\n    bar: string;\n};"
+        ),
+        "Expected Pick<T & U, K> to preserve the intersection return surface: {output}"
+    );
+    assert!(
+        output.contains("declare const o1: Pick<any, \"foo\" | \"bar\">;"),
+        "Expected K[] literal argument to preserve Pick<any, literal-key-union>: {output}"
+    );
+}
+
+#[test]
+fn generic_call_constrained_mapped_return_uses_concrete_constraint_surface() {
+    let output = emit_dts_with_binding(
+        r#"
+declare function f1<T1>(): { [P in keyof T1]: void };
+declare function f2<T1 extends string>(): { [P in keyof T1]: void };
+declare function f3<T1 extends number>(): { [P in keyof T1]: void };
+interface Number {
+    toString(): string;
+    toFixed(): string;
+    toExponential(): string;
+    toPrecision(): string;
+    valueOf(): number;
+    toLocaleString(): string;
+}
+declare function f4<T1 extends Number>(): { [P in keyof T1]: void };
+interface WrappedValue {
+    alpha(): string;
+    beta: number;
+}
+declare function f5<Value extends WrappedValue>(): { [Key in keyof Value]: boolean };
+
+let x1 = f1();
+let x2 = f2();
+let x3 = f3();
+let x4 = f4();
+let x5 = f5();
+"#,
+    );
+
+    assert!(
+        output.contains("declare let x2: string;"),
+        "Expected string-constrained mapped call result to expand to string: {output}"
+    );
+    assert!(
+        output.contains("declare let x3: number;"),
+        "Expected number-constrained mapped call result to expand to number: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare let x4: {\n    toString: void;\n    toFixed: void;\n    toExponential: void;\n    toPrecision: void;\n    valueOf: void;\n    toLocaleString: void;\n};"
+        ),
+        "Expected object-wrapper mapped call result to expand public members: {output}"
+    );
+    assert!(
+        output.contains("declare let x5: {\n    alpha: boolean;\n    beta: boolean;\n};"),
+        "Expected renamed wrapper mapped call result to expand declared public members: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================
@@ -451,6 +622,120 @@ fn emit_dts_with_index_access_return(source: &str, method_name_str: &str) -> Str
     emitter.emit(root)
 }
 
+fn emit_dts_with_method_node_return_type(
+    source: &str,
+    method_name_str: &str,
+    return_type_id: TypeId,
+) -> String {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let method_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::METHOD_DECLARATION {
+                return None;
+            }
+            let nidx = NodeIndex(idx as u32);
+            let decl = parser.arena.get_method_decl(parser.arena.get(nidx)?)?;
+            (parser.arena.get_identifier_text(decl.name)? == method_name_str).then_some(nidx)
+        })
+        .expect("method not found");
+
+    let mut node_types = FxHashMap::default();
+    node_types.insert(method_idx.0, return_type_id);
+
+    let type_cache = crate::type_cache_view::TypeCacheView {
+        node_types,
+        ..Default::default()
+    };
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.emit(root)
+}
+
+fn emit_dts_with_function_return_type(
+    source: &str,
+    function_name_str: &str,
+    return_type_id: TypeId,
+) -> String {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let func_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return None;
+            }
+            let nidx = NodeIndex(idx as u32);
+            let func = parser.arena.get_function(parser.arena.get(nidx)?)?;
+            (parser.arena.get_identifier_text(func.name)? == function_name_str).then_some(nidx)
+        })
+        .expect("function not found");
+
+    let func_type = interner.function(FunctionShape::new(Vec::new(), return_type_id));
+    let mut node_types = FxHashMap::default();
+    node_types.insert(func_idx.0, func_type);
+
+    let type_cache = crate::type_cache_view::TypeCacheView {
+        node_types,
+        ..Default::default()
+    };
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.emit(root)
+}
+
+fn preferred_function_body_return_text(source: &str, function_name_str: &str) -> Option<String> {
+    use tsz_parser::parser::syntax_kind_ext;
+
+    let mut parser = tsz_parser::ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+
+    let function_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            if node.kind != syntax_kind_ext::FUNCTION_DECLARATION {
+                return None;
+            }
+            let nidx = NodeIndex(idx as u32);
+            let func = parser.arena.get_function(parser.arena.get(nidx)?)?;
+            (parser.arena.get_identifier_text(func.name)? == function_name_str).then_some(nidx)
+        })?;
+    let func = parser
+        .arena
+        .get(function_idx)
+        .and_then(|node| parser.arena.get_function(node))?;
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.function_body_preferred_return_type_text(func.body)
+}
+
 #[test]
 fn test_generic_class_method_indexed_access_return_class_param() {
     // Method returns PropType[K] where PropType is the class type param and K is the method's.
@@ -506,5 +791,214 @@ export class Plain {
     assert!(
         output.contains("get(key: string): string"),
         "Non-generic class method should still emit correctly: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_method_indexed_access_return_preserves_declared_receiver_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+class Shape {
+    name: string;
+    width: number;
+    height: number;
+}
+export class Reader {
+    readShape<K extends keyof Shape>(shape: Shape, key: K) {
+        return shape[key];
+    }
+}
+"#,
+        "readShape",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("readShape<K extends keyof Shape>(shape: Shape, key: K): Shape[K]"),
+        "Expected indexed-access return surface from declared receiver: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_method_indexed_access_return_preserves_renamed_key_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+type Store = {
+    title: string;
+    count: number;
+};
+export class Reader {
+    readStore<TKey extends keyof Store>(store: Store, key: TKey) {
+        return store[key];
+    }
+}
+"#,
+        "readStore",
+        TypeId::STRING,
+    );
+    assert!(
+        output
+            .contains("readStore<TKey extends keyof Store>(store: Store, key: TKey): Store[TKey]"),
+        "Expected indexed-access return surface with renamed key type: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_this_indexed_access_return_preserves_this_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+export class Bag {
+    value: number;
+    get<TKey extends keyof this>(key: TKey) {
+        return this[key];
+    }
+}
+"#,
+        "get",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("get<TKey extends keyof this>(key: TKey): this[TKey]"),
+        "Expected this-indexed return surface: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_indexed_access_return_preserves_array_element_key_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+type Store<K extends string> = { [P in K]: 0 | 1 };
+export class Reader {
+    read<K extends string>(store: Store<K>, keys: K[]) {
+        return store[keys[0]];
+    }
+}
+"#,
+        "read",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("read<K extends string>(store: Store<K>, keys: K[]): Store<K>[K]"),
+        "Expected indexed-access return surface from array element key: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_function_indexed_access_return_preserves_array_element_key_surface() {
+    let output = emit_dts_with_function_return_type(
+        r#"
+type Store<K extends string> = { [P in K]: 0 | 1 };
+export function read<K extends string>(store: Store<K>, keys: K[]) {
+    return store[keys[0]];
+}
+"#,
+        "read",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("read<K extends string>(store: Store<K>, keys: K[]): Store<K>[K]"),
+        "Expected top-level indexed-access return surface from array element key: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_function_returning_local_indexed_helper_call_preserves_surface() {
+    let source = r#"
+interface Shape {
+    name: string;
+    width: number;
+    height: number;
+    visible: boolean;
+}
+function getProperty<T, K extends keyof T>(obj: T, key: K) {
+    return obj[key];
+}
+export function read<S extends Shape, K extends keyof S>(shape: S, key: K) {
+    let prop = getProperty(shape, key);
+    return prop;
+}
+"#;
+    assert_eq!(
+        preferred_function_body_return_text(source, "read").as_deref(),
+        Some("S[K]")
+    );
+    let output = emit_dts_with_function_return_type(source, "read", TypeId::NUMBER);
+    assert!(
+        output.contains("read<S extends Shape, K extends keyof S>(shape: S, key: K): S[K]"),
+        "Expected local helper-call indexed-access surface: {output}"
+    );
+}
+
+#[test]
+fn test_explicit_type_argument_indexed_member_call_result_uses_member_type() {
+    let output = emit_dts_with_binding(
+        r#"
+type MethodDescriptor = {
+    name: string;
+    args: any[];
+    returnValue: any;
+};
+declare function dispatchMethod<M extends MethodDescriptor>(
+    name: M["name"],
+    args: M["args"]
+): M["returnValue"];
+type StringMethodDescriptor = {
+    name: "stringMethod";
+    args: [string, number];
+    returnValue: string[];
+};
+let result = dispatchMethod<StringMethodDescriptor>("stringMethod", ["hello", 35]);
+"#,
+    );
+    assert!(
+        output.contains("declare let result: string[]"),
+        "Expected explicit type argument indexed member return to evaluate to member type: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_method_returning_indexed_helper_call_preserves_this_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+function read<TObj, TKey extends keyof TObj>(obj: TObj, key: TKey) {
+    return obj[key];
+}
+export class Person {
+    parts: number;
+    getParts() {
+        return read(this, "parts");
+    }
+}
+"#,
+        "getParts",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("getParts(): this[\"parts\"]"),
+        "Expected helper call indexed-access surface: {output}"
+    );
+}
+
+#[test]
+fn test_unannotated_method_returning_inherited_this_indexed_method_call_preserves_surface() {
+    let output = emit_dts_with_method_node_return_type(
+        r#"
+export class Base {
+    get<TKey extends keyof this>(key: TKey) {
+        return this[key];
+    }
+}
+export class Person extends Base {
+    parts: number;
+    getParts() {
+        return this.get("parts");
+    }
+}
+"#,
+        "getParts",
+        TypeId::NUMBER,
+    );
+    assert!(
+        output.contains("getParts(): this[\"parts\"]"),
+        "Expected inherited this-indexed method call surface: {output}"
     );
 }
