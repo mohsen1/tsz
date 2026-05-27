@@ -548,6 +548,65 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns `true` when the constructor body has a `this`-before-super
+    /// access that would trigger TS17009. Used to suppress the redundant TS2376
+    /// emission: TS17009 (this-before-super) subsumes TS2376 (super-not-first).
+    fn constructor_has_pre_super_this_reference(&self, ctor_idx: NodeIndex) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+        if ctor.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let Some(first_super_stmt_index) = block
+            .statements
+            .nodes
+            .iter()
+            .position(|&stmt| self.is_super_call_statement(stmt))
+        else {
+            return false;
+        };
+
+        let pre_super_statements = &block.statements.nodes[..first_super_stmt_index];
+        if pre_super_statements.is_empty() {
+            return false;
+        }
+
+        for i in 0..self.ctx.arena.len() {
+            let node_idx = NodeIndex(i as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if !self.is_directly_in_constructor_body(node_idx, ctor_idx) {
+                continue;
+            }
+            let in_pre_super = pre_super_statements
+                .iter()
+                .any(|&stmt| self.is_descendant_of_node(node_idx, stmt) || node_idx == stmt);
+            if !in_pre_super {
+                continue;
+            }
+            if node.kind == SyntaxKind::ThisKeyword as u16
+                && self.is_this_before_super_in_derived_constructor(node_idx)
+            {
+                return true;
+            }
+        }
+        false
+    }
+
     fn is_additional_super_call_after_first_root_level_super_statement(
         &self,
         idx: NodeIndex,
@@ -903,12 +962,17 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_super_call_first_statement_in_constructor(idx) {
+                // TS17009 (this-before-super) subsumes TS2376 (super-not-first).
+                // Only emit TS2376 when the constructor has a pre-super `super`
+                // property reference but NOT a pre-super `this` reference: when
+                // `this` is accessed before `super`, TS17009 is already emitted at
+                // that site and reporting TS2376 here is redundant.
                 let should_emit_ts2376 =
                     self.enclosing_constructor_node(idx)
                         .is_some_and(|ctor_idx| {
                             self.constructor_has_pre_super_this_or_super_property_reference(
                                 ctor_idx,
-                            )
+                            ) && !self.constructor_has_pre_super_this_reference(ctor_idx)
                         });
 
                 if should_emit_ts2376 {
