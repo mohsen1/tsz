@@ -140,7 +140,10 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !self.diagnostic_relation_boolean_guard_with_env(source_return, target_return) {
+        if !self
+            .assign_relation_outcome_with_env(source_return, target_return)
+            .related
+        {
             return false;
         }
 
@@ -149,7 +152,8 @@ impl<'a> CheckerState<'a> {
             self.get_generator_next_type_argument(target_return_type),
         ) {
             (Some(source_next), Some(target_next)) => {
-                self.diagnostic_relation_boolean_guard_with_env(target_next, source_next)
+                self.assign_relation_outcome_with_env(target_next, source_next)
+                    .related
             }
             _ => true,
         }
