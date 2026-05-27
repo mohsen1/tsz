@@ -1958,6 +1958,24 @@ impl<'a> CheckerState<'a> {
                 let Some(member_node) = arena.get(member_idx) else {
                     return false;
                 };
+                if member_node.kind == syntax_kind_ext::INDEX_SIGNATURE {
+                    let Some(index_signature) = arena.get_index_signature(member_node) else {
+                        return false;
+                    };
+                    let Some(param_idx) = index_signature.parameters.nodes.first().copied() else {
+                        return false;
+                    };
+                    let Some(param_node) = arena.get(param_idx) else {
+                        return false;
+                    };
+                    let Some(param) = arena.get_parameter(param_node) else {
+                        return false;
+                    };
+                    return Self::source_file_type_node_is_scope_independent(
+                        arena,
+                        param.type_annotation,
+                    ) && value_is_lowerable(index_signature.type_annotation);
+                }
                 if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
                     return false;
                 }
