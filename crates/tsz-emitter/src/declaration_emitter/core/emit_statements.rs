@@ -166,10 +166,11 @@ impl<'a> DeclarationEmitter<'a> {
         let saved_comment_idx = self.comment_emit_idx;
         self.current_statement_jsdoc_chain =
             self.emittable_jsdoc_comment_chain_for_pos(stmt_node.pos);
-        let has_jsdoc_type_alias = self
-            .current_statement_jsdoc_chain
-            .iter()
-            .any(|jsdoc| Self::jsdoc_contains_type_alias_tag(jsdoc));
+        let jsdoc_facts = Self::statement_jsdoc_declaration_facts(
+            self.current_statement_jsdoc_chain.clone(),
+            has_jsdoc_type_function_signature,
+        );
+        let has_jsdoc_type_alias = jsdoc_facts.has_type_alias_tag();
         // True when emit_leading_jsdoc_type_aliases_for_pos was called above, so the raw
         // @typedef comment blocks should be suppressed from the JSDoc chain.
         let emitted_leading_typedef_aliases = self.source_is_js_file
@@ -202,12 +203,16 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_leading_jsdoc_comments(stmt_node.pos);
             self.writer.truncate(before_jsdoc_len);
             let mut filtered = if has_jsdoc_type_function_signature {
-                Self::jsdoc_chain_without_type_or_alias_tags(&self.current_statement_jsdoc_chain)
+                jsdoc_facts.comments_without_type_or_alias_tags()
             } else {
-                self.current_statement_jsdoc_chain.clone()
+                jsdoc_facts.comments().to_vec()
             };
             if suppress_jsdoc_type_alias_comments {
-                filtered.retain(|jsdoc| !Self::jsdoc_contains_type_alias_tag(jsdoc));
+                filtered = Self::statement_jsdoc_declaration_facts(
+                    filtered,
+                    has_jsdoc_type_function_signature,
+                )
+                .comments_without_type_alias_tags();
             }
             if has_jsdoc_type_function_signature {
                 if !self.emit_jsdoc_comment_chain_preserving_source_for_pos_verbatim(

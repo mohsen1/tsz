@@ -130,6 +130,7 @@ type JsStaticMethodAugmentationEntry = (
     Vec<(NodeIndex, NodeIndex)>,
 );
 
+#[derive(Clone)]
 pub(in crate::declaration_emitter) struct JsdocTypeAliasDecl {
     pub(in crate::declaration_emitter) name: String,
     pub(in crate::declaration_emitter) type_params: Vec<String>,
