@@ -187,6 +187,9 @@ mod interface_heritage_index_relation_routing_arch_tests;
 #[path = "tests/interface_heritage_property_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_property_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]
+mod interface_index_conflict_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
 #[cfg(test)]
