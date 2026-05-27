@@ -1572,6 +1572,15 @@ impl<'a> ES5ClassTransformer<'a> {
             let Some(computed) = self.arena.get_computed_property(name_node) else {
                 continue;
             };
+            if let Some(Tc39Es5MemberDecorator {
+                name: Tc39Es5MemberName::Computed { key_var, .. },
+                ..
+            }) = self.tc39_es5_decorated_field(member_idx)
+            {
+                self.computed_prop_temp_map
+                    .insert(computed.expression, key_var.clone());
+                continue;
+            }
             let Some(expr_node) = self.arena.get(computed.expression) else {
                 continue;
             };

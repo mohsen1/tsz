@@ -1405,6 +1405,46 @@ class D {
 }
 
 #[test]
+fn tc39_es5_public_fields_schedule_computed_keys_in_decorator_wrapper() {
+    let source = "\
+declare var dec: any;
+declare var field3: any;
+
+class C {
+    @dec(1) field1 = 1;
+    @dec(2) [\"field2\"] = 2;
+    @dec(3) [field3] = 3;
+}
+
+class D {
+    @dec(1) static field1 = 1;
+    @dec(2) static [\"field2\"] = 2;
+    @dec(3) static [field3] = 3;
+}
+";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            use_define_for_class_fields: false,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("_b = __propKey(field3),")
+            && output.contains("this[_b] = (__runInitializers(this, _member_extraInitializers), __runInitializers(this, _member_initializers_1, 3));")
+            && output.contains("_a[_b] = (__runInitializers(_a, _static_member_extraInitializers), __runInitializers(_a, _static_member_initializers_1, 3)),"),
+        "ES5 TC39 computed field keys should be scheduled by the decorator wrapper and reused by field initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("            var _a;\n            _a = field3;"),
+        "Decorated computed static fields must not emit duplicate key temp initialization inside the class IIFE.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn tc39_es5_abstract_decorated_accessors_have_no_runtime_decorator_output() {
     let source = "\
 declare var dec: any;
