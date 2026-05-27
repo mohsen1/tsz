@@ -139,6 +139,14 @@ impl<'a> DeclarationEmitter<'a> {
         if self.has_export_modifier(modifiers) {
             return false;
         }
+        // A non-exported namespace member is still part of the public surface
+        // when an exported namespace function returns it by identifier; the
+        // exported return type must be nameable as `typeof Member`.
+        if let Some(idx) = decl_idx
+            && self.namespace_member_decl_returned_by_exported_function(idx)
+        {
+            return false;
+        }
         // If the member is referenced by the exported API surface, keep it
         if let Some(idx) = decl_idx
             && self.is_ns_member_used_by_exports(idx)
@@ -147,6 +155,22 @@ impl<'a> DeclarationEmitter<'a> {
         }
         // Non-exported member inside non-ambient namespace: skip
         true
+    }
+
+    pub(crate) fn namespace_member_decl_returned_by_exported_function(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(name_idx) = self.get_declaration_name_idx(decl_node) else {
+            return false;
+        };
+        let Some(name) = self.get_identifier_text(name_idx) else {
+            return false;
+        };
+        self.namespace_member_returned_by_exported_function(decl_idx, &name)
     }
 
     /// Check if a non-exported namespace member's symbol appears in `used_symbols`.
@@ -230,6 +254,7 @@ impl<'a> DeclarationEmitter<'a> {
             return used.contains_key(&sym_id) && self.symbol_parent_matches(sym_id, direct_parent);
         }
         self.namespace_member_referenced_by_exported_object_literal(decl_idx, &name)
+            || self.namespace_member_returned_by_exported_function(decl_idx, &name)
     }
 
     fn symbol_parent_matches(
@@ -261,6 +286,65 @@ impl<'a> DeclarationEmitter<'a> {
                 self.exported_variable_statement_initializer_references_name(stmt_idx, name)
             })
         }) || self.object_literal_member_references_name(name)
+    }
+
+    fn namespace_member_returned_by_exported_function(
+        &self,
+        decl_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(module_block_idx) = self.containing_module_block_for_decl(decl_idx) else {
+            return false;
+        };
+        let Some(module_block_node) = self.arena.get(module_block_idx) else {
+            return false;
+        };
+        let Some(module_block) = self.arena.get_module_block(module_block_node) else {
+            return false;
+        };
+        let Some(statements) = module_block.statements.as_ref() else {
+            return false;
+        };
+
+        statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let func_idx = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION {
+                self.arena
+                    .get_export_decl(stmt_node)
+                    .and_then(|export| {
+                        self.arena
+                            .get(export.export_clause)
+                            .map(|_| export.export_clause)
+                    })
+                    .unwrap_or(stmt_idx)
+            } else {
+                stmt_idx
+            };
+            let Some(func_node) = self.arena.get(func_idx) else {
+                return false;
+            };
+            let Some(func) = self.arena.get_function(func_node) else {
+                return false;
+            };
+            if !self.statement_has_effective_export(stmt_idx) {
+                return false;
+            }
+            func.body.is_some() && self.function_body_returns_identifier(func.body, name)
+        })
+    }
+
+    fn containing_module_block_for_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = decl_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let parent_node = self.arena.get(parent_idx)?;
+            if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
     }
 
     fn object_literal_member_references_name(&self, name: &str) -> bool {

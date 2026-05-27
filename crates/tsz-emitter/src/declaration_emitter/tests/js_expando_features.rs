@@ -106,3 +106,41 @@ Renamed.state = { code: 200 };
         "Expected renamed arrow expando assignment to emit normalized object union: {output}"
     );
 }
+
+#[test]
+fn namespace_returned_local_function_expando_emits_typeof_merge() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+namespace Boxed {
+    function Builder(): void {}
+    Builder.count = 1;
+    export function make() {
+        return Builder;
+    }
+}
+
+namespace Renamed {
+    function Factory(flag: boolean) {
+        return flag;
+    }
+    Factory.label = "ready";
+    export function getFactory() {
+        return Factory;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "function Builder(): void;\n    namespace Builder {\n        var count: number;\n    }\n    export function make(): typeof Builder;"
+        ),
+        "Expected returned namespace-local function expando to emit a function/namespace merge and typeof return: {output}"
+    );
+    assert!(
+        output.contains(
+            "function Factory(flag: boolean): boolean;\n    namespace Factory {\n        var label: string;\n    }\n    export function getFactory(): typeof Factory;"
+        ),
+        "Expected renamed namespace-local function expando to emit a function/namespace merge and typeof return: {output}"
+    );
+}
