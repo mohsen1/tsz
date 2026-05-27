@@ -550,12 +550,8 @@ impl<'a> Printer<'a> {
                         if block.statements.nodes.is_empty() {
                             if needs_param_prologue {
                                 self.emit_block_with_param_prologue(func.body, &param_transforms);
-                            } else if self.is_single_line(block_node) {
-                                self.write("{ }");
                             } else {
-                                self.write("{");
-                                self.write_line();
-                                self.write("}");
+                                self.emit(func.body);
                             }
                             self.emitting_function_body_block = prev_emitting_function_body_block;
                             self.pop_temp_scope();

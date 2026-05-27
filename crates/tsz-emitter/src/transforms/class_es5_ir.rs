@@ -819,7 +819,28 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         let result = converter.convert_statement(idx);
         self.collect_from_converter(&converter);
-        result
+        if matches!(result, IRNode::ASTRef(_) | IRNode::Raw(_))
+            && let Some(operand) = self.recovered_throw_operand_text(idx)
+        {
+            IRNode::ThrowStatement(Box::new(IRNode::Raw(operand.into())))
+        } else {
+            result
+        }
+    }
+
+    fn recovered_throw_operand_text(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        if node.kind != syntax_kind_ext::THROW_STATEMENT {
+            return None;
+        }
+
+        let source_text = self.source_text?;
+        let start = (node.pos as usize).min(source_text.len());
+        let end = (node.end as usize).min(source_text.len());
+        let statement = source_text[start..end].trim();
+        let operand = statement.strip_prefix("throw")?.trim();
+        let operand = operand.trim_end_matches(';').trim_end();
+        operand.ends_with('.').then(|| operand.to_string())
     }
 
     /// Collect hoisted temps from a converter and update our temp counter
@@ -1263,11 +1284,15 @@ impl<'a> ES5ClassTransformer<'a> {
                 )
             } else {
                 let mut converted = Vec::new();
+                let mut prev_stmt_end = block_node.pos;
                 for &stmt_idx in &block.statements.nodes {
-                    if let Some(stmt_node) = self.arena.get(stmt_idx)
-                        && let Some(comment) = self.extract_leading_comment(stmt_node)
-                    {
-                        converted.push(IRNode::Raw(comment.into()));
+                    if let Some(stmt_node) = self.arena.get(stmt_idx) {
+                        self.emit_leading_statement_comments(
+                            &mut converted,
+                            prev_stmt_end,
+                            stmt_node.pos,
+                        );
+                        prev_stmt_end = stmt_node.end;
                     }
                     converted.push(self.convert_statement_with_context(
                         stmt_idx,
