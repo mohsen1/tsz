@@ -664,6 +664,9 @@ mod jsx_react_hoc_spread_props_tests;
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
 #[cfg(test)]
+#[path = "tests/jsx_union_props_relation_routing_arch_tests.rs"]
+mod jsx_union_props_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/keyof_function_type_is_never_tests.rs"]
 mod keyof_function_type_is_never_tests;
 #[cfg(test)]
