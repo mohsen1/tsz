@@ -89,17 +89,17 @@ const i: I = { [s]: "const-str" as const };
 }
 
 #[test]
-fn ts2418_const_string_key_value_widened() {
+fn ts2418_well_known_symbol_value_widened() {
     let msg = first_2418_msg(
         r#"
-interface I { a: number; }
-const k = "a" as const;
-const i: I = { [k]: "wrong" };
+interface I { [k: symbol]: number; }
+const s2 = Symbol();
+const i: I = { [s2]: "bad" };
 "#,
     );
     assert!(
         msg.contains("'string'"),
-        "expected widened 'string' for const-key value in message, got: {msg}"
+        "expected widened 'string' for well-known-symbol value in message, got: {msg}"
     );
 }
 
