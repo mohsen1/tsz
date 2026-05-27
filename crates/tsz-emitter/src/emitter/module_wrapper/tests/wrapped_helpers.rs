@@ -137,6 +137,24 @@ fn amd_es5_exported_async_method_dynamic_import_uses_wrapper_runtime() {
 }
 
 #[test]
+fn amd_es5_exported_async_arrow_const_downlevels_to_var() {
+    let output = emit_wrapped(
+        "export const l = async () => { const req = await import(\"./dep\"); };\n",
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains("var l = function () { return __awaiter("),
+        "ES5 exported async-arrow locals should use var before the export assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("const l = function ()"),
+        "ES5 exported async-arrow locals should not preserve const after async lowering.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_es5_async_dynamic_import_callbacks_are_file_sequenced() {
     let output = emit_wrapped(
         r#"export async function f() { const req = await import("./one"); }
