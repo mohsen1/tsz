@@ -76,3 +76,33 @@ function makeFlagged(flag: boolean) {
         "Expected returned arrow expando property to keep assigned member type: {output}"
     );
 }
+
+#[test]
+fn repeated_object_expando_assignments_emit_normalized_union() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const Build = function (label: string) {
+    return label.length;
+};
+Build.config = { count: 1 };
+Build.config = { name: "ready" };
+
+const Renamed = (enabled: boolean) => enabled;
+Renamed.state = { ok: true };
+Renamed.state = { code: 200 };
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "config: {\n        count: number;\n        name?: undefined;\n    } | {\n        name: string;\n        count?: undefined;\n    };"
+        ),
+        "Expected repeated object expando assignment to emit normalized object union: {output}"
+    );
+    assert!(
+        output.contains(
+            "state: {\n        ok: boolean;\n        code?: undefined;\n    } | {\n        code: number;\n        ok?: undefined;\n    };"
+        ),
+        "Expected renamed arrow expando assignment to emit normalized object union: {output}"
+    );
+}

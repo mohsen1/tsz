@@ -564,10 +564,40 @@ impl<'a> DeclarationEmitter<'a> {
                     existing.property_name_text == member.property_name_text
                 })
         {
-            *existing = member;
+            if let Some(type_text) = Self::late_bound_repeated_object_assignment_union_type_text(
+                &existing.type_text,
+                &member.type_text,
+            ) {
+                existing.type_text = type_text;
+            } else {
+                *existing = member;
+            }
         } else {
             members.push(member);
         }
+    }
+
+    fn late_bound_repeated_object_assignment_union_type_text(
+        existing_type_text: &str,
+        next_type_text: &str,
+    ) -> Option<String> {
+        let mut arms = Self::split_top_level_union_type_parts(existing_type_text);
+        arms.push(next_type_text.trim().to_string());
+        if arms.len() < 2
+            || !arms
+                .iter()
+                .all(|arm| Self::is_object_literal_type_text(arm))
+        {
+            return None;
+        }
+
+        Self::expand_object_union_arms_from_sibling_properties(&mut arms);
+        Some(arms.join(" | "))
+    }
+
+    fn is_object_literal_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        trimmed.starts_with('{') && trimmed.ends_with('}')
     }
 
     fn declared_late_bound_namespace_member_names(&self, root_name: &str) -> FxHashSet<String> {
