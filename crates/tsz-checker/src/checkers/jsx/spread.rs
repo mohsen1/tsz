@@ -109,7 +109,9 @@ impl<'a> CheckerState<'a> {
         // normalized JSX spread path below so we can classify TS2322 vs TS2741 from
         // the apparent/object shape first.
         if !spread_has_type_params
-            && self.diagnostic_relation_boolean_guard(spread_type, props_type)
+            && self
+                .assign_relation_outcome(spread_type, props_type)
+                .related
         {
             return false;
         }
@@ -195,7 +197,10 @@ impl<'a> CheckerState<'a> {
                 // so the spread's type issues are masked.
                 return false;
             }
-            if self.diagnostic_relation_boolean_guard(spread_type, props_type) {
+            if self
+                .assign_relation_outcome(spread_type, props_type)
+                .related
+            {
                 return false;
             }
             let spread_name = self.format_type(spread_source_type);
