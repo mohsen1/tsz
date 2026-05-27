@@ -329,7 +329,10 @@ impl<'a> CheckerState<'a> {
 
         let def_id = if let Some(alias_type) = self.resolve_lib_type_by_name(name) {
             let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, alias_type)
+                crate::query_boundaries::definition_identity::lazy_def_id(
+                    self.ctx.types,
+                    alias_type,
+                )
             else {
                 record_direct_actual_lib_alias_body_outcome(
                     DirectActualLibAliasBodyOutcome::ResolverNotLazyDef,

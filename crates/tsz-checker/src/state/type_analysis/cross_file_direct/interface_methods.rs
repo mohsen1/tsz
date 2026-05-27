@@ -169,7 +169,7 @@ impl<'a> CheckerState<'a> {
                     )
                 })
                 .map(|type_args| {
-                    crate::query_boundaries::common::TypeSubstitution::from_args(
+                    crate::query_boundaries::type_rewrite::TypeSubstitution::from_args(
                         self.ctx.types,
                         &params,
                         &type_args,
@@ -182,7 +182,7 @@ impl<'a> CheckerState<'a> {
                     return None;
                 }
                 if let Some(substitution) = substitution.as_ref() {
-                    member_type = crate::query_boundaries::common::instantiate_type(
+                    member_type = crate::query_boundaries::type_rewrite::instantiate_type(
                         self.ctx.types,
                         member_type,
                         substitution,
@@ -222,7 +222,7 @@ impl<'a> CheckerState<'a> {
                 )
             })
             .map(|type_args| {
-                crate::query_boundaries::common::TypeSubstitution::from_args(
+                crate::query_boundaries::type_rewrite::TypeSubstitution::from_args(
                     self.ctx.types,
                     &params,
                     &type_args,
@@ -248,7 +248,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             let atom = self.ctx.types.intern_string(&name);
-            let Some(mut member_type) = crate::query_boundaries::common::raw_property_type(
+            let Some(mut member_type) = crate::query_boundaries::property_access::raw_property_type(
                 self.ctx.types,
                 interface_type,
                 atom,
@@ -256,7 +256,7 @@ impl<'a> CheckerState<'a> {
                 continue;
             };
             if let Some(substitution) = substitution.as_ref() {
-                member_type = crate::query_boundaries::common::instantiate_type(
+                member_type = crate::query_boundaries::type_rewrite::instantiate_type(
                     self.ctx.types,
                     member_type,
                     substitution,

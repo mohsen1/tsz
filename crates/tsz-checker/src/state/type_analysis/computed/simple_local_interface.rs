@@ -1,3 +1,4 @@
+use crate::query_boundaries::type_predicates::is_compiler_managed_type;
 use crate::state::CheckerState;
 use crate::symbol_resolver::TypeSymbolResolution;
 use tsz_binder::SymbolId;
@@ -314,9 +315,7 @@ impl<'a> CheckerState<'a> {
         let type_name_node = self.ctx.arena.get(type_ref.type_name)?;
         let ident = self.ctx.arena.get_identifier(type_name_node)?;
         let name = ident.escaped_text.as_str();
-        if crate::query_boundaries::common::is_compiler_managed_type(name)
-            || self.ctx.file_local_type_shadow_for_lib_name(name)
-        {
+        if is_compiler_managed_type(name) || self.ctx.file_local_type_shadow_for_lib_name(name) {
             return None;
         }
         let TypeSymbolResolution::Type(sym_id) =
@@ -453,9 +452,7 @@ impl<'a> CheckerState<'a> {
 
         if type_name_node.kind == SyntaxKind::Identifier as u16 {
             if let Some(ident) = self.ctx.arena.get_identifier(type_name_node)
-                && crate::query_boundaries::common::is_compiler_managed_type(
-                    ident.escaped_text.as_str(),
-                )
+                && is_compiler_managed_type(ident.escaped_text.as_str())
             {
                 return TypeReferenceOutcome::IdentifierCompilerManagedType;
             }
