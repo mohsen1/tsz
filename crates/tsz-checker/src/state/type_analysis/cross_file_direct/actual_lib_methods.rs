@@ -9,6 +9,50 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|export_sym_id| export_sym_id == sym_id)
     }
 
+    /// Namespace-qualifier of a lib interface symbol (e.g. `Temporal`), derived
+    /// from the enclosing `module`/`namespace` declarations of its declarations.
+    fn lib_symbol_namespace_prefix(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> Option<String> {
+        symbol.declarations.iter().find_map(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .and_then(|arenas| {
+                    arenas.iter().find_map(|arena| {
+                        Self::lib_interface_namespace_prefix(&[(decl_idx, arena.as_ref())])
+                    })
+                })
+        })
+    }
+
+    /// Whether any declaration of a lib interface symbol has an `extends` clause.
+    fn lib_interface_declarations_have_heritage(
+        &self,
+        sym_id: SymbolId,
+        symbol: &tsz_binder::Symbol,
+    ) -> bool {
+        symbol.declarations.iter().any(|&decl_idx| {
+            self.ctx
+                .binder
+                .declaration_arenas
+                .get(&(sym_id, decl_idx))
+                .is_some_and(|arenas| {
+                    arenas.iter().any(|arena| {
+                        let arena = arena.as_ref();
+                        arena
+                            .get(decl_idx)
+                            .and_then(|node| arena.get_interface(node))
+                            .and_then(|interface| interface.heritage_clauses.as_ref())
+                            .is_some_and(|clauses| !clauses.nodes.is_empty())
+                    })
+                })
+        })
+    }
+
     fn symbol_is_proven_direct_actual_lib_value_interface(
         &self,
         sym_id: SymbolId,
@@ -469,6 +513,20 @@ impl<'a> CheckerState<'a> {
         if !symbol.has_any_flags(symbol_flags::TYPE) {
             return None;
         }
+
+        // Namespaced lib interfaces (e.g. `Temporal.RoundingOptionsWithLargestUnit`,
+        // `Intl.*`) that `extends` a base interface declared in the same namespace
+        // need their inherited members merged in. The lightweight direct lowerings
+        // below emit only an interface's own body, so the qualified name is
+        // computed here and used to run the namespace-aware heritage merge on the
+        // lowered body before returning (see the end of this method).
+        let heritage_merge_name = (symbol.has_any_flags(symbol_flags::INTERFACE)
+            && !symbol.has_any_flags(symbol_flags::TYPE_ALIAS)
+            && self.lib_interface_declarations_have_heritage(sym_id, &symbol))
+        .then(|| self.lib_symbol_namespace_prefix(sym_id, &symbol))
+        .flatten()
+        .filter(|prefix| self.symbol_is_actual_lib_namespace_export(prefix, &name, sym_id))
+        .map(|prefix| format!("{prefix}.{name}"));
         let proven_value_interface =
             self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
         let protocol_method_interface =
@@ -598,6 +656,17 @@ impl<'a> CheckerState<'a> {
         if let Some(outcome) = intl_success_outcome {
             record_direct_actual_lib_intl_interface_outcome(outcome);
         }
+        // Merge inherited members for a namespaced interface that `extends` a
+        // base declared in the same namespace. The body-only lowerings above
+        // drop them; this runs the namespace-aware heritage merge keyed by the
+        // qualified name so the base interface members are instantiated in.
+        let (direct_type, params) = match heritage_merge_name {
+            Some(merge_name) => {
+                let merged = self.merge_lib_interface_heritage(direct_type, &merge_name);
+                (merged, params)
+            }
+            None => (direct_type, params),
+        };
         self.ctx.symbol_types.insert(sym_id, direct_type);
         self.ctx
             .lib_delegation_cache

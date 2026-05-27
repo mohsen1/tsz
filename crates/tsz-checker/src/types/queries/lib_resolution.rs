@@ -1118,8 +1118,6 @@ impl<'a> CheckerState<'a> {
 
         // Merge heritage (extends) from lib interface declarations.
         // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
-        // Merge heritage (extends) from lib interface declarations.
-        // This propagates base interface members (e.g., Iterator.next() into ArrayIterator).
         if let Some(ty) = lib_type_id {
             lib_type_id = Some(self.merge_lib_interface_heritage(ty, name));
         }
