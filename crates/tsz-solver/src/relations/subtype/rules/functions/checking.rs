@@ -885,8 +885,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params_unpacked
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
-        let allow_bivariant_param_count =
-            self.allow_bivariant_param_count && (is_method || !self.strict_function_types);
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(is_method);
         if (!target_has_rest || guard_target_rest_arity)
             && !allow_bivariant_param_count
             && source_required

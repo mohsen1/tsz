@@ -19,6 +19,11 @@ use crate::visitor::{
 };
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    pub(crate) const fn allows_bivariant_param_count(&self, is_method_like: bool) -> bool {
+        self.allow_bivariant_param_count
+            && (!self.strict_function_types || (is_method_like && !self.disable_method_bivariance))
+    }
+
     pub(crate) fn resolved_type_param_info(
         &self,
         type_id: TypeId,

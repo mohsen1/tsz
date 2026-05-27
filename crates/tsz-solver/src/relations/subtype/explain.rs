@@ -1503,8 +1503,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             target.params.len()
         };
-        let allow_bivariant_param_count =
-            self.allow_bivariant_param_count && (source.is_method || !self.strict_function_types);
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
         // When the target has a rest parameter (e.g., ...args: number[]),
         // it can absorb unlimited arguments — skip the too-many check entirely
         // so we fall through to per-parameter type checking.

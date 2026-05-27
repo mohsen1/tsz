@@ -900,3 +900,92 @@ fn assignability_cache_allow_bivariant_param_count_matches_uncached_policy() {
         "bivariant parameter-count policy result must use its own cache slot",
     );
 }
+
+#[test]
+fn assignability_cache_bivariant_param_count_respects_disabled_method_bivariance() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let mut source_shape = FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    );
+    source_shape.is_method = true;
+    let source = interner.function(source_shape);
+    let mut target_shape =
+        FunctionShape::new(vec![ParamInfo::unnamed(TypeId::STRING)], TypeId::VOID);
+    target_shape.is_method = true;
+    let target = interner.function(target_shape);
+
+    let bivariant_method_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
+            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT,
+    );
+    let disabled_method_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
+            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT
+            | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE,
+    );
+
+    let bivariant_method_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_method_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let bivariant_method_cached =
+        db.is_assignable_to_with_policy(source, target, bivariant_method_policy);
+
+    assert_eq!(
+        bivariant_method_cached, bivariant_method_uncached,
+        "cached method-bivariant parameter-count assignability must match the uncached relation facade",
+    );
+    assert!(
+        bivariant_method_cached,
+        "ALLOW_BIVARIANT_PARAM_COUNT should ignore extra required method parameters when method bivariance is enabled",
+    );
+
+    let disabled_method_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        disabled_method_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let disabled_method_cached =
+        db.is_assignable_to_with_policy(source, target, disabled_method_policy);
+
+    assert_eq!(
+        disabled_method_cached, disabled_method_uncached,
+        "cached disabled-method-bivariance parameter-count assignability must match the uncached relation facade",
+    );
+    assert!(
+        !disabled_method_cached,
+        "DISABLE_METHOD_BIVARIANCE must also disable the method branch of ALLOW_BIVARIANT_PARAM_COUNT",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            bivariant_method_policy.cache_config(),
+        )),
+        Some(bivariant_method_cached),
+        "method-bivariant parameter-count result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            disabled_method_policy.cache_config(),
+        )),
+        Some(disabled_method_cached),
+        "disabled-method-bivariance result must use its own cache slot",
+    );
+}
