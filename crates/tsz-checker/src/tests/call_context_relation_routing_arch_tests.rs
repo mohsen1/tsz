@@ -83,3 +83,43 @@ fn round2_inference_refinement_uses_env_relation_outcome_boundary() {
         "round-2 inference refinement should not regress to raw env boolean assignability"
     );
 }
+
+#[test]
+fn contextual_generic_call_retry_uses_env_relation_outcome_boundary() {
+    for (path, end_marker) in [
+        (
+            "src/types/computation/call/mod.rs",
+            "if is_generic_call\n            && should_retry_generic_call",
+        ),
+        (
+            "src/types/computation/call/inner.rs",
+            "let mut retried_arg_types = None;",
+        ),
+    ] {
+        let source = fs::read_to_string(path).expect("failed to read call computation source");
+        let start = source
+            .find("let should_retry_generic_call =")
+            .unwrap_or_else(|| panic!("missing contextual generic retry block in {path}"));
+        let end = source[start..]
+            .find(end_marker)
+            .map(|offset| start + offset)
+            .unwrap_or_else(|| panic!("missing contextual generic retry end marker in {path}"));
+        let retry_block = &source[start..end];
+
+        assert_eq!(
+            retry_block
+                .matches("assign_relation_outcome_with_env(")
+                .count(),
+            1,
+            "contextual generic retry in {path} should route env-aware relation probes through RelationOutcome"
+        );
+        assert!(
+            retry_block.contains(".related"),
+            "contextual generic retry in {path} should use the relation outcome decision"
+        );
+        assert!(
+            !retry_block.contains("is_assignable_to_with_env("),
+            "contextual generic retry in {path} should not regress to raw env boolean assignability"
+        );
+    }
+}
