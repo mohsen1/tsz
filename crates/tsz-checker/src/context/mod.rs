@@ -243,7 +243,6 @@ pub struct TypeCache {
     pub boxed_types: FxHashMap<tsz_solver::IntrinsicKind, TypeId>,
     pub boxed_def_ids: FxHashMap<tsz_solver::IntrinsicKind, Vec<tsz_solver::DefId>>,
     pub well_known_symbol_names: FxHashMap<String, tsz_solver::SymbolRef>,
-
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`
     pub flow_analysis_cache:
