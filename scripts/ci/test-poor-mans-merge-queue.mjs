@@ -383,6 +383,18 @@ assert.deepEqual(
   ],
 );
 assert.match(failureCommentBody("M1-A", "CI Summary failed"), /^AgentName: M1-A\n\nPoor man's merge queue/m);
+assert.doesNotMatch(failureCommentBody("M1-A", "CI Summary failed"), /not evidence that the PR head failed CI/);
+assert.match(
+  failureCommentBody(
+    "Studio-F",
+    "git checkout -B automation/merge-queue/pr-10521 4e422f332cbe68ca5452299c4f1a144a30eefab0 failed",
+  ),
+  /infrastructure\/worktree evidence, not evidence that the PR head failed CI/,
+);
+assert.match(
+  failureCommentBody("Studio-F", "git fetch --no-tags origin main pull/10521/head failed"),
+  /infrastructure\/worktree evidence, not evidence that the PR head failed CI/,
+);
 assert.throws(() => failureCommentBody("M1-A\nOther", "CI Summary failed"), /single line/);
 
 assert.match(

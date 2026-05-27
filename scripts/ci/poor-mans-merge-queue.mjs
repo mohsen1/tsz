@@ -563,13 +563,27 @@ function postComment(repository, number, body) {
 }
 
 export function failureCommentBody(agentName, reason) {
-  return [
+  const lines = [
     `AgentName: ${cleanAgentName(agentName)}`,
     "",
     "Poor man's merge queue could not land this PR.",
     "",
     `Reason: ${reason}`,
-  ].join("\n");
+  ];
+  if (isRunnerInfrastructureFailure(reason)) {
+    lines.push(
+      "",
+      "Queue runner note: this failure happened while preparing or publishing the synthetic merge branch. It is infrastructure/worktree evidence, not evidence that the PR head failed CI.",
+    );
+  }
+  return lines.join("\n");
+}
+
+function isRunnerInfrastructureFailure(reason) {
+  const text = String(reason || "");
+  return /^git (fetch|checkout|push)\b/.test(text)
+    || text.includes("cannot lock ref")
+    || text.includes("is already used by worktree");
 }
 
 export function skipReasonCounts(skips) {

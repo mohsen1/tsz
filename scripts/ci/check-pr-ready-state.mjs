@@ -70,7 +70,7 @@ function runGh(args) {
 
 function readPullRequest(options) {
   if (options.fixture) {
-    return JSON.parse(fs.readFileSync(options.fixture, "utf8"));
+    return normalizePullRequest(JSON.parse(fs.readFileSync(options.fixture, "utf8")));
   }
 
   const repository = process.env.REPOSITORY || process.env.GITHUB_REPOSITORY;
@@ -79,13 +79,20 @@ function readPullRequest(options) {
     throw new Error("PR_NUMBER and REPOSITORY or GITHUB_REPOSITORY are required");
   }
 
-  const output = runGh([
-    "api",
-    `repos/${repository}/pulls/${prNumber}`,
-    "--jq",
-    "{number,title,body,draft,labels:[.labels[]?.name]}",
-  ]);
-  return JSON.parse(output);
+  const output = runGh(["api", `repos/${repository}/pulls/${prNumber}`]);
+  return normalizePullRequest(JSON.parse(output));
+}
+
+export function normalizePullRequest(pr) {
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: pr.body,
+    draft: pr.draft,
+    labels: Array.isArray(pr.labels)
+      ? pr.labels.map((label) => typeof label === "string" ? label : label?.name)
+      : [],
+  };
 }
 
 function hasWipTitle(title) {
