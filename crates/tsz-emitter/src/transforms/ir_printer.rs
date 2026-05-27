@@ -97,6 +97,14 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn is_generator_break_return(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ReturnStatement(Some(expr))
+                if matches!(expr.as_ref(), IRNode::GeneratorOp { opcode: 3, .. })
+        )
+    }
+
     const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
             expr,
@@ -1080,8 +1088,17 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.write("if (");
                 self.emit_node(condition);
-                self.write(") ");
-                self.emit_node(then_branch);
+                self.write(")");
+                if Self::is_generator_break_return(then_branch) {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
+                    self.emit_node(then_branch);
+                    self.decrease_indent();
+                } else {
+                    self.write(" ");
+                    self.emit_node(then_branch);
+                }
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();

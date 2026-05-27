@@ -154,6 +154,9 @@ pub struct AsyncES5Transformer<'a> {
     /// Active async-lowered loop labels and the generator label that implements
     /// `continue <label>` for that loop.
     pub(super) labeled_continue_targets: Vec<(String, u32)>,
+    /// Active async-lowered loop labels and the generator label that implements
+    /// `break <label>` for that loop.
+    pub(super) labeled_break_targets: Vec<(String, u32)>,
     /// Active catch binding substitutions used while lowering async try regions.
     pub(super) catch_binding_renames: Vec<(String, String)>,
 }
@@ -184,6 +187,7 @@ impl<'a> AsyncES5Transformer<'a> {
             module_kind: ModuleKind::None,
             dynamic_import_promise_counter: Cell::new(1),
             labeled_continue_targets: Vec::new(),
+            labeled_break_targets: Vec::new(),
             catch_binding_renames: Vec::new(),
         }
     }

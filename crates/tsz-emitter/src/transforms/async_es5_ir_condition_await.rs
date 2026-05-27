@@ -150,10 +150,13 @@ impl<'a> AsyncES5Transformer<'a> {
             break_label: exit_placeholder,
             continue_label: loop_label,
         };
-        let label_stack_len = self.labeled_continue_targets.len();
+        let continue_stack_len = self.labeled_continue_targets.len();
+        let break_stack_len = self.labeled_break_targets.len();
         if let Some(label) = labeled_continue {
             self.labeled_continue_targets
                 .push((label.to_string(), loop_label));
+            self.labeled_break_targets
+                .push((label.to_string(), exit_placeholder));
         }
         self.process_loop_body_statement_in_async(
             loop_data.statement,
@@ -162,9 +165,12 @@ impl<'a> AsyncES5Transformer<'a> {
             current_label,
             loop_control,
         );
-        self.labeled_continue_targets.truncate(label_stack_len);
+        self.labeled_continue_targets.truncate(continue_stack_len);
+        self.labeled_break_targets.truncate(break_stack_len);
 
-        current_statements.push(Self::generator_break_statement(loop_label));
+        if !Self::loop_statements_end_control_flow(current_statements) {
+            current_statements.push(Self::generator_break_statement(loop_label));
+        }
 
         cases.push(IRGeneratorCase {
             label: *current_label,
