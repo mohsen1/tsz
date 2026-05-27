@@ -1086,11 +1086,7 @@ impl<'a> CheckerState<'a> {
         let Some(access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        self.ctx
-            .arena
-            .get_identifier_text(access.expression)
-            .is_some_and(|name| name == "Symbol")
-            && !self.known_global_value_has_local_shadow(access.expression, "Symbol")
+        self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             && self
                 .ctx
                 .arena
