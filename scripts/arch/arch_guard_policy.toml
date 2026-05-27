@@ -350,6 +350,11 @@ exclude_files = [
 name = "Checker test boundary: no direct solver internal type inspection in src tests"
 base = "crates/tsz-checker/src/tests"
 pattern = '\btsz_solver::types::|\bTypeData::|\buse\s+tsz_solver::TypeData\b'
+exclude_dirs = [
+  # Split shards of the architecture-contract self-test contain the forbidden
+  # patterns as fixture strings for the guard itself.
+  "architecture_contract_tests_parts",
+]
 exclude_files = [
   "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
 ]
