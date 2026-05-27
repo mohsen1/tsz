@@ -1152,6 +1152,78 @@ fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
 }
 
 #[test]
+fn subtype_cache_top_level_only_any_mode_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
+
+    let all_any_policy =
+        RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::All);
+    let top_level_only_policy =
+        RelationPolicy::default().with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
+    let all_any_key = RelationCacheKey::for_subtype(source, target, all_any_policy.cache_config());
+    let top_level_only_key =
+        RelationCacheKey::for_subtype(source, target, top_level_only_policy.cache_config());
+
+    assert_ne!(
+        all_any_key, top_level_only_key,
+        "top-level-only any propagation must partition subtype cache entries",
+    );
+
+    let all_any_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        all_any_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let top_level_only_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        top_level_only_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        all_any_uncached,
+        "ordinary any propagation should let a nested any property satisfy a number property",
+    );
+    assert!(
+        !top_level_only_uncached,
+        "top-level-only any propagation must not let nested any silence the property mismatch",
+    );
+
+    let all_any_cached = db.is_subtype_of_with_policy(source, target, all_any_policy);
+    let top_level_only_cached = db.is_subtype_of_with_policy(source, target, top_level_only_policy);
+
+    assert_eq!(
+        all_any_cached, all_any_uncached,
+        "cached all-any subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        top_level_only_cached, top_level_only_uncached,
+        "cached top-level-only subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(all_any_key),
+        Some(all_any_cached),
+        "all-any policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(top_level_only_key),
+        Some(top_level_only_cached),
+        "top-level-only any policy result must use its own cache slot",
+    );
+}
+
+#[test]
 fn assignability_policy_flip_matches_uncached_relation_query() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
