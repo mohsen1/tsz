@@ -8,6 +8,28 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
+    pub(in crate::declaration_emitter) fn generic_call_reverse_mapped_handler_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            self.generic_call_reverse_mapped_handler_type_text_for_function(
+                source_arena,
+                func,
+                arguments,
+            )
+        })
+    }
+
     pub(in crate::declaration_emitter) fn generic_call_pick_mapped_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -61,6 +83,131 @@ impl<'a> DeclarationEmitter<'a> {
                 func,
             )
         })
+    }
+
+    fn generic_call_reverse_mapped_handler_type_text_for_function(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        arguments: &NodeList,
+    ) -> Option<String> {
+        let return_type_param = type_reference_identifier_name(source_arena, func.type_annotation)?;
+        if !function_declares_type_parameter(source_arena, func, &return_type_param) {
+            return None;
+        }
+
+        func.parameters
+            .nodes
+            .iter()
+            .copied()
+            .zip(arguments.nodes.iter().copied())
+            .find_map(|(param_idx, arg_idx)| {
+                let param_node = source_arena.get(param_idx)?;
+                let param = source_arena.get_parameter(param_node)?;
+                let type_node = source_arena.get(param.type_annotation)?;
+                if type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                    return None;
+                }
+                let type_ref = source_arena.get_type_ref(type_node)?;
+                let type_args = type_ref.type_arguments.as_ref()?;
+                let [type_arg_idx] = type_args.nodes.as_slice() else {
+                    return None;
+                };
+                if type_reference_identifier_name(source_arena, *type_arg_idx).as_deref()
+                    != Some(return_type_param.as_str())
+                {
+                    return None;
+                }
+                let alias_sym =
+                    self.type_reference_symbol_from_arena(source_arena, type_ref.type_name)?;
+                self.with_symbol_declarations(alias_sym, |alias_arena, alias_decl_idx| {
+                    let alias_node = alias_arena.get(alias_decl_idx)?;
+                    let alias = alias_arena.get_type_alias(alias_node)?;
+                    reverse_mapped_handler_alias_source_param(alias_arena, alias)?;
+                    self.object_literal_reverse_mapped_handler_type_text(arg_idx, 0)
+                })
+            })
+    }
+
+    fn object_literal_reverse_mapped_handler_type_text(
+        &self,
+        object_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        if object_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(object_node)?;
+        let mut members = Vec::new();
+
+        for &member_idx in &object.elements.nodes {
+            let member_node = self.arena.get(member_idx)?;
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            let name_idx = self.object_literal_member_name_idx(member_node)?;
+            let name = self.object_literal_member_name_text(name_idx)?;
+            if name.is_empty() || name == ":" {
+                return None;
+            }
+            let type_text = self.reverse_mapped_handler_member_type_text(member_node)?;
+            members.push(Self::format_object_member_type_text(
+                &name,
+                &type_text,
+                depth + 1,
+            ));
+        }
+
+        if members.is_empty() {
+            return None;
+        }
+        let member_indent = "    ".repeat((depth + 1) as usize);
+        let closing_indent = "    ".repeat(depth as usize);
+        let formatted_members = members
+            .iter()
+            .map(|member| Self::format_object_member_entry(&member_indent, member))
+            .collect::<Vec<_>>()
+            .join("\n");
+        Some(format!("{{\n{formatted_members}\n{closing_indent}}}"))
+    }
+
+    fn reverse_mapped_handler_member_type_text(
+        &self,
+        member_node: &tsz_parser::parser::node::Node,
+    ) -> Option<String> {
+        if let Some(method) = self.arena.get_method_decl(member_node) {
+            return self.first_handler_parameter_type_text(&method.parameters);
+        }
+
+        let initializer = self.object_literal_member_initializer(member_node)?;
+        let initializer = self.skip_parenthesized_expression(initializer)?;
+        let node = self.arena.get(initializer)?;
+        if node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let func = self.arena.get_function(node)?;
+        self.first_handler_parameter_type_text(&func.parameters)
+    }
+
+    fn first_handler_parameter_type_text(&self, parameters: &NodeList) -> Option<String> {
+        let Some(param_idx) = parameters.nodes.first().copied() else {
+            return Some("unknown".to_string());
+        };
+        let param = self
+            .arena
+            .get(param_idx)
+            .and_then(|node| self.arena.get_parameter(node))?;
+        let Some(type_annotation) = param.type_annotation.into_option() else {
+            return Some("unknown".to_string());
+        };
+        self.source_slice_from_arena(self.arena, type_annotation)
+            .or_else(|| self.emit_type_node_text_from_arena(self.arena, type_annotation))
+            .map(|text| text.trim().to_string())
+            .filter(|text| !text.is_empty())
     }
 
     fn generic_call_pick_mapped_type_text_for_function(
@@ -679,6 +826,71 @@ fn type_alias_is_pick_like(source_arena: &NodeArena, alias: &TypeAliasData) -> b
         == Some(object_param_name.as_str())
         && type_reference_identifier_name(source_arena, indexed.index_type).as_deref()
             == Some(mapped_param_name.as_str())
+}
+
+fn reverse_mapped_handler_alias_source_param(
+    source_arena: &NodeArena,
+    alias: &TypeAliasData,
+) -> Option<String> {
+    let [source_param_idx] = alias.type_parameters.as_ref()?.nodes.as_slice() else {
+        return None;
+    };
+    let source_param_name = type_parameter_name(source_arena, *source_param_idx)?;
+    let mapped = mapped_type_from_annotation(source_arena, alias.type_node)?;
+    if mapped.name_type.is_some()
+        || mapped.question_token.is_some()
+        || mapped
+            .members
+            .as_ref()
+            .is_some_and(|members| !members.nodes.is_empty())
+    {
+        return None;
+    }
+    let mapped_param = source_arena
+        .get(mapped.type_parameter)
+        .and_then(|node| source_arena.get_type_parameter(node))?;
+    let mapped_param_name = identifier_text(source_arena, mapped_param.name)?;
+    let constraint_node = source_arena.get(mapped_param.constraint)?;
+    let constraint = source_arena.get_type_operator(constraint_node)?;
+    if constraint.operator != SyntaxKind::KeyOfKeyword as u16
+        || type_reference_identifier_name(source_arena, constraint.type_node).as_deref()
+            != Some(source_param_name.as_str())
+    {
+        return None;
+    }
+
+    let function_node = source_arena.get(mapped.type_node)?;
+    if function_node.kind != syntax_kind_ext::FUNCTION_TYPE {
+        return None;
+    }
+    let function = source_arena.get_function_type(function_node)?;
+    let first_param_idx = function.parameters.nodes.first().copied()?;
+    let first_param = source_arena
+        .get(first_param_idx)
+        .and_then(|node| source_arena.get_parameter(node))?;
+    let indexed_node = source_arena.get(first_param.type_annotation)?;
+    let indexed = source_arena.get_indexed_access_type(indexed_node)?;
+    if type_reference_identifier_name(source_arena, indexed.object_type).as_deref()
+        == Some(source_param_name.as_str())
+        && type_reference_identifier_name(source_arena, indexed.index_type).as_deref()
+            == Some(mapped_param_name.as_str())
+    {
+        Some(source_param_name)
+    } else {
+        None
+    }
+}
+
+fn function_declares_type_parameter(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+    type_param_name: &str,
+) -> bool {
+    func.type_parameters.as_ref().is_some_and(|type_params| {
+        type_params.nodes.iter().copied().any(|param_idx| {
+            type_parameter_name(source_arena, param_idx).as_deref() == Some(type_param_name)
+        })
+    })
 }
 
 fn type_parameter_name(source_arena: &NodeArena, type_param_idx: NodeIndex) -> Option<String> {
