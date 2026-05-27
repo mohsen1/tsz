@@ -6,7 +6,7 @@ use crate::intern::TypeInterner;
 use crate::relations::relation_queries::{
     RelationContext, RelationKind, RelationPolicy, query_relation,
 };
-use crate::types::{RelationCacheKey, TypeData, TypeId};
+use crate::types::{RelationCacheKey, RelationFlags, TypeData, TypeId};
 
 #[test]
 fn subtype_cache_no_unchecked_indexed_access_policy_matches_uncached_relation_query() {
@@ -16,10 +16,9 @@ fn subtype_cache_no_unchecked_indexed_access_policy_matches_uncached_relation_qu
     let string_array = interner.array(TypeId::STRING);
     let indexed_string = interner.intern(TypeData::IndexAccess(string_array, TypeId::NUMBER));
 
-    let ordinary = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let no_unchecked = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS,
+    let ordinary = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let no_unchecked = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::NO_UNCHECKED_INDEXED_ACCESS,
     );
     let ordinary_key =
         RelationCacheKey::for_subtype(indexed_string, TypeId::STRING, ordinary.cache_config());

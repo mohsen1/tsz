@@ -573,8 +573,7 @@ impl<'a> Printer<'a> {
                     .get(*name_id as usize)
                     .map(|ident| ident.escaped_text.clone())
             })
-            .filter(|name| !name.is_empty())
-            .filter(|name| seen.insert(name.clone()))
+            .filter(|name| !name.is_empty() && seen.insert(name.clone()))
             .collect()
     }
 

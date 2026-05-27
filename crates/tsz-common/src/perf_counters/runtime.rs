@@ -1467,6 +1467,31 @@ pub fn record_direct_actual_lib_intl_interface_outcome(
     c.direct_actual_lib_intl_interface_outcome[outcome.as_index()].fetch_add(1, Ordering::Relaxed);
 }
 
+/// Record one semantic `check_source_file` duration in attribution mode.
+///
+/// This intentionally stores only a bounded top-N list. The call site gates
+/// `Instant::now()` behind [`enabled_fast`], so timing-mode runs where
+/// `TSZ_PERF_COUNTERS` is unset do not pay for clock reads.
+pub fn record_slow_check_file_timing(file: &str, elapsed_ns: u64, diagnostics: u64) {
+    if !enabled_fast() {
+        return;
+    }
+    let mut rows = slow_check_file_timings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rows.push(SlowCheckFileTiming {
+        file: file.to_owned(),
+        elapsed_ms: elapsed_ns as f64 / 1_000_000.0,
+        diagnostics,
+    });
+    rows.sort_by(|a, b| {
+        b.elapsed_ms
+            .total_cmp(&a.elapsed_ms)
+            .then_with(|| a.file.cmp(&b.file))
+    });
+    rows.truncate(SLOW_CHECK_FILE_TIMING_LIMIT);
+}
+
 /// Record a raw `SymbolId`-shaped `DefId` redirect inside
 /// `TypeEnvironment::resolve_lazy`.
 ///

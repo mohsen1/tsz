@@ -113,6 +113,25 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             ],
         )
 
+    def test_pass_summary_names_clean_guardrail_counters(self):
+        findings = [
+            self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
+            self.audit.Finding("b.rs", 2, "replace", "rewritten = rewritten.replace(&a, &b);"),
+        ]
+
+        summary = self.audit.format_pass_summary(findings, [])
+
+        self.assertEqual(
+            summary,
+            "Output-surgery audit passed: "
+            "total_findings=2, "
+            "files_with_findings=2, "
+            "unallowlisted_calls=0, "
+            "over_allowlist_files=0, "
+            "over_allowlist_excess_calls=0, "
+            "stale_allowlist_files=0.",
+        )
+
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
             report_path = pathlib.Path(temp_dir) / "nested" / "report.json"

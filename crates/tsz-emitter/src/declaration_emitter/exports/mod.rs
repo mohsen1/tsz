@@ -2191,3 +2191,4 @@ impl<'a> DeclarationEmitter<'a> {
 }
 
 mod imports_and_modules;
+mod parameters_and_heritage;
