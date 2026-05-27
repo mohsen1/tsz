@@ -794,11 +794,11 @@ impl<'a> CheckerState<'a> {
     /// application member made progress, so callers can fall through to their
     /// normal resolution path.
     fn resolve_union_application_members(&mut self, type_id: TypeId) -> Option<TypeId> {
-        use tsz_solver::TypeData;
+        use crate::query_boundaries::state::type_environment::is_application_type;
         let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
         if !members
             .iter()
-            .any(|&m| matches!(self.ctx.types.lookup(m), Some(TypeData::Application(_))))
+            .any(|&m| is_application_type(self.ctx.types, m))
         {
             return None;
         }
@@ -806,10 +806,7 @@ impl<'a> CheckerState<'a> {
         let resolved: Vec<TypeId> = members
             .iter()
             .map(|&member| {
-                if matches!(
-                    self.ctx.types.lookup(member),
-                    Some(TypeData::Application(_))
-                ) {
+                if is_application_type(self.ctx.types, member) {
                     let evaluated = self.evaluate_application_type(member);
                     if evaluated != member {
                         changed = true;
