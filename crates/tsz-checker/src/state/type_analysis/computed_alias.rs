@@ -78,7 +78,7 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn lower_cross_arena_type_alias_declaration(
         &mut self,
-        _sym_id: SymbolId,
+        sym_id: SymbolId,
         decl_idx: NodeIndex,
         decl_arena: &NodeArena,
         type_alias: &TypeAliasData,
@@ -345,6 +345,14 @@ impl<'a> CheckerState<'a> {
         .with_lazy_type_params_resolver(&lazy_type_params_resolver)
         .with_name_def_id_resolver(&name_resolver)
         .with_type_query_override(&type_query_override);
+        let lowering = if let Some(symbol) = decl_binder.get_symbol(sym_id) {
+            lowering.with_preferred_self_reference(
+                symbol.escaped_name.clone(),
+                self.ctx.get_or_create_def_id(sym_id),
+            )
+        } else {
+            lowering
+        };
         let lowering = if std::ptr::eq(decl_arena, self.ctx.arena) {
             lowering
         } else {

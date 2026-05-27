@@ -1193,6 +1193,57 @@ fn direct_source_file_type_alias_lowers_renamed_guarded_recursive_object_aliases
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_guarded_direct_self_object_alias() {
+    with_two_file_state(
+        "export type Node = { value: string; next?: Node };",
+        "import { Node } from './target';",
+        |state, target_binder| {
+            let node_sym = target_binder.file_locals.get("Node").expect("Node");
+            let (node_ty, node_params) = state
+                .direct_source_file_type_alias_result(node_sym, Some(1), true)
+                .expect("object members structurally guard direct self aliases");
+            assert_ne!(node_ty, TypeId::UNKNOWN);
+            assert_ne!(node_ty, TypeId::ERROR);
+            assert!(node_params.is_empty(), "Node should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_guarded_direct_self_array_alias() {
+    with_two_file_state(
+        "export type Nested = string | Nested[];",
+        "import { Nested } from './target';",
+        |state, target_binder| {
+            let nested_sym = target_binder.file_locals.get("Nested").expect("Nested");
+            let (nested_ty, nested_params) = state
+                .direct_source_file_type_alias_result(nested_sym, Some(1), true)
+                .expect("array elements structurally guard direct self aliases");
+            assert_ne!(nested_ty, TypeId::UNKNOWN);
+            assert_ne!(nested_ty, TypeId::ERROR);
+            assert!(nested_params.is_empty(), "Nested should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
+    with_two_file_state(
+        "export type Loop = Loop | string;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "unguarded direct self aliases must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_mutual_recursion_in_chain() {
     with_two_file_state(
         "type Ping = Pong | string;\nexport type Pong = Ping | number;",

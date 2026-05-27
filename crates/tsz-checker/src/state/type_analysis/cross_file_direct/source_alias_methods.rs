@@ -210,16 +210,13 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        // Keep flow-sensitive `typeof` aliases and direct self/cycle cases on
-        // the child-checker path, where diagnostics and resolution are handled.
+        // Keep flow-sensitive `typeof` aliases on the child-checker path, where
+        // diagnostics and resolution are handled. The direct proof above owns
+        // recursive-cycle admission and still rejects unguarded self cycles.
         if Self::source_file_type_node_contains_kind(
             symbol_arena,
             type_alias.type_node,
             syntax_kind_ext::TYPE_QUERY,
-        ) || Self::source_file_type_node_contains_identifier_name(
-            symbol_arena,
-            type_alias.type_node,
-            &name,
         ) {
             record(DirectSourceFileTypeAliasLoweringOutcome::TypeQueryOrSelfReference);
             return None;
