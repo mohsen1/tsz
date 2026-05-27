@@ -772,6 +772,9 @@ mod recursive_path_default_type_param_tests;
 #[path = "tests/relation_flags_boundary_contract_tests.rs"]
 mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/remapped_missing_property_relation_routing_arch_tests.rs"]
+mod remapped_missing_property_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
