@@ -763,6 +763,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.disposable_env_counter.get(),
                 self.blocked_disposable_env_names.borrow().iter().cloned(),
             )
+            .with_class_transformer_indent_base(self.indent_base + 2)
             .with_module_kind(self.module_kind);
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);

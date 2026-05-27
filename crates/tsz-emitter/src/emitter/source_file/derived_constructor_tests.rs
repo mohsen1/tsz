@@ -5,12 +5,18 @@ use tsz_common::ScriptTarget;
 use tsz_parser::ParserState;
 
 fn emit(source: &str, target: ScriptTarget) -> String {
+    emit_with_options(
+        source,
+        PrinterOptions {
+            target,
+            ..Default::default()
+        },
+    )
+}
+
+fn emit_with_options(source: &str, options: PrinterOptions) -> String {
     let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
     let root = parser.parse_source_file();
-    let options = PrinterOptions {
-        target,
-        ..Default::default()
-    };
     let ctx = EmitContext::with_options(options.clone());
     let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
     let mut printer =
@@ -67,6 +73,35 @@ fn derived_constructor_fields_follow_parenthesized_super_call() {
             "function SuperArgument() {\n        var _this = _super.call(this, _this) || this;\n        _this.prop = true;\n        return _this;\n    }"
         ),
         "ES5 derived constructor lowering should route `this` in super-call arguments through the constructor result temp.\nOutput:\n{es5_output}"
+    );
+}
+
+#[test]
+fn pre_super_nested_class_emits_legacy_decorators() {
+    let source = "declare const decorate: any;\nclass Base {}\nclass Derived extends Base {\n    prop = true;\n    constructor() {\n        @decorate(this)\n        class Inner {\n            @decorate(this)\n            method() {}\n            @decorate(this)\n            prop;\n        }\n        super();\n    }\n}\n";
+
+    let output = emit_with_options(
+        source,
+        PrinterOptions {
+            target: ScriptTarget::ES5,
+            legacy_decorators: true,
+            ..Default::default()
+        },
+    );
+
+    assert!(
+        output.contains("Inner = __decorate([")
+            && output.contains("decorate(this)")
+            && output.contains("], Inner);"),
+        "Nested classes lowered directly through ES5 class IR should still emit legacy class decorator calls.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("], Inner.prototype, \"method\", null);"),
+        "Nested class methods lowered directly through ES5 class IR should still emit legacy method decorator calls.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("], Inner.prototype, \"prop\", void 0);"),
+        "Nested class fields lowered directly through ES5 class IR should still emit legacy field decorator calls.\nOutput:\n{output}"
     );
 }
 

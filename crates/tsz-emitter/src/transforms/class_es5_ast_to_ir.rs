@@ -4,6 +4,7 @@
 //! into IR nodes, avoiding `ASTRef` when possible.
 
 use super::*;
+use crate::context::transform::TransformDirective;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
@@ -27,6 +28,8 @@ pub struct AstToIr<'a> {
     this_captured: Cell<bool>,
     /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
+    /// Base indentation for class declarations converted directly by this statement converter.
+    class_transformer_indent_base: u32,
     /// Current `this` substitution to use when lowering static initializer contexts.
     current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Capture alias for lexical `this` inside arrows within the current member body.
@@ -76,6 +79,7 @@ impl<'a> AstToIr<'a> {
             source_text: None,
             this_captured: Cell::new(false),
             transforms: None,
+            class_transformer_indent_base: 0,
             current_this_substitution: Cell::new(None),
             lexical_this_capture_alias: Cell::new(None),
             has_super: false,
@@ -127,6 +131,11 @@ impl<'a> AstToIr<'a> {
     /// Set transform directives from `LoweringPass`
     pub fn with_transforms(mut self, transforms: TransformContext) -> Self {
         self.transforms = Some(transforms);
+        self
+    }
+
+    pub const fn with_class_transformer_indent_base(mut self, indent_base: u32) -> Self {
+        self.class_transformer_indent_base = indent_base;
         self
     }
 
@@ -889,8 +898,17 @@ impl<'a> AstToIr<'a> {
     fn convert_class_declaration(&self, idx: NodeIndex) -> IRNode {
         let mut transformer = ES5ClassTransformer::new(self.arena);
         transformer.set_module_kind(self.module_kind);
+        transformer.set_indent_base(self.class_transformer_indent_base);
         if let Some(transforms) = self.transforms.clone() {
             transformer.set_transforms(transforms);
+        }
+        if !self.has_tc39_decorator_directive(idx) {
+            let class_decorators = self.collect_class_decorators(idx);
+            let has_member_decorators = self.class_has_member_decorators(idx);
+            if !class_decorators.is_empty() || has_member_decorators {
+                transformer.set_class_decorators(class_decorators);
+                transformer.set_legacy_decorators(has_member_decorators);
+            }
         }
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
@@ -904,6 +922,116 @@ impl<'a> AstToIr<'a> {
         }
 
         IRNode::ASTRef(idx)
+    }
+
+    fn has_tc39_decorator_directive(&self, idx: NodeIndex) -> bool {
+        self.transforms
+            .as_ref()
+            .and_then(|transforms| transforms.get(idx))
+            .is_some_and(Self::directive_is_tc39_decorators)
+    }
+
+    fn directive_is_tc39_decorators(directive: &TransformDirective) -> bool {
+        match directive {
+            TransformDirective::TC39Decorators { .. } => true,
+            TransformDirective::Chain(items) => {
+                items.iter().any(Self::directive_is_tc39_decorators)
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_class_decorators(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+        let Some(node) = self.arena.get(idx) else {
+            return Vec::new();
+        };
+        let Some(class_data) = self.arena.get_class(node) else {
+            return Vec::new();
+        };
+        Self::collect_decorators_from_modifiers(self.arena, class_data.modifiers.as_ref())
+    }
+
+    fn class_has_member_decorators(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        let Some(class_data) = self.arena.get_class(node) else {
+            return false;
+        };
+        class_data
+            .members
+            .nodes
+            .iter()
+            .any(|&member_idx| self.member_has_decorator(member_idx))
+    }
+
+    fn member_has_decorator(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        let modifiers = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .and_then(|method| method.modifiers.as_ref()),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .and_then(|property| property.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .and_then(|accessor| accessor.modifiers.as_ref()),
+            _ => None,
+        };
+        if !Self::collect_decorators_from_modifiers(self.arena, modifiers).is_empty() {
+            return true;
+        }
+
+        let parameters = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .map(|method| &method.parameters),
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .arena
+                .get_constructor(member_node)
+                .map(|ctor| &ctor.parameters),
+            _ => None,
+        };
+
+        parameters.is_some_and(|params| {
+            params.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                !Self::collect_decorators_from_modifiers(self.arena, param.modifiers.as_ref())
+                    .is_empty()
+            })
+        })
+    }
+
+    fn collect_decorators_from_modifiers(
+        arena: &NodeArena,
+        modifiers: Option<&NodeList>,
+    ) -> Vec<NodeIndex> {
+        modifiers
+            .map(|m| {
+                m.nodes
+                    .iter()
+                    .copied()
+                    .filter(|&mod_idx| {
+                        arena
+                            .get(mod_idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn convert_function_declaration(&self, idx: NodeIndex) -> IRNode {
