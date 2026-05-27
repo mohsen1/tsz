@@ -287,6 +287,14 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        self.function_expression_type_text_from_ast_at(expr_idx, 0)
+    }
+
+    pub(in crate::declaration_emitter) fn function_expression_type_text_from_ast_at(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != syntax_kind_ext::ARROW_FUNCTION
             && expr_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
@@ -334,8 +342,7 @@ impl<'a> DeclarationEmitter<'a> {
             scratch.write(&return_type);
         } else if func.body.is_some()
             && let Some(return_type) = scratch
-                .preferred_expression_type_text(func.body)
-                .or_else(|| scratch.infer_fallback_type_text_at(func.body, 0))
+                .function_expression_return_type_text(func, depth + 1)
                 .filter(|text| !text.is_empty() && text != "any")
         {
             scratch.write(&return_type);
