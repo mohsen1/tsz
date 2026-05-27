@@ -1494,8 +1494,10 @@ impl<'a> DeclarationEmitter<'a> {
         &mut self,
         constraint_idx: NodeIndex,
     ) {
+        let contains_type_literal = self.type_node_contains_type_literal(constraint_idx, 0);
         if let Some(node) = self.arena.get(constraint_idx)
             && let Some(text) = self.get_source_slice(node.pos, node.end)
+            && !contains_type_literal
         {
             let text = Self::mapped_type_constraint_source_text(&text);
             if !text.is_empty() {
@@ -1506,7 +1508,9 @@ impl<'a> DeclarationEmitter<'a> {
 
         // tsc keeps mapped-type constraint expressions on a single line; suppress multiline tuple formatting.
         let saved_indent = self.indent_level;
-        self.indent_level = 0;
+        if !contains_type_literal {
+            self.indent_level = 0;
+        }
         self.emit_type(constraint_idx);
         self.indent_level = saved_indent;
     }
@@ -1575,6 +1579,22 @@ impl<'a> DeclarationEmitter<'a> {
             .get_children(type_idx)
             .into_iter()
             .any(|child_idx| self.type_node_contains_mapped_type(child_idx, depth + 1))
+    }
+
+    fn type_node_contains_type_literal(&self, type_idx: NodeIndex, depth: usize) -> bool {
+        if type_idx.is_none() || depth > 128 {
+            return false;
+        }
+        let Some(node) = self.arena.get(type_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::TYPE_LITERAL {
+            return true;
+        }
+        self.arena
+            .get_children(type_idx)
+            .into_iter()
+            .any(|child_idx| self.type_node_contains_type_literal(child_idx, depth + 1))
     }
 
     fn mapped_type_constraint_source_text(text: &str) -> &str {

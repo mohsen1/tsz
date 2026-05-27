@@ -1350,3 +1350,124 @@ const pages = pluck(book, "pages", (n) => n.toFixed());
         "Expected callback parameter for key \"age\" to be number, not T[keyof T]. Actual diagnostics: {diagnostics:#?}"
     );
 }
+
+// Regression tests for #9709: a failed indexed access (`T[number]` with no
+// matching index signature) must resolve to the error type, not `undefined`,
+// so the single TS2537 is not followed by cascading false-positive TS2322/TS2344.
+
+#[test]
+fn ts2537_failed_numeric_index_yields_error_type_no_cascade() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type O = { 0: "zero"; 1: "one" };
+type Bad = O[number];
+const x: Bad = "anything";
+type Use = Bad extends string ? 1 : 2;
+const y: Use = 99;
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2537),
+        "Expected TS2537 for `O[number]` with no numeric index signature.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Failed indexed access should resolve to the error type, suppressing TS2322 cascades.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2344),
+        "Failed indexed access should suppress TS2344 cascades.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2537_failed_numeric_index_is_structural_renamed_keys() {
+    // Same rule, different key/value/alias names: the fix must not depend on any
+    // user-chosen identifier.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Mapp = { 10: "ten"; 20: "twenty" };
+type BadM = Mapp[number];
+const xm: BadM = 123;
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2537),
+        "Expected TS2537 for renamed numeric-keyed object.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Renamed numeric-keyed object should also suppress the cascade.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2537_failed_string_index_yields_error_type_no_cascade() {
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type S = { a: 1; b: 2 };
+type BadS = S[string];
+const xs: BadS = { whatever: true };
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2537),
+        "Expected TS2537 for `S[string]` with no string index signature.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Failed string index access should suppress TS2322 cascades.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn ts2537_failed_index_through_alias_no_cascade() {
+    // Alias/wrapper case: the object type reaches the access through a lazy alias.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type O = { 0: "zero"; 1: "one" };
+type Alias = O;
+type BadAlias = Alias[number];
+const xa: BadAlias = true;
+"#,
+    );
+
+    assert!(
+        has_error(&diagnostics, 2537),
+        "Expected TS2537 for aliased numeric-keyed object.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert!(
+        !has_error(&diagnostics, 2322),
+        "Aliased failed index access should suppress the cascade.\nActual diagnostics: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn valid_literal_and_index_signature_access_still_report_real_ts2322() {
+    // Negative control: valid accesses must keep resolving to a concrete type and
+    // still flag genuine assignment errors — the fix must not over-suppress.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type O = { 0: "zero"; 1: "one" };
+type Good = O[0];
+const gBad: Good = "one";
+
+type WithIdx = { [k: string]: number };
+type FromIdx = WithIdx[string];
+const fiBad: FromIdx = "no";
+"#,
+    );
+
+    assert!(
+        !has_error(&diagnostics, 2537),
+        "Valid literal/index-signature accesses must not emit TS2537.\nActual diagnostics: {diagnostics:#?}"
+    );
+    assert_eq!(
+        diagnostics.iter().filter(|(code, _)| *code == 2322).count(),
+        2,
+        "Both genuine TS2322 assignment errors must still be reported.\nActual diagnostics: {diagnostics:#?}"
+    );
+}

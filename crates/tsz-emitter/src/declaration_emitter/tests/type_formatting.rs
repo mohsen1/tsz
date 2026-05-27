@@ -1903,6 +1903,29 @@ fn mapped_type_named_tuple_union_constraint_stays_inline_renamed_var() {
     );
 }
 
+#[test]
+fn mapped_type_keyof_noinfer_object_constraint_formats_multiline() {
+    let output = emit_dts("export type M = { [K in keyof NoInfer<{ a: string, b: string }>]: K };");
+    assert!(
+        output.contains(
+            "export type M = {\n    [K in keyof NoInfer<{\n        a: string;\n        b: string;\n    }>]: K;\n};"
+        ),
+        "Object type literals inside mapped constraints should use structured multiline formatting: {output}"
+    );
+}
+
+#[test]
+fn mapped_type_keyof_noinfer_object_constraint_formats_multiline_renamed_var() {
+    let output =
+        emit_dts("export type M = { [P in keyof NoInfer<{ left: number, right: boolean }>]: P };");
+    assert!(
+        output.contains(
+            "export type M = {\n    [P in keyof NoInfer<{\n        left: number;\n        right: boolean;\n    }>]: P;\n};"
+        ),
+        "Object type literal formatting should not depend on mapped variable or property names: {output}"
+    );
+}
+
 /// A union-of-named-tuples used as a top-level type alias must be preserved
 /// in output (no regression for non-mapped-type positions).
 #[test]
