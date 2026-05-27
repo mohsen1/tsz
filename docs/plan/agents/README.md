@@ -116,7 +116,10 @@ scripts/agents/show-goal.sh M1-A
 When reviewing or developing a branch that edits a lane goal file, use
 `scripts/agents/show-goal.sh <AgentName> --local` to preview the branch-local
 file. The default command still prefers `origin/main` so launch sessions can be
-redirected without first merging the in-progress branch.
+redirected without first merging the in-progress branch. If the branch-local
+file differs from the printed `origin/main` goal, `show-goal.sh` warns on
+stderr; treat that as a cue to inspect `--local` before acting on branch-local
+coordination.
 
 Then run the remaining commands listed in that lane's `Start Every Cycle`
 section.
