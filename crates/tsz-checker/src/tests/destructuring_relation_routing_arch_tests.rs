@@ -20,3 +20,28 @@ fn array_destructuring_unchecked_element_uses_relation_diagnostic_helper() {
          a raw diagnostic relation boolean"
     );
 }
+
+#[test]
+fn destructuring_default_checks_use_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/assignability/assignment_checker/destructuring.rs")
+        .expect("failed to read assignment_checker/destructuring.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        compact_source
+            .matches("assign_relation_outcome(default_type,target_type).related")
+            .count()
+            >= 2
+            && compact_source.contains("assign_relation_outcome(prop_type,target_type).related")
+            && compact_source
+                .contains("assign_relation_outcome(source_type,target_prop_type).related"),
+        "destructuring default/property relation checks should route through relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("diagnostic_relation_boolean_guard(default_type,target_type)")
+            && !compact_source.contains("diagnostic_relation_boolean_guard(prop_type,target_type)")
+            && !compact_source
+                .contains("diagnostic_relation_boolean_guard(source_type,target_prop_type)",),
+        "destructuring default/property relation checks should not use raw boolean guards"
+    );
+}
