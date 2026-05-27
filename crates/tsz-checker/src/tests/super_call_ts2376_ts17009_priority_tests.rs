@@ -1,8 +1,8 @@
 //! Tests for TS2376/TS17009 diagnostic prioritization in derived class constructors.
 //!
-//! When `this` is accessed before `super()`, tsc emits only TS17009 at the `this`
-//! site. tsz previously emitted both TS17009 and TS2376; the fix suppresses TS2376
-//! when `constructor_has_pre_super_this_reference` is true.
+//! For the narrow single-expression-statement case, `tsc` emits only TS17009 at
+//! the `this` site. It still emits TS2376 for declaration initializers and
+//! multiple pre-super `this` references in position-sensitive constructors.
 //!
 //! Issue: <https://github.com/mohsen1/tsz/issues/9678>
 
@@ -34,7 +34,7 @@ class Derived extends Base {
     );
     assert!(
         ts2376.is_empty(),
-        "Expected no TS2376 when TS17009 already covers this-before-super; got: {diags:?}"
+        "Expected no TS2376 for the single pre-super this expression statement; got: {diags:?}"
     );
 }
 
@@ -64,7 +64,69 @@ class Dog extends Animal {
     );
     assert!(
         ts2376.is_empty(),
-        "Expected no TS2376 when TS17009 is emitted; got: {diags:?}"
+        "Expected no TS2376 for the single pre-super this expression statement; got: {diags:?}"
+    );
+}
+
+/// `tsc` keeps TS2376 when the pre-super `this` reference appears inside a
+/// declaration initializer rather than as a standalone expression statement.
+#[test]
+fn this_before_super_in_variable_initializer_keeps_ts2376() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {}
+class Derived extends Base {
+    x = 1;
+    constructor() {
+        const value = this.x;
+        super();
+    }
+}
+"#,
+    );
+
+    let ts17009: Vec<_> = diags.iter().filter(|d| d.code == 17009).collect();
+    let ts2376: Vec<_> = diags.iter().filter(|d| d.code == 2376).collect();
+
+    assert!(
+        !ts17009.is_empty(),
+        "Expected TS17009 for this-before-super; got: {diags:?}"
+    );
+    assert!(
+        !ts2376.is_empty(),
+        "Expected TS2376 when this-before-super is in a variable initializer; got: {diags:?}"
+    );
+}
+
+/// `tsc` also keeps TS2376 when multiple pre-super `this` references appear
+/// before the first root-level `super()` call.
+#[test]
+fn multiple_this_references_before_super_keep_ts2376() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {}
+class Derived extends Base {
+    x = 1;
+    y: number;
+    constructor() {
+        this.x = 2;
+        this.y = 3;
+        super();
+    }
+}
+"#,
+    );
+
+    let ts17009: Vec<_> = diags.iter().filter(|d| d.code == 17009).collect();
+    let ts2376: Vec<_> = diags.iter().filter(|d| d.code == 2376).collect();
+
+    assert!(
+        !ts17009.is_empty(),
+        "Expected TS17009 for this-before-super; got: {diags:?}"
+    );
+    assert!(
+        !ts2376.is_empty(),
+        "Expected TS2376 when multiple pre-super this references precede super(); got: {diags:?}"
     );
 }
 
@@ -106,8 +168,8 @@ class Child extends Base {
 }
 
 /// Mixed case: both `super.property` and `this` appear before `super()`.
-/// TS17009 subsumes TS2376 — only TS17009 should fire (at the `this` site),
-/// and TS2376 must be suppressed even though `super.property` is also present.
+/// The single `this` expression-statement still suppresses TS2376 even when a
+/// separate pre-super `super.property` expression appears first.
 #[test]
 fn super_property_and_this_before_super_emits_ts17009_only() {
     let diags = check_source_diagnostics(
@@ -135,7 +197,7 @@ class Mixed extends Base {
     );
     assert!(
         ts2376.is_empty(),
-        "Expected no TS2376 when TS17009 already covers the mixed case; got: {diags:?}"
+        "Expected no TS2376 for the mixed single-this expression-statement case; got: {diags:?}"
     );
 }
 

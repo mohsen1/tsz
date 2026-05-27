@@ -548,10 +548,16 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Returns `true` when the constructor body has a `this`-before-super
-    /// access that would trigger TS17009. Used to suppress the redundant TS2376
-    /// emission: TS17009 (this-before-super) subsumes TS2376 (super-not-first).
-    fn constructor_has_pre_super_this_reference(&self, ctor_idx: NodeIndex) -> bool {
+    /// Returns `true` for the narrow `tsc` diagnostic-priority case where a
+    /// single pre-super `this` reference lives in an expression statement.
+    ///
+    /// `tsc` still reports TS2376 when the pre-super `this` appears in a
+    /// declaration initializer, or when multiple pre-super `this` references
+    /// occur before the first root-level `super()` call.
+    fn constructor_has_single_pre_super_this_expression_statement(
+        &self,
+        ctor_idx: NodeIndex,
+    ) -> bool {
         use tsz_scanner::SyntaxKind;
 
         let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
@@ -584,6 +590,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let mut this_reference_count = 0;
+
         for i in 0..self.ctx.arena.len() {
             let node_idx = NodeIndex(i as u32);
             let Some(node) = self.ctx.arena.get(node_idx) else {
@@ -592,19 +600,32 @@ impl<'a> CheckerState<'a> {
             if !self.is_directly_in_constructor_body(node_idx, ctor_idx) {
                 continue;
             }
-            let in_pre_super = pre_super_statements
-                .iter()
-                .any(|&stmt| self.is_descendant_of_node(node_idx, stmt) || node_idx == stmt);
-            if !in_pre_super {
-                continue;
-            }
             if node.kind == SyntaxKind::ThisKeyword as u16
                 && self.is_this_before_super_in_derived_constructor(node_idx)
             {
-                return true;
+                let Some(containing_statement) = pre_super_statements
+                    .iter()
+                    .copied()
+                    .find(|&stmt| self.is_descendant_of_node(node_idx, stmt) || node_idx == stmt)
+                else {
+                    continue;
+                };
+
+                let Some(statement_node) = self.ctx.arena.get(containing_statement) else {
+                    return false;
+                };
+                if statement_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return false;
+                }
+
+                this_reference_count += 1;
+                if this_reference_count > 1 {
+                    return false;
+                }
             }
         }
-        false
+
+        this_reference_count == 1
     }
 
     fn is_additional_super_call_after_first_root_level_super_statement(
@@ -962,17 +983,17 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_super_call_first_statement_in_constructor(idx) {
-                // TS17009 (this-before-super) subsumes TS2376 (super-not-first).
-                // Only emit TS2376 when the constructor has a pre-super `super`
-                // property reference but NOT a pre-super `this` reference: when
-                // `this` is accessed before `super`, TS17009 is already emitted at
-                // that site and reporting TS2376 here is redundant.
+                // TS17009 suppresses TS2376 only for the narrow `tsc`
+                // expression-statement case. Declaration initializers and
+                // multiple pre-super `this` references still retain TS2376.
                 let should_emit_ts2376 =
                     self.enclosing_constructor_node(idx)
                         .is_some_and(|ctor_idx| {
                             self.constructor_has_pre_super_this_or_super_property_reference(
                                 ctor_idx,
-                            ) && !self.constructor_has_pre_super_this_reference(ctor_idx)
+                            ) && !self.constructor_has_single_pre_super_this_expression_statement(
+                                ctor_idx,
+                            )
                         });
 
                 if should_emit_ts2376 {
