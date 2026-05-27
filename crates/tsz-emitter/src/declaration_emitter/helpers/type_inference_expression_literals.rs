@@ -809,6 +809,7 @@ impl<'a> DeclarationEmitter<'a> {
                 depth + 1,
                 getter_names.contains(&name),
                 setter_names.contains(&name),
+                None,
             )?;
             if member_text.trim_start().starts_with(':') {
                 return None;
