@@ -1,5 +1,4 @@
 //! Mapped type evaluation.
-//!
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
@@ -26,7 +25,6 @@ use super::super::evaluate::TypeEvaluator;
 
 #[cfg(test)]
 mod mapped_tests;
-
 #[cfg(test)]
 mod tests;
 pub(crate) use key_types::{MappedKey, MappedKeys};
