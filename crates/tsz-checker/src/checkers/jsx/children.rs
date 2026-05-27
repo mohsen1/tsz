@@ -161,10 +161,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(raw_zero_param_child_type) =
                             self.raw_single_jsx_zero_param_callback_type(attributes_idx)
                         && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
-                        && !self.diagnostic_relation_boolean_guard(
-                            raw_zero_param_child_type,
-                            children_type,
-                        )
+                        && !self
+                            .assign_relation_outcome(raw_zero_param_child_type, children_type)
+                            .related
                     {
                         self.check_jsx_single_child_assignable(
                             attributes_idx,
