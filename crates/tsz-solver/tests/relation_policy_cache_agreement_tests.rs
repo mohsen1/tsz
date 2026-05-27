@@ -463,3 +463,100 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
         "method-bivariant and sound-method policies should miss in separate cache slots",
     );
 }
+
+#[test]
+fn assignability_cache_strict_subtype_checking_matches_uncached_method_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let run = interner.intern_string("run");
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+    let dog_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(dog)],
+        TypeId::VOID,
+    ));
+    let animal_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(animal)],
+        TypeId::VOID,
+    ));
+    let source = interner.object(vec![PropertyInfo::method(run, dog_method)]);
+    let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
+
+    let ordinary = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+        .with_strict_subtype_checking(false);
+    let strict = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+        .with_strict_subtype_checking(true);
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let strict_key = RelationCacheKey::for_assignability(source, target, strict.cache_config());
+
+    assert_ne!(
+        ordinary_key, strict_key,
+        "ordinary and strict-subtype policies must occupy distinct assignability cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary strict-function assignability should keep method parameters bivariant",
+    );
+    assert!(
+        !strict_uncached,
+        "strict subtype checking should disable method bivariance for assignability",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary result must be stored in the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        None,
+        "strict-subtype lookup must not hit the ordinary slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict),
+        strict_uncached,
+        "cached strict-subtype policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_uncached),
+        "strict-subtype result must be stored in the strict assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary assignability slot must remain intact after the strict lookup",
+    );
+}
