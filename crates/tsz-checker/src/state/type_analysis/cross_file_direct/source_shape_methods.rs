@@ -352,10 +352,10 @@ impl<'a> CheckerState<'a> {
                     .type_parameters
                     .as_ref()
                     .is_none_or(|params| params.nodes.is_empty())
-                    && !Self::source_file_type_node_contains_kind(
+                    && !Self::source_file_type_node_contains_disallowed_type_query(
                         arena,
+                        delegate_binder,
                         type_alias.type_node,
-                        syntax_kind_ext::TYPE_QUERY,
                     )
                     && Self::source_file_type_node_is_option_bag_lowerable(
                         arena,
@@ -610,6 +610,78 @@ impl<'a> CheckerState<'a> {
             stack.extend(arena.get_children(idx));
         }
         false
+    }
+
+    pub(super) fn source_file_type_node_contains_disallowed_type_query(
+        arena: &NodeArena,
+        binder: &BinderState,
+        root: NodeIndex,
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY
+                && !Self::source_file_type_query_is_well_known_global_symbol_property(
+                    arena, binder, idx,
+                )
+            {
+                return true;
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        false
+    }
+
+    pub(super) fn source_file_type_query_is_well_known_global_symbol_property(
+        arena: &NodeArena,
+        binder: &BinderState,
+        type_query_idx: NodeIndex,
+    ) -> bool {
+        let Some(type_query_node) = arena.get(type_query_idx) else {
+            return false;
+        };
+        let Some(type_query) = arena.get_type_query(type_query_node) else {
+            return false;
+        };
+        let Some(expr_node) = arena.get(type_query.expr_name) else {
+            return false;
+        };
+        let (base_idx, member_idx) = if expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        {
+            let Some(access) = arena.get_access_expr(expr_node) else {
+                return false;
+            };
+            (access.expression, access.name_or_argument)
+        } else if expr_node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let Some(qualified) = arena.get_qualified_name(expr_node) else {
+                return false;
+            };
+            (qualified.left, qualified.right)
+        } else {
+            return false;
+        };
+        let Some(base_ident) = arena.get(base_idx).and_then(|base| arena.get_identifier(base))
+        else {
+            return false;
+        };
+        if base_ident.escaped_text != "Symbol" {
+            return false;
+        }
+        if let Some(sym_id) = binder.file_locals.get("Symbol")
+            && !binder.lib_symbol_ids.contains(&sym_id)
+            && binder.get_symbol(sym_id).is_some_and(|symbol| {
+                !symbol.declarations.is_empty()
+                    && symbol.flags & (symbol_flags::VALUE | symbol_flags::ALIAS) != 0
+            })
+        {
+            return false;
+        }
+        arena
+            .get(member_idx)
+            .and_then(|name| arena.get_identifier(name))
+            .is_some()
     }
 
     pub(super) fn source_file_type_node_contains_identifier_name(

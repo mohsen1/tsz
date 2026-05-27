@@ -8,7 +8,7 @@ use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::is_compiler_managed_type;
-use tsz_solver::{TupleElement, TypeId};
+use tsz_solver::{SymbolRef, TupleElement, TypeId};
 
 impl<'a> CheckerState<'a> {
     pub(crate) fn resolve_cross_arena_type_alias_body_with_checker(
@@ -245,6 +245,12 @@ impl<'a> CheckerState<'a> {
         );
         let computed_name_resolver = |expr_idx: NodeIndex| computed_names.get(&expr_idx).copied();
         let type_query_override = |expr_name_idx: NodeIndex| -> Option<TypeId> {
+            if let Some(symbol_type) =
+                self.cross_arena_well_known_symbol_type_query(decl_arena, expr_name_idx)
+            {
+                return Some(symbol_type);
+            }
+
             let expr_node = decl_arena.get(expr_name_idx)?;
             let ident = decl_arena.get_identifier(expr_node)?;
             let referenced_sym_id = resolve_type_name(&ident.escaped_text)?;
@@ -437,6 +443,18 @@ impl<'a> CheckerState<'a> {
             return Self::well_known_symbol_property_name_in_cross_arena(arena, paren.expression);
         }
 
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qualified = arena.get_qualified_name(node)?;
+            let base_node = arena.get(qualified.left)?;
+            let base_ident = arena.get_identifier(base_node)?;
+            if base_ident.escaped_text != "Symbol" {
+                return None;
+            }
+            let name_node = arena.get(qualified.right)?;
+            let name_ident = arena.get_identifier(name_node)?;
+            return Some(format!("[Symbol.{}]", name_ident.escaped_text));
+        }
+
         if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
         {
@@ -466,6 +484,87 @@ impl<'a> CheckerState<'a> {
         }
 
         None
+    }
+
+    pub(super) fn source_file_type_node_type_queries_are_direct_lowerable(
+        &self,
+        arena: &NodeArena,
+        root: NodeIndex,
+    ) -> bool {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_QUERY {
+                let Some(type_query) = arena.get_type_query(node) else {
+                    return false;
+                };
+                if self
+                    .cross_arena_well_known_symbol_type_query(arena, type_query.expr_name)
+                    .is_none()
+                {
+                    return false;
+                }
+            }
+            stack.extend(arena.get_children(idx));
+        }
+        true
+    }
+
+    fn cross_arena_well_known_symbol_type_query(
+        &self,
+        arena: &NodeArena,
+        expr_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let property_name = Self::well_known_symbol_property_name_in_cross_arena(arena, expr_idx)?;
+        let symbol_ref =
+            self.cross_arena_well_known_symbol_ref_from_property_name(&property_name)?;
+        Some(self.ctx.types.unique_symbol(symbol_ref))
+    }
+
+    fn cross_arena_well_known_symbol_ref_from_property_name(
+        &self,
+        property_name: &str,
+    ) -> Option<SymbolRef> {
+        let member_name = property_name.strip_prefix("[Symbol.")?.strip_suffix(']')?;
+
+        for lib_ctx in self
+            .ctx
+            .lib_contexts
+            .iter()
+            .take(self.ctx.actual_lib_file_count)
+        {
+            if let Some(member_sym) = ["Symbol", "SymbolConstructor"]
+                .iter()
+                .filter_map(|name| lib_ctx.binder.file_locals.get(name))
+                .filter_map(|sym_id| lib_ctx.binder.get_symbol(sym_id))
+                .find_map(|symbol| Self::symbol_member_or_export(symbol, member_name))
+            {
+                return Some(SymbolRef(member_sym.0));
+            }
+        }
+
+        ["Symbol", "SymbolConstructor"]
+            .iter()
+            .filter_map(|name| self.ctx.binder.file_locals.get(name))
+            .filter(|sym_id| self.ctx.binder.lib_symbol_ids.contains(sym_id))
+            .filter_map(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .find_map(|symbol| Self::symbol_member_or_export(symbol, member_name))
+            .map(|member_sym| SymbolRef(member_sym.0))
+    }
+
+    fn symbol_member_or_export(symbol: &tsz_binder::Symbol, member_name: &str) -> Option<SymbolId> {
+        symbol
+            .members
+            .as_ref()
+            .and_then(|members| members.get(member_name))
+            .or_else(|| {
+                symbol
+                    .exports
+                    .as_ref()
+                    .and_then(|exports| exports.get(member_name))
+            })
     }
 
     fn cross_arena_expression_name_text(arena: &NodeArena, idx: NodeIndex) -> Option<String> {

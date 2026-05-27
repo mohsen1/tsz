@@ -1686,6 +1686,71 @@ fn direct_source_file_type_alias_rejects_shadowed_global_function_reference() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_well_known_symbol_iterator_type_query() {
+    with_two_file_state_with_libs(
+        "type DeepObject<T> = { [K in keyof T]: K extends typeof Symbol.iterator ? T[K] extends () => Iterator<infer Item, infer Return, infer Next> ? () => Iterator<Deep<Item>, Deep<Return>, Deep<Next>> : Deep<T[K]> : Deep<T[K]> };\nexport type Deep<T> = T extends object ? DeepObject<T> : T;",
+        "import { Deep } from './target';",
+        &[
+            "es5.d.ts",
+            "es2015.symbol.d.ts",
+            "es2015.symbol.wellknown.d.ts",
+            "es2015.iterable.d.ts",
+        ],
+        |state, target_binder| {
+            let deep_sym = target_binder.file_locals.get("Deep").expect("Deep");
+            let target_arena = state.ctx.all_arenas.as_ref().expect("arenas")[1].clone();
+            let deep_symbol = target_binder.get_symbol(deep_sym).expect("Deep symbol");
+            let deep_decl = deep_symbol.declarations[0];
+            let deep_node = target_arena.get(deep_decl).expect("Deep decl");
+            let deep_alias = target_arena.get_type_alias(deep_node).expect("Deep alias");
+            assert!(
+                !CheckerState::source_file_type_node_contains_disallowed_type_query(
+                    target_arena.as_ref(),
+                    target_binder.as_ref(),
+                    deep_alias.type_node,
+                ),
+                "well-known Symbol.iterator should be the only type query",
+            );
+            assert!(
+                state.source_file_type_node_type_queries_are_direct_lowerable(
+                    target_arena.as_ref(),
+                    deep_alias.type_node,
+                ),
+                "well-known Symbol.iterator should resolve to a lib unique symbol",
+            );
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(deep_sym, Some(1), true)
+                .expect("well-known Symbol.iterator type queries should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "Deep should expose T");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_shadowed_symbol_iterator_type_query() {
+    with_two_file_state_with_libs(
+        "declare const Symbol: { iterator: unique symbol };\nexport type Shadowed<T> = T extends typeof Symbol.iterator ? T : never;",
+        "import { Shadowed } from './target';",
+        &[
+            "es5.d.ts",
+            "es2015.symbol.d.ts",
+            "es2015.symbol.wellknown.d.ts",
+        ],
+        |state, target_binder| {
+            let shadowed_sym = target_binder.file_locals.get("Shadowed").expect("Shadowed");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(shadowed_sym, Some(1), true)
+                    .is_none(),
+                "local Symbol shadows must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_chain_when_alias_guard_limit_is_hit() {
     let mut target_source = String::from("type A130 = string;\n");
     for index in (1..130).rev() {

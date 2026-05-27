@@ -554,10 +554,10 @@ impl<'a> CheckerState<'a> {
                 }) {
                     return false;
                 }
-                if Self::source_file_type_node_contains_kind(
+                if Self::source_file_type_node_contains_disallowed_type_query(
                     resolved.arena,
+                    resolved.binder,
                     type_alias.type_node,
-                    syntax_kind_ext::TYPE_QUERY,
                 ) {
                     return false;
                 }
@@ -642,6 +642,11 @@ impl<'a> CheckerState<'a> {
                         inferred_guard_names,
                     )
                 })
+            }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                Self::source_file_type_query_is_well_known_global_symbol_property(
+                    arena, binder, node_idx,
+                )
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => arena.get_array_type(node).is_some_and(|array| {
                 Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -966,10 +971,10 @@ impl<'a> CheckerState<'a> {
                     }) {
                         return false;
                     }
-                    if Self::source_file_type_node_contains_kind(
+                    if Self::source_file_type_node_contains_disallowed_type_query(
                         resolved.arena,
+                        resolved.binder,
                         type_alias.type_node,
-                        syntax_kind_ext::TYPE_QUERY,
                     ) || !Self::source_file_alias_proof_seen_push(seen, key)
                     {
                         return false;
@@ -1014,10 +1019,10 @@ impl<'a> CheckerState<'a> {
                         false,
                         &[],
                     )
-                } else if Self::source_file_type_node_contains_kind(
+                } else if Self::source_file_type_node_contains_disallowed_type_query(
                     resolved.arena,
+                    resolved.binder,
                     type_alias.type_node,
-                    syntax_kind_ext::TYPE_QUERY,
                 ) {
                     false
                 } else {
@@ -1060,6 +1065,11 @@ impl<'a> CheckerState<'a> {
                         inferred_guard_names,
                     )
                 })
+            }
+            k if k == syntax_kind_ext::TYPE_QUERY => {
+                Self::source_file_type_query_is_well_known_global_symbol_property(
+                    arena, binder, node_idx,
+                )
             }
             k if k == syntax_kind_ext::TUPLE_TYPE => {
                 arena.get_tuple_type(node).is_some_and(|tuple| {
