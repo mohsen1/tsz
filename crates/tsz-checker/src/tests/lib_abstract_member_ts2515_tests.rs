@@ -48,6 +48,13 @@ fn lib_abstract_iterator_next_requires_ts2515_when_not_implemented() {
          'next' must emit TS2515. Got: {diags:#?}"
     );
     assert!(
+        diags.iter().any(|diag| diag.code == 2515
+            && diag
+                .message_text
+                .contains("Iterator<number, undefined, unknown>")),
+        "TS2515 must render Iterator defaults from the cross-arena class declaration. Got: {diags:#?}"
+    );
+    assert!(
         !has_diagnostic_code(&diags, 2351),
         "No false TS2351 expected when extending abstract Iterator. Got: {diags:#?}"
     );
