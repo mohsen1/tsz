@@ -18,7 +18,7 @@ impl<'a> Printer<'a> {
     /// alias. In that mode reads and writes go directly through the captured
     /// accessor (`_super.x`, `_superIndex("x").value`); the `Reflect`-based
     /// rewrite is only correct for the static-member super alias.
-    pub(in crate::emitter) fn in_async_captured_super(&self) -> bool {
+    pub(in crate::emitter) const fn in_async_captured_super(&self) -> bool {
         self.scoped_static_super_direct_access || self.scoped_static_super_index_alias.is_some()
     }
 
