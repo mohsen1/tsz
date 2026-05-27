@@ -2,6 +2,7 @@
 
 mod private_error;
 mod super_static_access;
+mod union_restricted_property;
 
 use crate::classes_domain::class_summary::ClassMemberKind;
 use crate::query_boundaries::type_computation::complex::{
@@ -98,7 +99,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .is_some();
 
-        if self.union_restricted_property_is_missing(object_expr, property_name, object_type) {
+        if self.union_restricted_property_is_missing(property_name, object_type) {
             self.error_property_not_exist_at(property_name, object_type, error_node);
             return false;
         }
@@ -830,75 +831,6 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         self.is_assignment_operator(binary.operator_token)
-    }
-
-    /// Check if a union type has a property that should be treated as "not existing"
-    /// because one or more members have it as private/protected while other members
-    /// have it publicly or from a different declaring class.
-    ///
-    /// Matches tsc's `createUnionOrIntersectionProperty` logic: when a property has a
-    /// private/protected declaration in one constituent but is missing, public, or has
-    /// a different declaration in another constituent, the property doesn't exist on
-    /// the union type (TS2339) rather than getting a specific accessibility error.
-    fn union_restricted_property_is_missing(
-        &mut self,
-        _object_expr: NodeIndex,
-        property_name: &str,
-        object_type: tsz_solver::TypeId,
-    ) -> bool {
-        use crate::query_boundaries::state::checking;
-
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
-            return false;
-        };
-
-        if members.len() < 2 {
-            return false;
-        }
-
-        let is_static = self.is_constructor_type(object_type);
-
-        let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
-
-        for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                // Non-class member in the union (e.g., object literal type).
-                // Treated as a different declaration from any class member.
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    // Property is restricted (private/protected) in this member
-                    has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            // Different declaring class — counts as "other"
-                            has_other = true;
-                        }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
-                    }
-                }
-                None => {
-                    // Property is public or not found in this class member
-                    has_other = true;
-                }
-            }
-        }
-
-        // If any member has a restricted property and there's at least one member
-        // with a different declaration (public, missing, or different class),
-        // the property doesn't exist on the union type.
-        has_restricted && has_other
     }
 
     fn intersection_private_property_is_missing(
