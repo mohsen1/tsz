@@ -1317,25 +1317,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn prototype_define_property_base_is_global_object(&self, idx: NodeIndex) -> bool {
-        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
-            return false;
-        };
-        if base_ident.escaped_text != "Object" {
-            return false;
-        }
-        let is_object_lib_symbol = |sym_id| {
-            self.ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_some_and(|symbol| symbol.escaped_name == "Object")
-                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
-                    || self.ctx.symbol_is_from_lib(sym_id))
-        };
-
-        if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
-            return is_object_lib_symbol(sym_id);
-        }
-        !self.known_global_value_has_local_shadow(idx, "Object")
+        self.identifier_resolves_to_unshadowed_global(idx, "Object")
     }
 
     /// Resolve a self-referencing class constructor in a static initializer.
