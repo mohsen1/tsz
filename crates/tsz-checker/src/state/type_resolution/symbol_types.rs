@@ -1643,9 +1643,17 @@ impl<'a> CheckerState<'a> {
                 let mut merged =
                     self.merge_interface_heritage_types(&symbol.declarations, interface_type);
                 // If standard merge didn't propagate lib-arena heritage, fall
-                // back to the lib-aware heritage merge.
+                // back to the lib-aware heritage merge. Namespaced lib interfaces
+                // (e.g. `Temporal.RoundingOptionsWithLargestUnit`) resolve their
+                // own symbol and their base interfaces through the enclosing
+                // namespace, so the lib-aware merge needs the qualified name; the
+                // bare name fails to resolve the namespaced symbol and drops every
+                // inherited member.
                 if merged == interface_type {
-                    let name = symbol.escaped_name.clone();
+                    let name = match &namespace_prefix {
+                        Some(prefix) => format!("{prefix}.{}", symbol.escaped_name),
+                        None => symbol.escaped_name.clone(),
+                    };
                     merged = self.merge_lib_interface_heritage(merged, &name);
                 }
                 self.pop_type_parameters(updates);

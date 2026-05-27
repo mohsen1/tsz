@@ -310,4 +310,43 @@ impl<'a> CheckerState<'a> {
                 })
         })
     }
+
+    /// Compute the namespace-qualifier (e.g. `Temporal` for
+    /// `Temporal.RoundingOptionsWithLargestUnit`) for a lib interface from its
+    /// declarations by walking enclosing `module`/`namespace` declarations.
+    ///
+    /// Heritage merging resolves both the interface's own symbol and its base
+    /// interfaces through this namespace, so callers that only have the bare
+    /// interface name must qualify it before delegating to
+    /// `merge_lib_interface_heritage`; otherwise the namespaced symbol cannot be
+    /// found and every inherited member is dropped.
+    pub(crate) fn lib_interface_namespace_prefix(
+        decls_with_arenas: &[(NodeIndex, &NodeArena)],
+    ) -> Option<String> {
+        decls_with_arenas.iter().find_map(|(decl_idx, arena)| {
+            let node = arena.get(*decl_idx)?;
+            arena.get_interface(node)?;
+
+            let mut parent = arena
+                .get_extended(*decl_idx)
+                .map_or(NodeIndex::NONE, |info| info.parent);
+            let mut prefixes = Vec::new();
+            while parent.is_some() {
+                let parent_node = arena.get(parent)?;
+                if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                    && let Some(module) = arena.get_module(parent_node)
+                    && let Some(name_node) = arena.get(module.name)
+                    && name_node.kind == SyntaxKind::Identifier as u16
+                    && let Some(name_ident) = arena.get_identifier(name_node)
+                {
+                    prefixes.push(name_ident.escaped_text.clone());
+                }
+                parent = arena
+                    .get_extended(parent)
+                    .map_or(NodeIndex::NONE, |info| info.parent);
+            }
+
+            (!prefixes.is_empty()).then(|| prefixes.into_iter().rev().collect::<Vec<_>>().join("."))
+        })
+    }
 }
