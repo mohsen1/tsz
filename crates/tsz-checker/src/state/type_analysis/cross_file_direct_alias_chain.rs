@@ -160,6 +160,75 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn collect_generic_projection_infer_type_param_names<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        root: NodeIndex,
+        names: &mut Vec<String>,
+        proof: &SourceFileAliasProofContext<'b>,
+    ) {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TYPE_REFERENCE
+                && let Some(type_ref) = arena.get_type_ref(node)
+                && let Some(args) = type_ref.type_arguments.as_ref()
+                && !args.nodes.is_empty()
+                && Self::source_file_type_reference_target_is_projection_lowerable(
+                    arena,
+                    binder,
+                    type_ref.type_name,
+                    args.nodes.len(),
+                    proof,
+                )
+            {
+                for arg in args.nodes.iter().copied() {
+                    Self::collect_infer_type_param_names(arena, arg, names);
+                }
+            }
+            stack.extend(arena.get_children(idx));
+        }
+    }
+
+    fn source_file_type_reference_target_is_projection_lowerable<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        type_name: NodeIndex,
+        arg_count: usize,
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        let Some(name) = arena
+            .get(type_name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        let Some(raw_sym_id) = binder.file_locals.get(name) else {
+            return (proof.global_type_is_lowerable)(binder, name);
+        };
+        if Self::source_file_local_symbol_can_fall_back_to_global_type(arena, binder, raw_sym_id) {
+            return (proof.global_type_is_lowerable)(binder, name);
+        }
+        let Some(resolved) =
+            Self::source_file_resolve_alias_symbol_for_lowering(arena, binder, raw_sym_id, proof)
+        else {
+            return false;
+        };
+        resolved
+            .binder
+            .get_symbol(resolved.sym_id)
+            .is_some_and(|symbol| {
+                Self::source_file_local_interface_application_is_lowerable(
+                    resolved.arena,
+                    symbol,
+                    arg_count,
+                )
+            })
+    }
+
     fn collect_infer_type_param_name_from_node(
         arena: &NodeArena,
         node_idx: NodeIndex,
@@ -328,7 +397,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         if Self::source_file_type_node_is_generic_scope_independent(
             arena,
@@ -381,7 +450,7 @@ impl<'a> CheckerState<'a> {
                                 seen,
                                 proof,
                                 recursion_guarded,
-                                tuple_rest_guard_names,
+                                inferred_guard_names,
                             )
                         });
                 };
@@ -398,7 +467,7 @@ impl<'a> CheckerState<'a> {
                                 seen,
                                 proof,
                                 recursion_guarded,
-                                tuple_rest_guard_names,
+                                inferred_guard_names,
                             )
                         });
                 }
@@ -414,7 +483,7 @@ impl<'a> CheckerState<'a> {
                         || Self::source_file_type_arguments_contain_guard_name(
                             arena,
                             args,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         ),
                 };
                 if Self::source_file_alias_proof_seen_contains(seen, key) {
@@ -437,7 +506,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     });
                 }
@@ -480,7 +549,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 }) {
                     return false;
@@ -517,16 +586,23 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_branch_names,
                     );
-                    let mut true_tuple_rest_guard_names = tuple_rest_guard_names.to_vec();
+                    let mut true_inferred_guard_names = inferred_guard_names.to_vec();
                     Self::collect_tuple_rest_infer_type_param_names(
                         arena,
                         conditional.extends_type,
-                        &mut true_tuple_rest_guard_names,
+                        &mut true_inferred_guard_names,
                     );
                     Self::collect_array_element_infer_type_param_names(
                         arena,
                         conditional.extends_type,
-                        &mut true_tuple_rest_guard_names,
+                        &mut true_inferred_guard_names,
+                    );
+                    Self::collect_generic_projection_infer_type_param_names(
+                        arena,
+                        binder,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
+                        proof,
                     );
                     Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
@@ -536,7 +612,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -545,7 +621,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -554,7 +630,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        &true_tuple_rest_guard_names,
+                        &true_inferred_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -563,7 +639,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -576,7 +652,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }),
             k if k == syntax_kind_ext::TUPLE_TYPE => arena.get_tuple_type(node).is_some_and(|tuple| {
@@ -589,7 +665,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         true,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }),
@@ -604,7 +680,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     })
                 })
@@ -622,7 +698,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -636,7 +712,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -650,7 +726,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -659,7 +735,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -672,7 +748,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -684,7 +760,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
@@ -696,7 +772,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -708,7 +784,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             _ => false,
@@ -740,7 +816,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
             return true;
@@ -776,7 +852,7 @@ impl<'a> CheckerState<'a> {
                                         seen,
                                         proof,
                                         recursion_guarded,
-                                        tuple_rest_guard_names,
+                                        inferred_guard_names,
                                     )
                                 })
                             }));
@@ -795,7 +871,7 @@ impl<'a> CheckerState<'a> {
                                         seen,
                                         proof,
                                         recursion_guarded,
-                                        tuple_rest_guard_names,
+                                        inferred_guard_names,
                                     )
                                 })
                             }));
@@ -813,7 +889,7 @@ impl<'a> CheckerState<'a> {
                             Self::source_file_type_arguments_contain_guard_name(
                                 arena,
                                 args,
-                                tuple_rest_guard_names,
+                                inferred_guard_names,
                             )
                         }),
                 };
@@ -839,7 +915,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     });
                 }
@@ -885,7 +961,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     }) {
                         return false;
@@ -967,7 +1043,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     })
                 })
@@ -981,7 +1057,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         true,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -995,7 +1071,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             true,
-                            tuple_rest_guard_names,
+                            inferred_guard_names,
                         )
                     })
                 })
@@ -1012,7 +1088,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -1025,7 +1101,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -1038,7 +1114,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     ) && Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
                         arena,
                         binder,
@@ -1046,7 +1122,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
-                        tuple_rest_guard_names,
+                        inferred_guard_names,
                     )
                 })
             }
@@ -1058,7 +1134,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -1075,7 +1151,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -1087,7 +1163,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             }
             _ => false,
@@ -1292,7 +1368,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -1326,7 +1402,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         {
             return false;
@@ -1340,7 +1416,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         {
             return false;
@@ -1363,7 +1439,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             ))
             && (mapped.type_node.is_none()
                 || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1374,7 +1450,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 ))
     }
 
@@ -1385,7 +1461,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -1412,7 +1488,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         {
             return false;
@@ -1425,7 +1501,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         {
             return false;
@@ -1439,7 +1515,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             ))
             && (mapped.type_node.is_none()
                 || Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
@@ -1449,7 +1525,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 ))
     }
 
@@ -1461,7 +1537,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -1474,7 +1550,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             );
         }
         Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1485,7 +1561,7 @@ impl<'a> CheckerState<'a> {
             seen,
             proof,
             recursion_guarded,
-            tuple_rest_guard_names,
+            inferred_guard_names,
         )
     }
 
@@ -1496,7 +1572,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -1512,7 +1588,7 @@ impl<'a> CheckerState<'a> {
             seen,
             proof,
             recursion_guarded,
-            tuple_rest_guard_names,
+            inferred_guard_names,
         )
     }
 
@@ -1538,7 +1614,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         _recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
             Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1549,7 +1625,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 true,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         })
     }
@@ -1582,7 +1658,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         let Some(template) = arena.get_template_literal_type(node) else {
             return false;
@@ -1606,7 +1682,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
         })
     }
@@ -1619,7 +1695,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> bool {
         let Some(function_type) = arena.get_function_type(node) else {
             return false;
@@ -1633,7 +1709,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
         else {
             return false;
@@ -1659,7 +1735,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
         }) && function_type.type_annotation.is_some()
             && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1670,7 +1746,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
-                tuple_rest_guard_names,
+                inferred_guard_names,
             )
     }
 
@@ -1682,7 +1758,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
-        tuple_rest_guard_names: &[String],
+        inferred_guard_names: &[String],
     ) -> Option<Vec<String>> {
         let Some(params) = params else {
             return Some(Vec::new());
@@ -1713,7 +1789,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             {
                 return None;
@@ -1727,7 +1803,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
-                    tuple_rest_guard_names,
+                    inferred_guard_names,
                 )
             {
                 return None;

@@ -51,14 +51,25 @@ impl<'a> CheckerState<'a> {
         type_name: &str,
         lib_binders: &[std::sync::Arc<BinderState>],
     ) -> bool {
-        binder
-            .get_global_type_with_libs(type_name, lib_binders)
-            .or_else(|| {
-                lib_binders
-                    .iter()
-                    .find_map(|lib| lib.file_locals.get(type_name))
-            })
-            .and_then(|sym_id| binder.get_symbol_with_libs(sym_id, lib_binders))
+        if binder
+            .file_locals
+            .get(type_name)
+            .and_then(|sym_id| binder.get_symbol(sym_id))
             .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        {
+            return true;
+        }
+
+        lib_binders.iter().any(|lib| {
+            lib.file_locals
+                .get(type_name)
+                .and_then(|sym_id| lib.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        }) || binder.lib_binders.iter().any(|lib| {
+            lib.file_locals
+                .get(type_name)
+                .and_then(|sym_id| lib.get_symbol(sym_id))
+                .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE))
+        })
     }
 }

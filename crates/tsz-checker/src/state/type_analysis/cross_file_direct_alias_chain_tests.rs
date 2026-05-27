@@ -1346,6 +1346,42 @@ fn direct_source_file_type_alias_rejects_array_conditional_original_arg_recursio
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_global_projection_conditional_recursion() {
+    with_two_file_state_with_libs(
+        "export type DeepMap<Input> = Input extends Map<infer Key, infer Value> ? Map<DeepMap<Key>, DeepMap<Value>> : Input;",
+        "import { DeepMap } from './target';",
+        &["es5.d.ts", "es2015.collection.d.ts"],
+        |state, target_binder| {
+            let deep_map_sym = target_binder.file_locals.get("DeepMap").expect("DeepMap");
+            let (deep_map_ty, deep_map_params) = state
+                .direct_source_file_type_alias_result(deep_map_sym, Some(1), true)
+                .expect("global generic projection inference should guard recursive aliases");
+            assert_ne!(deep_map_ty, TypeId::UNKNOWN);
+            assert_ne!(deep_map_ty, TypeId::ERROR);
+            assert_eq!(deep_map_params.len(), 1, "DeepMap should expose Input");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_global_projection_original_arg_recursion() {
+    with_two_file_state_with_libs(
+        "export type Loop<Input> = Input extends Map<infer Key, infer Value> ? Loop<Input> : Input;",
+        "import { Loop } from './target';",
+        &["es5.d.ts", "es2015.collection.d.ts"],
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "global generic projection conditionals only guard recursive calls that consume inferred components",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
     with_two_file_state(
         "export type Loop = Loop | string;",
