@@ -913,6 +913,7 @@ impl SourceFileSymbolArenaCacheEligibilityOutcome {
 pub const DELEGATE_DECLARATION_FILE_MISS_RESIDUE_LIMIT: usize = 128;
 pub const DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT: usize = 128;
 pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT: usize = 128;
+pub const SLOW_CHECK_FILE_TIMING_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DelegateDeclarationFileMissResidue {
@@ -946,6 +947,13 @@ pub struct DirectSourceFileTypeAliasBodyRejectionResidue {
     pub count: u64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SlowCheckFileTiming {
+    pub file: String,
+    pub elapsed_ms: f64,
+    pub diagnostics: u64,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct DirectSourceFileTypeAliasBodyRejectionResidueInput<'a> {
     pub name: &'a str,
@@ -969,6 +977,7 @@ static DELEGATE_SOURCE_FILE_MISS_RESIDUES: OnceLock<Mutex<Vec<DelegateSourceFile
 static DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUES: OnceLock<
     Mutex<Vec<DirectSourceFileTypeAliasBodyRejectionResidue>>,
 > = OnceLock::new();
+static SLOW_CHECK_FILE_TIMINGS: OnceLock<Mutex<Vec<SlowCheckFileTiming>>> = OnceLock::new();
 
 fn delegate_declaration_file_miss_residues(
 ) -> &'static Mutex<Vec<DelegateDeclarationFileMissResidue>> {
@@ -982,6 +991,10 @@ fn delegate_source_file_miss_residues() -> &'static Mutex<Vec<DelegateSourceFile
 fn direct_source_file_type_alias_body_rejection_residues(
 ) -> &'static Mutex<Vec<DirectSourceFileTypeAliasBodyRejectionResidue>> {
     DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUES.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn slow_check_file_timings() -> &'static Mutex<Vec<SlowCheckFileTiming>> {
+    SLOW_CHECK_FILE_TIMINGS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:

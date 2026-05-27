@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_two() {
+    fn schema_version_is_three() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 2);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 3);
     }
 
     #[test]
@@ -48,10 +48,51 @@ mod json_tests {
             "direct_actual_lib_intl_interface_outcomes",
             "cross_file_cache_miss_causes",
             "source_file_symbol_arena_cache_eligibility_outcomes",
+            "slow_check_file_timings",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 2);
+        assert_eq!(json["schema_version"], 3);
+    }
+
+    #[test]
+    fn slow_check_file_timings_keep_slowest_rows_sorted() {
+        {
+            let mut rows = slow_check_file_timings()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(SlowCheckFileTiming {
+                file: "fast.ts".to_string(),
+                elapsed_ms: 1.0,
+                diagnostics: 0,
+            });
+            rows.push(SlowCheckFileTiming {
+                file: "slow.ts".to_string(),
+                elapsed_ms: 12.5,
+                diagnostics: 2,
+            });
+            rows.push(SlowCheckFileTiming {
+                file: "middle.ts".to_string(),
+                elapsed_ms: 4.0,
+                diagnostics: 1,
+            });
+        }
+
+        let json = serde_json::to_value(PerfCounters::snapshot()).expect("serializes");
+        let rows = json["slow_check_file_timings"]
+            .as_array()
+            .expect("slow_check_file_timings is array");
+        assert!(
+            rows.len() >= 3,
+            "expected recorded timing rows in snapshot: {rows:?}"
+        );
+        assert_eq!(rows[0]["file"], "slow.ts");
+        assert_eq!(rows[0]["diagnostics"], 2);
+        assert!(
+            rows[0]["elapsed_ms"].as_f64().unwrap_or_default()
+                >= rows[1]["elapsed_ms"].as_f64().unwrap_or_default(),
+            "rows must be sorted by descending elapsed_ms"
+        );
     }
 
     #[test]
@@ -1740,7 +1781,7 @@ mod json_tests {
         let raw = std::fs::read_to_string(&path).expect("read back");
         // Round-trip through serde to confirm structure.
         let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(value["schema_version"], 2);
+        assert_eq!(value["schema_version"], 3);
         assert!(value["wired"].is_object());
         // The atomic-rename `.json.tmp` should not be left behind.
         let tmp = path.with_extension("json.tmp");
