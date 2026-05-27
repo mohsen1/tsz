@@ -750,7 +750,7 @@ impl<'a> CheckerState<'a> {
                         && self.target_has_named_property_for_key(effective_param_type, &prop_name))
                 {
                     // For TS2418, use the literal type from the initializer
-                    // expression when available (tsc shows "str" not string).
+                    // expression when available.
                     let computed_source = self
                         .literal_type_from_initializer(prop_value_idx)
                         .unwrap_or(source_prop_type);
