@@ -4,6 +4,24 @@ use crate::def::DefId;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::SubtypeChecker;
 
+fn test_type_param(interner: &TypeInterner, name: &str) -> (Atom, TypeId) {
+    let name = interner.intern_string(name);
+    (name, test_type_param_from_name(interner, name))
+}
+
+fn test_infer_param(interner: &TypeInterner, name: &str) -> (Atom, TypeId) {
+    let name = interner.intern_string(name);
+    (name, test_infer_param_from_name(interner, name))
+}
+
+fn test_type_param_from_name(interner: &TypeInterner, name: Atom) -> TypeId {
+    interner.intern(TypeData::TypeParameter(TypeParamInfo::simple(name)))
+}
+
+fn test_infer_param_from_name(interner: &TypeInterner, name: Atom) -> TypeId {
+    interner.intern(TypeData::Infer(TypeParamInfo::simple(name)))
+}
+
 // Split into under-cap shards by evaluator family while preserving test order.
 include!("evaluate_tests_parts/conditional_infer_core.rs");
 include!("evaluate_tests_parts/conditional_infer_arrays.rs");

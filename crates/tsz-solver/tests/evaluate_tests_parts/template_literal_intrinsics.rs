@@ -1095,13 +1095,7 @@ fn test_string_template_infer_prefix_pattern() {
 
     let input = interner.literal_string("prefix-value");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("prefix-")),
@@ -1128,13 +1122,7 @@ fn test_string_template_infer_suffix_pattern() {
 
     let input = interner.literal_string("value-suffix");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Type(infer_r),
@@ -1161,13 +1149,7 @@ fn test_string_template_infer_middle_pattern() {
 
     let input = interner.literal_string("start-middle-end");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("start-")),
@@ -1195,13 +1177,7 @@ fn test_string_template_infer_no_match_pattern() {
 
     let input = interner.literal_string("different");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("prefix-")),
@@ -1227,21 +1203,9 @@ fn test_template_infer_two_parts() {
 
     let input = interner.literal_string("first_second");
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_b_name, infer_b) = test_infer_param(&interner, "B");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Type(infer_a),
@@ -1282,13 +1246,7 @@ fn test_template_infer_union_distributive() {
     let input_a = interner.literal_string("get-foo");
     let input_b = interner.literal_string("get-bar");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("get-")),
@@ -1338,13 +1296,7 @@ fn test_template_multi_segment_extraction() {
     // `item-${infer N}-end` should match "item-123-end" and extract "123"
     let input = interner.literal_string("item-123-end");
 
-    let infer_name = interner.intern_string("N");
-    let infer_n = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_n) = test_infer_param(&interner, "N");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("item-")),
@@ -1517,13 +1469,7 @@ fn test_literal_matches_template_via_infer() {
 
     let literal = interner.literal_string("prefix-value");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let template = interner.template_literal(vec![
         TemplateSpan::Text(interner.intern_string("prefix-")),

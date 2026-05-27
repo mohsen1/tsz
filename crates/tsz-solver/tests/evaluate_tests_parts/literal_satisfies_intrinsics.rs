@@ -317,12 +317,7 @@ fn test_satisfies_with_generic_function() {
     let t_name = interner.intern_string("T");
     let x_name = interner.intern_string("x");
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
     let source_func = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -432,12 +427,7 @@ fn test_noinfer_blocks_inference_in_target() {
     let t_name = interner.intern_string("T");
 
     let var_t = ctx.fresh_type_param(t_name, false);
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
     let hello_lit = interner.literal_string("hello");
     let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
@@ -550,14 +540,7 @@ fn test_noinfer_contains_type_param() {
     }
 
     let interner = TypeInterner::new();
-    let t_name = interner.intern_string("T");
-
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let noinfer_t = interner.intern(TypeData::NoInfer(t_param));
 

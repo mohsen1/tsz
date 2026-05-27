@@ -2,21 +2,9 @@
 fn test_conditional_infer_object_property_intersection_check() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends { a: infer R } ? R : never, with T = { a: string } & { b: number }.
     let extends_obj = interner.object(vec![PropertyInfo::new(
@@ -54,21 +42,9 @@ fn test_conditional_infer_object_property_intersection_check() {
 fn test_conditional_infer_function_param_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (arg: infer R) => void ? R : never, with T = ((arg: string) => void)
     // | ((arg: number) => void).
@@ -122,21 +98,9 @@ fn test_conditional_infer_function_param_distributive() {
 fn test_conditional_infer_function_optional_param_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (arg?: infer R) => void ? R : never, with T = ((arg?: string) => void)
     // | ((arg?: number) => void).
@@ -205,21 +169,9 @@ fn test_conditional_infer_function_optional_param_distributive() {
 fn test_conditional_infer_function_optional_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(arg?: infer R) => void] ? R : never, with T = ((arg?: string) => void)
     // | ((arg?: number) => void).
@@ -300,21 +252,9 @@ fn test_conditional_infer_function_optional_param_non_distributive_union_input()
 fn test_conditional_infer_function_param_non_function_union_branch() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (arg: infer R) => void ? R : never, with T = ((arg: string) => void) | number.
     let extends_fn = interner.function(FunctionShape {
@@ -357,21 +297,9 @@ fn test_conditional_infer_function_param_non_function_union_branch() {
 fn test_conditional_infer_function_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(arg: infer R) => void] ? R : never, with T = ((arg: string) => void)
     // | ((arg: number) => void).
@@ -438,21 +366,9 @@ fn test_conditional_infer_function_param_non_distributive_union_input() {
 fn test_conditional_infer_function_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(arg: infer R) => void] ? R : never, with T = ((arg: string) => void) | number.
     let extends_fn = interner.function(FunctionShape {
@@ -505,21 +421,9 @@ fn test_conditional_infer_function_param_non_distributive_union_branch() {
 fn test_conditional_infer_function_rest_param_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (...args: infer R) => void ? R : never, with T = ((...args: string[]) => void)
     // | ((...args: number[]) => void).
@@ -591,21 +495,9 @@ fn test_conditional_infer_function_rest_param_distributive() {
 fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
     // | ((...args: number[]) => void).
@@ -689,21 +581,9 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_input() {
 fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(...args: infer R) => void] ? R : never, with T = ((...args: string[]) => void)
     // | number.
@@ -767,21 +647,9 @@ fn test_conditional_infer_function_rest_param_non_distributive_union_branch() {
 fn test_conditional_infer_function_this_param_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (this: infer R) => void ? R : never, with T = ((this: string) => void)
     // | ((this: number) => void).
@@ -835,21 +703,9 @@ fn test_conditional_infer_function_this_param_distributive() {
 fn test_conditional_infer_function_this_param_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(this: infer R) => void] ? R : never, with T = ((this: string) => void)
     // | ((this: number) => void).
@@ -913,21 +769,9 @@ fn test_conditional_infer_function_this_param_non_distributive_union_input() {
 fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(this: infer R) => void] ? R : never, with T = ((this: string) => void)
     // | number.
@@ -981,21 +825,9 @@ fn test_conditional_infer_function_this_param_non_distributive_union_branch() {
 fn test_conditional_infer_function_return_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends () => infer R ? R : never, with T = (() => string) | (() => number).
     let extends_fn = interner.function(FunctionShape {
@@ -1048,21 +880,9 @@ fn test_conditional_infer_function_return_distributive() {
 fn test_conditional_infer_function_return_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [() => infer R] ? R : never, with T = (() => string) | (() => number).
     let extends_fn = interner.function(FunctionShape {
@@ -1125,29 +945,11 @@ fn test_conditional_infer_function_return_non_distributive_union_input() {
 fn test_conditional_infer_function_param_and_return_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_p_name, infer_p) = test_infer_param(&interner, "P");
 
-    let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_r_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends (arg: infer P) => infer R ? [P, R] : never, with T = ((arg: string) => number)
     // | ((arg: boolean) => string).
@@ -1246,21 +1048,9 @@ fn test_conditional_infer_function_param_and_return_distributive() {
 fn test_conditional_infer_function_return_non_distributive_union_branch() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [() => infer R] ? R : never, with T = (() => string) | number.
     let extends_fn = interner.function(FunctionShape {
@@ -1313,29 +1103,11 @@ fn test_conditional_infer_function_return_non_distributive_union_branch() {
 fn test_conditional_infer_function_param_and_return_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_p_name, infer_p) = test_infer_param(&interner, "P");
 
-    let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_r_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [(arg: infer P) => infer R] ? [P, R] : never, with T = ((arg: string) => number)
     // | ((arg: boolean) => string).
@@ -1433,21 +1205,9 @@ fn test_conditional_infer_function_param_and_return_non_distributive_union_input
 fn test_conditional_infer_object_call_signature_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends { (x: infer R): void } ? R : never, with T = { (x: string): void }
     // | { (x: number): void }.
@@ -1525,21 +1285,9 @@ fn test_conditional_infer_object_call_signature_distributive() {
 fn test_conditional_infer_call_signature_param_from_function_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends { (x: infer R): void } ? R : never, with T = ((x: string) => void)
     // | ((x: number) => void).
@@ -1600,21 +1348,9 @@ fn test_conditional_infer_call_signature_param_from_function_distributive() {
 fn test_conditional_infer_call_signature_return_from_function_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends { (): infer R } ? R : never, with T = (() => string) | (() => number).
     let extends_callable = interner.callable(CallableShape {
@@ -1674,21 +1410,9 @@ fn test_conditional_infer_call_signature_return_from_function_distributive() {
 fn test_conditional_infer_object_call_signature_non_distributive_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // [T] extends [{ (x: infer R): void }] ? R : never, with T = { (x: string): void }
     // | { (x: number): void }.

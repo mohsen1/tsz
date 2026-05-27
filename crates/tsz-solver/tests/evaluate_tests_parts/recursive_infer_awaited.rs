@@ -9,13 +9,7 @@ fn test_awaited_basic_promise() {
     let promise_string = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::STRING)]);
 
     // Using infer pattern: T extends { then: infer U } ? U : T
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -41,13 +35,7 @@ fn test_awaited_promise_number() {
 
     let promise_number = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NUMBER)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -89,18 +77,8 @@ fn test_awaited_thenable_matches_optional_onfulfilled_parameter() {
     });
     let source_thenable = interner.object(vec![PropertyInfo::readonly(then_name, source_then)]);
 
-    let infer_f = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_f_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_f = test_infer_param_from_name(&interner, infer_f_name);
+    let infer_rest = test_infer_param_from_name(&interner, infer_rest_name);
     let pattern_then = interner.function(FunctionShape {
         params: vec![
             ParamInfo::required(onfulfilled_name, infer_f),
@@ -141,13 +119,7 @@ fn test_awaited_nested_promise() {
     let outer_promise = interner.object(vec![PropertyInfo::readonly(then_name, inner_promise)]);
 
     // First unwrap: extracts Promise<string>
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -183,13 +155,7 @@ fn test_awaited_string_passthrough() {
 
     let then_name = interner.intern_string("then");
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -214,13 +180,7 @@ fn test_awaited_number_passthrough() {
 
     let then_name = interner.intern_string("then");
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -243,13 +203,7 @@ fn test_awaited_null_undefined_passthrough() {
 
     let then_name = interner.intern_string("then");
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -288,13 +242,7 @@ fn test_awaited_promise_union_distributive() {
 
     let promise_number = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NUMBER)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -339,13 +287,7 @@ fn test_awaited_mixed_promise_union() {
 
     let promise_string = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::STRING)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -391,13 +333,7 @@ fn test_awaited_promise_void() {
 
     let promise_void = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::VOID)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -422,13 +358,7 @@ fn test_awaited_promise_never() {
 
     let promise_never = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::NEVER)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -453,13 +383,7 @@ fn test_awaited_promise_any() {
 
     let promise_any = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::ANY)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -487,13 +411,7 @@ fn test_awaited_promise_object() {
 
     let promise_obj = interner.object(vec![PropertyInfo::readonly(then_name, inner_obj)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -519,13 +437,7 @@ fn test_awaited_promise_array() {
 
     let promise_array = interner.object(vec![PropertyInfo::readonly(then_name, string_array)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -557,13 +469,7 @@ fn test_awaited_triple_nested() {
     // Level 3: Promise<Promise<Promise<boolean>>>
     let level3 = interner.object(vec![PropertyInfo::readonly(then_name, level2)]);
 
-    let infer_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_u) = test_infer_param(&interner, "U");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_u)]);
 
@@ -1450,13 +1356,7 @@ fn test_infer_optional_property_present() {
     // Input: { prop: string } -> P = string
     let interner = TypeInterner::new();
 
-    let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_p_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: { prop?: infer P }
     let pattern = interner.object(vec![PropertyInfo::opt(
@@ -1489,13 +1389,7 @@ fn test_infer_optional_property_missing() {
     // Input: {} (no prop) -> P = undefined
     let interner = TypeInterner::new();
 
-    let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_p_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: { prop?: infer P }
     let pattern = interner.object(vec![PropertyInfo::opt(
@@ -1525,13 +1419,7 @@ fn test_infer_optional_property_with_undefined() {
     // Input: { prop: string | undefined } -> P = string | undefined
     let interner = TypeInterner::new();
 
-    let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_p_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: { prop?: infer P }
     let pattern = interner.object(vec![PropertyInfo::opt(
@@ -1686,13 +1574,7 @@ fn test_infer_discriminated_union_kind() {
     // Input: { kind: "circle" } | { kind: "square" }
     let interner = TypeInterner::new();
 
-    let infer_k_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_k_name, infer_k) = test_infer_param(&interner, "K");
 
     // Pattern: { kind: infer K }
     let pattern = interner.object(vec![PropertyInfo::new(
@@ -1734,21 +1616,9 @@ fn test_infer_discriminated_union_with_extra_props() {
     // T extends { type: infer T, data: infer D } ? [T, D] : never
     let interner = TypeInterner::new();
 
-    let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_t_name, infer_t) = test_infer_param(&interner, "T");
 
-    let infer_d_name = interner.intern_string("D");
-    let infer_d = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_d_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_d_name, infer_d) = test_infer_param(&interner, "D");
 
     // Pattern: { type: infer T, data: infer D }
     let pattern = interner.object(vec![
