@@ -1304,6 +1304,42 @@ fn test_no_unchecked_indexed_access_tuple_subtyping() {
 }
 
 #[test]
+fn test_index_access_fresh_equivalent_type_parameter_keys_are_related() {
+    let interner = TypeInterner::new();
+    let mut checker = SubtypeChecker::new(&interner);
+
+    let key_atom = interner.intern_string("Key");
+    let key_info = TypeParamInfo {
+        name: key_atom,
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let source_key = interner.fresh_type_param(key_info);
+    let target_key = interner.fresh_type_param(key_info);
+    let object = interner.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::NUMBER,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+
+    let source = interner.index_access(object, source_key);
+    let target = interner.index_access(object, target_key);
+
+    assert!(
+        checker.is_subtype_of(source, target),
+        "fresh ids for the same declaration-scoped key should compare through the operand relation"
+    );
+}
+
+#[test]
 fn test_no_unchecked_object_index_signature_subtyping() {
     let interner = TypeInterner::new();
     let mut checker = SubtypeChecker::new(&interner);

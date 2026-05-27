@@ -178,6 +178,8 @@ withTempDir((dir) => {
   const result = run(file);
   assert.equal(result.status, 0, `missing measurement profile should warn, not fail:\n${result.stderr}`);
   assert.match(result.stdout, /Measurement profile.*measurement_profile missing/);
+  assert.match(result.stdout, /Measurement profile warnings.*\| 1 \|/);
+  assert.match(result.stdout, /artifact measurement_profile.*measurement_profile missing/);
 });
 console.log("✅ missing measurement profile is reported without failing readiness");
 

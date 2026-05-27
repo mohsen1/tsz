@@ -1538,9 +1538,34 @@ impl<'a> CheckerState<'a> {
         // Checking a synthesized object (which loses the type parameter identity)
         // against the type parameter would produce a false TS2322.
         let spread_satisfies_type_param = props_is_type_param
-            && spread_entries.iter().any(|&(spread_type, _, _, _)| {
-                self.diagnostic_relation_boolean_guard(spread_type, props_type)
-            });
+            && spread_entries
+                .iter()
+                .any(|&(spread_type, display_spread_type, _, _)| {
+                    self.diagnostic_relation_boolean_guard(spread_type, props_type)
+                        || crate::query_boundaries::checkers::jsx::spread_source_covers_readonly_wrapped_type_parameter(
+                            self.ctx.types,
+                            &self.ctx.definition_store,
+                            spread_type,
+                            props_type,
+                        )
+                        || crate::query_boundaries::checkers::jsx::spread_source_covers_readonly_wrapped_type_parameter(
+                            self.ctx.types,
+                            &self.ctx.definition_store,
+                            display_spread_type,
+                            props_type,
+                        )
+                });
+        let react_alias_spread_only_contributes_children = props_is_type_param
+            && !has_explicit_jsx_attrs
+            && !spread_entries.is_empty()
+            && !provided_attrs.is_empty()
+            && provided_attrs.iter().all(|(name, _)| name == "children")
+            && special_attr_component_type
+                .or(component_type)
+                .is_some_and(|component| {
+                    self.is_react_jsx_component_alias_application(component)
+                        || self.is_react_jsx_component_alias_union(component)
+                });
         let reported_type_param_assignability = if !reported_custom_children_assignability
             && !reported_special_attr_assignability
             && !reported_class_missing_props_assignability
@@ -1551,6 +1576,7 @@ impl<'a> CheckerState<'a> {
             && props_is_type_param
             && !self.jsx_props_type_is_library_managed_attributes_application(raw_props_type)
             && !spread_satisfies_type_param
+            && !react_alias_spread_only_contributes_children
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
             if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {

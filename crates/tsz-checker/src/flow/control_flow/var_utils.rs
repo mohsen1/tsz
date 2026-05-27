@@ -8,6 +8,7 @@
 
 use crate::query_boundaries::flow_analysis as query;
 use rustc_hash::{FxHashMap, FxHashSet};
+use smallvec::SmallVec;
 use tsz_binder::{FlowNodeId, SymbolId, flow_flags, symbol_flags};
 use tsz_common::comments::{get_jsdoc_content, get_leading_comments_from_cache, is_jsdoc_comment};
 use tsz_parser::parser::NodeIndex;
@@ -103,25 +104,14 @@ impl<'a> FlowAnalyzer<'a> {
         else {
             return false;
         };
-        let switch_type = query::enum_member_domain(self.interner, switch_type);
         let case_types = self.case_types_for_exhaustiveness(switch_data.case_block);
-        if case_types.is_empty()
-            || matches!(switch_type, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN)
-            || case_types
-                .iter()
-                .any(|&ty| matches!(ty, TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN))
-        {
-            return false;
-        }
-
-        let env_borrow;
-        let mut narrowing = self.make_narrowing_context();
-        if let Some(env) = &self.type_environment {
-            env_borrow = env.borrow();
-            narrowing = narrowing.with_resolver(&*env_borrow);
-        }
-
-        narrowing.narrow_excluding_types(switch_type, &case_types) == TypeId::NEVER
+        let env_borrow = self.type_environment.as_ref().map(|env| env.borrow());
+        query::cases_exhaust_type(
+            self.interner,
+            env_borrow.as_deref(),
+            switch_type,
+            &case_types,
+        )
     }
 
     /// Iterative flow graph traversal for definite assignment checks.
@@ -172,7 +162,7 @@ impl<'a> FlowAnalyzer<'a> {
                 // Flow node doesn't exist - mark as assigned
                 local_cache.insert(current_flow, true);
                 // Notify any nodes waiting for this one
-                let ready: Vec<_> = waiting_for
+                let ready: SmallVec<[FlowNodeId; 4]> = waiting_for
                     .iter()
                     .filter(|(_, ants)| ants.contains(&current_flow))
                     .map(|(&node, _)| node)
@@ -214,7 +204,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     // Check if all antecedents have results
                     let mut all_ready = true;
-                    let mut results = Vec::new();
+                    let mut results: SmallVec<[bool; 4]> = SmallVec::new();
 
                     for &ant in &flow.antecedent {
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant)
@@ -278,7 +268,7 @@ impl<'a> FlowAnalyzer<'a> {
                 } else {
                     // Similar to BRANCH_LABEL - check all antecedents
                     let mut all_ready = true;
-                    let mut results = Vec::new();
+                    let mut results: SmallVec<[bool; 4]> = SmallVec::new();
 
                     for &ant in &flow.antecedent {
                         if let Some(ant_node) = self.binder.flow_nodes.get(ant)
@@ -321,7 +311,7 @@ impl<'a> FlowAnalyzer<'a> {
             local_cache.insert(current_flow, result);
 
             // Notify any nodes waiting for this one
-            let ready: Vec<_> = waiting_for
+            let ready: SmallVec<[FlowNodeId; 4]> = waiting_for
                 .iter()
                 .filter(|(_, ants)| ants.contains(&current_flow))
                 .map(|(&node, _)| node)

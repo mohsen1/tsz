@@ -114,6 +114,10 @@ name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 
 [[test]]
+name = "noinfer_diagnostic_display_tests"
+path = "tests/noinfer_diagnostic_display_tests.rs"
+
+[[test]]
 name = "array_generic_shorthand_canonical_tests"
 path = "tests/array_generic_shorthand_canonical_tests.rs"
 
@@ -630,6 +634,10 @@ name = "keyof_well_known_symbol_key_tests"
 path = "tests/keyof_well_known_symbol_key_tests.rs"
 
 [[test]]
+name = "keyof_class_unique_symbol_key_tests"
+path = "tests/keyof_class_unique_symbol_key_tests.rs"
+
+[[test]]
 name = "partial_self_argument_diagnostic_tests"
 path = "tests/partial_self_argument_diagnostic_tests.rs"
 
@@ -660,6 +668,10 @@ path = "tests/commonjs_module_export_alias_tests.rs"
 [[test]]
 name = "conditional_infer_tests"
 path = "tests/conditional_infer_tests.rs"
+
+[[test]]
+name = "inline_conditional_infer_return_tests"
+path = "tests/inline_conditional_infer_return_tests.rs"
 
 [[test]]
 name = "recursive_conditional_mapped_infer_tests"
@@ -760,6 +772,10 @@ path = "tests/issue_3768_generic_callback_outer_inference_tests.rs"
 [[test]]
 name = "issue_7653_parameterless_lambda_inference_tests"
 path = "tests/issue_7653_parameterless_lambda_inference_tests.rs"
+
+[[test]]
+name = "issue_9692_function_candidate_inference"
+path = "tests/issue_9692_function_candidate_inference.rs"
 
 [[test]]
 name = "issue_9780_typeof_generic_call_callback_param"
@@ -1272,6 +1288,10 @@ path = "tests/strict_mode_reserved_word_in_qualified_type_tests.rs"
 [[test]]
 name = "union_index_access_function_application_param_tests"
 path = "tests/union_index_access_function_application_param_tests.rs"
+
+[[test]]
+name = "union_index_annotation_missing_key_tests"
+path = "tests/union_index_annotation_missing_key_tests.rs"
 
 [[test]]
 name = "indexed_access_resolved_union_property_tests"

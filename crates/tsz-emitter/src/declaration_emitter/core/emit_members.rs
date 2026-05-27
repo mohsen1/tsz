@@ -256,6 +256,12 @@ impl<'a> DeclarationEmitter<'a> {
             self.write(": ");
             self.write(&return_type_text);
         } else if !is_private
+            && let Some(return_type_text) =
+                self.object_type_recursive_constructor_method_return_text(method)
+        {
+            self.write(": ");
+            self.write(return_type_text);
+        } else if !is_private
             && let Some(type_text) = self.static_method_returning_this_type_text(method_idx, method)
         {
             self.write(": ");
@@ -504,6 +510,10 @@ impl<'a> DeclarationEmitter<'a> {
             } else {
                 self.emit_type(method.type_annotation);
             }
+        } else if let Some(return_type_text) =
+            self.object_type_recursive_constructor_method_return_text(method)
+        {
+            self.write(return_type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let method_type_id = cache
                 .node_types
@@ -619,6 +629,21 @@ impl<'a> DeclarationEmitter<'a> {
         let class = self.arena.get_class(class_node)?;
         let class_name = self.get_identifier_text(class.name)?;
         Some(format!("typeof {class_name}"))
+    }
+
+    fn object_type_recursive_constructor_method_return_text(
+        &self,
+        method: &MethodDeclData,
+    ) -> Option<&'static str> {
+        let reference_text = self
+            .object_type_recursive_constructor_reference
+            .as_deref()?;
+        if !method.body.is_some() {
+            return None;
+        }
+        let body = method.body;
+        self.function_body_returns_new_reference(body, reference_text)
+            .then_some(crate::ELIDED_ANY)
     }
 
     fn enclosing_class_for_member(&self, member_idx: NodeIndex) -> Option<NodeIndex> {

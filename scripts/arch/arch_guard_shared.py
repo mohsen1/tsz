@@ -241,19 +241,14 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/assignability/assignability_checker.rs",
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/checkers/jsx/tests.rs",
-            "crates/tsz-checker/src/classes/class_checker.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
             "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/elaboration.rs",
             "crates/tsz-checker/src/error_reporter/properties.rs",
-            "crates/tsz-checker/src/error_reporter/render_failure.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
             "crates/tsz-checker/src/jsdoc/params.rs",
-            "crates/tsz-checker/src/state/state_checking/class.rs",
             "crates/tsz-checker/src/state/state_checking/property.rs",
             "crates/tsz-checker/src/state/state_checking_members/interface_checks.rs",
-            "crates/tsz-checker/src/state/type_analysis/computed_helpers.rs",
             "crates/tsz-checker/src/state/type_analysis/core.rs",
             "crates/tsz-checker/src/state/type_environment/core.rs",
             "crates/tsz-checker/src/state/type_resolution/module.rs",
@@ -262,17 +257,12 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/class_type/core.rs",
-            "crates/tsz-checker/src/types/computation/call/inner.rs",
-            "crates/tsz-checker/src/types/computation/call_inference.rs",
-            "crates/tsz-checker/src/types/computation/object_literal/computation.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
-            "crates/tsz-checker/src/types/utilities/enum_utils.rs",
         },
     ),
     (
@@ -527,7 +517,14 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Refreshed #9852 on current main for contextual-wrapper excess-property
         # diagnostics; this records the merged live count.
-        3440,
+        #
+        # Ratcheted down after current-main guard tests caught slack in the
+        # live direct-reference count.
+        #
+        # Ratcheted down to the live merged count after #10311 and #10359
+        # narrowed checker-side direct common references; removal condition
+        # remains #8225 narrowing this quarantine.
+        3338,
     ),
 ]
 
@@ -612,13 +609,13 @@ REGEX_LINE_COUNT_CHECKS = [
         "Checker diagnostic boundary: post-check rewrite_*_fingerprints functions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"^\s*fn\s+rewrite_\w+_fingerprints\s*\("),
-        9,
+        7,
     ),
     (
         "Checker diagnostic boundary: source_text.contains decisions (Track 10)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        36,
+        25,
     ),
     (
         "Checker diagnostic boundary: file-name/path substring decisions (Track 10)",

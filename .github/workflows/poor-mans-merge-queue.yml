@@ -1,5 +1,8 @@
 name: Poor Man's Merge Queue
 
+# Official TSZ merge queue for this user-owned repository. It uses the
+# required `Queue Tested` status as the final latest-main merge gate.
+
 on:
   push:
     branches: [main]

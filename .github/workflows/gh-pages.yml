@@ -68,17 +68,33 @@ jobs:
         env:
           WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
           WORKFLOW_RUN_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
           WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ steps.in_flight.outputs.in_flight }}" = "true" ]; then
             echo "should_deploy=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ "${{ github.event_name }}" = "workflow_run" ]; then
-            if [ "$WORKFLOW_RUN_CONCLUSION" = "success" ] && \
-              [ "$WORKFLOW_RUN_HEAD_BRANCH" = "main" ] && \
-              { [ "$WORKFLOW_RUN_NAME" = "CI" ] || [ "$WORKFLOW_RUN_NAME" = "Bench" ]; }; then
+            if [ "$WORKFLOW_RUN_CONCLUSION" != "success" ] || \
+              [ "$WORKFLOW_RUN_HEAD_BRANCH" != "main" ]; then
+              echo "workflow_run was not successful main CI/Bench, skipping"
+              echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+            elif [ "$WORKFLOW_RUN_NAME" = "CI" ]; then
               echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+            elif [ "$WORKFLOW_RUN_NAME" = "Bench" ]; then
+              artifact_id="$(gh api \
+                "repos/${{ github.repository }}/actions/runs/${WORKFLOW_RUN_ID}/artifacts" \
+                --jq '.artifacts[]? | select(.name == "bench-results-merged" and .expired == false) | .id' 2>/dev/null |
+                head -n 1)"
+              if [ -n "$artifact_id" ]; then
+                echo "Bench run ${WORKFLOW_RUN_ID} published bench-results-merged; deploying fresh benchmark data."
+                echo "should_deploy=true" >> "$GITHUB_OUTPUT"
+              else
+                echo "Bench run ${WORKFLOW_RUN_ID} did not publish bench-results-merged; skipping stale benchmark redeploy."
+                echo "should_deploy=false" >> "$GITHUB_OUTPUT"
+              fi
             else
               echo "workflow_run was not successful main CI/Bench, skipping"
               echo "should_deploy=false" >> "$GITHUB_OUTPUT"

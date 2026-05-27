@@ -5,6 +5,7 @@ import { readyStateFailures } from "./check-pr-ready-state.mjs";
 const DEFAULT_BASE = "main";
 const DEFAULT_MAX_PRS = 200;
 const DEFAULT_QUEUE_BRANCH_PREFIX = "automation/merge-queue";
+const DEFAULT_QUEUE_LABEL = "merge-queue";
 const DEFAULT_STATUS_CONTEXT = "Queue Tested";
 const DEFAULT_PR_REQUIRED_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
 const DEFAULT_MERGE_REQUIRED_CHECKS = ["CI Summary"];
@@ -18,13 +19,14 @@ function usage() {
   return [
     "usage: poor-mans-merge-queue.mjs --repository owner/repo [options]",
     "",
-    "Serially tests one auto-merge PR on a synthetic latest-main merge branch,",
+    "Serially tests one labeled PR on a synthetic latest-main merge branch,",
     "posts a required status to the PR head, and merges only if main/head did not move.",
     "",
     "Options:",
     "  --base <branch>                 Base branch (default: main)",
     "  --max-prs <n>                   Max open PRs to inspect",
     "  --status-context <name>         Required status context to post",
+    "  --queue-label <name>            Label that marks a PR ready for the queue",
     "  --queue-branch-prefix <prefix>  Temporary branch namespace",
     "  --agent-name <name>             AgentName for queue failure comments",
     "  --pr-required-check <name>      PR-head check required before queueing",
@@ -61,6 +63,7 @@ export function parseArgs(argv) {
     maxPrs: DEFAULT_MAX_PRS,
     mergeRequiredChecks: [...DEFAULT_MERGE_REQUIRED_CHECKS],
     prRequiredChecks: [...DEFAULT_PR_REQUIRED_CHECKS],
+    queueLabel: process.env.QUEUE_LABEL || DEFAULT_QUEUE_LABEL,
     queueBranchPrefix: DEFAULT_QUEUE_BRANCH_PREFIX,
     repository: process.env.REPOSITORY || process.env.GITHUB_REPOSITORY || null,
     statusContext: DEFAULT_STATUS_CONTEXT,
@@ -82,6 +85,9 @@ export function parseArgs(argv) {
     } else if (arg === "--status-context") {
       options.statusContext = argv[++index];
       if (!options.statusContext) throw new Error("--status-context requires a name");
+    } else if (arg === "--queue-label") {
+      options.queueLabel = argv[++index];
+      if (!options.queueLabel) throw new Error("--queue-label requires a label name");
     } else if (arg === "--queue-branch-prefix") {
       options.queueBranchPrefix = argv[++index];
       if (!options.queueBranchPrefix) throw new Error("--queue-branch-prefix requires a branch prefix");
@@ -177,6 +183,26 @@ function readPaginatedArray(path, { limit = Number.POSITIVE_INFINITY, perPage = 
   return items.slice(0, limit);
 }
 
+export function readPaginatedObjectArray(
+  path,
+  key,
+  { limit = Number.POSITIVE_INFINITY, perPage = 100, readJson = (url) => runGhJson(["api", url]) } = {},
+) {
+  const items = [];
+  for (let page = 1; items.length < limit; page += 1) {
+    const pageSize = Math.min(perPage, limit - items.length);
+    const separator = path.includes("?") ? "&" : "?";
+    const response = readJson(`${path}${separator}per_page=${pageSize}&page=${page}`);
+    const chunk = response?.[key];
+    if (!Array.isArray(chunk)) {
+      throw new Error(`expected GitHub API object array ${key} from ${path}`);
+    }
+    items.push(...chunk);
+    if (chunk.length < pageSize) break;
+  }
+  return items.slice(0, limit);
+}
+
 function git(args, options = {}) {
   return run("git", args, options);
 }
@@ -195,8 +221,33 @@ function agentLabel(labels) {
   return labelNames(labels).find((label) => label.startsWith("agent:")) || "";
 }
 
+function hasQueueLabel(labels, queueLabel = DEFAULT_QUEUE_LABEL) {
+  return labelNames(labels).includes(queueLabel);
+}
+
 function normalize(value) {
   return String(value || "").toUpperCase();
+}
+
+function checkTimestampMs(check) {
+  const timestamp = check.completedAt
+    || check.completed_at
+    || check.startedAt
+    || check.started_at
+    || check.createdAt
+    || check.created_at
+    || "";
+  const ms = Date.parse(timestamp);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function shouldReplaceCheck(current, candidate) {
+  const currentMs = checkTimestampMs(current);
+  const candidateMs = checkTimestampMs(candidate);
+  if (currentMs !== null && candidateMs !== null) return candidateMs >= currentMs;
+  if (candidateMs !== null) return true;
+  if (currentMs !== null) return false;
+  return true;
 }
 
 export function requiredCheckState(checks, requiredNames) {
@@ -204,7 +255,10 @@ export function requiredCheckState(checks, requiredNames) {
   for (const check of checks || []) {
     const name = check.name || check.context;
     if (!name) continue;
-    byName.set(name, check);
+    const current = byName.get(name);
+    if (!current || shouldReplaceCheck(current, check)) {
+      byName.set(name, check);
+    }
   }
 
   const missing = [];
@@ -329,11 +383,10 @@ function activePendingQueueRun(repository, pr, options) {
   };
 }
 
-export function queueSkipReason(pr, requiredState, base) {
+export function queueSkipReason(pr, requiredState, base, queueLabel = DEFAULT_QUEUE_LABEL) {
   if (pr.baseRefName !== base) return `base is ${pr.baseRefName || "(unknown)"}, not ${base}`;
   if (pr.isDraft) return "draft PR";
   if (pr.isCrossRepository) return "cross-repository PR";
-  if (!pr.autoMergeRequest) return "auto-merge is not armed";
   const readinessFailures = readyStateFailures({
     number: pr.number,
     title: pr.title,
@@ -342,6 +395,7 @@ export function queueSkipReason(pr, requiredState, base) {
     labels: labelNames(pr.labels),
   });
   if (readinessFailures.length) return `ready-state WIP marker: ${readinessFailures.join(", ")}`;
+  if (!hasQueueLabel(pr.labels, queueLabel)) return `missing ${queueLabel} label`;
   if (requiredState.kind !== "passed") return requiredState.reason;
   return null;
 }
@@ -461,18 +515,18 @@ export function supersededOpenQueueBranchReason(queueBranch, currentBaseOid, que
   return `superseded open PR queue branch for older base (current ${basePrefix || "unknown"})`;
 }
 
-function readPullRequestState(repository, number) {
-  return runGhJson([
-    "api",
-    `repos/${repository}/pulls/${number}`,
-    "--jq",
-    "{number: .number, state: .state, merged: (.merged_at != null), updatedAt: .updated_at}",
-  ]);
+export function normalizePullRequestState(pr) {
+  return {
+    number: pr.number,
+    state: pr.state,
+    merged: pr.merged_at != null,
+    updatedAt: pr.updated_at || "",
+    owner: agentLabel(pr.labels),
+  };
 }
 
-function readPullRequestOwner(repository, number) {
-  const pr = runGhJson(["api", `repos/${repository}/pulls/${number}`]);
-  return agentLabel(pr.labels);
+function readPullRequestState(repository, number) {
+  return normalizePullRequestState(runGhJson(["api", `repos/${repository}/pulls/${number}`]));
 }
 
 function deleteRemoteBranch(branch) {
@@ -737,8 +791,8 @@ function cleanupQueueBranches(repository, options) {
     const { number } = metadata;
 
     const pullRequest = readPullRequestState(repository, number);
+    const owner = pullRequest.owner || "";
     if (String(pullRequest.state || "").toUpperCase() === "OPEN") {
-      const owner = readPullRequestOwner(repository, number);
       const supersededReason = options.cleanupSupersededOpenQueueBranches
         ? supersededOpenQueueBranchReason(queueBranchInfo.branch, currentBaseOid, options.queueBranchPrefix)
         : null;
@@ -786,7 +840,7 @@ function cleanupQueueBranches(repository, options) {
       activeRuns.push({
         branch: queueBranchInfo.branch,
         number,
-        owner: "",
+        owner,
         runId: activeRun.databaseId || null,
         url: activeRun.url || "",
         status: activeRun.status || "",
@@ -795,9 +849,10 @@ function cleanupQueueBranches(repository, options) {
       if (options.verbose) {
         skips.push({
           branch: queueBranchInfo.branch,
-          owner: "",
+          owner,
           reason: `active queue run ${activeRun.databaseId || "(unknown)"}`,
           summaryReason: "active queue run",
+          updatedAt: pullRequest.updatedAt || "",
         });
       }
       continue;
@@ -840,11 +895,11 @@ function readQueueCandidates(repository, options) {
   return readPullRequests(repository, options.base, options.maxPrs)
     .sort((a, b) => a.number - b.number)
     .map((pr) => {
-      const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base);
+      const skipReason = queueSkipReason(pr, { kind: "passed" }, options.base, options.queueLabel);
       if (skipReason) return { pr, skipReason };
       const detailed = readPullRequest(repository, pr.number);
       const requiredState = requiredCheckState(detailed.statusCheckRollup, options.prRequiredChecks);
-      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base);
+      const detailedSkipReason = queueSkipReason(detailed, requiredState, options.base, options.queueLabel);
       if (detailedSkipReason) return { pr: detailed, skipReason: detailedSkipReason };
       const activeRun = activePendingQueueRun(repository, detailed, options);
       if (activeRun) {
@@ -876,7 +931,6 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
     git(["push", forceWithLeaseArg(branch), "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
-    runGh(["workflow", "run", "ci.yml", "--repo", repository, "--ref", branch]);
   }
   return { branch, mergeOid };
 }
@@ -888,25 +942,28 @@ function commitStatusRollup(repository, sha) {
     "--jq",
     "{statuses: .statuses}",
   ]);
-  const checks = runGhJson([
-    "api",
-    `repos/${repository}/commits/${sha}/check-runs?per_page=100`,
-    "--jq",
-    "{check_runs: .check_runs}",
-  ]);
+  const checks = readPaginatedObjectArray(
+    `repos/${repository}/commits/${sha}/check-runs`,
+    "check_runs",
+    { perPage: 100 },
+  );
   return [
     ...(status.statuses || []).map((item) => ({
       __typename: "StatusContext",
       context: item.context,
       state: item.state,
       targetUrl: item.target_url || "",
+      createdAt: item.created_at || "",
     })),
-    ...(checks.check_runs || []).map((item) => ({
+    ...checks.map((item) => ({
       __typename: "CheckRun",
       name: item.name,
       status: item.status,
       conclusion: item.conclusion,
       detailsUrl: item.html_url || item.details_url || "",
+      completedAt: item.completed_at || "",
+      startedAt: item.started_at || "",
+      createdAt: item.created_at || "",
     })),
   ];
 }
@@ -1032,6 +1089,7 @@ export function formatResult(result, options) {
     "",
     `Mode: ${options.dryRun ? "dry run" : "apply"}`,
     `Base: \`${options.base}\``,
+    `Queue label: \`${options.queueLabel}\``,
     `Status: \`${options.statusContext}\``,
     "",
   ];
@@ -1090,7 +1148,7 @@ export function formatResult(result, options) {
       pushCleanupSkipRows(lines, result.skips);
     }
   } else if (!result.selected) {
-    lines.push("No queue-ready auto-merge PR found.");
+    lines.push("No queue-ready PR found.");
   } else if (result.dryRun) {
     lines.push(`Would synthetic-test and merge #${result.selected.number} at \`${result.selected.headRefOid.slice(0, 12)}\`.`);
   } else if (result.merged) {

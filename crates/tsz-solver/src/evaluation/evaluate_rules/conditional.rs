@@ -766,8 +766,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 if self.infer_pattern_has_unresolved_application(cond.extends_type)
-                    || (extends_type != cond.extends_type
-                        && self.infer_pattern_has_unresolved_application(extends_type))
+                    && (extends_type == cond.extends_type
+                        || self.infer_pattern_has_unresolved_application(extends_type))
                 {
                     // Lib-backed patterns can be seen before their base is
                     // resolved. Keep the conditional deferred rather than

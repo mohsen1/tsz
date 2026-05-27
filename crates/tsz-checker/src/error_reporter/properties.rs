@@ -451,7 +451,9 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) -> (u32, String) {
-        let prop_display = tsz_solver::format_excess_property_name(prop_name);
+        let prop_display = self
+            .excess_property_name_display_for_site(idx, self.ctx.types.intern_string(prop_name))
+            .unwrap_or_else(|| tsz_solver::format_excess_property_name(prop_name).into_owned());
         let type_str = self.excess_property_target_display_for_site(target, idx);
         let suggestion_target = self.strip_non_object_union_members_for_excess_display(target);
         if !self.has_syntax_parse_errors()
@@ -2442,8 +2444,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        let mut formatter = self.ctx.create_type_formatter();
-        let index_str = formatter.format(index_type);
+        let index_str = self.format_type_for_assignability_message(index_type);
         // For type parameters, tsc displays the constraint type name in the
         // diagnostic (e.g., "can't be used to index type 'Item'" not "'T'").
         let display_object_type =

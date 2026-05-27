@@ -30,18 +30,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
-            return false;
-        };
-        if !self.ctx.symbol_is_from_lib(sym_id) {
-            return false;
-        }
-
-        let lib_binders = self.get_lib_binders();
         self.ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
-            .is_some_and(|symbol| symbol.escaped_name == "Function")
+            .resolve_type_to_symbol_id(type_id)
+            .is_some_and(|sym_id| self.ctx.sym_id_is_lib_function(sym_id))
     }
 
     pub(super) fn is_global_function_interface_constraint(&self, type_id: TypeId) -> bool {
@@ -53,18 +44,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let Some(sym_id) = self.ctx.resolve_type_to_symbol_id(type_id) else {
-            return false;
-        };
-        if !self.ctx.symbol_is_from_lib(sym_id) {
-            return false;
-        }
-
-        let lib_binders = self.get_lib_binders();
         self.ctx
-            .binder
-            .get_symbol_with_libs(sym_id, &lib_binders)
-            .is_some_and(|symbol| symbol.escaped_name == "Function")
+            .resolve_type_to_symbol_id(type_id)
+            .is_some_and(|sym_id| self.ctx.sym_id_is_lib_function(sym_id))
     }
 
     /// Check if a type parameter has a callable constraint (e.g., `F extends Function`).
