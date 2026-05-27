@@ -555,7 +555,9 @@ impl BinderState {
             tracing::debug!(idx = idx.0, kind = node.kind, "bind_node called");
         }
 
-        self.bind_node_by_node_kind(arena, node, idx);
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.bind_node_by_node_kind(arena, node, idx);
+        });
     }
 
     #[inline]

@@ -32,9 +32,9 @@ fn subtype_cache_bivariant_rest_policy_matches_uncached_relation_query() {
         interner.array(TypeId::UNKNOWN),
     )]));
 
-    let strict = RelationPolicy::from_flags(RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16);
-    let bivariant = RelationPolicy::from_flags(
-        (RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::ALLOW_BIVARIANT_REST).bits() as u16,
+    let strict = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let bivariant = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::ALLOW_BIVARIANT_REST,
     );
     let strict_key = RelationCacheKey::for_subtype(source, target, strict.cache_config());
     let bivariant_key = RelationCacheKey::for_subtype(source, target, bivariant.cache_config());

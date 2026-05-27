@@ -609,10 +609,9 @@ fn subtype_cache_strict_readonly_identity_matches_uncached_policy() {
     let source = interner.object(vec![PropertyInfo::readonly(property, TypeId::STRING)]);
     let target = interner.object(vec![PropertyInfo::new(property, TypeId::STRING)]);
 
-    let ordinary_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let readonly_identity_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+    let ordinary_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let readonly_identity_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::STRICT_READONLY_IDENTITY,
     );
     let ordinary_key =
         RelationCacheKey::for_subtype(source, target, ordinary_policy.cache_config());
@@ -850,9 +849,10 @@ fn allow_erased_generic_signature_retry_partitions_cache_entries() {
 fn in_callback_param_check_partitions_cache_entries() {
     // Set transiently during function-signature comparison; callback-mode
     // results must live in a separate slot from ordinary comparisons.
-    assert_packed_flag_partitions(
+    assert_subtype_partitions(
         "in_callback_param_check",
-        RelationFlags::IN_CALLBACK_PARAM_CHECK.bits() as u16,
+        RelationPolicy::from_relation_flags(RelationFlags::IN_CALLBACK_PARAM_CHECK),
+        RelationPolicy::from_relation_flags(RelationFlags::empty()),
     );
 }
 
@@ -860,9 +860,10 @@ fn in_callback_param_check_partitions_cache_entries() {
 fn strict_readonly_identity_partitions_cache_entries() {
     // Toggled during conditional-type distribution; results computed under
     // this mode must not share a slot with ordinary relation results.
-    assert_packed_flag_partitions(
+    assert_subtype_partitions(
         "strict_readonly_identity",
-        RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY),
+        RelationPolicy::from_relation_flags(RelationFlags::empty()),
     );
 }
 
@@ -874,9 +875,9 @@ fn subtype_cache_strict_readonly_identity_policy_matches_uncached_relation_query
     let source = interner.object(vec![PropertyInfo::readonly(prop, TypeId::NUMBER)]);
     let target = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
 
-    let ordinary = RelationPolicy::from_flags(0);
+    let ordinary = RelationPolicy::from_relation_flags(RelationFlags::empty());
     let strict_readonly =
-        RelationPolicy::from_flags(RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16);
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY);
     let ordinary_key = RelationCacheKey::for_subtype(source, target, ordinary.cache_config());
     let strict_key = RelationCacheKey::for_subtype(source, target, strict_readonly.cache_config());
 
