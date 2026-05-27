@@ -790,6 +790,9 @@ mod jsx_react_hoc_spread_props_tests;
 #[path = "tests/jsx_render_fallback_relation_routing_arch_tests.rs"]
 mod jsx_render_fallback_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsx_return_relation_routing_arch_tests.rs"]
+mod jsx_return_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_single_child_precise_relation_routing_arch_tests.rs"]
 mod jsx_single_child_precise_relation_routing_arch_tests;
 #[cfg(test)]
