@@ -2150,8 +2150,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             {
                                 upper
                             } else if let Some(default) = tp.default {
-                                instantiate_call_type(
-                                    self.interner,
+                                self.eval_type_param_default(
                                     default,
                                     &final_subst,
                                     actual_this_type,
@@ -2312,8 +2311,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     }
                 }
             } else if let Some(default) = tp.default {
-                let ty =
-                    instantiate_call_type(self.interner, default, &final_subst, actual_this_type);
+                let ty = self.eval_type_param_default(default, &final_subst, actual_this_type);
                 trace!(resolved_type = ?ty, "Using default type");
                 // Track that this type parameter fell back to its default.
                 // We should NOT check argument assignability against the default

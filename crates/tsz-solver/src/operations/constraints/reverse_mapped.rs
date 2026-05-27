@@ -286,6 +286,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         &mut self,
         ctx: &mut InferenceContext,
         var_map: &FxHashMap<TypeId, crate::inference::infer::InferenceVar>,
+        source_type: TypeId,
         source_obj: &ObjectShape,
         mapped: &crate::types::MappedType,
         target_placeholder: TypeId,
@@ -301,8 +302,17 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
 
         let mut reverse_properties = Vec::with_capacity(source_obj.properties.len());
         let mut any_reversed = false;
+        // Fresh object literals keep their as-written literal property types in
+        // display provenance even when the canonical checking type is widened.
+        // Reverse-mapped inference needs that source surface so dependent
+        // defaults like `T["entry"]` can observe the captured literal.
+        let display_properties = self.interner.get_display_properties(source_type);
 
         for prop in &source_obj.properties {
+            let source_prop_type = display_properties
+                .as_ref()
+                .and_then(|properties| properties.iter().find(|display| display.name == prop.name))
+                .map_or(prop.type_id, |display| display.type_id);
             // Substitute the iteration parameter K with the property-key literal.
             // Bare numeric names (`{ 1: ... }`) substitute as `Number(1)`, not `"1"`.
             let key_literal = crate::utils::literal_key_for_property_name(
@@ -311,11 +321,31 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                 prop.is_string_named,
             );
             let subst = TypeSubstitution::single(iter_param_name, key_literal);
-            let instantiated_template = instantiate_type(self.interner, template, &subst);
+            let mut instantiated_template = instantiate_type(self.interner, template, &subst);
+            if let Some(TypeData::IndexAccess(obj, idx)) =
+                self.interner.lookup(instantiated_template)
+                && !self.is_placeholder_match(obj, target_placeholder)
+            {
+                // Instantiated mapped constraints can resolve `T[K]` through
+                // `T`'s upper bound (`Constraint[K]`) while the inference target
+                // remains the placeholder. Rebind that upper-bound access to the
+                // placeholder so template reversal still reconstructs `T`.
+                if var_map
+                    .get(&target_placeholder)
+                    .and_then(|&var| ctx.get_constraints(var))
+                    .is_some_and(|constraints| constraints.upper_bounds.contains(&obj))
+                {
+                    instantiated_template = self.interner.index_access(target_placeholder, idx);
+                } else if let Some(TypeData::TypeParameter(info)) = self.interner.lookup(obj) {
+                    let target_subst = TypeSubstitution::single(info.name, target_placeholder);
+                    instantiated_template =
+                        instantiate_type(self.interner, instantiated_template, &target_subst);
+                }
+            }
 
             // Reverse-infer through the template: find what T[K] should be.
             let mut reversed_value = match self.reverse_infer_through_template(
-                prop.type_id,
+                source_prop_type,
                 instantiated_template,
                 target_placeholder,
             ) {
@@ -342,7 +372,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                     // assignability check reject `null` against `Deep<any>` so the
                     // expected TS2345 still fires (e.g. mappedTypeRecursiveInference).
                     any_reversed = true;
-                    if prop_source_has_nullish_union(self.interner, prop.type_id) {
+                    if prop_source_has_nullish_union(self.interner, source_prop_type) {
                         TypeId::ANY
                     } else {
                         TypeId::UNKNOWN
