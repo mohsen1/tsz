@@ -682,6 +682,9 @@ mod mapped_infer_with_substitution_tests;
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
+#[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
+mod merged_interface_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
