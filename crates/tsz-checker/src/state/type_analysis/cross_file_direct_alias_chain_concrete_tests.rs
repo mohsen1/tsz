@@ -1,3 +1,4 @@
+use super::cross_file_direct_alias_chain::SourceFileAliasProofContext;
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
@@ -159,6 +160,41 @@ fn direct_source_file_type_alias_rejects_local_alias_projection_original_arg_rec
                     .direct_source_file_type_alias_result(loop_sym, Some(1), true)
                     .is_none(),
                 "local alias projections only guard recursive calls that consume inferred components",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_recursive_mapped_projection_guard() {
+    with_two_file_state(
+        "type Primitive = string | number | boolean | bigint | symbol | undefined | null;\nexport type DeepReadonly<T> = T extends ((...args: any[]) => any) | Primitive ? T : T extends _DeepReadonlyArray<infer Item> ? _DeepReadonlyArray<Item> : T extends _DeepReadonlyObject<infer Shape> ? _DeepReadonlyObject<Shape> : T;\nexport interface _DeepReadonlyArray<Item> extends ReadonlyArray<DeepReadonly<Item>> {}\nexport type _DeepReadonlyObject<Shape> = { readonly [Key in keyof Shape]: DeepReadonly<Shape[Key]> };\nexport type ReadOnly<Input extends object> = DeepReadonly<Input>;",
+        "import { ReadOnly } from './target';",
+        |state, target_binder| {
+            let object_sym = target_binder
+                .file_locals
+                .get("_DeepReadonlyObject")
+                .expect("_DeepReadonlyObject");
+            let object_symbol = target_binder
+                .get_symbol(object_sym)
+                .expect("_DeepReadonlyObject symbol");
+            let target_arena = state.ctx.get_arena_for_file(1);
+            let global_type_is_lowerable = |_: &BinderState, _: &str| true;
+            let proof = SourceFileAliasProofContext {
+                current_file_idx: Some(1),
+                global_type_is_lowerable: &global_type_is_lowerable,
+                import_alias_target: None,
+            };
+
+            assert!(
+                !CheckerState::source_file_local_type_alias_application_is_projection_lowerable(
+                    target_arena,
+                    target_binder,
+                    object_symbol,
+                    1,
+                    &proof,
+                ),
+                "recursive mapped aliases are not transparent projection guards",
             );
         },
     );
