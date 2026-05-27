@@ -12,6 +12,20 @@ use tsz_solver::types::{
 };
 
 impl<'a> TypeLowering<'a> {
+    fn lower_lazy_def_reference(&self, def_id: tsz_solver::def::DefId) -> TypeId {
+        let lazy = self.interner.lazy(def_id);
+        if let Some(resolve_params) = self.lazy_type_params_resolver
+            && let Some(type_params) = resolve_params(def_id)
+            && !type_params.is_empty()
+            && type_params.iter().all(|param| param.default.is_some())
+            && let Some(default_args) =
+                tsz_solver::computation::fill_application_defaults(self.interner, &[], &type_params)
+        {
+            return self.interner.application(lazy, default_args);
+        }
+        lazy
+    }
+
     /// Lower a conditional type (T extends U ? X : Y)
     pub(super) fn lower_conditional_type(&self, node_idx: NodeIndex) -> TypeId {
         let node = match self.arena.get(node_idx) {
@@ -569,6 +583,13 @@ impl<'a> TypeLowering<'a> {
                     args.nodes.iter().map(|&idx| self.lower_type(idx)).collect();
                 let type_symbol = self.resolve_type_symbol(data.type_name);
                 let value_symbol = self.resolve_value_symbol(data.type_name);
+                let base_type = if let Some(tsz_solver::TypeData::Application(app_id)) =
+                    self.interner.lookup(base_type)
+                {
+                    self.interner.type_application(app_id).base
+                } else {
+                    base_type
+                };
                 let base_type = if type_symbol.is_some() && base_type != TypeId::ERROR {
                     base_type
                 } else if base_type == TypeId::ERROR {
@@ -756,7 +777,7 @@ impl<'a> TypeLowering<'a> {
             if self.preferred_self_name.as_deref() == Some(name.as_ref())
                 && let Some(def_id) = self.preferred_self_def_id
             {
-                return self.interner.lazy(def_id);
+                return self.lower_lazy_def_reference(def_id);
             }
 
             // Must resolve to DefId.
@@ -769,25 +790,25 @@ impl<'a> TypeLowering<'a> {
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
             } else {
                 if let Some(def_id) = self.resolve_def_id(node_idx) {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(scoped_name) = self.scoped_identifier_name_text(node_idx)
                     && let Some(def_id) = self.resolve_def_id_by_name(&scoped_name)
                 {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
                 if let Some(def_id) = self.resolve_def_id_by_name(name) {
-                    return self.interner.lazy(def_id);
+                    return self.lower_lazy_def_reference(def_id);
                 }
             }
 
