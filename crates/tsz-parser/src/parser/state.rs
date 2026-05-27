@@ -206,6 +206,10 @@ pub struct ParserState {
     /// After a missing object-literal property initializer, allow the next
     /// line-broken property-like token to continue without a synthetic comma error.
     pub(crate) suppress_object_literal_comma_once: bool,
+    /// A malformed object method used `=>` where a body/return annotation should
+    /// appear. Abort the object-literal member list so the return-token tail is
+    /// recovered as ordinary statements.
+    pub(crate) abort_object_literal_recovery_once: bool,
     /// Recovery already reported a missing `)` at a later synchronized position,
     /// so the immediate caller should suppress its fallback `parse_expected(')')`.
     pub(crate) suppress_next_missing_close_paren_error_once: bool,
@@ -366,6 +370,7 @@ impl ParserState {
             in_import_type_options_context: false,
             import_attribute_tail_recovered: false,
             suppress_object_literal_comma_once: false,
+            abort_object_literal_recovery_once: false,
             suppress_next_missing_close_paren_error_once: false,
             suppress_next_missing_class_close_brace_error_once: false,
             non_block_close_brace_statement_errors_remaining: 0,
@@ -419,6 +424,7 @@ impl ParserState {
         self.in_import_type_options_context = false;
         self.import_attribute_tail_recovered = false;
         self.suppress_object_literal_comma_once = false;
+        self.abort_object_literal_recovery_once = false;
         self.suppress_next_missing_close_paren_error_once = false;
         self.suppress_next_missing_class_close_brace_error_once = false;
         self.non_block_close_brace_statement_errors_remaining = 0;

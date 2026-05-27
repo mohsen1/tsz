@@ -1564,6 +1564,10 @@ impl ParserState {
             if prop.is_some() {
                 properties.push(prop);
             }
+            if self.abort_object_literal_recovery_once {
+                self.abort_object_literal_recovery_once = false;
+                break;
+            }
 
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
@@ -2452,20 +2456,11 @@ impl ParserState {
                     diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                 );
-                self.next_token();
             }
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                let block = self.parse_block();
-                if self.is_token(SyntaxKind::CloseBraceToken) {
-                    self.parse_error_at_current_token(
-                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                }
-                block
-            } else {
-                NodeIndex::NONE
-            }
+            self.abort_object_literal_recovery_once = true;
+            self.pop_label_scope();
+            self.context_flags = saved_flags;
+            return NodeIndex::NONE;
         } else {
             // tsc emits TS1005 "'{' expected." when an object method body is missing
             use tsz_common::diagnostics::diagnostic_codes;
