@@ -53,7 +53,7 @@ curl -fsSL https://tsz.dev/install | sh
 irm https://tsz.dev/install.ps1 | iex
 ```
 
-## TypeScript compatiblity 
+## TypeScript compatibility
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
