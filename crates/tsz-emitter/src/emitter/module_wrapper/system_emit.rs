@@ -24,61 +24,72 @@ impl<'a> Printer<'a> {
         self.write_line();
         self.increase_indent();
         for (idx, dep) in dependencies.iter().enumerate() {
-            let Some(dep_var) = dep_vars.get(dep) else {
+            let actions = system_plan.actions.get(dep);
+            let dep_var = actions.and_then(|_| dep_vars.get(dep));
+            if actions.is_some() && dep_var.is_none() {
                 continue;
-            };
-            let Some(actions) = system_plan.actions.get(dep) else {
-                continue;
-            };
+            }
             self.write("function (");
-            self.write(dep_var);
-            self.write("_1) {");
+            if let Some(dep_var) = dep_var {
+                self.write(dep_var);
+                self.write("_1");
+            } else {
+                self.write("_1");
+            }
+            self.write(") {");
             self.write_line();
             self.increase_indent();
-            for action in actions {
-                match action {
-                    SystemDependencyAction::Assign(local_name) => {
-                        self.write(local_name);
-                        self.write(" = ");
-                        self.write(dep_var);
-                        self.write("_1;");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::ExportStar => {
-                        self.write("exportStar_1(");
-                        self.write(dep_var);
-                        self.write("_1);");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::NamedExports(exports) => {
-                        self.write("exports_1({");
-                        self.write_line();
-                        self.increase_indent();
-                        for (export_idx, (export_name, import_name)) in exports.iter().enumerate() {
-                            self.write("\"");
-                            self.write(export_name);
-                            self.write("\": ");
-                            let setter_arg = format!("{dep_var}_1");
-                            self.write(&setter_arg);
-                            self.write("[\"");
-                            self.write(import_name);
-                            self.write("\"]");
-                            if export_idx + 1 != exports.len() {
-                                self.write(",");
-                            }
+            if let Some(actions) = actions {
+                let Some(dep_var) = dep_var else {
+                    continue;
+                };
+                for action in actions {
+                    match action {
+                        SystemDependencyAction::Assign(local_name) => {
+                            self.write(local_name);
+                            self.write(" = ");
+                            self.write(dep_var);
+                            self.write("_1;");
                             self.write_line();
                         }
-                        self.decrease_indent();
-                        self.write("});");
-                        self.write_line();
-                    }
-                    SystemDependencyAction::NamespaceExport(export_name) => {
-                        self.write("exports_1(\"");
-                        self.write(export_name);
-                        self.write("\", ");
-                        self.write(dep_var);
-                        self.write("_1);");
-                        self.write_line();
+                        SystemDependencyAction::ExportStar => {
+                            self.write("exportStar_1(");
+                            self.write(dep_var);
+                            self.write("_1);");
+                            self.write_line();
+                        }
+                        SystemDependencyAction::NamedExports(exports) => {
+                            self.write("exports_1({");
+                            self.write_line();
+                            self.increase_indent();
+                            for (export_idx, (export_name, import_name)) in
+                                exports.iter().enumerate()
+                            {
+                                self.write("\"");
+                                self.write(export_name);
+                                self.write("\": ");
+                                let setter_arg = format!("{dep_var}_1");
+                                self.write(&setter_arg);
+                                self.write("[\"");
+                                self.write(import_name);
+                                self.write("\"]");
+                                if export_idx + 1 != exports.len() {
+                                    self.write(",");
+                                }
+                                self.write_line();
+                            }
+                            self.decrease_indent();
+                            self.write("});");
+                            self.write_line();
+                        }
+                        SystemDependencyAction::NamespaceExport(export_name) => {
+                            self.write("exports_1(\"");
+                            self.write(export_name);
+                            self.write("\", ");
+                            self.write(dep_var);
+                            self.write("_1);");
+                            self.write_line();
+                        }
                     }
                 }
             }
@@ -220,7 +231,7 @@ impl<'a> Printer<'a> {
 
             if named_imports.name.is_some() && named_imports.elements.nodes.is_empty() {
                 let local_name = self.get_identifier_text_idx(named_imports.name);
-                if !local_name.is_empty() {
+                if !local_name.is_empty() && clause.name.is_none() {
                     self.commonjs_named_import_substitutions
                         .insert(local_name, dep_var.clone());
                 }
@@ -1445,6 +1456,9 @@ impl<'a> Printer<'a> {
                 {
                     subst.clone()
                 } else {
+                    if self.system_local_var_export_has_initializer(&local_name) == Some(false) {
+                        continue;
+                    }
                     local_name
                 };
                 if emitted_any {
@@ -1461,6 +1475,46 @@ impl<'a> Printer<'a> {
         }
 
         false
+    }
+
+    fn system_local_var_export_has_initializer(&self, local_name: &str) -> Option<bool> {
+        let mut found_uninitialized = false;
+        for stmt_idx in self.scope_statements_for_runtime_lookup(None) {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::VARIABLE_STATEMENT {
+                continue;
+            }
+            let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                continue;
+            };
+            for &decl_list_idx in &var_stmt.declarations.nodes {
+                let Some(decl_list_node) = self.arena.get(decl_list_idx) else {
+                    continue;
+                };
+                let Some(decl_list) = self.arena.get_variable(decl_list_node) else {
+                    continue;
+                };
+                for &decl_idx in &decl_list.declarations.nodes {
+                    let Some(decl_node) = self.arena.get(decl_idx) else {
+                        continue;
+                    };
+                    let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+                        continue;
+                    };
+                    let mut names = Vec::new();
+                    self.collect_binding_names(decl.name, &mut names);
+                    if names.iter().any(|name| name == local_name) {
+                        if decl.initializer.is_some() {
+                            return Some(true);
+                        }
+                        found_uninitialized = true;
+                    }
+                }
+            }
+        }
+        found_uninitialized.then_some(false)
     }
 
     fn emit_system_enum_with_export_fold(

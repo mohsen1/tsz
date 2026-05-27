@@ -228,6 +228,59 @@ fn system_es2015_exported_class_registers_before_static_field_tail() {
 }
 
 #[test]
+fn system_mixed_imports_preserve_tsc_setter_shape() {
+    let output = emit_system_es2015(
+        r#"import * as ns from "file1";
+import { a, b as c } from "file2";
+import d from "file3";
+import "file4";
+import e, * as ns2 from "file5";
+import ns3 = require("file6");
+
+ns.f();
+a();
+c();
+d();
+e();
+ns2.f();
+ns3.f();
+
+export * from "file7";
+
+var x, y = true;
+export { x };
+export { y as z };
+"#,
+    );
+
+    assert!(
+        output.contains("var ns, file2_1, file3_1, file5_1, ns3, x, y;"),
+        "System wrapper should hoist tsc-shaped import temps for mixed imports.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("function (_1) {\n            },"),
+        "Side-effect imports should keep an empty System setter.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "function (file5_1_1) {\n                file5_1 = file5_1_1;\n            },"
+        ) && output.contains("file5_1.default();")
+            && output.contains("ns2.f();"),
+        "Default-plus-namespace imports should use a generated default temp while preserving namespace references.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "function (file7_1_1) {\n                exportStar_1(file7_1_1);\n            }"
+        ),
+        "Export-star-only dependencies should use the first generated module temp for their setter parameter.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports_1(\"x\", x);") && output.contains("exports_1(\"z\", y);"),
+        "Uninitialized local var re-exports should not publish an initial value, while initialized ones should.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
     let source = r#"class C {
     _path = "./other";

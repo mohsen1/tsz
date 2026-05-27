@@ -479,7 +479,8 @@ impl<'a> Printer<'a> {
         self.write("\"use strict\";");
         self.write_line();
         self.emit_system_helpers_if_needed(source);
-        let mut dep_vars = self.collect_system_dependency_vars(&system_dependencies, source);
+        let mut dep_vars =
+            self.collect_system_dependency_vars(&system_dependencies, source, &system_plan);
         for (dep, actions) in &system_plan.actions {
             if let Some(SystemDependencyAction::Assign(dep_var)) = actions
                 .iter()
@@ -967,8 +968,11 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let dep_var =
-                    namespace_name.unwrap_or_else(|| self.next_commonjs_module_var(&module_spec));
+                let dep_var = if clause.name.is_none() {
+                    namespace_name.unwrap_or_else(|| self.next_commonjs_module_var(&module_spec))
+                } else {
+                    self.next_commonjs_module_var(&module_spec)
+                };
                 plan.import_vars.insert(stmt_node.pos, dep_var.clone());
                 plan.actions
                     .entry(module_spec)
@@ -1050,12 +1054,26 @@ impl<'a> Printer<'a> {
     }
 
     fn collect_system_dependency_vars(
-        &self,
+        &mut self,
         dependencies: &[String],
         source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
     ) -> HashMap<String, String> {
         let mut dep_vars = HashMap::new();
-        for (idx, dep) in dependencies.iter().enumerate() {
+        for dep in dependencies {
+            if let Some(SystemDependencyAction::Assign(dep_var)) =
+                system_plan.actions.get(dep).and_then(|actions| {
+                    actions
+                        .iter()
+                        .find(|action| matches!(action, SystemDependencyAction::Assign(_)))
+                })
+            {
+                dep_vars.insert(dep.clone(), dep_var.clone());
+                continue;
+            }
+            if !system_plan.actions.contains_key(dep) {
+                continue;
+            }
             let mut chosen = None;
             for &stmt_idx in &source.statements.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1087,8 +1105,7 @@ impl<'a> Printer<'a> {
             let dep_var = if let Some(local_name) = chosen {
                 local_name
             } else {
-                let base = crate::transforms::emit_utils::sanitize_module_name(dep);
-                format!("{base}_{}", idx + 1)
+                self.next_commonjs_module_var(dep)
             };
             dep_vars.insert(dep.clone(), dep_var);
         }
