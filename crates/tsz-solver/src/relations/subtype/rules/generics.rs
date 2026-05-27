@@ -19,6 +19,20 @@ use crate::visitor::{
 };
 use crate::visitors::visitor_predicates::is_primitive_type;
 
+/// Maximum nesting depth, per generic `DefId`, for the one-sided application
+/// expansion relation paths (`App <: T` and `T <: App`).
+///
+/// This mirrors tsc's `isDeeplyNestedType` recursion-identity bailout (default
+/// `maxDepth = 5`). When the same generic definition is re-introduced by its own
+/// structural expansion past this depth, the relation is assumed related
+/// (`Ternary.Maybe`) instead of expanding further. The two-sided `App <: App`
+/// comparison already bounds recursion through `def_guard`; this constant bounds
+/// the previously-unguarded one-sided paths so a generic alias whose expansion
+/// keeps re-introducing itself (recursive mapped/conditional/template
+/// compositions) terminates cheaply rather than driving a terminating-but-
+/// exponential evaluate<->subtype expansion.
+pub(crate) const ONE_SIDED_APP_EXPANSION_MAX_DEPTH: u32 = 5;
+
 fn args_contain_type_parameters(
     interner: &dyn crate::construction::TypeDatabase,
     args: &[TypeId],
@@ -28,6 +42,30 @@ fn args_contain_type_parameters(
 }
 
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
+    /// Enter a one-sided application expansion for `def_id`.
+    ///
+    /// Returns `true` if expansion may proceed and `false` when the same
+    /// generic definition is already nested at or beyond
+    /// [`ONE_SIDED_APP_EXPANSION_MAX_DEPTH`] (the caller should bail to
+    /// [`Self::depth_result`]). Callers that receive `true` must pair this with
+    /// [`Self::leave_app_expansion_depth`] once the expansion completes.
+    pub(crate) fn enter_app_expansion_depth(&mut self, def_id: DefId) -> bool {
+        let depth = self.app_expand_depth.get(&def_id).copied().unwrap_or(0);
+        if depth >= ONE_SIDED_APP_EXPANSION_MAX_DEPTH {
+            return false;
+        }
+        self.app_expand_depth.insert(def_id, depth + 1);
+        true
+    }
+
+    /// Leave a one-sided application expansion previously entered via
+    /// [`Self::enter_app_expansion_depth`].
+    pub(crate) fn leave_app_expansion_depth(&mut self, def_id: DefId) {
+        if let Some(depth) = self.app_expand_depth.get_mut(&def_id) {
+            *depth = depth.saturating_sub(1);
+        }
+    }
+
     fn iterator_protocol_mismatch_for_same_application_family(
         &mut self,
         source_type: TypeId,
@@ -1007,7 +1045,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        match self.try_expand_application(app_id) {
+        // Bound one-sided application expansion by recursion identity (tsc's
+        // `isDeeplyNestedType`): if this generic definition is already nested at
+        // the limit, assume related instead of expanding further. See
+        // `ONE_SIDED_APP_EXPANSION_MAX_DEPTH`.
+        let base = self.interner.type_application(app_id).base;
+        let def_id = self.application_base_def_id(base);
+        if let Some(def) = def_id
+            && !self.enter_app_expansion_depth(def)
+        {
+            return self.depth_result();
+        }
+
+        let result = match self.try_expand_application(app_id) {
             Some(expanded) => self.check_subtype(expanded, target),
             None => {
                 let s_eval = self.evaluate_type(source);
@@ -1017,7 +1067,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     SubtypeResult::False
                 }
             }
+        };
+
+        if let Some(def) = def_id {
+            self.leave_app_expansion_depth(def);
         }
+
+        result
     }
 
     fn is_readonly_application_assignable_to_target(
@@ -1068,7 +1124,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::True;
         }
 
-        match self.try_expand_application(app_id) {
+        // Bound one-sided application expansion by recursion identity (tsc's
+        // `isDeeplyNestedType`): if this generic definition is already nested at
+        // the limit, assume related instead of expanding further. See
+        // `ONE_SIDED_APP_EXPANSION_MAX_DEPTH`.
+        let base = self.interner.type_application(app_id).base;
+        let def_id = self.application_base_def_id(base);
+        if let Some(def) = def_id
+            && !self.enter_app_expansion_depth(def)
+        {
+            return self.depth_result();
+        }
+
+        let result = match self.try_expand_application(app_id) {
             Some(expanded) => {
                 let expanded_result = self.check_subtype(source, expanded);
                 if expanded_result.is_true() {
@@ -1092,7 +1160,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .unwrap_or(SubtypeResult::False)
                 }
             }
+        };
+
+        if let Some(def) = def_id {
+            self.leave_app_expansion_depth(def);
         }
+
+        result
     }
 
     fn check_source_to_collected_application_properties(
