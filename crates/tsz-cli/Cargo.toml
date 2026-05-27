@@ -81,6 +81,10 @@ path = "tests/recursive_defaulted_template_accumulator_tests.rs"
 name = "recursive_const_arrow_dts_emit_tests"
 path = "tests/recursive_const_arrow_dts_emit_tests.rs"
 
+[[test]]
+name = "parenthesized_type_dts_emit_tests"
+path = "tests/parenthesized_type_dts_emit_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
