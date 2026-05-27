@@ -12,6 +12,7 @@ use crate::state::MAX_TREE_WALK_ITERATIONS;
 
 use super::FlowAnalyzer;
 use crate::query_boundaries::flow_analysis::{self as flow_query, TypeResolver};
+use crate::types_domain::property_access_type::known_globals;
 
 pub(crate) fn reference_is_in_class_property_initializer(
     arena: &NodeArena,
@@ -578,18 +579,11 @@ impl<'a> FlowAnalyzer<'a> {
                 // The lib.d.ts instance types may be Lazy references that the solver's
                 // is_object_interface/is_function_interface_structural checks don't match.
                 let ctor_expr = self.skip_parens_and_assertions(bin.right);
-                if let Some(ident) = self.arena.get_identifier_at(ctor_expr) {
-                    let name = &ident.escaped_text;
-                    if name == "Object" && self.is_builtin_global_reference(ctor_expr) {
-                        return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
-                    }
-                    if name == "Function" && self.is_builtin_global_reference(ctor_expr) {
-                        return Some((
-                            TypeGuard::Instanceof(TypeId::FUNCTION, true),
-                            target,
-                            false,
-                        ));
-                    }
+                if self.identifier_resolves_to_unshadowed_global(ctor_expr, "Object") {
+                    return Some((TypeGuard::Instanceof(TypeId::OBJECT, true), target, false));
+                }
+                if self.identifier_resolves_to_unshadowed_global(ctor_expr, "Function") {
+                    return Some((TypeGuard::Instanceof(TypeId::FUNCTION, true), target, false));
                 }
                 return Some((TypeGuard::Instanceof(instance_type, false), target, false));
             }
@@ -888,10 +882,9 @@ impl<'a> FlowAnalyzer<'a> {
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
 
-        if obj_text != "Array" {
-            return None;
-        }
-        if !self.is_builtin_global_reference(access.expression) {
+        if obj_text != "Array"
+            || !self.identifier_resolves_to_unshadowed_global(access.expression, "Array")
+        {
             return None;
         }
 
@@ -965,10 +958,9 @@ impl<'a> FlowAnalyzer<'a> {
             .get(access.expression)
             .and_then(|node| self.arena.get_identifier(node))
             .map(|ident| ident.escaped_text.as_str())?;
-        if obj_text != "ArrayBuffer" {
-            return None;
-        }
-        if !self.is_builtin_global_reference(access.expression) {
+        if obj_text != "ArrayBuffer"
+            || !self.identifier_resolves_to_unshadowed_global(access.expression, "ArrayBuffer")
+        {
             return None;
         }
 
@@ -1032,10 +1024,28 @@ impl<'a> FlowAnalyzer<'a> {
         ))
     }
 
-    fn is_builtin_global_reference(&self, reference: NodeIndex) -> bool {
-        self.binder
-            .resolve_identifier(self.arena, reference)
-            .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
+    fn identifier_resolves_to_unshadowed_global(&self, reference: NodeIndex, name: &str) -> bool {
+        if let Some(ctx) = self.checker_context {
+            return known_globals::identifier_resolves_to_unshadowed_global_in_context(
+                ctx,
+                self.arena,
+                self.binder,
+                reference,
+                name,
+            );
+        }
+
+        let Some(node) = self.arena.get(reference) else {
+            return false;
+        };
+        let Some(ident) = self.arena.get_identifier(node) else {
+            return false;
+        };
+        ident.escaped_text == name
+            && self
+                .binder
+                .resolve_identifier(self.arena, reference)
+                .is_none_or(|symbol_id| self.binder.lib_symbol_ids.contains(&symbol_id))
     }
 
     /// Check if a call is `array.every(predicate)` where predicate has a type predicate.

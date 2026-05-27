@@ -38,8 +38,14 @@ export const COMPILE_GUARD_EXCLUDED_ROWS = new Set([
 ]);
 
 function extractCaseArmRows(scriptText) {
-  return [...scriptText.matchAll(/^\s{4}([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm)]
+  return [...scriptText.matchAll(/^[ \t]+([a-z0-9-]+(?:\|[a-z0-9-]+)*)\)\s*$/gm)]
     .flatMap((m) => m[1].split("|"));
+}
+
+function extractShellFunctionBody(scriptText, functionName) {
+  const escapedName = functionName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const match = scriptText.match(new RegExp(`^[ \\t]*${escapedName}\\(\\)[ \\t]*\\{\\n([\\s\\S]*?)^\\}`, "m"));
+  return match ? match[1] : scriptText;
 }
 
 export function extractBenchRunnerRows(scriptText) {
@@ -49,10 +55,11 @@ export function extractBenchRunnerRows(scriptText) {
 }
 
 export function extractCompileGuardRows(scriptText) {
+  const projectRowFunction = extractShellFunctionBody(scriptText, "run_project_row");
   const literalRows = [...scriptText.matchAll(/check_project\s+"([^"]+)"/g)]
     .map((m) => m[1])
     .filter((r) => r !== "$name");
-  return [...new Set([...literalRows, ...extractCaseArmRows(scriptText)])].sort();
+  return [...new Set([...literalRows, ...extractCaseArmRows(projectRowFunction)])].sort();
 }
 
 function extractShellArrayRows(scriptText, arrayName) {
@@ -70,7 +77,7 @@ export function extractCompileGuardFallbackRows(scriptText) {
 }
 
 export function extractFixtureSourceRows(scriptText) {
-  return [...new Set(extractCaseArmRows(scriptText))].sort();
+  return [...new Set(extractCaseArmRows(extractShellFunctionBody(scriptText, "tsz_project_fixture_sources")))].sort();
 }
 
 export function readSurfaceData() {
