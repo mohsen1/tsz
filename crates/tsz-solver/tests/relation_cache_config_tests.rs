@@ -35,7 +35,7 @@ use crate::relations::relation_queries::{
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
     CachedAnyMode, FunctionShape, ParamInfo, PropertyInfo, RelationCacheConfig, RelationCacheKey,
-    RelationCacheKind, RelationFlags, TypeParamInfo,
+    RelationCacheKind, RelationFlags, TypeData, TypeParamInfo,
 };
 
 /// Assert that two `RelationPolicy` configurations produce distinct
@@ -289,6 +289,87 @@ fn erase_generics_partitions_cache_entries() {
         "erase_generics",
         RelationPolicy::default().with_erase_generics(true),
         RelationPolicy::default().with_erase_generics(false),
+    );
+}
+
+#[test]
+fn assignability_cache_no_unchecked_indexed_access_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let array = interner.array(TypeId::STRING);
+    let indexed_read = interner.intern(TypeData::IndexAccess(array, TypeId::NUMBER));
+
+    let checked_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let unchecked_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS,
+    );
+    let checked_key = RelationCacheKey::for_assignability(
+        indexed_read,
+        TypeId::STRING,
+        checked_policy.cache_config(),
+    );
+    let unchecked_key = RelationCacheKey::for_assignability(
+        indexed_read,
+        TypeId::STRING,
+        unchecked_policy.cache_config(),
+    );
+
+    assert_ne!(
+        checked_key, unchecked_key,
+        "indexed-access read policy must partition assignability cache entries",
+    );
+
+    let checked_uncached = query_relation(
+        &interner,
+        indexed_read,
+        TypeId::STRING,
+        RelationKind::Assignable,
+        checked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let unchecked_uncached = query_relation(
+        &interner,
+        indexed_read,
+        TypeId::STRING,
+        RelationKind::Assignable,
+        unchecked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        checked_uncached,
+        "without noUncheckedIndexedAccess, array[number] should read as string",
+    );
+    assert!(
+        !unchecked_uncached,
+        "with noUncheckedIndexedAccess under strict null checks, array[number] should include undefined",
+    );
+
+    let checked_cached =
+        db.is_assignable_to_with_policy(indexed_read, TypeId::STRING, checked_policy);
+    let unchecked_cached =
+        db.is_assignable_to_with_policy(indexed_read, TypeId::STRING, unchecked_policy);
+
+    assert_eq!(
+        checked_cached, checked_uncached,
+        "cached checked indexed-access assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        unchecked_cached, unchecked_uncached,
+        "cached unchecked indexed-access assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(checked_key),
+        Some(checked_cached),
+        "checked indexed-access policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(unchecked_key),
+        Some(unchecked_cached),
+        "unchecked indexed-access policy result must use its own cache slot",
     );
 }
 
