@@ -271,12 +271,21 @@ impl<'a> CheckerState<'a> {
     ) -> Option<TypeId> {
         let allows_callable_fallback =
             self.named_contextual_property_allows_callable_fallback(contextual_type, property_name);
+        let raw_property_callable_context = self
+            .ctx
+            .types
+            .contextual_property_type(contextual_type, property_name)
+            .and_then(|type_id| self.precise_callable_context_type(type_id));
+        let callable_index_context =
+            self.contextual_callable_string_index_signature_type(contextual_type, 4);
         let direct = match self.resolve_property_access_with_env(contextual_type, property_name) {
             tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } => {
                 self.precise_callable_context_type(type_id)
             }
             _ => None,
         }
+        .or(raw_property_callable_context)
+        .or(callable_index_context)
         .or_else(|| self.contextual_object_property_type_for_lookup(contextual_type, property_name))
         .or_else(|| {
             allows_callable_fallback
@@ -300,12 +309,21 @@ impl<'a> CheckerState<'a> {
         if lookup_type != contextual_type {
             let allows_lookup_callable_fallback =
                 self.named_contextual_property_allows_callable_fallback(lookup_type, property_name);
+            let raw_lookup_property_callable_context = self
+                .ctx
+                .types
+                .contextual_property_type(lookup_type, property_name)
+                .and_then(|type_id| self.precise_callable_context_type(type_id));
+            let callable_lookup_index_context =
+                self.contextual_callable_string_index_signature_type(lookup_type, 4);
             let result = match self.resolve_property_access_with_env(lookup_type, property_name) {
                 tsz_solver::operations::property::PropertyAccessResult::Success {
                     type_id, ..
                 } => self.precise_callable_context_type(type_id),
                 _ => None,
             }
+            .or(raw_lookup_property_callable_context)
+            .or(callable_lookup_index_context)
             .or_else(|| self.contextual_object_literal_property_type(lookup_type, property_name))
             .or_else(|| {
                 allows_lookup_callable_fallback

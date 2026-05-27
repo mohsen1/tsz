@@ -124,6 +124,79 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    pub(crate) fn contextual_callable_string_index_signature_type(
+        &mut self,
+        type_id: TypeId,
+        depth: usize,
+    ) -> Option<TypeId> {
+        if depth == 0 {
+            return None;
+        }
+
+        let type_id = self.strip_contextual_this_type_markers(type_id);
+        let mut candidates = Vec::new();
+        let mut seen = rustc_hash::FxHashSet::default();
+        let mut push_candidate = |this: &mut Self, candidate: TypeId| {
+            if let Some(callable) = this.precise_callable_context_type(candidate)
+                && seen.insert(callable)
+            {
+                candidates.push(callable);
+            }
+        };
+
+        if let Some(index) = self.ctx.types.get_index_signatures(type_id).string_index {
+            push_candidate(self, index.value_type);
+        }
+
+        if let Some(constraint) =
+            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+            && let Some(candidate) =
+                self.contextual_callable_string_index_signature_type(constraint, depth - 1)
+        {
+            push_candidate(self, candidate);
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, type_id).or_else(|| {
+                crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+            })
+        {
+            for member in members {
+                if let Some(candidate) =
+                    self.contextual_callable_string_index_signature_type(member, depth - 1)
+                {
+                    push_candidate(self, candidate);
+                }
+            }
+        }
+
+        let resolved_type = self.resolve_type_for_property_access(type_id);
+        if resolved_type != type_id
+            && let Some(candidate) =
+                self.contextual_callable_string_index_signature_type(resolved_type, depth - 1)
+        {
+            push_candidate(self, candidate);
+        }
+
+        let evaluated_type = self.evaluate_type_with_env(type_id);
+        let evaluated_type = self.resolve_type_for_property_access(evaluated_type);
+        let evaluated_type = self.resolve_lazy_type(evaluated_type);
+        let evaluated_type = self.evaluate_application_type(evaluated_type);
+        if evaluated_type != type_id
+            && evaluated_type != resolved_type
+            && let Some(candidate) =
+                self.contextual_callable_string_index_signature_type(evaluated_type, depth - 1)
+        {
+            push_candidate(self, candidate);
+        }
+
+        match candidates.as_slice() {
+            [] => None,
+            [single] => Some(*single),
+            _ => Some(self.ctx.types.factory().union_preserve_members(candidates)),
+        }
+    }
+
     pub(crate) fn fallback_contextual_callable_property_type(
         &mut self,
         type_id: TypeId,
@@ -399,6 +472,22 @@ impl<'a> CheckerState<'a> {
                 );
             }
             return None;
+        }
+
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
+        {
+            let callable_members: Vec<_> = members
+                .into_iter()
+                .filter(|&member| {
+                    crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
+                })
+                .collect();
+            return match callable_members.as_slice() {
+                [] => None,
+                [single] => Some(*single),
+                _ => Some(self.ctx.types.factory().intersection(callable_members)),
+            };
         }
 
         crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id)

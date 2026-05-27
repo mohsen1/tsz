@@ -998,6 +998,10 @@ name = "contextual_typing_tests"
 path = "tests/contextual_typing_tests.rs"
 
 [[test]]
+name = "contextual_method_index_signature_tests"
+path = "tests/contextual_method_index_signature_tests.rs"
+
+[[test]]
 name = "contextual_literal_keyof_lib_tests"
 path = "tests/contextual_literal_keyof_lib_tests.rs"
 
