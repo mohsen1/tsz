@@ -144,6 +144,7 @@ impl PerfCounters {
                 &snap.delegate_source_file_miss_residues,
             )
             + &Self::dump_source_file_symbol_arena_cache_eligibility_outcomes()
+            + &Self::dump_slow_check_timings(&snap)
             + &Self::dump_by_reason()
     }
 
@@ -688,6 +689,35 @@ impl PerfCounters {
             let count = load(&c.source_file_symbol_arena_cache_eligibility_outcome[idx]);
             if count > 0 {
                 out.push_str(&format!("  {name:<32} {count:>12}\n"));
+            }
+        }
+        out
+    }
+
+    fn dump_slow_check_timings(snap: &PerfCounterSnapshot) -> String {
+        if snap.slow_check_file_timings.is_empty()
+            && snap.slow_check_statement_timings.is_empty()
+        {
+            return String::new();
+        }
+
+        let mut out = String::new();
+        if !snap.slow_check_file_timings.is_empty() {
+            out.push_str("\nSlowest semantic check files:\n");
+            for row in snap.slow_check_file_timings.iter().take(10) {
+                out.push_str(&format!(
+                    "  {:>8.2} ms  diags={:>4}  {}\n",
+                    row.elapsed_ms, row.diagnostics, row.file
+                ));
+            }
+        }
+        if !snap.slow_check_statement_timings.is_empty() {
+            out.push_str("\nSlowest semantic check statements:\n");
+            for row in snap.slow_check_statement_timings.iter().take(10) {
+                out.push_str(&format!(
+                    "  {:>8.2} ms  kind={:>4}  span={:>8}..{:<8}  {}\n",
+                    row.elapsed_ms, row.kind, row.pos, row.end, row.file
+                ));
             }
         }
         out
