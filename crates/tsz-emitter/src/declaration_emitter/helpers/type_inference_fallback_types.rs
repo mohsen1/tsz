@@ -249,6 +249,9 @@ impl<'a> DeclarationEmitter<'a> {
                     self.value_reference_symbol_type_text(expr_idx)
                         .filter(|text| text != "any" && text != "unknown")
                 })
+                .or_else(|| {
+                    self.this_property_constructor_assignment_type_text(expr_idx, depth + 1)
+                })
                 .or_else(|| self.namespace_property_access_type_text(expr_idx, depth + 1))
                 .or_else(|| self.length_property_access_type_text(expr_idx, depth + 1))
                 .or_else(|| self.class_instance_property_access_type_text(expr_idx)),
@@ -370,6 +373,83 @@ impl<'a> DeclarationEmitter<'a> {
             if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
                 return Some(initializer);
             }
+        }
+        None
+    }
+
+    fn this_property_constructor_assignment_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        if self
+            .arena
+            .get(access.expression)
+            .is_none_or(|receiver| receiver.kind != SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        let class_idx = self.enclosing_class_for_node(expr_idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let constructor_idx = class.members.nodes.iter().copied().find(|member_idx| {
+            self.arena
+                .get(*member_idx)
+                .is_some_and(|member| member.kind == syntax_kind_ext::CONSTRUCTOR)
+        })?;
+        let constructor_node = self.arena.get(constructor_idx)?;
+        let constructor = self.arena.get_constructor(constructor_node)?;
+        let body_node = self.arena.get(constructor.body)?;
+        let body = self.arena.get_block(body_node)?;
+
+        for &stmt_idx in &body.statements.nodes {
+            let Some((name_idx, rhs_idx)) = self.js_this_property_assignment(stmt_idx) else {
+                continue;
+            };
+            if self.get_identifier_text(name_idx).as_deref() != Some(property_name.as_str()) {
+                continue;
+            }
+            return self
+                .jsdoc_type_text_for_node(stmt_idx)
+                .or_else(|| {
+                    if self.js_constructor_assignment_rhs_is_jsdoc_null_parameter(
+                        rhs_idx,
+                        &constructor.parameters,
+                    ) {
+                        Some("any".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| self.anonymous_module_exports_class_new_expression_type_text(rhs_idx))
+                .or_else(|| {
+                    self.get_node_type_or_names(&[rhs_idx])
+                        .filter(|type_id| {
+                            !matches!(
+                                *type_id,
+                                tsz_solver::types::TypeId::ANY
+                                    | tsz_solver::types::TypeId::UNKNOWN
+                                    | tsz_solver::types::TypeId::ERROR
+                            )
+                        })
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+                .or_else(|| {
+                    self.js_constructor_assignment_expression_type_text(
+                        rhs_idx,
+                        &constructor.parameters,
+                        depth + 1,
+                    )
+                })
+                .or_else(|| self.infer_fallback_type_text_at(rhs_idx, depth + 1))
+                .or_else(|| self.allowlisted_initializer_type_text(rhs_idx))
+                .or_else(|| self.js_namespace_value_member_type_text(rhs_idx));
         }
         None
     }

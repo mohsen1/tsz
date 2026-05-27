@@ -27,6 +27,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
+        if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
+            && let Some(type_text) = self
+                .declaration_summary_primitive_expression_type_text(return_expr, 0)
+                .filter(|text| !text.is_empty() && text != "any")
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
