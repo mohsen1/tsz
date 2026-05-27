@@ -743,6 +743,30 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
+    pub(in crate::declaration_emitter) fn function_initializer_has_parameter_type_annotations(
+        &self,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+        if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return false;
+        }
+        let Some(func) = self.arena.get_function(init_node) else {
+            return false;
+        };
+
+        func.parameters.nodes.iter().copied().any(|param_idx| {
+            self.arena
+                .get(param_idx)
+                .and_then(|param_node| self.arena.get_parameter(param_node))
+                .is_some_and(|param| param.type_annotation.is_some())
+        })
+    }
+
     pub(in crate::declaration_emitter) fn function_initializer_needs_source_signature(
         &self,
         initializer: NodeIndex,

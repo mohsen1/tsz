@@ -48,6 +48,15 @@ impl<'a> DeclarationEmitter<'a> {
         (!type_text.trim().is_empty()).then_some(type_text)
     }
 
+    pub(in crate::declaration_emitter) fn function_body_local_function_expando_return_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        self.local_variable_function_expando_type_text(returned_identifier)
+            .filter(|text| !text.is_empty())
+    }
+
     fn function_parameter_type_annotation(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
@@ -1175,6 +1184,11 @@ impl<'a> DeclarationEmitter<'a> {
                     && let Some(text) = self
                         .preferred_expression_type_text(ret.expression)
                         .filter(|text| !text.is_empty() && text != "any")
+                {
+                    text
+                } else if let Some(text) = self
+                    .local_variable_function_expando_type_text(ret.expression)
+                    .filter(|text| !text.is_empty())
                 {
                     text
                 } else if let Some(text) = self

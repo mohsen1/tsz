@@ -765,10 +765,13 @@ impl<'a> DeclarationEmitter<'a> {
             self.get_identifier_text(func.name).is_some_and(|name| {
                 self.namespace_member_referenced_by_exported_object_literal(func_idx, &name)
             });
+        let used_by_exported_function_return =
+            self.namespace_member_decl_returned_by_exported_function(func_idx);
         if !is_exported
             && !self.should_emit_public_api_member(&func.modifiers)
             && !self.should_emit_public_api_dependency(func.name)
             && !used_by_exported_object_literal
+            && !used_by_exported_function_return
         {
             return;
         }
@@ -925,6 +928,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.returned_late_bound_function_typeof_text(func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let (Some(return_type_text), true) =
             self.function_body_return_hint(func, func_body)
         {
@@ -1061,6 +1071,27 @@ impl<'a> DeclarationEmitter<'a> {
                         let _ = self.emit_non_portable_function_return_diagnostics(
                             &type_text, func_body, func_name,
                         );
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| self.returned_late_bound_function_typeof_text(func_body))
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
+                            self.function_body_local_function_expando_return_type_text(func_body)
+                        })
+                        .flatten()
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, &type_text);
+                        self.emit_non_portable_function_return_diagnostics(
+                            &type_text, func_body, func_name,
+                        );
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| {
@@ -1264,6 +1295,12 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> bool {
         if self.body_returns_void(func_body) {
             self.write(": void");
+            return true;
+        }
+
+        if let Some(type_text) = self.returned_late_bound_function_typeof_text(func_body) {
+            self.write(": ");
+            self.write(&type_text);
             return true;
         }
 
