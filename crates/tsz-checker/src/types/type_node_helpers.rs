@@ -11,7 +11,7 @@ use super::type_node::{TypeLiteralSignatureScopeUpdates, TypeNodeChecker};
 
 /// Extract the string literal text from a type-level index (e.g., `'y'` from `T['y']`).
 /// In type position, the index is a `LiteralType` node wrapping a string literal.
-pub(super) fn get_string_literal_from_type_index(
+pub(crate) fn get_string_literal_from_type_index(
     arena: &tsz_parser::parser::NodeArena,
     idx: NodeIndex,
 ) -> Option<String> {
@@ -31,7 +31,7 @@ pub(super) fn get_string_literal_from_type_index(
 
 /// Check if a type node is `typeof globalThis`, possibly wrapped in parentheses.
 /// Used to detect `(typeof globalThis)['key']` patterns in indexed access types.
-pub(super) fn is_typeof_global_this_type_node(
+pub(crate) fn is_typeof_global_this_type_node(
     arena: &tsz_parser::parser::NodeArena,
     mut node_idx: NodeIndex,
 ) -> bool {

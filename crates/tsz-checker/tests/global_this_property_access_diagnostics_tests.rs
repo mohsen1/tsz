@@ -85,6 +85,48 @@ const bad = g.definitelyMissingOnGlobalThis;
     );
 }
 
+#[test]
+fn typeof_globalthis_indexed_access_missing_key_reports_ts2339_only() {
+    let source = r#"
+type Missing = (typeof globalThis)["\"ambientModule\""];
+"#;
+    let diags = check_with_no_implicit_any(source);
+    let ts2339: Vec<_> = diags.iter().filter(|diag| diag.code == 2339).collect();
+    assert_eq!(
+        ts2339.len(),
+        1,
+        "missing typeof globalThis indexed key should emit one TS2339; got: {diags:#?}"
+    );
+    assert!(
+        ts2339[0]
+            .message_text
+            .contains("Property '\"ambientModule\"' does not exist on type 'typeof globalThis'"),
+        "TS2339 must keep the canonical typeof globalThis receiver; got: {}",
+        ts2339[0].message_text
+    );
+    assert_eq!(
+        count(&diags, 2536),
+        0,
+        "TS2536 should not cascade after the missing globalThis property; got: {diags:#?}"
+    );
+}
+
+#[test]
+fn typeof_globalthis_indexed_access_keeps_declared_namespace_keys_valid() {
+    let source = r#"
+namespace renamedValue { export var val = 1; }
+namespace renamedNamespace { export type typ = 1; }
+type ValueOk = (typeof globalThis)["renamedValue"];
+type NamespaceOk = globalThis.renamedNamespace.typ;
+"#;
+    let diags = check_with_no_implicit_any(source);
+    assert_eq!(
+        count(&diags, 2339) + count(&diags, 2536),
+        0,
+        "declared global namespace/value keys should not regress; got: {diags:#?}"
+    );
+}
+
 /// Element access `globalThis['unknown']` under `--noImplicitAny` must emit
 /// TS7053. Same rationale as TS7017 above.
 #[test]

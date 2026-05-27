@@ -13,6 +13,24 @@ use tsz_parser::parser::NodeIndex;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    pub(crate) fn default_import_module_for_new_target(
+        &self,
+        expr_idx: NodeIndex,
+        fallback_name: &str,
+    ) -> Option<String> {
+        self.resolve_identifier_symbol(expr_idx)
+            .and_then(|sym_id| {
+                self.get_cross_file_symbol(sym_id)
+                    .or_else(|| self.ctx.binder.get_symbol(sym_id))
+                    .and_then(|symbol| {
+                        (symbol.import_name.as_deref() == Some("default"))
+                            .then(|| symbol.import_module.clone())
+                            .flatten()
+                    })
+            })
+            .or_else(|| self.source_file_default_import_module_named(expr_idx, fallback_name))
+    }
+
     pub(crate) fn type_node_contains_abstract_constructor(
         &self,
         type_idx: NodeIndex,
