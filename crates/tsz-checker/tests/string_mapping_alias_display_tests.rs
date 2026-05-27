@@ -123,6 +123,40 @@ const x: `a${string}` = v;
 }
 
 #[test]
+fn capitalize_alias_source_is_name_independent() {
+    // Different alias spelling for `Capitalize` proves the rule is keyed on the
+    // structural shape, not the alias name `Cap`.
+    let msg = ts2322(
+        r#"
+type Headline = Capitalize<string>;
+declare let v: Headline;
+const x: `A${string}` = v;
+"#,
+    );
+    assert!(
+        msg.contains("Type 'Capitalize<string>' is not assignable to type '`A${string}`'."),
+        "renamed Capitalize source must render structurally, got: {msg}"
+    );
+    assert!(!msg.contains("'Headline'"), "got: {msg}");
+}
+
+#[test]
+fn uncapitalize_alias_source_is_name_independent() {
+    let msg = ts2322(
+        r#"
+type Slug = Uncapitalize<string>;
+declare let v: Slug;
+const x: `a${string}` = v;
+"#,
+    );
+    assert!(
+        msg.contains("Type 'Uncapitalize<string>' is not assignable to type '`a${string}`'."),
+        "renamed Uncapitalize source must render structurally, got: {msg}"
+    );
+    assert!(!msg.contains("'Slug'"), "got: {msg}");
+}
+
+#[test]
 fn nested_string_mapping_alias_source_renders_structurally() {
     let msg = ts2322(
         r#"
