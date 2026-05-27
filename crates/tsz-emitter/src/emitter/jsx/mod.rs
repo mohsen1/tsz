@@ -203,11 +203,20 @@ pub(super) fn process_jsx_text(text: &str) -> String {
 /// `quote` is the surrounding quote char (' or ") so we know which to escape.
 pub(super) fn escape_jsx_text_for_js_with_quote(s: &str, quote: char) -> String {
     let mut result = String::with_capacity(s.len());
-    for c in s.chars() {
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
             '\\' => result.push_str("\\\\"),
+            // tsc rebuilds JSX string content as a fresh JS string literal with
+            // line terminators normalized to LF, so a raw `CRLF` or lone `CR` in
+            // a JSX attribute value (or text child) is emitted as `\n`, never `\r`.
+            '\r' => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                result.push_str("\\n");
+            }
             '\n' => result.push_str("\\n"),
-            '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
             c if c == quote => {
                 result.push('\\');
@@ -565,7 +574,7 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::process_jsx_text;
+    use super::{escape_jsx_text_for_js_with_quote, process_jsx_text};
     use crate::context::emit::EmitContext;
     use crate::emitter::{JsxEmit, Printer as EmitPrinter, PrinterOptions};
     use crate::lowering::LoweringPass;
@@ -767,6 +776,67 @@ x = <foo>x</foo>, x = <foo/>;
     #[test]
     fn process_jsx_text_normalizes_mixed_cr_and_lf() {
         assert_eq!(process_jsx_text("a\rb\nc"), "a b c");
+    }
+
+    #[test]
+    fn escape_jsx_string_normalizes_crlf_to_lf() {
+        // tsc rebuilds a JSX attribute value as a JS string literal with line
+        // terminators normalized to LF, so a raw CRLF must become a single `\n`.
+        assert_eq!(
+            escape_jsx_text_for_js_with_quote("\r\nfoo: 23\r\n", '"'),
+            "\\nfoo: 23\\n"
+        );
+    }
+
+    #[test]
+    fn escape_jsx_string_normalizes_lone_cr_to_lf() {
+        // Classic-Mac line endings (lone CR) normalize the same as CRLF/LF.
+        assert_eq!(escape_jsx_text_for_js_with_quote("a\rb", '"'), "a\\nb");
+    }
+
+    #[test]
+    fn escape_jsx_string_preserves_literal_backslash_n() {
+        // JSX attribute strings do not process escape sequences, so a source
+        // backslash-n is two characters and stays escaped (`\\n`), while the
+        // surrounding raw CRLF terminators normalize to `\n`.
+        assert_eq!(
+            escape_jsx_text_for_js_with_quote("\r\nfoo: 23\\n\r\n", '\''),
+            "\\nfoo: 23\\\\n\\n"
+        );
+    }
+
+    #[test]
+    fn escape_jsx_string_without_line_breaks_is_unchanged() {
+        assert_eq!(
+            escape_jsx_text_for_js_with_quote("plain value", '"'),
+            "plain value"
+        );
+    }
+
+    #[test]
+    fn react_emit_normalizes_crlf_in_double_quoted_attr_value() {
+        let source = "const a = <input value=\"\r\nfoo: 23\r\n\"></input>;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("{ value: \"\\nfoo: 23\\n\" }"),
+            "CRLF in a JSX attribute value should normalize to \\n.\nOutput: {output}"
+        );
+        assert!(
+            !output.contains("\\r"),
+            "No raw CR should survive into emitted JSX string content.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn react_emit_normalizes_crlf_in_single_quoted_attr_value() {
+        // Preserves the single-quote style while normalizing line endings, and
+        // keeps a literal backslash-n unprocessed (JSX strings are not cooked).
+        let source = "const c = <input value='\r\nfoo: 23\\n\r\n'></input>;";
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains("{ value: '\\nfoo: 23\\\\n\\n' }"),
+            "Single-quoted multiline JSX attribute value mismatch.\nOutput: {output}"
+        );
     }
 
     #[test]
