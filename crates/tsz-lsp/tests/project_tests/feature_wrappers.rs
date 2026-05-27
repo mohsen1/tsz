@@ -227,6 +227,43 @@ fn test_project_get_document_links() {
 }
 
 #[test]
+fn test_project_get_document_colors_hex_literals() {
+    let mut project = Project::new();
+    project.set_file(
+        "test.ts".to_string(),
+        "const primary = \"#336699\";\nconst overlay = `#ff008080`;\nconst short = \"#0f8\";\n"
+            .to_string(),
+    );
+
+    let colors = project
+        .get_document_colors("test.ts")
+        .expect("document colors should be available for existing files");
+
+    assert_eq!(colors.len(), 3);
+    assert_eq!(colors[0].range.start, Position::new(0, 17));
+    assert_eq!(colors[0].range.end, Position::new(0, 24));
+    assert_eq!(colors[1].range.start, Position::new(1, 17));
+    assert_eq!(colors[1].range.end, Position::new(1, 26));
+    assert_eq!(colors[2].range.start, Position::new(2, 15));
+    assert_eq!(colors[2].range.end, Position::new(2, 19));
+
+    assert_eq!(colors[0].color.red, 0x33 as f64 / 255.0);
+    assert_eq!(colors[0].color.green, 0x66 as f64 / 255.0);
+    assert_eq!(colors[0].color.blue, 0x99 as f64 / 255.0);
+    assert_eq!(colors[0].color.alpha, 1.0);
+
+    assert_eq!(colors[1].color.red, 1.0);
+    assert_eq!(colors[1].color.green, 0.0);
+    assert_eq!(colors[1].color.blue, 0x80 as f64 / 255.0);
+    assert_eq!(colors[1].color.alpha, 0x80 as f64 / 255.0);
+
+    assert_eq!(colors[2].color.red, 0.0);
+    assert_eq!(colors[2].color.green, 1.0);
+    assert_eq!(colors[2].color.blue, 0x88 as f64 / 255.0);
+    assert_eq!(colors[2].color.alpha, 1.0);
+}
+
+#[test]
 fn test_project_get_linked_editing_ranges_jsx() {
     let mut project = Project::new();
     project.set_file(
@@ -379,6 +416,12 @@ fn test_project_prepare_call_hierarchy_returns_none_for_missing_file() {
 fn test_project_get_document_links_returns_none_for_missing_file() {
     let project = Project::new();
     assert!(project.get_document_links("missing.ts").is_none());
+}
+
+#[test]
+fn test_project_get_document_colors_returns_none_for_missing_file() {
+    let project = Project::new();
+    assert!(project.get_document_colors("missing.ts").is_none());
 }
 
 #[test]
