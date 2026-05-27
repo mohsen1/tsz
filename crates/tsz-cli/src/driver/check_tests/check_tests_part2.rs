@@ -13,6 +13,109 @@
         }
         resolved
     }
+
+    fn resolved_options_for_esnext_sharedmemory_strict_test() -> ResolvedCompilerOptions {
+        let mut args = default_cli_args_for_test();
+        args.ignore_config = true;
+        args.strict = true;
+        args.no_emit = true;
+        args.target = Some(crate::args::Target::EsNext);
+        args.lib = Some(vec!["es2023".to_string(), "es2024.sharedmemory".to_string()]);
+
+        let mut resolved = crate::config::resolve_compiler_options(None)
+            .expect("resolve default compiler options");
+        crate::driver::apply_cli_overrides(&mut resolved, &args).expect("apply cli overrides");
+        if matches!(resolved.printer.module, ModuleKind::None) {
+            resolved.printer.module = ModuleKind::ESNext;
+            resolved.checker.module = ModuleKind::ESNext;
+        }
+        resolved
+    }
+
+    #[test]
+    fn test_compile_inner_program_accepts_atomics_wait_async_bigint_sharedarraybuffer() {
+        let dir = tempfile::TempDir::new().expect("temp dir");
+        let file_path = dir.path().join("main.ts");
+        std::fs::write(
+            &file_path,
+            r#"
+const sab64 = new SharedArrayBuffer(BigInt64Array.BYTES_PER_ELEMENT * 1024);
+const int64 = new BigInt64Array(sab64);
+const { async: async64, value: value64 } = Atomics.waitAsync(int64, 0, BigInt(0));
+
+async function main() {
+    if (async64) {
+        await value64;
+    }
+}
+"#,
+        )
+        .expect("write source");
+
+        let resolved = resolved_options_for_esnext_sharedmemory_strict_test();
+        let file_paths = vec![file_path];
+        let SourceReadResult {
+            sources,
+            dependencies: _,
+            module_resolutions: _,
+            type_reference_errors,
+            resolution_mode_errors,
+            ..
+        } = super::read_source_files(&file_paths, dir.path(), &resolved, None, None)
+            .expect("read source files");
+
+        assert!(type_reference_errors.is_empty());
+        assert!(resolution_mode_errors.is_empty());
+
+        let disable_default_libs =
+            resolved.lib_is_default && super::sources_have_no_default_lib(&sources);
+        let lib_paths = super::resolve_effective_lib_paths(
+            &resolved,
+            &sources,
+            dir.path(),
+            disable_default_libs,
+        )
+        .expect("resolve effective lib paths");
+        let lib_path_refs: Vec<_> = lib_paths.iter().map(PathBuf::as_path).collect();
+        let lib_files =
+            parallel::load_lib_files_for_binding_strict(&lib_path_refs).expect("load strict libs");
+        let checker_libs = load_checker_libs(&lib_files);
+        let compile_inputs: Vec<_> = sources
+            .into_iter()
+            .map(|source| {
+                (
+                    source.path.to_string_lossy().into_owned(),
+                    source.text.unwrap_or_default(),
+                )
+            })
+            .collect();
+        let program = parallel::merge_bind_results(parallel::parse_and_bind_parallel_with_libs(
+            compile_inputs,
+            &lib_files,
+        ));
+        let type_cache_output = std::sync::Mutex::new(FxHashMap::default());
+
+        let diagnostics = collect_diagnostics(
+            &CollectDiagnosticsInput {
+                program: &program,
+                options: &resolved,
+                base_dir: dir.path(),
+                checker_libs: &checker_libs,
+                typescript_dom_replacement_globals: (false, false, false),
+                has_deprecation_diagnostics: false,
+                collect_compile_stats: false,
+            },
+            None,
+            &type_cache_output,
+        )
+        .diagnostics;
+
+        assert!(
+            diagnostics.iter().all(|diag| diag.code != 2769),
+            "Did not expect TS2769 for Atomics.waitAsync with BigInt64Array<SharedArrayBuffer>, got: {diagnostics:?}"
+        );
+    }
+
     #[test]
     fn test_compile_inner_program_build_promise_is_assignable_to_promise_like() {
         let dir = tempfile::TempDir::new().expect("temp dir");
