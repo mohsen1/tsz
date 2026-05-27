@@ -149,6 +149,32 @@ fn es5_property_access_preserves_raw_astral_identifier_name() {
 }
 
 #[test]
+fn es5_arrow_empty_block_preserves_inner_line_comment() {
+    let source = "const f: () => undefined = () => {\n    // keep\n};\n";
+    let output = parse_and_emit_strict_target(source, "arrow.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("var f = function () {\n    // keep\n};"),
+        "ES5 arrow block lowering should preserve comment-only bodies.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("};\n// keep"),
+        "Comment-only arrow body comments must not drift after the function expression.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_accessor_recovered_throw_preserves_comment_chain_and_semicolon_line() {
+    let source = "class C {\n    get value() {\n        // first\n        // second\n        throw null;\n        throw undefined.\n    }\n}\n";
+    let output = parse_and_emit_strict_target(source, "accessor.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("get: function () {\n            // first\n            // second\n            throw null;\n            throw undefined.\n            ;\n        }"),
+        "ES5 accessor lowering should keep leading comment chains and recovered throw semicolon layout.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn es5_braced_astral_class_member_tail_emits_as_outer_statements() {
     let source = r#"
 class Foo {
