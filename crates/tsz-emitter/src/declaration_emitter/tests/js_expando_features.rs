@@ -42,3 +42,37 @@ RenamedArrow.meta = "value";
         "Did not expect mutable arrow function to merge expando static surface: {output}"
     );
 }
+
+#[test]
+fn returned_local_function_expando_keeps_assigned_member_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function makeCounter(seed: number) {
+    const next = function (step: number) {
+        return seed + step;
+    };
+    next.total = seed + 1;
+    return next;
+}
+
+function makeFlagged(flag: boolean) {
+    let choose = (value: string) => value.length;
+    choose.ready = flag;
+    return choose;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare function makeCounter(seed: number): {\n    (step: number): number;\n    total: number;\n};"
+        ),
+        "Expected returned function expression expando property to keep assigned member type: {output}"
+    );
+    assert!(
+        output.contains(
+            "declare function makeFlagged(flag: boolean): {\n    (value: string): any;\n    ready: boolean;\n};"
+        ),
+        "Expected returned arrow expando property to keep assigned member type: {output}"
+    );
+}

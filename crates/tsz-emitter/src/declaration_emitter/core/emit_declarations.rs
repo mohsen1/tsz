@@ -1064,6 +1064,20 @@ impl<'a> DeclarationEmitter<'a> {
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| {
+                            self.function_body_local_function_expando_return_type_text(func_body)
+                        })
+                        .flatten()
+                    {
+                        let (type_text, _) =
+                            self.function_return_type_text_for_declaration_scope(func, &type_text);
+                        self.emit_non_portable_function_return_diagnostics(
+                            &type_text, func_body, func_name,
+                        );
+                        self.write(": ");
+                        self.write(&type_text);
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| {
                             self.function_body_single_spread_object_literal_type_text(func_body)
                         })
                         .flatten()

@@ -2,6 +2,7 @@
 
 use super::super::DeclarationEmitter;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -124,6 +125,10 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         expr_idx: NodeIndex,
     ) -> Option<String> {
+        if let Some(type_text) = self.local_variable_function_expando_type_text(expr_idx) {
+            return Some(type_text);
+        }
+
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind != SyntaxKind::Identifier as u16 {
             return None;
@@ -164,6 +169,115 @@ impl<'a> DeclarationEmitter<'a> {
                     )
                     .unwrap_or(type_text),
                 );
+            }
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn local_variable_function_expando_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let outer_func = self.enclosing_function_data(expr_idx)?;
+        let name = self.get_identifier_text(expr_idx)?;
+        let outer_type_param_names = outer_func
+            .type_parameters
+            .as_ref()
+            .map(|type_params| self.collect_type_param_names(type_params))
+            .unwrap_or_default();
+        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
+            && let Some(binder) = self.binder
+            && let Some(symbol) = binder.symbols.get(sym_id)
+        {
+            for decl_idx in symbol.declarations.iter().copied() {
+                let decl_node = self.arena.get(decl_idx)?;
+                let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                    continue;
+                };
+                let Some(init_node) = self.arena.get(var_decl.initializer) else {
+                    continue;
+                };
+                if init_node.kind != syntax_kind_ext::ARROW_FUNCTION
+                    && init_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+                {
+                    continue;
+                }
+                let inner_func = self.arena.get_function(init_node)?;
+                if let Some(type_text) = self.source_function_initializer_expando_type_text(
+                    outer_func,
+                    var_decl.name,
+                    var_decl.initializer,
+                    inner_func,
+                    &outer_type_param_names,
+                ) {
+                    return Some(type_text);
+                }
+            }
+        }
+
+        let (binding_name, initializer, inner_func) =
+            self.local_function_initializer_for_name_in_node(outer_func.body, &name)?;
+        self.source_function_initializer_expando_type_text(
+            outer_func,
+            binding_name,
+            initializer,
+            inner_func,
+            &outer_type_param_names,
+        )
+    }
+
+    fn local_function_initializer_for_name_in_node(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> Option<(
+        NodeIndex,
+        NodeIndex,
+        &tsz_parser::parser::node::FunctionData,
+    )> {
+        let node = self.arena.get(node_idx)?;
+        if let Some(var_decl) = self.arena.get_variable_declaration(node)
+            && self.get_identifier_text(var_decl.name).as_deref() == Some(name)
+        {
+            let init_node = self.arena.get(var_decl.initializer)?;
+            if init_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || init_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            {
+                return Some((
+                    var_decl.name,
+                    var_decl.initializer,
+                    self.arena.get_function(init_node)?,
+                ));
+            }
+        }
+
+        if let Some(var_data) = self.arena.get_variable(node) {
+            for decl_idx in var_data.declarations.nodes.iter().copied() {
+                if let Some(found) =
+                    self.local_function_initializer_for_name_in_node(decl_idx, name)
+                {
+                    return Some(found);
+                }
+            }
+        }
+
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::MODULE_DECLARATION
+        {
+            return None;
+        }
+
+        for child_idx in self.arena.get_children(node_idx) {
+            if let Some(found) = self.local_function_initializer_for_name_in_node(child_idx, name) {
+                return Some(found);
             }
         }
         None

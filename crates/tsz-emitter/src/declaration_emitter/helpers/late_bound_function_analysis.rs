@@ -688,6 +688,26 @@ impl<'a> DeclarationEmitter<'a> {
         members
     }
 
+    pub(in crate::declaration_emitter) fn collect_late_bound_assignment_members_in_node(
+        &self,
+        root_name_idx: NodeIndex,
+        scope_idx: NodeIndex,
+    ) -> Vec<LateBoundAssignmentMember> {
+        let Some(root_name) = self.get_identifier_text(root_name_idx) else {
+            return Vec::new();
+        };
+        let declared_members = FxHashSet::default();
+        let mut members = Vec::new();
+        self.collect_late_bound_assignment_members_from_node(
+            scope_idx,
+            &root_name,
+            None,
+            &declared_members,
+            &mut members,
+        );
+        members
+    }
+
     pub(in crate::declaration_emitter) fn should_emit_ts_late_bound_function_namespace(
         &self,
         func_idx: NodeIndex,
