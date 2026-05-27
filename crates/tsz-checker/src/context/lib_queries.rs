@@ -382,6 +382,17 @@ impl<'a> CheckerContext<'a> {
                 .is_some_and(|symbol| symbol.escaped_name.as_str() == "Promise")
     }
 
+    /// True when `sym_id` is the standard-library `Function` symbol, including
+    /// current-binder clones produced by lib merging.
+    pub fn sym_id_is_lib_function(&self, sym_id: SymbolId) -> bool {
+        self.actual_lib_global_type_symbol_id("Function") == Some(sym_id)
+            || (self.binder.lib_symbol_ids.contains(&sym_id)
+                && self
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.escaped_name.as_str() == "Function"))
+    }
+
     fn sym_id_is_lib_promise_like(&self, sym_id: SymbolId) -> bool {
         self.actual_lib_global_type_symbol_id("PromiseLike") == Some(sym_id)
     }
