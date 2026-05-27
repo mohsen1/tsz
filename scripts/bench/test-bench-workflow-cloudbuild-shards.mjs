@@ -58,8 +58,8 @@ assert.match(
 
 assert.match(
   shardCloudbuild,
-  /output_dir="bench-shards\/\$\{_BENCH_TARGET_SHA\}\/\$\{_BENCH_SHARD_LABEL\}"[\s\S]+mkdir -p "\$output_dir"[\s\S]+run_shard\(\)[\s\S]+apt-get update/,
-  "Cloud Build shard status directory should be prepared before setup commands that can fail",
+  /output_dir="bench-shards\/\$\{_BENCH_TARGET_SHA\}\/\$\{_BENCH_SHARD_LABEL\}"[\s\S]+mkdir -p "\$output_dir"[\s\S]+run_shard\(\)[\s\S]+apt-get update[\s\S]+hyperfine[\s\S]+pnpm config set store-dir/,
+  "Cloud Build shard status directory should be prepared before setup commands that can fail, and shard images should install benchmark runtime tools",
 );
 
 assert.ok(
