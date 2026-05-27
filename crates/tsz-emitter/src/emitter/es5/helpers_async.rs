@@ -464,6 +464,38 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn async_body_function_declarations(&self, body: NodeIndex) -> Vec<NodeIndex> {
+        let Some(body_node) = self.arena.get(body) else {
+            return Vec::new();
+        };
+        let Some(block) = self.arena.get_block(body_node) else {
+            return Vec::new();
+        };
+
+        block
+            .statements
+            .nodes
+            .iter()
+            .copied()
+            .filter(|&stmt_idx| {
+                self.arena
+                    .get(stmt_idx)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+            })
+            .collect()
+    }
+
+    fn emit_async_hoisted_function_declarations(&mut self, hoisted_function_decls: &[NodeIndex]) {
+        for &stmt in hoisted_function_decls {
+            if let Some(stmt_node) = self.arena.get(stmt) {
+                let actual_start = self.skip_trivia_forward(stmt_node.pos, stmt_node.end);
+                self.emit_comments_before_pos(actual_start);
+            }
+            self.emit(stmt);
+            self.write_line();
+        }
+    }
+
     /// Emit an async function transformed to ES5 __awaiter/__generator pattern
     pub(in crate::emitter) fn emit_async_function_es5(
         &mut self,
@@ -627,6 +659,7 @@ impl<'a> Printer<'a> {
 
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
+            let hoisted_function_decls = self.async_body_function_declarations(body);
             let hoist_function_decls_only =
                 !body_has_await && self.block_has_only_function_decls(body);
             if hoist_function_decls_only {
@@ -688,18 +721,12 @@ impl<'a> Printer<'a> {
                 }
             }
 
-            let (generator_body, hoisted_var_groups, directive_prologue, _) = if body_has_await {
-                async_emitter.emit_generator_body_with_await_and_hoisted_var_groups(body)
-            } else {
-                let (generator_body, hoisted_var_groups, needs_lexical_this_capture) =
-                    async_emitter.emit_simple_generator_body_with_hoisted_var_groups(body);
-                (
-                    generator_body,
-                    hoisted_var_groups,
-                    Vec::new(),
-                    needs_lexical_this_capture,
-                )
-            };
+            let (generator_body, hoisted_var_groups, directive_prologue, _) = async_emitter
+                .emit_generator_body_and_hoisted_vars_skipping(
+                    body,
+                    body_has_await,
+                    &hoisted_function_decls,
+                );
             let generator_mappings = async_emitter.take_mappings();
             self.next_disposable_env_id = async_emitter.disposable_env_counter();
             for generated_name in async_emitter.take_generated_disposable_env_names() {
@@ -713,6 +740,7 @@ impl<'a> Printer<'a> {
             self.write(this_expr);
             if hoisted_var_groups.is_empty() {
                 let can_inline_wrapper = body_is_single_line
+                    && hoisted_function_decls.is_empty()
                     && directive_prologue.is_empty()
                     && !(this_expr != "this" && generator_body.contains("return _this"))
                     && generator_mappings.is_empty();
@@ -751,6 +779,7 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
+                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
                 if this_expr != "this" && generator_body.contains("return _this") {
                     self.write("var _this = this;");
                     self.write_line();
@@ -781,6 +810,7 @@ impl<'a> Printer<'a> {
                     self.write("\";");
                     self.write_line();
                 }
+                self.emit_async_hoisted_function_declarations(&hoisted_function_decls);
                 for group in &hoisted_var_groups {
                     self.write("var ");
                     for (i, var_name) in group.iter().enumerate() {

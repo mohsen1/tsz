@@ -191,3 +191,33 @@ fn async_with_statement_wraps_suspended_body_segments() {
         "Suspended with bodies should wrap both the yield segment and resume segment in the captured with scopes.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_body_hoists_function_and_nested_var_declarations() {
+    let output = emit_es5(
+        "declare var y: any;
+        async function f() {
+            var a0, a1 = 1;
+            function z() {
+                var b0, b1 = 1;
+            }
+            await 0;
+            if (true) {
+                var c0, c1 = 1;
+            }
+            for (var a = 0; y;) {
+            }
+        }",
+    );
+
+    assert!(
+        output.contains(
+            "function z() {\n            var b0, b1 = 1;\n        }\n        var a0, a1, c0, c1, a;"
+        ),
+        "Async body function declarations should hoist before async-body var declarations, while nested function vars stay local.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (true) {\n                        c1 = 1;\n                    }"),
+        "Nested async-body var declarations should hoist and leave initializer assignments in place.\nOutput:\n{output}"
+    );
+}

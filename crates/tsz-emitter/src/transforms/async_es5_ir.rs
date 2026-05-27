@@ -850,6 +850,26 @@ impl<'a> AsyncES5Transformer<'a> {
         self.build_generator_body(body_idx, has_await, &[])
     }
 
+    pub fn transform_generator_body_skipping(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        skipped_statements: &[NodeIndex],
+    ) -> IRNode {
+        self.state.reset();
+        self.reset_loop_exit_placeholders();
+        self.state.has_await = has_await;
+        self.helpers_needed.generator = true;
+
+        self.state.captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments && self.state.arguments_capture_name.is_empty() {
+            self.state.arguments_capture_name = self.fresh_arguments_capture_name(body_idx, &[]);
+        }
+
+        self.build_generator_body(body_idx, has_await, skipped_statements)
+    }
+
     /// Build the generator body IR
     fn build_generator_body(
         &mut self,
@@ -3109,6 +3129,28 @@ impl<'a> AsyncES5Transformer<'a> {
         )
     }
 
+    fn statement_to_hoistable_ir(&mut self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::EmptyStatement;
+        };
+
+        let mut cases = Vec::new();
+        let mut statements = Vec::new();
+        let mut label = 0;
+        self.process_block_or_statement_in_async(idx, &mut cases, &mut statements, &mut label);
+        if !cases.is_empty() {
+            return self.statement_to_ir(idx);
+        }
+        if node.kind == syntax_kind_ext::BLOCK {
+            return IRNode::Block(statements);
+        }
+        if statements.len() == 1 {
+            statements.pop().expect("len checked")
+        } else {
+            IRNode::Block(statements)
+        }
+    }
+
     fn process_expression_in_async(
         &mut self,
         idx: NodeIndex,
@@ -3963,9 +4005,17 @@ impl<'a> AsyncES5Transformer<'a> {
             && self.contains_await_recursive(if_stmt.else_statement);
 
         if !cond_has_await && !then_has_await && !else_has_await {
-            // No await anywhere in this if statement -- emit as-is
-            let ir = self.statement_to_ir(idx);
-            current_statements.push(ir);
+            let has_else = if_stmt.else_statement.is_some()
+                && self
+                    .arena
+                    .get(if_stmt.else_statement)
+                    .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
+            current_statements.push(IRNode::IfStatement {
+                condition: Box::new(self.expression_to_ir(if_stmt.expression)),
+                then_branch: Box::new(self.statement_to_hoistable_ir(if_stmt.then_statement)),
+                else_branch: has_else
+                    .then(|| Box::new(self.statement_to_hoistable_ir(if_stmt.else_statement))),
+            });
             return;
         }
 
@@ -5213,40 +5263,11 @@ impl<'a> AsyncES5Transformer<'a> {
         let mut hoisted = Vec::new();
         let mut current_group = Vec::new();
         for case in cases.iter_mut() {
-            let mut i = 0;
-            while i < case.statements.len() {
-                match &case.statements[i] {
-                    IRNode::HoistedVarGroupBreak => {
-                        if !current_group.is_empty() {
-                            hoisted.push(std::mem::take(&mut current_group));
-                        }
-                        case.statements.remove(i);
-                        continue;
-                    }
-                    IRNode::VarDecl { name, initializer } if initializer.is_none() => {
-                        // Pure declaration with no initializer -- hoist and remove.
-                        current_group.push(name.to_string());
-                        case.statements.remove(i);
-                        continue;
-                    }
-                    IRNode::VarDecl { name, initializer } => {
-                        // Has initializer -- hoist the name but keep as assignment.
-                        let var_name = name.clone();
-                        current_group.push(var_name.to_string());
-                        let init = initializer
-                            .clone()
-                            .expect("VarDecl match without guard guarantees initializer is Some");
-                        case.statements[i] =
-                            IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
-                                left: Box::new(IRNode::Identifier(var_name)),
-                                operator: "=".to_string().into(),
-                                right: init,
-                            }));
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
+            Self::extract_and_remove_var_decl_groups_from_statements(
+                &mut case.statements,
+                &mut hoisted,
+                &mut current_group,
+            );
         }
 
         if !current_group.is_empty() {
@@ -5254,6 +5275,142 @@ impl<'a> AsyncES5Transformer<'a> {
         }
 
         hoisted
+    }
+
+    fn extract_and_remove_var_decl_groups_from_statements(
+        statements: &mut Vec<IRNode>,
+        hoisted: &mut Vec<Vec<String>>,
+        current_group: &mut Vec<String>,
+    ) {
+        let mut i = 0;
+        while i < statements.len() {
+            match &mut statements[i] {
+                IRNode::HoistedVarGroupBreak => {
+                    if !current_group.is_empty() {
+                        hoisted.push(std::mem::take(current_group));
+                    }
+                    statements.remove(i);
+                    continue;
+                }
+                IRNode::VarDecl { name, initializer } if initializer.is_none() => {
+                    current_group.push(name.to_string());
+                    statements.remove(i);
+                    continue;
+                }
+                IRNode::VarDecl { name, initializer } => {
+                    let var_name = name.clone();
+                    current_group.push(var_name.to_string());
+                    let init = initializer
+                        .clone()
+                        .expect("VarDecl match without guard guarantees initializer is Some");
+                    statements[i] = IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
+                        left: Box::new(IRNode::Identifier(var_name)),
+                        operator: "=".to_string().into(),
+                        right: init,
+                    }));
+                }
+                IRNode::IfStatement {
+                    then_branch,
+                    else_branch,
+                    ..
+                } => {
+                    Self::extract_and_remove_var_decl_groups_from_node(
+                        then_branch,
+                        hoisted,
+                        current_group,
+                    );
+                    if let Some(else_branch) = else_branch {
+                        Self::extract_and_remove_var_decl_groups_from_node(
+                            else_branch,
+                            hoisted,
+                            current_group,
+                        );
+                    }
+                }
+                IRNode::WithStatement { body, .. } => {
+                    Self::extract_and_remove_var_decl_groups_from_node(
+                        body,
+                        hoisted,
+                        current_group,
+                    );
+                }
+                IRNode::Block(body) | IRNode::Sequence(body) => {
+                    Self::extract_and_remove_var_decl_groups_from_statements(
+                        body,
+                        hoisted,
+                        current_group,
+                    );
+                }
+                IRNode::SwitchStatement { cases, .. } => {
+                    for case in cases {
+                        Self::extract_and_remove_var_decl_groups_from_statements(
+                            &mut case.statements,
+                            hoisted,
+                            current_group,
+                        );
+                    }
+                }
+                IRNode::ForStatement { body, .. } | IRNode::ForInOfStatement { body, .. } => {
+                    Self::extract_and_remove_var_decl_groups_from_node(
+                        body,
+                        hoisted,
+                        current_group,
+                    );
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+
+    fn extract_and_remove_var_decl_groups_from_node(
+        node: &mut IRNode,
+        hoisted: &mut Vec<Vec<String>>,
+        current_group: &mut Vec<String>,
+    ) {
+        match node {
+            IRNode::Block(statements) | IRNode::Sequence(statements) => {
+                Self::extract_and_remove_var_decl_groups_from_statements(
+                    statements,
+                    hoisted,
+                    current_group,
+                );
+            }
+            IRNode::IfStatement {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                Self::extract_and_remove_var_decl_groups_from_node(
+                    then_branch,
+                    hoisted,
+                    current_group,
+                );
+                if let Some(else_branch) = else_branch {
+                    Self::extract_and_remove_var_decl_groups_from_node(
+                        else_branch,
+                        hoisted,
+                        current_group,
+                    );
+                }
+            }
+            IRNode::WithStatement { body, .. } => {
+                Self::extract_and_remove_var_decl_groups_from_node(body, hoisted, current_group);
+            }
+            IRNode::SwitchStatement { cases, .. } => {
+                for case in cases {
+                    Self::extract_and_remove_var_decl_groups_from_statements(
+                        &mut case.statements,
+                        hoisted,
+                        current_group,
+                    );
+                }
+            }
+            IRNode::ForStatement { body, .. } | IRNode::ForInOfStatement { body, .. } => {
+                Self::extract_and_remove_var_decl_groups_from_node(body, hoisted, current_group);
+            }
+            _ => {}
+        }
     }
 
     pub fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
