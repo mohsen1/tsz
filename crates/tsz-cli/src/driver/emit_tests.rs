@@ -256,6 +256,43 @@ fn outfile_non_amd_system_skips_external_module_js_chunk() {
 }
 
 #[test]
+fn outfile_skips_node_modules_source_js_chunk() {
+    let temp = tempdir().unwrap();
+    let dep = temp.path().join("node_modules/projB/index.ts");
+    std::fs::create_dir_all(dep.parent().unwrap()).unwrap();
+    std::fs::write(&dep, "export class C {}\n").unwrap();
+    std::fs::write(temp.path().join("a.ts"), "import { C } from \"projB\";\n").unwrap();
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--ignoreConfig",
+        "--target",
+        "es2015",
+        "--module",
+        "system",
+        "--moduleResolution",
+        "bundler",
+        "--outFile",
+        "out.js",
+        "--ignoreDeprecations",
+        "6.0",
+        "--pretty",
+        "false",
+        "node_modules/projB/index.ts",
+        "a.ts",
+    ])
+    .unwrap();
+    compile(&args, temp.path()).unwrap();
+    let output = std::fs::read_to_string(temp.path().join("out.js")).unwrap();
+
+    assert!(!output.contains("projB/index"));
+    assert_eq!(
+        output,
+        "System.register(\"a\", [], function (exports_1, context_1) {\n    \"use strict\";\n    var __moduleName = context_1 && context_1.id;\n    return {\n        setters: [],\n        execute: function () {\n        }\n    };\n});"
+    );
+}
+
+#[test]
 fn test_resolve_declaration_reference_path_treats_bare_paths_as_relative() {
     let mut file_lookup = rustc_hash::FxHashMap::default();
     file_lookup.insert("/project/c.js".to_string(), "/project/c.js".to_string());

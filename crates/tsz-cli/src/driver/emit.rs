@@ -281,6 +281,8 @@ pub(crate) fn emit_outputs(
             continue;
         }
 
+        let skip_js_outfile_node_modules_source =
+            js_bundle_path.is_some() && path_has_node_modules_segment(&input_path);
         let skip_js_outfile_external_module = js_bundle_path.is_some()
             && !matches!(
                 context.options.printer.module,
@@ -289,6 +291,7 @@ pub(crate) fn emit_outputs(
             && source_file_has_external_module_syntax(&file.arena, file.source_file);
 
         if !context.options.emit_declaration_only
+            && !skip_js_outfile_node_modules_source
             && !skip_js_outfile_external_module
             && let Some(js_path) = js_output_path(
                 context.base_dir,
@@ -2390,6 +2393,11 @@ fn js_input_skipped_by_node_modules_depth(path: &Path, max_depth: u32) -> bool {
         .filter(|component| component.as_os_str() == "node_modules")
         .count() as u32;
     depth > max_depth
+}
+
+fn path_has_node_modules_segment(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "node_modules")
 }
 
 fn build_ambient_global_type_only_names(
