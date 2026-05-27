@@ -69,3 +69,31 @@ fn call_tail_polymorphic_this_rest_target_uses_env_relation_outcome_boundary() {
         "polymorphic-this rest-target compatibility should not regress to raw env boolean guards"
     );
 }
+
+#[test]
+fn nominal_lib_object_callback_returns_use_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call/nominal_lib_object_callbacks.rs")
+        .expect("failed to read nominal lib object callback source");
+    let helper_start = source
+        .find("pub(crate) fn emit_nominal_lib_object_callback_return_errors")
+        .expect("missing nominal lib object callback diagnostic helper");
+    let helper_end = source[helper_start..]
+        .find("pub(crate) fn nominal_lib_object_callback_return_type")
+        .map(|offset| helper_start + offset)
+        .expect("missing next nominal lib object callback helper");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "nominal lib object callback return diagnostics should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "nominal lib object callback return diagnostics should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard_with_env("),
+        "nominal lib object callback return diagnostics should not regress to raw env boolean guards"
+    );
+}
