@@ -68,3 +68,58 @@ fn async_while_branch_break_targets_loop_exit() {
         "Loop-exit placeholders inside branch-local labeled breaks must be patched before printing.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_do_while_uses_condition_case_after_body() {
+    let output = emit_es5(
+        "declare var x, y: any;
+        async function f() {
+            do {
+                await x;
+            } while (y);
+        }
+        async function g() {
+            do {
+                if (1) continue;
+                await x;
+            } while (y);
+        }",
+    );
+
+    assert!(
+        output.contains("_a.sent();\n                    _a.label = 2;\n                case 2:\n                    if (y) return [3 /*break*/, 0];"),
+        "Async do-while fallthrough should enter a dedicated condition case with tsc's positive backedge test.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (1)\n                        return [3 /*break*/, 2];\n                    return [4 /*yield*/, x];"),
+        "Do-while continues should jump to the post-body condition case, not directly to the loop body.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_do_while_awaited_condition_uses_positive_sent_backedge() {
+    let output = emit_es5(
+        "declare var x, y: any;
+        async function f() {
+            do {
+                x;
+            } while (await y);
+        }
+        async function g() {
+            H: do {
+                break H;
+            } while (await y);
+        }",
+    );
+
+    assert!(
+        output.contains("case 1: return [4 /*yield*/, y];\n                case 2:\n                    if (_a.sent()) return [3 /*break*/, 0];"),
+        "Awaited do-while conditions should resume through `_a.sent()` and use a positive loop backedge.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "case 0: return [3 /*break*/, 3];\n                case 1: return [4 /*yield*/, y];"
+        ),
+        "A labeled break in a do-while body should jump to the loop exit while preserving the condition case shape.\nOutput:\n{output}"
+    );
+}

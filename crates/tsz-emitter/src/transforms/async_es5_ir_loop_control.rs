@@ -241,6 +241,46 @@ impl<'a> AsyncES5Transformer<'a> {
         )
     }
 
+    pub(super) fn contains_labeled_continue(&self, idx: NodeIndex, label: &str) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.is_function_expression_or_arrow()
+            || self.statement_starts_inner_loop_or_function(node.kind)
+        {
+            return false;
+        }
+        match node.kind {
+            k if k == syntax_kind_ext::CONTINUE_STATEMENT => {
+                let Some(jump) = self.arena.get_jump_data(node) else {
+                    return false;
+                };
+                let Some(jump_label) = jump.label.into_option() else {
+                    return false;
+                };
+                crate::transforms::emit_utils::identifier_text_or_empty(self.arena, jump_label)
+                    == label
+            }
+            k if k == syntax_kind_ext::BLOCK || k == syntax_kind_ext::CASE_BLOCK => {
+                self.arena.get_block(node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .any(|&stmt| self.contains_labeled_continue(stmt, label))
+                })
+            }
+            k if k == syntax_kind_ext::IF_STATEMENT => {
+                self.arena.get_if_statement(node).is_some_and(|if_stmt| {
+                    self.contains_labeled_continue(if_stmt.then_statement, label)
+                        || self.contains_labeled_continue(if_stmt.else_statement, label)
+                })
+            }
+            _ => false,
+        }
+    }
+
     fn contains_unlabeled_loop_local_control_kind(
         &self,
         idx: NodeIndex,
