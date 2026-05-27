@@ -1,7 +1,10 @@
 use super::*;
 use std::path::Path;
 
+use crate::args::CliArgs;
 use crate::config::JsxEmit;
+use crate::driver::compile;
+use clap::Parser;
 use tempfile::tempdir;
 
 // ─── js_extension_for tests ──────────────────────────────────────────────────
@@ -223,6 +226,33 @@ fn test_js_bundle_chunk_order_orders_reference_paths_first() {
     let order = js_bundle_chunk_order(&chunks);
 
     assert_eq!(order, vec![0, 2, 1]);
+}
+
+#[test]
+fn outfile_non_amd_system_skips_external_module_js_chunk() {
+    let temp = tempdir().unwrap();
+    std::fs::write(temp.path().join("a.ts"), "export class A { } // module\n").unwrap();
+    std::fs::write(temp.path().join("b.ts"), "var x = 0; // global\n").unwrap();
+
+    let args = CliArgs::try_parse_from([
+        "tsz",
+        "--ignoreConfig",
+        "--target",
+        "es2015",
+        "--outFile",
+        "out.js",
+        "--ignoreDeprecations",
+        "6.0",
+        "--pretty",
+        "false",
+        "a.ts",
+        "b.ts",
+    ])
+    .unwrap();
+    compile(&args, temp.path()).unwrap();
+    let output = std::fs::read_to_string(temp.path().join("out.js")).unwrap();
+
+    assert_eq!(output, "\"use strict\";\nvar x = 0; // global");
 }
 
 #[test]

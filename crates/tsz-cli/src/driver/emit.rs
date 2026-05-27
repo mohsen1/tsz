@@ -281,15 +281,15 @@ pub(crate) fn emit_outputs(
             continue;
         }
 
-        if js_bundle_path.is_some()
-            && matches!(context.options.printer.module, ModuleKind::None)
-            && is_js_input
-            && source_file_has_external_module_syntax(&file.arena, file.source_file)
-        {
-            continue;
-        }
+        let skip_js_outfile_external_module = js_bundle_path.is_some()
+            && !matches!(
+                context.options.printer.module,
+                ModuleKind::AMD | ModuleKind::System
+            )
+            && source_file_has_external_module_syntax(&file.arena, file.source_file);
 
         if !context.options.emit_declaration_only
+            && !skip_js_outfile_external_module
             && let Some(js_path) = js_output_path(
                 context.base_dir,
                 context.root_dir,
