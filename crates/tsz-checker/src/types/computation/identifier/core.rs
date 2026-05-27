@@ -1719,6 +1719,13 @@ impl<'a> CheckerState<'a> {
             if self.check_tdz_violation(sym_id, idx, name, true) {
                 return TypeId::ERROR;
             }
+            // Constraint-position substitution (tsc's getNarrowableTypeForReference):
+            // a reference to a generic type parameter with a union/nullable
+            // constraint is seen as its base constraint when it is the object of
+            // a property/element access or a call/new target. Applied before
+            // flow narrowing so guards like `if (x === undefined) return;` narrow
+            // the substituted constraint.
+            let declared_type = self.narrowable_type_for_reference(idx, declared_type);
             // Use check_flow_usage to integrate both DAA and type narrowing
             // This handles TS2454 errors and applies flow-based narrowing
             let flow_type = self.check_flow_usage(idx, declared_type, sym_id);

@@ -763,6 +763,107 @@ pub fn get_base_constraint_or_type(db: &dyn TypeDatabase, type_id: TypeId) -> Ty
     }
 }
 
+/// Whether `type_id` is "instantiable" — a type whose concrete shape depends on
+/// a pending type-parameter substitution. Mirrors the subset of tsc's
+/// `TypeFlags.Instantiable` that tsz models structurally.
+fn is_instantiable_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    matches!(
+        db.lookup(type_id),
+        Some(
+            TypeData::TypeParameter(_)
+                | TypeData::Infer(_)
+                | TypeData::BoundParameter(_)
+                | TypeData::KeyOf(_)
+                | TypeData::IndexAccess(_, _)
+                | TypeData::Conditional(_)
+                | TypeData::TemplateLiteral(_)
+        )
+    )
+}
+
+/// True when `type_id` is or contains (top-level union) `null`/`undefined`.
+///
+/// Mirrors tsc's `maybeTypeOfKind(type, TypeFlags.Nullable)` for the cases that
+/// matter to constraint-position substitution.
+fn maybe_nullable(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id == TypeId::NULL || type_id == TypeId::UNDEFINED {
+        return true;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| member == TypeId::NULL || member == TypeId::UNDEFINED),
+        _ => false,
+    }
+}
+
+/// tsc's `isGenericTypeWithUnionConstraint`, combined with the `someType`
+/// distribution applied at its call sites.
+///
+/// Returns true when `type_id` (or, distributing over union/intersection
+/// members, some constituent) is an instantiable type whose base constraint is
+/// a union or includes `null`/`undefined`. Such references are substituted with
+/// their base constraint when they appear in a constraint position, so that a
+/// `T extends X | undefined` reference is seen as possibly-undefined at a
+/// property/element access or call target.
+pub fn is_generic_type_with_union_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| is_generic_type_with_union_constraint(db, member)),
+        _ => {
+            if !is_instantiable_type(db, type_id) {
+                return false;
+            }
+            let base = get_base_constraint_or_type(db, type_id);
+            base != type_id
+                && (matches!(db.lookup(base), Some(TypeData::Union(_))) || maybe_nullable(db, base))
+        }
+    }
+}
+
+/// tsc's `isGenericTypeWithoutNullableConstraint`, combined with the `someType`
+/// distribution applied at its call site.
+///
+/// Returns true when `type_id` (or some union/intersection constituent) is an
+/// instantiable type whose base constraint does not include `null`/`undefined`.
+/// Used to recognize the `obj[key]` exception to constraint-position
+/// substitution: when both the object is a generic type without a nullable
+/// constraint and the index is a generic index type, the access keeps its
+/// deferred `T[K]` form instead of being substituted.
+pub fn is_generic_type_without_nullable_constraint(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    match db.lookup(type_id) {
+        Some(TypeData::Union(list) | TypeData::Intersection(list)) => db
+            .type_list(list)
+            .iter()
+            .any(|&member| is_generic_type_without_nullable_constraint(db, member)),
+        _ => {
+            is_instantiable_type(db, type_id)
+                && !maybe_nullable(db, get_base_constraint_or_type(db, type_id))
+        }
+    }
+}
+
+/// Substitute a constraint-position reference's type with its base constraint,
+/// distributing over union members (tsc's `mapType(type, getBaseConstraintOrType)`).
+pub fn substitute_reference_base_constraints(db: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
+    if let Some(TypeData::Union(list)) = db.lookup(type_id) {
+        let mapped: Vec<TypeId> = db
+            .type_list(list)
+            .iter()
+            .map(|&member| get_base_constraint_or_type(db, member))
+            .collect();
+        crate::utils::union_or_single(db, mapped)
+    } else {
+        get_base_constraint_or_type(db, type_id)
+    }
+}
+
 fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32) -> bool {
     if depth > 20 {
         return true;
