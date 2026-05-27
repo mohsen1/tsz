@@ -974,6 +974,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Visit a conditional type: T extends U ? X : Y
     fn visit_conditional(&mut self, cond_id: ConditionalTypeId) -> TypeId {
         let cond = self.interner.get_conditional(cond_id);
+        // tsc propagates the error type through conditionals: when the check type
+        // resolves to an error (e.g. a failed indexed access `O[number]`), the whole
+        // conditional resolves to the error type so neither branch is selected and
+        // downstream diagnostics stay suppressed instead of cascading.
+        if crate::visitor::is_error_type(self.interner, self.evaluate(cond.check_type)) {
+            return TypeId::ERROR;
+        }
         self.evaluate_conditional(&cond)
     }
 

@@ -9662,22 +9662,6 @@ fn test_index_access_object_string_key() {
 }
 
 #[test]
-fn test_index_access_object_string_index_optional_properties() {
-    let interner = TypeInterner::new();
-
-    let obj = interner.object(vec![
-        PropertyInfo::opt(interner.intern_string("x"), TypeId::NUMBER),
-        PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
-    ]);
-
-    // A plain object type has no string index signature, so indexing it by the bare
-    // `string` type is a TS2536/TS2537 failure: tsc resolves the access to the error
-    // type rather than the union of property types. See #9709.
-    let result = evaluate_index_access(&interner, obj, TypeId::STRING);
-    assert_eq!(result, TypeId::ERROR);
-}
-
-#[test]
 fn test_index_access_object_missing_key() {
     let interner = TypeInterner::new();
 

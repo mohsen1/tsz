@@ -412,6 +412,9 @@ mod index_access_comprehensive_tests;
 #[path = "../tests/inferred_declaration_mapped_surface_tests.rs"]
 mod inferred_declaration_mapped_surface_tests;
 #[cfg(test)]
+#[path = "../tests/indexed_access_error_type_tests.rs"]
+mod indexed_access_error_type_tests;
+#[cfg(test)]
 #[path = "caches/instantiation_cache_test.rs"]
 mod instantiation_cache_wiring_tests;
 #[cfg(test)]

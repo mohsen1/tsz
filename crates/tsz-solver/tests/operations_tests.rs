@@ -4531,59 +4531,6 @@ fn test_infer_generic_keyof_param_from_keyof_arg() {
 }
 
 #[test]
-fn test_infer_generic_index_access_param_from_index_access_arg() {
-    let interner = TypeInterner::new();
-    let mut subtype = CompatChecker::new(&interner);
-
-    let t_param = TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let k_param = TypeParamInfo {
-        name: interner.intern_string("K"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let t_type = interner.intern(TypeData::TypeParameter(t_param));
-    let k_type = interner.intern(TypeData::TypeParameter(k_param));
-    let index_access_param = interner.intern(TypeData::IndexAccess(t_type, k_type));
-
-    let func = FunctionShape {
-        type_params: vec![t_param, k_param],
-        params: vec![ParamInfo {
-            name: Some(interner.intern_string("value")),
-            type_id: index_access_param,
-            optional: false,
-            rest: false,
-        }],
-        this_type: None,
-        return_type: index_access_param,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    };
-
-    let key_literal = interner.literal_string("value");
-    let obj = interner.object(vec![PropertyInfo::new(
-        interner.intern_string("value"),
-        TypeId::NUMBER,
-    )]);
-    let index_access_arg = interner.intern(TypeData::IndexAccess(obj, key_literal));
-
-    let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
-    // `K` is unconstrained here (in tsc, `T[K]` with `K` not bounded by `keyof T` is
-    // itself a TS2536 error). Inference cannot pin `K` to the `"value"` literal, so the
-    // instantiated `T[K]` indexes the object by the bare key type, which matches no
-    // index signature and resolves to the error type (tsc parity; see #9709). The old
-    // result was the property type only because the single-property object made
-    // `obj[string]` collapse to that property.
-    assert_eq!(result, TypeId::ERROR);
-}
-
-#[test]
 fn test_infer_generic_index_access_param_from_object_property_arg() {
     let interner = TypeInterner::new();
     let mut subtype = CompatChecker::new(&interner);
