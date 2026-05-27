@@ -71,3 +71,23 @@ fn umd_es5_async_dynamic_import_helpers_emit_before_factory_wrapper() {
         "UMD wrapper body should not re-emit runtime helpers.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn amd_es5_async_arrow_dynamic_import_uses_wrapper_runtime() {
+    let output = emit_wrapped(
+        "export const obj = { m: async () => { const req = await import(\"./dep\"); } };\n",
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "new Promise(function (resolve_1, reject_1) { require([\"./dep\"], resolve_1, reject_1); }).then(__importStar)"
+        ),
+        "AMD ES5 async arrows should lower dynamic import through async require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("yield*/, import(\"./dep\")"),
+        "AMD ES5 async arrows should not leave native dynamic import in the generator body.\nOutput:\n{output}"
+    );
+}
