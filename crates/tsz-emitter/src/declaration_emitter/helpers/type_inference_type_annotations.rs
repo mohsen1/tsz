@@ -34,12 +34,15 @@ impl<'a> DeclarationEmitter<'a> {
                     Self::type_text_starts_with_string_intrinsic(raw_type_text)
                 });
             match printed {
-                Some(printed) if printed != "any" && raw_string_intrinsic_type_text.is_some() => {
+                Some(printed)
+                    if !matches!(printed.as_str(), "any" | "unknown")
+                        && raw_string_intrinsic_type_text.is_some() =>
+                {
                     raw_string_intrinsic_type_text
                         .expect("string intrinsic type text was checked above")
                 }
                 Some(printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && (!printed.contains("any") || type_text.contains("any"))
                         && printed.contains("typeof ")
                         && !type_text.contains("typeof ") =>
@@ -47,7 +50,7 @@ impl<'a> DeclarationEmitter<'a> {
                     printed.replace("typeof ", "")
                 }
                 Some(printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && (!printed.contains("any") || type_text.contains("any")) =>
                 {
                     printed
@@ -63,7 +66,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .unwrap_or(rewritten);
             match printed {
                 Some(ref printed)
-                    if printed != "any"
+                    if !matches!(printed.as_str(), "any" | "unknown")
                         && !printed.contains("any")
                         && !expands_mapped_object
                         && (!Self::type_text_contains_import_type(&rewritten)
