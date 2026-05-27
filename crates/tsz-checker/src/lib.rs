@@ -103,6 +103,9 @@ mod assertion_overlap_object_primitive_tests;
 #[path = "../tests/assertion_overlap_template_literal_tests.rs"]
 mod assertion_overlap_template_literal_tests;
 #[cfg(test)]
+#[path = "tests/assignability_reporter_relation_routing_arch_tests.rs"]
+mod assignability_reporter_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
@@ -439,6 +442,9 @@ mod architecture_contract_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
 #[cfg(test)]
+#[path = "tests/array_elaboration_relation_routing_arch_tests.rs"]
+mod array_elaboration_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
@@ -460,8 +466,23 @@ mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_checker_diagnostic_relation_routing_arch_tests.rs"]
+mod call_checker_diagnostic_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_context_relation_routing_arch_tests.rs"]
 mod call_context_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_display_format_relation_routing_arch_tests.rs"]
+mod call_display_format_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_elaboration_mutual_relation_routing_arch_tests.rs"]
+mod call_elaboration_mutual_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_error_anchor_relation_routing_arch_tests.rs"]
+mod call_error_anchor_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/call_result_relation_routing_arch_tests.rs"]
+mod call_result_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
@@ -511,6 +532,9 @@ mod conditional_never_param_inference_tests;
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
 #[cfg(test)]
+#[path = "tests/contextual_new_relation_routing_arch_tests.rs"]
+mod contextual_new_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
@@ -528,6 +552,9 @@ mod destructured_discriminant_source_narrowing_tests;
 #[cfg(test)]
 #[path = "tests/destructuring_relation_routing_arch_tests.rs"]
 mod destructuring_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/diagnostic_source_relation_routing_arch_tests.rs"]
+mod diagnostic_source_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/direct_generic_return_tests.rs"]
 mod direct_generic_return_tests;
@@ -760,6 +787,9 @@ mod optional_key_extraction_tests;
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
+#[path = "tests/overload_param_relation_routing_arch_tests.rs"]
+mod overload_param_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
@@ -772,8 +802,14 @@ mod private_brands;
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
+#[path = "tests/promise_this_relation_routing_arch_tests.rs"]
+mod promise_this_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
+#[cfg(test)]
+#[path = "tests/property_receiver_relation_routing_arch_tests.rs"]
+mod property_receiver_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
@@ -790,8 +826,17 @@ mod recursive_path_default_type_param_tests;
 #[path = "tests/relation_flags_boundary_contract_tests.rs"]
 mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
+#[path = "tests/remapped_missing_property_relation_routing_arch_tests.rs"]
+mod remapped_missing_property_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/render_failure_relation_routing_arch_tests.rs"]
+mod render_failure_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
+#[cfg(test)]
+#[path = "tests/rest_parameter_relation_routing_arch_tests.rs"]
+mod rest_parameter_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/return_context_promise_identity_tests.rs"]
 mod return_context_promise_identity_tests;
