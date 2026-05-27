@@ -1382,6 +1382,99 @@ fn direct_source_file_type_alias_rejects_global_projection_original_arg_recursio
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_subtractive_infer_recursion() {
+    with_two_file_state_with_libs(
+        "export type Result<Whole, Accumulator extends string[] = []> = Whole extends infer Part ? Part extends string ? Result<Exclude<Whole, Part>, [...Accumulator, Part]> : never : never;",
+        "import { Result } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (result_ty, result_params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("global Exclude over an inferred branch param should guard recursion");
+            assert_ne!(result_ty, TypeId::UNKNOWN);
+            assert_ne!(result_ty, TypeId::ERROR);
+            assert_eq!(result_params.len(), 2, "Result should expose both params");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_union_to_tuple_subtractive_recursion() {
+    with_program_state_with_libs(
+        &[
+            (
+                "union-to-intersection.ts",
+                "export type UnionToIntersection<Union> = (Union extends any ? (arg: Union) => void : never) extends (arg: infer Intersection) => void ? Intersection & Union : never;",
+            ),
+            (
+                "union-to-tuple.ts",
+                "import { UnionToIntersection } from './union-to-intersection';\ntype LastOfUnion<UnionType> = UnionToIntersection<UnionType extends unknown ? (arg: UnionType) => unknown : never> extends (arg: infer LastUnionElement) => unknown ? LastUnionElement : never;\nexport type UnionToTuple<UnionType, Accumulator extends string[] = []> = [UnionType] extends [never] ? Accumulator : LastOfUnion<UnionType> extends infer LastUnionElement ? LastUnionElement extends string ? UnionToTuple<Exclude<UnionType, LastUnionElement>, [...Accumulator, LastUnionElement]> : never : never;",
+            ),
+            (
+                "requester.ts",
+                "import { UnionToTuple } from './union-to-tuple';",
+            ),
+        ],
+        "requester.ts",
+        "union-to-tuple.ts",
+        &["es5.d.ts"],
+        |state, target_binder, target_idx| {
+            let tuple_sym = target_binder
+                .file_locals
+                .get("UnionToTuple")
+                .expect("UnionToTuple");
+            let (tuple_ty, tuple_params) = state
+                .direct_source_file_type_alias_result(tuple_sym, Some(target_idx), true)
+                .expect("UnionToTuple subtracts the inferred last union element before recursing");
+            assert_ne!(tuple_ty, TypeId::UNKNOWN);
+            assert_ne!(tuple_ty, TypeId::ERROR);
+            assert_eq!(
+                tuple_params.len(),
+                2,
+                "UnionToTuple should expose both params"
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_plain_infer_recursion() {
+    with_two_file_state_with_libs(
+        "export type Loop<Input> = Input extends infer Part ? Loop<Part> : Input;",
+        "import { Loop } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "plain inferred params do not structurally guard recursive calls",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_subtractive_recursion_with_local_exclude() {
+    with_two_file_state_with_libs(
+        "type Exclude<A, B> = A;\nexport type Loop<Input> = Input extends infer Part ? Loop<Exclude<Input, Part>> : Input;",
+        "import { Loop } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "local Exclude aliases must not prove subtractive recursion",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
     with_two_file_state(
         "export type Loop = Loop | string;",

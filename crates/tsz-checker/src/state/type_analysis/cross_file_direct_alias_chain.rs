@@ -99,6 +99,120 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    fn source_file_type_arguments_contain_subtractive_guard<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        args: &NodeList,
+        type_param_names: &[String],
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        args.nodes.iter().copied().any(|arg| {
+            Self::source_file_type_node_is_subtractive_type_param_guard(
+                arena,
+                binder,
+                arg,
+                type_param_names,
+                proof,
+            )
+        })
+    }
+
+    fn source_file_type_node_is_subtractive_type_param_guard<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        node_idx: NodeIndex,
+        type_param_names: &[String],
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        let Some(node) = arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = arena.get_wrapped_type(node)
+        {
+            return Self::source_file_type_node_is_subtractive_type_param_guard(
+                arena,
+                binder,
+                wrapped.type_node,
+                type_param_names,
+                proof,
+            );
+        }
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(name) = arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+        else {
+            return false;
+        };
+        if name != "Exclude"
+            || !Self::source_file_type_name_can_fall_back_to_global_type(arena, binder, name, proof)
+        {
+            return false;
+        }
+        let Some(args) = type_ref.type_arguments.as_ref() else {
+            return false;
+        };
+        if args.nodes.len() != 2 {
+            return false;
+        }
+        let Some(source_name) = Self::source_file_bare_type_param_name(arena, args.nodes[0]) else {
+            return false;
+        };
+        let Some(removed_name) = Self::source_file_bare_type_param_name(arena, args.nodes[1])
+        else {
+            return false;
+        };
+        source_name != removed_name
+            && type_param_names.iter().any(|name| name == source_name)
+            && type_param_names.iter().any(|name| name == removed_name)
+    }
+
+    fn source_file_bare_type_param_name<'b>(
+        arena: &'b NodeArena,
+        node_idx: NodeIndex,
+    ) -> Option<&'b str> {
+        let node = arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
+            let wrapped = arena.get_wrapped_type(node)?;
+            return Self::source_file_bare_type_param_name(arena, wrapped.type_node);
+        }
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = arena.get_type_ref(node)?;
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return None;
+        }
+        arena
+            .get(type_ref.type_name)
+            .and_then(|name_node| arena.get_identifier(name_node))
+            .map(|ident| ident.escaped_text.as_str())
+    }
+
+    fn source_file_type_name_can_fall_back_to_global_type<'b>(
+        arena: &NodeArena,
+        binder: &'b BinderState,
+        name: &str,
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        let Some(raw_sym_id) = binder.file_locals.get(name) else {
+            return (proof.global_type_is_lowerable)(binder, name);
+        };
+        Self::source_file_local_symbol_can_fall_back_to_global_type(arena, binder, raw_sym_id)
+            && (proof.global_type_is_lowerable)(binder, name)
+    }
+
     fn source_file_type_node_contains_any_identifier_name(
         arena: &NodeArena,
         root: NodeIndex,
@@ -484,6 +598,13 @@ impl<'a> CheckerState<'a> {
                             arena,
                             args,
                             inferred_guard_names,
+                        )
+                        || Self::source_file_type_arguments_contain_subtractive_guard(
+                            arena,
+                            binder,
+                            args,
+                            type_param_names,
+                            proof,
                         ),
                 };
                 if Self::source_file_alias_proof_seen_contains(seen, key) {
