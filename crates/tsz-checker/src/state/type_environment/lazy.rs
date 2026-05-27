@@ -224,6 +224,12 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 has_seed,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // First pass uses the limited `TypeEnvironment` resolver, which
+                // can leave residue (unresolved Lazy/IndexAccess/Mapped). Do NOT
+                // let it populate the resolver-independent application-eval cache,
+                // or sibling reads would observe under-resolved results. Writes
+                // are reserved for the authoritative full-resolver second pass.
+                None,
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;
@@ -298,6 +304,10 @@ impl<'a> CheckerState<'a> {
                 seed_iter.into_iter(),
                 use_cache,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                // Second pass uses the authoritative full `CheckerContext`
+                // resolver, so its application expansions are safe to memoize in
+                // the per-file application-eval cache.
+                Some(self.ctx.types),
             );
             if eval_result.depth_exceeded {
                 depth_exceeded = true;

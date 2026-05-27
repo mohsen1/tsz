@@ -29,6 +29,14 @@ impl<'a> DeclarationEmitter<'a> {
         }
         if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
             && let Some(type_text) = self
+                .source_indexed_access_return_type_text(return_expr)
+                .or_else(|| self.source_indexed_access_call_return_type_text(return_expr))
+                .filter(|text| !text.is_empty())
+        {
+            return Some(type_text);
+        }
+        if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
+            && let Some(type_text) = self
                 .declaration_summary_primitive_expression_type_text(return_expr, 0)
                 .filter(|text| !text.is_empty() && text != "any")
         {
@@ -1786,7 +1794,11 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut substitutions = Vec::new();
-        if call.type_arguments.is_some() {
+        if call
+            .type_arguments
+            .as_ref()
+            .is_some_and(|type_args| !type_args.nodes.is_empty())
+        {
             let explicit_type_args =
                 self.type_argument_list_source_text(call.type_arguments.as_ref());
             for (name, value) in type_param_names.iter().zip(explicit_type_args.iter()) {
@@ -1801,8 +1813,10 @@ impl<'a> DeclarationEmitter<'a> {
                     continue;
                 };
                 let Some(param_type_text) = self
-                    .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                    .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+                    .source_slice_from_arena(source_arena, param.type_annotation)
+                    .or_else(|| {
+                        self.emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                    })
                     .map(|text| text.trim().to_string())
                 else {
                     continue;
