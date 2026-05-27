@@ -216,8 +216,11 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
-                let raw = self.get_source_slice(node.pos, node.end)?;
-                Some(format!("\"{}\"", raw.trim().trim_matches(&['"', '\''][..])))
+                let lit = self.arena.get_literal(node)?;
+                Some(format!(
+                    "\"{}\"",
+                    super::escape_string_for_double_quote(&lit.text)
+                ))
             }
             k if k == SyntaxKind::NumericLiteral as u16 => self
                 .get_source_slice(node.pos, node.end)
