@@ -20,6 +20,8 @@ mod derived_constructor_tests;
 mod es5_object_rest_tests;
 #[cfg(test)]
 mod legacy_decorator_computed_tests;
+#[cfg(test)]
+mod private_field_helper_order_tests;
 
 #[cfg(test)]
 mod es5_emit_tests;
