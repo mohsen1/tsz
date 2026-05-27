@@ -299,7 +299,7 @@ impl<'a> CheckerState<'a> {
             // concrete `Success` whose type is not `any`, a type parameter, or
             // `this`. That keeps this strictly a rescue of the degenerate `any` —
             // a still-generic or `this`-bearing member is left for the
-            // post-query/AST-recovery paths that instantiate it.
+            // post-query instantiation paths.
             let resolver_result =
                 crate::query_boundaries::common::is_lazy_type(self.ctx.types, original_object_type)
                     .then(|| {
@@ -315,11 +315,10 @@ impl<'a> CheckerState<'a> {
                     tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
                 )
             ) {
-                // Both the solver (with the checker's `TypeResolver`) and the
-                // AST heritage recovery agree the member is absent on the
-                // resolved interface. Surface that absence instead of masking it
-                // with the noop path's `any`, so a genuinely missing cross-file
-                // member still reports TS2339 (the masking this ratchet targets).
+                // The solver, with the checker's `TypeResolver`, resolved the
+                // interface and found no member. Surface that absence instead
+                // of masking it with the noop path's `any`, so a genuinely
+                // missing cross-file member still reports TS2339.
                 result = resolver_result.expect("matched Some above");
             }
         }
