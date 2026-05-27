@@ -55,7 +55,9 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        self.emit_expression(tagged.tag);
+        if !self.emit_private_field_tagged_template_tag(tagged.tag) {
+            self.emit_expression(tagged.tag);
+        }
         self.write("(");
 
         if self.ctx.file_is_module {
