@@ -60,3 +60,21 @@ fn arena_global_identity_helper_accepts_target_binder_lib_clones() {
         "arena-aware global identity helper must accept lib clones recorded on the target binder"
     );
 }
+
+#[test]
+fn flow_instanceof_uses_global_identity_helper() {
+    let source = include_str!("../flow/control_flow/type_guards.rs");
+    assert!(
+        source.contains("identifier_resolves_to_unshadowed_global(ctor_expr, \"Object\")")
+            && source.contains("identifier_resolves_to_unshadowed_global(ctor_expr, \"Function\")"),
+        "`instanceof Object/Function` narrowing must route through the shared global identity helper"
+    );
+    assert!(
+        source.contains("known_globals::identifier_resolves_to_unshadowed_global_in_context"),
+        "flow's global identity adapter must delegate to the shared context helper"
+    );
+    assert!(
+        !source.contains("fn is_builtin_global_reference"),
+        "flow guards must not keep a name-agnostic local builtin-global helper"
+    );
+}
