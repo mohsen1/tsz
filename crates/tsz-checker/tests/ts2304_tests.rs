@@ -601,6 +601,23 @@ function A(): (x: B) => C {
 }
 
 #[test]
+fn unconstrained_generic_type_arg_still_reports_missing_name() {
+    let source = r#"
+type Box<T> = T;
+type Alias = Box<MissingType>;
+"#;
+    let diagnostics = check_without_lib(source);
+    let ts2304_errors: Vec<_> = diagnostics.iter().filter(|d| d.code == 2304).collect();
+
+    assert!(
+        ts2304_errors
+            .iter()
+            .any(|d| diagnostic_contains(d, "'MissingType'")),
+        "Expected TS2304 for MissingType inside unconstrained type argument, got: {ts2304_errors:?}",
+    );
+}
+
+#[test]
 fn test_no_ts2591_for_private_name_access_base() {
     let source = r#"exports.#nope = 1;"#;
     let diagnostics = check_without_lib(source);

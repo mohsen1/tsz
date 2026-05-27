@@ -969,6 +969,9 @@ impl<'a> CheckerState<'a> {
         // A syntactic check cannot reliably distinguish these cases and produces
         // false positives.  TS4109 should be emitted from the solver's type
         // resolution path once cycle detection is implemented there.
+        if type_params.iter().all(|param| param.constraint.is_none()) {
+            return false;
+        }
         self.validate_type_args_against_params(type_params, type_args_list);
         false
     }
