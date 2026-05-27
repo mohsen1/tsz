@@ -135,6 +135,33 @@ class Widget {
 }
 
 #[test]
+fn static_private_field_class_expression_gets_private_name() {
+    let source = r#"
+class Widget {
+    static #Anon = class {
+        static value = 1;
+    };
+    static #Named = class Named {
+        static value = 2;
+    };
+    read() {
+        return Widget.#Anon.value + Widget.#Named.value;
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__setFunctionName(_b, \"#Anon\")"),
+        "Anonymous class expressions assigned to private static fields should use the private name for named evaluation.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("__setFunctionName(_c, \"#Named\")"),
+        "Named class expressions assigned to private static fields should keep their class name and skip named-evaluation helpers.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_async_generator_helpers_preserve_function_kind() {
     let source = r#"
 const Widget = class {
