@@ -1130,23 +1130,38 @@ impl<'a> CheckerState<'a> {
                 .is_some_and(|expr_node| self.ctx.arena.get_identifier(expr_node).is_some());
 
         if !is_computed_identifier && let Some(name) = self.get_property_name(name_idx) {
-            // When the syntactic resolver returns a `[Symbol.xxx]` name but the
-            // property access expression resolves to ERROR (e.g. `Symbol.nonsense`
-            // where `nonsense` doesn't exist on SymbolConstructor), discard the
-            // name. This prevents creating a phantom named property in the object
-            // type, which would cause false TS2322 errors on assignment.
-            if name.starts_with("[Symbol.")
-                && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
-                && self.get_type_of_node(computed.expression) == TypeId::ERROR
-            {
-                return None;
+            let shadowed_well_known_symbol_name = name.starts_with("[Symbol.")
+                && self
+                    .ctx
+                    .arena
+                    .get_computed_property(name_node)
+                    .is_some_and(|computed| {
+                        self.computed_symbol_base_is_shadowed(computed.expression)
+                    });
+            if shadowed_well_known_symbol_name {
+                // Fall through to expression-type resolution below. A local
+                // `const Symbol = { iterator: "iterator" } as const` makes
+                // `[Symbol.iterator]` a literal `"iterator"` key, not the
+                // well-known symbol protocol key.
+            } else {
+                // When the syntactic resolver returns a `[Symbol.xxx]` name but the
+                // property access expression resolves to ERROR (e.g. `Symbol.nonsense`
+                // where `nonsense` doesn't exist on SymbolConstructor), discard the
+                // name. This prevents creating a phantom named property in the object
+                // type, which would cause false TS2322 errors on assignment.
+                if name.starts_with("[Symbol.")
+                    && let Some(computed) = self.ctx.arena.get_computed_property(name_node)
+                    && self.get_type_of_node(computed.expression) == TypeId::ERROR
+                {
+                    return None;
+                }
+                if name.starts_with("[Symbol.")
+                    && let Some(symbol_ref) = self.well_known_symbol_ref_for_name(&name, name_idx)
+                {
+                    self.register_well_known_symbol_name_mapping(&name, symbol_ref);
+                }
+                return Some(name);
             }
-            if name.starts_with("[Symbol.")
-                && let Some(symbol_ref) = self.well_known_symbol_ref_for_name(&name, name_idx)
-            {
-                self.register_well_known_symbol_name_mapping(&name, symbol_ref);
-            }
-            return Some(name);
         }
 
         if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -1689,6 +1704,36 @@ impl<'a> CheckerState<'a> {
             })?;
 
         Some(tsz_solver::SymbolRef(member_sym.0))
+    }
+
+    fn computed_symbol_base_is_shadowed(&self, expr_idx: NodeIndex) -> bool {
+        let mut current = expr_idx;
+        while let Some(node) = self.ctx.arena.get(current)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            current = self
+                .ctx
+                .arena
+                .get_parenthesized(node)
+                .map_or(NodeIndex::NONE, |paren| paren.expression);
+        }
+
+        let Some(node) = self.ctx.arena.get(current) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(access) = self.ctx.arena.get_access_expr(node) else {
+            return false;
+        };
+        self.ctx
+            .arena
+            .get_identifier_at(access.expression)
+            .is_some_and(|ident| ident.escaped_text == "Symbol")
+            && !self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
     }
 
     pub(crate) fn get_bound_class_name_from_decl(&self, class_idx: NodeIndex) -> Option<String> {
