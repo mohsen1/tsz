@@ -1384,28 +1384,11 @@ impl<'a> CheckerState<'a> {
                             }
                             // Fall through to perform the constraint check
                         }
-                        let base_allows_primitive_key = |this: &Self, candidate: TypeId| {
-                            let display = this.format_type_diagnostic(candidate);
-                            candidate == TypeId::STRING
-                                || candidate == TypeId::NUMBER
-                                || candidate == TypeId::SYMBOL
-                                || display == "string | number"
-                                || display == "string | number | symbol"
-                                || crate::query_boundaries::common::union_members(
-                                    this.ctx.types,
-                                    candidate,
-                                )
-                                .is_some_and(|members| {
-                                    members.into_iter().any(|member| {
-                                        matches!(
-                                            member,
-                                            TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL
-                                        )
-                                    })
-                                })
-                        };
                         if query::contains_free_type_parameters(self.ctx.types, base)
-                            && !base_allows_primitive_key(self, base)
+                            && !crate::query_boundaries::type_predicates::base_admits_any_primitive_index_key(
+                                self.ctx.types.as_type_database(),
+                                &[base],
+                            )
                         {
                             // Base constraint itself contains free type parameters
                             // (e.g., from outer generic scope). Defer check.
@@ -1465,42 +1448,22 @@ impl<'a> CheckerState<'a> {
                         .is_some()
                             && {
                                 // Decide membership *structurally* per primitive_key.
-                                // A display-string match ("string | number" /
-                                // "string | number | symbol") is per-base, not
-                                // per-key, so it would falsely admit SYMBOL
-                                // when base is `string | number` and emit a
-                                // spurious TS2344. Use TypeId equality and
-                                // union_members on both the unevaluated and
-                                // evaluated base — the latter recovers cases
-                                // where keyof/indexed-access bases only
-                                // decompose into a Union after evaluation.
+                                // Both the unevaluated and evaluated base are
+                                // checked so keyof/indexed-access bases that only
+                                // decompose into a Union after evaluation are
+                                // still recognized.
                                 let base_evaluated = self.evaluate_type_for_assignability(base);
-                                let base_members = crate::query_boundaries::common::union_members(
-                                    self.ctx.types,
-                                    base,
-                                );
-                                let base_evaluated_members =
-                                    crate::query_boundaries::common::union_members(
-                                        self.ctx.types,
-                                        base_evaluated,
+                                let present =
+                                    crate::query_boundaries::type_predicates::present_primitive_index_keys(
+                                        self.ctx.types.as_type_database(),
+                                        &[base, base_evaluated],
                                     );
-                                [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]
-                                    .into_iter()
-                                    .any(|primitive_key| {
-                                        let in_base = base == primitive_key
-                                            || base_evaluated == primitive_key
-                                            || base_members
-                                                .as_ref()
-                                                .is_some_and(|m| m.contains(&primitive_key))
-                                            || base_evaluated_members
-                                                .as_ref()
-                                                .is_some_and(|m| m.contains(&primitive_key));
-                                        in_base
-                                            && !self.diagnostic_relation_boolean_guard(
-                                                primitive_key,
-                                                inst_constraint,
-                                            )
-                                    })
+                                present.into_iter().any(|primitive_key| {
+                                    !self.diagnostic_relation_boolean_guard(
+                                        primitive_key,
+                                        inst_constraint,
+                                    )
+                                })
                             }
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
                         {
