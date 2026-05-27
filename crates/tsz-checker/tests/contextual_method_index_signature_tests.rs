@@ -31,6 +31,19 @@ createHandlers({
   run(value) { value.toUpperCase(); },
 });
 "#,
+        // Renamed type-param (Source) and mapped variable (Key) — proves the
+        // rule is not tied to the `T`/`P` spellings.
+        r#"
+declare function createHandlers<Source>(
+  handlers: { [key: string]: (state: string) => void } & {
+    [Key in keyof Source]: object;
+  }
+): void;
+
+createHandlers({
+  run(value) { value.toUpperCase(); },
+});
+"#,
     ] {
         let diagnostics = check_default(source);
         assert_eq!(

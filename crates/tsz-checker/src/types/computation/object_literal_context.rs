@@ -15,6 +15,7 @@
 //! - `sanitize_contextual_property_type` — contextual type sanitization
 
 use crate::query_boundaries::checkers::call as call_checker;
+use crate::query_boundaries::common;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
@@ -30,11 +31,10 @@ pub(crate) enum ContextualPropertyPresence {
 
 impl<'a> CheckerState<'a> {
     fn is_this_type_marker_application(&self, type_id: TypeId) -> bool {
-        let Some(app) = crate::query_boundaries::common::type_application(self.ctx.types, type_id)
-        else {
+        let Some(app) = common::type_application(self.ctx.types, type_id) else {
             return false;
         };
-        crate::query_boundaries::common::is_this_type(self.ctx.types, app.base)
+        common::is_this_type(self.ctx.types, app.base)
     }
 
     pub(crate) fn strip_contextual_this_type_markers(&self, type_id: TypeId) -> TypeId {
@@ -42,9 +42,7 @@ impl<'a> CheckerState<'a> {
             return TypeId::UNKNOWN;
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = common::intersection_members(self.ctx.types, type_id) {
             let filtered: Vec<_> = members
                 .iter()
                 .copied()
@@ -57,9 +55,7 @@ impl<'a> CheckerState<'a> {
                 _ => self.ctx.types.factory().intersection(filtered),
             };
         }
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = common::union_members(self.ctx.types, type_id) {
             let remapped: Vec<_> = members
                 .iter()
                 .copied()
@@ -148,18 +144,15 @@ impl<'a> CheckerState<'a> {
             push_candidate(self, index.value_type);
         }
 
-        if let Some(constraint) =
-            crate::query_boundaries::common::type_parameter_constraint(self.ctx.types, type_id)
+        if let Some(constraint) = common::type_parameter_constraint(self.ctx.types, type_id)
             && let Some(candidate) =
                 self.contextual_callable_string_index_signature_type(constraint, depth - 1)
         {
             push_candidate(self, candidate);
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id).or_else(|| {
-                crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-            })
+        if let Some(members) = common::union_members(self.ctx.types, type_id)
+            .or_else(|| common::intersection_members(self.ctx.types, type_id))
         {
             for member in members {
                 if let Some(candidate) =
@@ -237,12 +230,10 @@ impl<'a> CheckerState<'a> {
             ExcessPropertiesKind::Object(_) | ExcessPropertiesKind::ObjectWithIndex(_) => {
                 // Delegate to solver query: collect all callable property types
                 // (named properties + index signatures) from the object shape.
-                candidates.extend(
-                    crate::query_boundaries::common::collect_callable_property_types(
-                        self.ctx.types,
-                        type_id,
-                    ),
-                );
+                candidates.extend(common::collect_callable_property_types(
+                    self.ctx.types,
+                    type_id,
+                ));
             }
             ExcessPropertiesKind::Union(members) | ExcessPropertiesKind::Intersection(members) => {
                 for member in members {
@@ -276,9 +267,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, type_id)
-            || crate::query_boundaries::common::is_mapped_type(self.ctx.types, type_id)
-            || crate::query_boundaries::common::type_application(self.ctx.types, type_id).is_some()
+        if common::contains_type_parameters(self.ctx.types, type_id)
+            || common::is_mapped_type(self.ctx.types, type_id)
+            || common::type_application(self.ctx.types, type_id).is_some()
         {
             return true;
         }
@@ -343,10 +334,7 @@ impl<'a> CheckerState<'a> {
                 .copied()
                 .any(|member| self.union_with_non_nullish_non_object_member(member, depth - 1)),
             ExcessPropertiesKind::NotObject => {
-                if crate::query_boundaries::common::is_primitive_type(
-                    self.ctx.types,
-                    evaluated_type,
-                ) {
+                if common::is_primitive_type(self.ctx.types, evaluated_type) {
                     return true;
                 }
 
@@ -379,7 +367,7 @@ impl<'a> CheckerState<'a> {
         use crate::query_boundaries::assignability::{
             ExcessPropertiesKind, classify_for_excess_properties,
         };
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use common::PropertyAccessResult;
 
         let resolved = self.resolve_type_for_property_access(type_id);
         let evaluated = self.evaluate_type_with_env(type_id);
@@ -387,9 +375,9 @@ impl<'a> CheckerState<'a> {
         let evaluated = self.resolve_lazy_type(evaluated);
         let evaluated = self.evaluate_application_type(evaluated);
 
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-            .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, resolved))
-            .or_else(|| crate::query_boundaries::common::union_members(self.ctx.types, evaluated))
+        let members = common::union_members(self.ctx.types, type_id)
+            .or_else(|| common::union_members(self.ctx.types, resolved))
+            .or_else(|| common::union_members(self.ctx.types, evaluated))
             .or_else(
                 || match classify_for_excess_properties(self.ctx.types, type_id) {
                     ExcessPropertiesKind::Union(members) => Some(members),
@@ -422,12 +410,8 @@ impl<'a> CheckerState<'a> {
             let evaluated_member = self.evaluate_application_type(evaluated_member);
             let resolved_member = self.resolve_type_for_property_access(member);
             let resolved_evaluated_member = self.resolve_type_for_property_access(evaluated_member);
-            let is_primitive =
-                crate::query_boundaries::common::is_primitive_type(self.ctx.types, member)
-                    || crate::query_boundaries::common::is_primitive_type(
-                        self.ctx.types,
-                        evaluated_member,
-                    );
+            let is_primitive = common::is_primitive_type(self.ctx.types, member)
+                || common::is_primitive_type(self.ctx.types, evaluated_member);
             if is_primitive
                 && (matches!(
                     self.resolve_property_access_with_env(member, property_name),
@@ -447,22 +431,20 @@ impl<'a> CheckerState<'a> {
     }
 
     pub(crate) fn precise_callable_context_type(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
+        let type_id = common::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return None;
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = common::union_members(self.ctx.types, type_id) {
             let callable_members: Vec<_> = members
                 .into_iter()
                 .filter(|&member| member != TypeId::UNDEFINED)
                 .collect();
             if !callable_members.is_empty()
-                && callable_members.iter().all(|&member| {
-                    crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
-                })
+                && callable_members
+                    .iter()
+                    .all(|&member| common::is_callable_type(self.ctx.types, member))
             {
                 return Some(
                     self.ctx
@@ -474,14 +456,10 @@ impl<'a> CheckerState<'a> {
             return None;
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = common::intersection_members(self.ctx.types, type_id) {
             let callable_members: Vec<_> = members
                 .into_iter()
-                .filter(|&member| {
-                    crate::query_boundaries::common::is_callable_type(self.ctx.types, member)
-                })
+                .filter(|&member| common::is_callable_type(self.ctx.types, member))
                 .collect();
             return match callable_members.as_slice() {
                 [] => None,
@@ -490,26 +468,25 @@ impl<'a> CheckerState<'a> {
             };
         }
 
-        crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id)
-            .then_some(type_id)
+        common::is_callable_type(self.ctx.types, type_id).then_some(type_id)
     }
 
     fn callable_context_type_from_mixed_union(&mut self, type_id: TypeId) -> Option<TypeId> {
-        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
+        let type_id = common::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return None;
         }
 
-        if crate::query_boundaries::common::is_callable_type(self.ctx.types, type_id) {
+        if common::is_callable_type(self.ctx.types, type_id) {
             return Some(type_id);
         }
 
-        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        let members = common::union_members(self.ctx.types, type_id)?;
 
         let callable_members: Vec<_> = members
             .into_iter()
             .filter_map(|member| {
-                if crate::query_boundaries::common::is_callable_type(self.ctx.types, member) {
+                if common::is_callable_type(self.ctx.types, member) {
                     return Some(member);
                 }
                 let had_prior_complexity = self.ctx.types.take_union_too_complex();
@@ -523,8 +500,7 @@ impl<'a> CheckerState<'a> {
                 if produced_complexity {
                     return None;
                 }
-                crate::query_boundaries::common::is_callable_type(self.ctx.types, evaluated)
-                    .then_some(evaluated)
+                common::is_callable_type(self.ctx.types, evaluated).then_some(evaluated)
             })
             .collect();
 
@@ -570,10 +546,7 @@ impl<'a> CheckerState<'a> {
             return Some(callable_only);
         }
 
-        if !crate::query_boundaries::common::type_contains_undefined(
-            self.ctx.types,
-            property_context_type,
-        ) {
+        if !common::type_contains_undefined(self.ctx.types, property_context_type) {
             return Some(property_context_type);
         }
 
@@ -624,9 +597,9 @@ impl<'a> CheckerState<'a> {
         depth: usize,
     ) -> ContextualPropertyPresence {
         use crate::query_boundaries::assignability::ExcessPropertiesKind;
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use common::PropertyAccessResult;
 
-        let type_id = crate::query_boundaries::common::remove_undefined(self.ctx.types, type_id);
+        let type_id = common::remove_undefined(self.ctx.types, type_id);
         if type_id == TypeId::UNDEFINED {
             return ContextualPropertyPresence::Absent;
         }
@@ -661,9 +634,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        if let Some(members) =
-            crate::query_boundaries::common::intersection_members(self.ctx.types, type_id)
-        {
+        if let Some(members) = common::intersection_members(self.ctx.types, type_id) {
             let mut saw_unknown = false;
             for member in members {
                 match self.contextual_property_presence(member, property_name, depth - 1) {
@@ -703,10 +674,7 @@ impl<'a> CheckerState<'a> {
                 }
             }
             ExcessPropertiesKind::NotObject => {
-                if crate::query_boundaries::common::contains_type_parameters(
-                    self.ctx.types,
-                    type_id,
-                ) {
+                if common::contains_type_parameters(self.ctx.types, type_id) {
                     ContextualPropertyPresence::Unknown
                 } else {
                     ContextualPropertyPresence::Absent
@@ -801,11 +769,7 @@ impl<'a> CheckerState<'a> {
                                           union_type: TypeId,
                                           property_name: &str|
          -> Option<TypeId> {
-            let members = crate::query_boundaries::common::union_members(
-                this.ctx.types,
-                union_type,
-            )
-            .or_else(|| {
+            let members = common::union_members(this.ctx.types, union_type).or_else(|| {
                 match crate::query_boundaries::assignability::classify_for_excess_properties(
                     this.ctx.types,
                     union_type,
@@ -928,10 +892,7 @@ impl<'a> CheckerState<'a> {
                                                  intersection_type: TypeId,
                                                  property_name: &str|
          -> Option<TypeId> {
-            let members = crate::query_boundaries::common::intersection_members(
-                this.ctx.types,
-                intersection_type,
-            )?;
+            let members = common::intersection_members(this.ctx.types, intersection_type)?;
             let mut property_types = Vec::new();
 
             for &member in &members {
@@ -1016,10 +977,9 @@ impl<'a> CheckerState<'a> {
             None
         };
 
-        if let Some(constraint) = crate::query_boundaries::common::type_parameter_constraint(
-            self.ctx.types,
-            original_contextual_type,
-        ) && constraint != original_contextual_type
+        if let Some(constraint) =
+            common::type_parameter_constraint(self.ctx.types, original_contextual_type)
+            && constraint != original_contextual_type
             && let Some(property_type) =
                 self.contextual_object_literal_property_type(constraint, property_name)
         {
@@ -1241,10 +1201,8 @@ impl<'a> CheckerState<'a> {
         // If contextual extraction fails but the parent context is generic/deferred,
         // preserve an `unknown` contextual slot to prevent false implicit-any
         // diagnostics during higher-order inference rounds.
-        if crate::query_boundaries::common::contains_type_parameters(
-            self.ctx.types,
-            contextual_type,
-        ) && effective_property_presence != ContextualPropertyPresence::Absent
+        if common::contains_type_parameters(self.ctx.types, contextual_type)
+            && effective_property_presence != ContextualPropertyPresence::Absent
         {
             tracing::trace!(
                 contextual_type = contextual_type.0,
@@ -1270,8 +1228,7 @@ impl<'a> CheckerState<'a> {
         contextual_type: TypeId,
         property_name: &str,
     ) -> Option<TypeId> {
-        let mapped =
-            crate::query_boundaries::common::mapped_type_info(self.ctx.types, contextual_type)?;
+        let mapped = common::mapped_type_info(self.ctx.types, contextual_type)?;
         let constraint = mapped.constraint;
         let template = mapped.template;
 
@@ -1282,10 +1239,7 @@ impl<'a> CheckerState<'a> {
         let key_type = if let Some(value) = numeric_key {
             self.ctx.types.literal_number(value)
         } else {
-            crate::query_boundaries::common::create_string_literal_type(
-                self.ctx.types,
-                property_name,
-            )
+            common::create_string_literal_type(self.ctx.types, property_name)
         };
 
         let constraint_resolved = self.resolve_lazy_type(constraint);
@@ -1295,26 +1249,16 @@ impl<'a> CheckerState<'a> {
         {
             let mut substitution = TypeSubstitution::new();
             substitution.insert(mapped.type_param.name, key_type);
-            let instantiated = crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                template,
-                &substitution,
-            );
+            let instantiated = common::instantiate_type(self.ctx.types, template, &substitution);
             let evaluated = self.evaluate_type_with_env(instantiated);
             let evaluated = self.resolve_lazy_type(evaluated);
             return Some(self.evaluate_application_type(evaluated));
         }
 
-        if numeric_key.is_some()
-            && crate::query_boundaries::common::contains_type_parameters(self.ctx.types, constraint)
-        {
+        if numeric_key.is_some() && common::contains_type_parameters(self.ctx.types, constraint) {
             let mut substitution = TypeSubstitution::new();
             substitution.insert(mapped.type_param.name, key_type);
-            let instantiated = crate::query_boundaries::common::instantiate_type(
-                self.ctx.types,
-                template,
-                &substitution,
-            );
+            let instantiated = common::instantiate_type(self.ctx.types, template, &substitution);
             let evaluated = self.evaluate_type_with_env(instantiated);
             let evaluated = self.resolve_lazy_type(evaluated);
             return Some(self.evaluate_application_type(evaluated));
@@ -1354,23 +1298,23 @@ impl<'a> CheckerState<'a> {
             return Some(current);
         }
 
-        if crate::query_boundaries::common::union_members(self.ctx.types, current)
+        if common::union_members(self.ctx.types, current)
             .is_some_and(|members| members.contains(&candidate))
         {
             return Some(candidate);
         }
-        if crate::query_boundaries::common::union_members(self.ctx.types, candidate)
+        if common::union_members(self.ctx.types, candidate)
             .is_some_and(|members| members.contains(&current))
         {
             return Some(current);
         }
 
-        if crate::query_boundaries::common::intersection_members(self.ctx.types, current)
+        if common::intersection_members(self.ctx.types, current)
             .is_some_and(|members| members.contains(&candidate))
         {
             return Some(candidate);
         }
-        if crate::query_boundaries::common::intersection_members(self.ctx.types, candidate)
+        if common::intersection_members(self.ctx.types, candidate)
             .is_some_and(|members| members.contains(&current))
         {
             return Some(current);
@@ -1382,9 +1326,8 @@ impl<'a> CheckerState<'a> {
             return Some(preferred);
         }
 
-        let current_eval = crate::query_boundaries::common::evaluate_type(self.ctx.types, current);
-        let candidate_eval =
-            crate::query_boundaries::common::evaluate_type(self.ctx.types, candidate);
+        let current_eval = common::evaluate_type(self.ctx.types, current);
+        let candidate_eval = common::evaluate_type(self.ctx.types, candidate);
         let candidate_narrower = crate::query_boundaries::assignability::is_fresh_subtype_of(
             self.ctx.types,
             candidate_eval,
@@ -1428,14 +1371,8 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
 
-                    let current_eval = crate::query_boundaries::common::evaluate_type(
-                        self.ctx.types,
-                        current_param,
-                    );
-                    let candidate_eval = crate::query_boundaries::common::evaluate_type(
-                        self.ctx.types,
-                        candidate_param,
-                    );
+                    let current_eval = common::evaluate_type(self.ctx.types, current_param);
+                    let candidate_eval = common::evaluate_type(self.ctx.types, candidate_param);
                     let current_narrower =
                         crate::query_boundaries::assignability::is_fresh_subtype_of(
                             self.ctx.types,
@@ -1487,12 +1424,10 @@ impl<'a> CheckerState<'a> {
     ) -> TypeId {
         // Get union members; bail if not a union.
         let resolved = self.resolve_type_for_property_access(ctx_type);
-        let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, resolved)
-        else {
+        let Some(members) = common::union_members(self.ctx.types, resolved) else {
             return ctx_type;
         };
-        let raw_members = crate::query_boundaries::common::union_members(self.ctx.types, ctx_type);
+        let raw_members = common::union_members(self.ctx.types, ctx_type);
 
         if members.len() < 2 {
             return ctx_type;
@@ -1523,15 +1458,10 @@ impl<'a> CheckerState<'a> {
                     .literal_type_from_initializer(prop.initializer)
                     .or_else(|| {
                         let initializer_type = self.get_type_of_node(prop.initializer);
-                        crate::query_boundaries::common::is_unit_type(
-                            self.ctx.types,
-                            initializer_type,
-                        )
-                        .then_some(initializer_type)
+                        common::is_unit_type(self.ctx.types, initializer_type)
+                            .then_some(initializer_type)
                     })
-                    .filter(|&lit_type| {
-                        crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                    });
+                    .filter(|&lit_type| common::is_unit_type(self.ctx.types, lit_type));
                 if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
                 } else {
@@ -1548,9 +1478,7 @@ impl<'a> CheckerState<'a> {
                 let unit_lit = self
                     .shorthand_const_literal_type(shorthand.name)
                     .or_else(|| self.literal_type_from_initializer(shorthand.name))
-                    .filter(|&lit_type| {
-                        crate::query_boundaries::common::is_unit_type(self.ctx.types, lit_type)
-                    });
+                    .filter(|&lit_type| common::is_unit_type(self.ctx.types, lit_type));
                 if let Some(lit_type) = unit_lit {
                     unit_discriminants.push((name, lit_type));
                 } else {
@@ -1578,8 +1506,7 @@ impl<'a> CheckerState<'a> {
                 let Some(member_prop_type) = member_prop_type else {
                     continue;
                 };
-                if !crate::query_boundaries::common::is_unit_type(self.ctx.types, member_prop_type)
-                {
+                if !common::is_unit_type(self.ctx.types, member_prop_type) {
                     return false;
                 }
                 unit_member_count += 1;
@@ -1631,7 +1558,7 @@ impl<'a> CheckerState<'a> {
                         if *lit_type == TypeId::UNDEFINED {
                             let prop_name_atom = self.ctx.types.intern_string(prop_name);
                             let is_optional = member_candidates.iter().any(|&candidate| {
-                                crate::query_boundaries::common::find_property_in_object(
+                                common::find_property_in_object(
                                     self.ctx.types,
                                     candidate,
                                     prop_name_atom,
@@ -1658,11 +1585,7 @@ impl<'a> CheckerState<'a> {
                 let prop_name_atom = self.ctx.types.intern_string(prop_name);
                 // Look up the raw property type from the member's object shape.
                 let raw_prop_type = member_candidates.iter().find_map(|&candidate| {
-                    crate::query_boundaries::common::raw_property_type(
-                        self.ctx.types,
-                        candidate,
-                        prop_name_atom,
-                    )
+                    common::raw_property_type(self.ctx.types, candidate, prop_name_atom)
                 });
                 match raw_prop_type {
                     Some(type_id) => type_id != TypeId::NEVER,
@@ -1686,12 +1609,10 @@ impl<'a> CheckerState<'a> {
             // is itself a signal in tsc's discriminantPropertyInference.
             let absent_required_match = {
                 let mut ok = true;
-                if let Some(shape) = member_candidates.iter().find_map(|&candidate| {
-                    crate::query_boundaries::common::object_shape_for_type(
-                        self.ctx.types,
-                        candidate,
-                    )
-                }) {
+                if let Some(shape) = member_candidates
+                    .iter()
+                    .find_map(|&candidate| common::object_shape_for_type(self.ctx.types, candidate))
+                {
                     for prop in &shape.properties {
                         if prop.optional {
                             continue;
@@ -1702,45 +1623,31 @@ impl<'a> CheckerState<'a> {
                             continue;
                         }
                         let member_is_array_like = member_candidates.iter().any(|&candidate| {
-                            crate::query_boundaries::common::array_element_type(
-                                self.ctx.types,
-                                candidate,
-                            )
-                            .is_some()
-                                || crate::query_boundaries::common::tuple_elements(
-                                    self.ctx.types,
-                                    candidate,
-                                )
-                                .is_some()
-                                || crate::query_boundaries::common::object_shape_for_type(
-                                    self.ctx.types,
-                                    candidate,
-                                )
-                                .is_some_and(|shape| {
-                                    shape.number_index.is_some() || {
-                                        let has_length = shape.properties.iter().any(|prop| {
-                                            self.ctx.types.resolve_atom_ref(prop.name).as_ref()
-                                                == "length"
-                                        });
-                                        let has_array_method =
-                                            shape.properties.iter().any(|prop| {
-                                                matches!(
-                                                    self.ctx
-                                                        .types
-                                                        .resolve_atom_ref(prop.name)
-                                                        .as_ref(),
-                                                    "push" | "pop" | "concat" | "slice"
-                                                )
+                            common::array_element_type(self.ctx.types, candidate).is_some()
+                                || common::tuple_elements(self.ctx.types, candidate).is_some()
+                                || common::object_shape_for_type(self.ctx.types, candidate)
+                                    .is_some_and(|shape| {
+                                        shape.number_index.is_some() || {
+                                            let has_length = shape.properties.iter().any(|prop| {
+                                                self.ctx.types.resolve_atom_ref(prop.name).as_ref()
+                                                    == "length"
                                             });
-                                        has_length && has_array_method
-                                    }
-                                })
+                                            let has_array_method =
+                                                shape.properties.iter().any(|prop| {
+                                                    matches!(
+                                                        self.ctx
+                                                            .types
+                                                            .resolve_atom_ref(prop.name)
+                                                            .as_ref(),
+                                                        "push" | "pop" | "concat" | "slice"
+                                                    )
+                                                });
+                                            has_length && has_array_method
+                                        }
+                                    })
                         });
                         if !member_is_array_like
-                            && !crate::query_boundaries::common::is_unit_type(
-                                self.ctx.types,
-                                prop.type_id,
-                            )
+                            && !common::is_unit_type(self.ctx.types, prop.type_id)
                         {
                             continue;
                         }
@@ -1756,7 +1663,7 @@ impl<'a> CheckerState<'a> {
                             let other_candidates =
                                 [evaluated_other, resolved_other, lazy_other, other];
                             let other_prop = other_candidates.iter().find_map(|&candidate| {
-                                crate::query_boundaries::common::find_property_in_object(
+                                common::find_property_in_object(
                                     self.ctx.types,
                                     candidate,
                                     prop.name,
@@ -1834,13 +1741,11 @@ impl<'a> CheckerState<'a> {
 
     fn sanitize_contextual_property_type(&self, property_type: TypeId) -> TypeId {
         if property_type == TypeId::ERROR
-            || crate::query_boundaries::common::contains_error_type(self.ctx.types, property_type)
+            || common::contains_error_type(self.ctx.types, property_type)
         {
             return TypeId::UNKNOWN;
         }
-        if let Some(default) =
-            crate::query_boundaries::common::type_parameter_default(self.ctx.types, property_type)
-        {
+        if let Some(default) = common::type_parameter_default(self.ctx.types, property_type) {
             return default;
         }
         property_type
