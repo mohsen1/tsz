@@ -322,6 +322,34 @@ let x5 = f5();
     );
 }
 
+#[test]
+fn test_variadic_tuple_call_return_materializes_prefix_or_constraint() {
+    let output = emit_dts_with_binding(
+        r#"
+    declare function collect<Items extends readonly [string, ...string[]]>(
+        ...values: readonly [...Items, number]
+    ): [...Items, number];
+
+    export const one = collect("first", 1);
+    export const two = collect("first", "second", 1);
+    export const fallback = collect(1, 2);
+    "#,
+    );
+
+    assert!(
+        output.contains("export declare const one: [\"first\", number];"),
+        "Expected single literal prefix to materialize into the variadic tuple return: {output}"
+    );
+    assert!(
+        output.contains("export declare const two: [\"first\", \"second\", number];"),
+        "Expected multiple literal prefixes to materialize into the variadic tuple return: {output}"
+    );
+    assert!(
+        output.contains("export declare const fallback: [string, ...string[], number];"),
+        "Expected invalid or unmaterializable prefixes to fall back to the tuple constraint: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================
