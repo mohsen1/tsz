@@ -57,6 +57,21 @@ pub(crate) struct PrivateAccessorDef {
     pub param: Option<NodeIndex>,
 }
 
+/// Info about a private method function to emit after the class body.
+#[derive(Debug, Clone)]
+pub(crate) struct PrivateMethodDef {
+    /// The variable name (e.g., `_C_method`).
+    pub var_name: String,
+    /// The body node index.
+    pub body: NodeIndex,
+    /// Method parameter node indices.
+    pub params: Vec<NodeIndex>,
+    /// Whether the extracted method function is async.
+    pub is_async: bool,
+    /// Whether the extracted method function is a generator.
+    pub is_generator: bool,
+}
+
 /// How a class property name should be emitted in `ClassName.name = ...` assignments.
 #[derive(Clone)]
 pub(crate) enum PropertyNameEmit {
@@ -820,10 +835,10 @@ pub struct Printer<'a> {
     /// Set when the class has private instance methods or accessors.
     pub(crate) pending_instances_weakset_add: Option<String>,
 
-    /// Private method/accessor function definitions to emit after the class body.
-    /// Each entry is (`var_name`, `body_idx`, params) for `_C_method = function _C_method(params) { ... }`.
+    /// Private method function definitions to emit after the class body.
+    /// Each entry emits `_C_method = function _C_method(params) { ... }`.
     /// These are joined with the WeakMap/WeakSet inits using comma separation.
-    pub(crate) pending_private_method_defs: Vec<(String, NodeIndex, Vec<NodeIndex>)>,
+    pub(crate) pending_private_method_defs: Vec<PrivateMethodDef>,
 
     /// Private accessor function definitions to emit after the class body.
     /// Each entry is (`var_name`, `body_idx`) for `_C_prop_get = function _C_prop_get() { ... }`.
