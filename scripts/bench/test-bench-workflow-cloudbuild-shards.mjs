@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
+const shardCloudbuild = fs.readFileSync(
+  "scripts/cloudbuild/cloudbuild-bench-shard.yaml",
+  "utf8",
+);
 
 assert.match(
   workflow,
@@ -30,8 +34,35 @@ assert.match(
 
 assert.match(
   workflow,
-  /bench-postmortem-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-cloudbuild-\$\{\{ matrix\.label \}\}\.log\s*\n\s*retention-days: 7/,
+  /bench-postmortem-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-prep-fetch-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-cloudbuild-\$\{\{ matrix\.label \}\}\.log\s*\n\s*retention-days: 7/,
   "bench shard artifacts should include the captured Cloud Build log",
+);
+
+assert.match(
+  workflow,
+  /storage_cp "\$\{prefix\}\/bench-prep-fetch-\$\{\{ matrix\.label \}\}\.log" "bench-prep-fetch-\$\{\{ matrix\.label \}\}\.log" \|\| true/,
+  "bench shard waits should download the prep-fetch log when Cloud Build publishes it",
+);
+
+assert.match(
+  shardCloudbuild,
+  /\} > bench-prep-fetch\.log 2>&1[\s\S]+BENCH_PREP_FETCH_STATUS=%s[\s\S]+exit 0/,
+  "Cloud Build prep-fetch step should record status and never fail the build before shard status artifacts can be written",
+);
+
+assert.match(
+  shardCloudbuild,
+  /output_dir="bench-shards\/\$\{_BENCH_TARGET_SHA\}\/\$\{_BENCH_SHARD_LABEL\}"[\s\S]+mkdir -p "\$output_dir"[\s\S]+run_shard\(\)[\s\S]+apt-get update/,
+  "Cloud Build shard status directory should be prepared before setup commands that can fail",
+);
+
+assert.ok(
+  shardCloudbuild.includes('run_shard 2>&1 | tee "/workspace/${run_log}"') &&
+    shardCloudbuild.includes('shard_status="${PIPESTATUS[0]}"') &&
+    shardCloudbuild.includes("printf 'BENCH_SHARD_STATUS=%s\\n' \"$shard_status\"") &&
+    shardCloudbuild.includes("bench-prep-fetch-${_BENCH_SHARD_LABEL}.log") &&
+    shardCloudbuild.includes("exit 0"),
+  "Cloud Build shard should publish status/log artifacts and exit successfully so GitHub can consume BENCH_SHARD_STATUS",
 );
 
 console.log("test-bench-workflow-cloudbuild-shards: ok");
