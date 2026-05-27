@@ -512,7 +512,9 @@ fn is_coinductive_return_type_cycle(
         // Check each param for assignability
         for (sp, tp) in s_params.iter().zip(t_params.iter()) {
             if sp.type_id != tp.type_id
-                && !checker.diagnostic_relation_boolean_guard(tp.type_id, sp.type_id)
+                && !checker
+                    .assign_relation_outcome(tp.type_id, sp.type_id)
+                    .related
             {
                 return false;
             }
