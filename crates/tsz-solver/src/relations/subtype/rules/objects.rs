@@ -591,6 +591,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         else {
             return false;
         };
+        if !matches!(
+            self.resolver.get_def_kind(source_def),
+            Some(crate::def::DefKind::Class)
+        ) {
+            return false;
+        }
         let Some(target_def) = target_def else {
             return false;
         };
@@ -629,6 +635,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target_receiver: Option<TypeId>,
         target: Option<&ObjectShape>,
     ) -> Option<crate::def::DefId> {
+        if target_receiver.is_some_and(|type_id| self.receiver_is_application(type_id)) {
+            return None;
+        }
+
         target_receiver
             .and_then(|type_id| {
                 lazy_def_id(self.interner, type_id)
@@ -643,6 +653,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         .and_then(|symbol| self.resolver.symbol_to_def_id(SymbolRef(symbol.0)))
                 })
             })
+    }
+
+    fn receiver_is_application(&self, type_id: TypeId) -> bool {
+        application_id(self.interner, type_id).is_some()
+            || self
+                .interner
+                .get_display_alias(type_id)
+                .is_some_and(|alias| application_id(self.interner, alias).is_some())
     }
 
     fn def_for_receiver_shape_symbol(&self, type_id: TypeId) -> Option<crate::def::DefId> {

@@ -2478,6 +2478,34 @@ impl<'a> TypeFormatter<'a> {
             return (1, file_id, span_start);
         }
 
+        // If a structural type is displayed through an alias such as
+        // `Iterator<T>`, use that visible alias for source-order sorting too.
+        // Otherwise diagnostics can print the alias while sorting by its
+        // expanded helper shape, flipping unions like `Iterator<T> | Iterable<T>`.
+        if let Some(alias_origin) = self
+            .interner
+            .get_display_alias(type_id)
+            .filter(|&alias| alias != type_id)
+        {
+            match self.interner.lookup(alias_origin) {
+                Some(TypeData::Application(alias_app_id)) => {
+                    return self.get_application_source_position(
+                        alias_app_id,
+                        def_store,
+                        Some(type_id),
+                    );
+                }
+                Some(TypeData::Lazy(def_id)) => {
+                    if let Some(def) = def_store.get(def_id)
+                        && let (Some(file_id), Some((span_start, _))) = (def.file_id, def.span)
+                    {
+                        return (1, file_id, span_start);
+                    }
+                }
+                _ => {}
+            }
+        }
+
         // Try Lazy(DefId) - type aliases, interfaces, classes
         if let Some(TypeData::Lazy(def_id)) = &data
             && let Some(def) = def_store.get(*def_id)
@@ -2491,15 +2519,7 @@ impl<'a> TypeFormatter<'a> {
         // (modeled as `Application(Container, [Cover])`) sort with their
         // user-defined element type rather than with a built-in/lib base.
         if let Some(TypeData::Application(app_id)) = &data {
-            let app = self.interner.type_application(*app_id);
-            let mut best = self.get_source_position_for_type(app.base, def_store);
-            for &arg in &app.args {
-                let candidate = self.get_source_position_for_type(arg, def_store);
-                if candidate > best {
-                    best = candidate;
-                }
-            }
-            return best;
+            return self.get_application_source_position(*app_id, def_store, Some(type_id));
         }
 
         // Try Array - structural shorthand for `Array<T>`. Use the element's
@@ -2571,6 +2591,26 @@ impl<'a> TypeFormatter<'a> {
 
         // Other tier 2 types: sort after objects, preserve relative order
         (2, u32::MAX, u32::MAX)
+    }
+
+    fn get_application_source_position(
+        &self,
+        app_id: crate::types::TypeApplicationId,
+        def_store: &crate::def::DefinitionStore,
+        skip_type: Option<TypeId>,
+    ) -> (u32, u32, u32) {
+        let app = self.interner.type_application(app_id);
+        let mut best = self.get_source_position_for_type(app.base, def_store);
+        for &arg in &app.args {
+            if Some(arg) == skip_type {
+                continue;
+            }
+            let candidate = self.get_source_position_for_type(arg, def_store);
+            if candidate > best {
+                best = candidate;
+            }
+        }
+        best
     }
 }
 

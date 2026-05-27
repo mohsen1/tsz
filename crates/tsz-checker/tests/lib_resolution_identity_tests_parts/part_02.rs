@@ -654,6 +654,14 @@ const iter3 = iter2.flatMap(() => g1);
         "Expected TS2322 for flatMap callback rejecting Generator TNext. Got: {diagnostics:#?}"
     );
     assert!(
+        has_diagnostic_code_message(
+            &diagnostics,
+            2322,
+            "Iterator<string, unknown, undefined> | Iterable<string, unknown, undefined>"
+        ),
+        "Expected flatMap callback target union to keep tsc's Iterator-before-Iterable order. Got: {diagnostics:#?}"
+    );
+    assert!(
         has_diagnostic_code_message(&diagnostics, 2416, "Iterator<number, undefined, unknown>"),
         "Expected Iterator heritage diagnostics to show scoped abstract defaults. Got: {diagnostics:#?}"
     );
@@ -702,6 +710,10 @@ class BadIterator3 extends Iterator<number> {
     }
   }
 }
+declare const g1: Generator<string, number, boolean>;
+const iter1 = Iterator.from(g1);
+declare const iter2: IteratorObject<string>;
+const iter3 = iter2.flatMap(() => g1);
 "#,
     );
 
@@ -719,6 +731,25 @@ class BadIterator3 extends Iterator<number> {
             .iter()
             .all(|(_, message)| message.contains("Iterator<number, undefined, unknown>")),
         "Expected every ESNext Iterator TS2416 base type display to include scoped defaults. Got: {ts2416:#?}"
+    );
+    let union_order_messages: Vec<_> = diagnostics
+        .iter()
+        .filter(|(code, message)| {
+            (*code == 2322 || *code == 2345)
+                && message.contains("Iterator<")
+                && message.contains("Iterable<")
+        })
+        .collect();
+    assert!(
+        !union_order_messages.is_empty(),
+        "Expected ESNext iterator diagnostics with Iterator/Iterable union targets. Got: {diagnostics:#?}"
+    );
+    assert!(
+        union_order_messages.iter().all(|(_, message)| {
+            message.find("Iterator<").unwrap_or(usize::MAX)
+                < message.find("Iterable<").unwrap_or(usize::MAX)
+        }),
+        "Expected ESNext iterator target unions to keep tsc's Iterator-before-Iterable order. Got: {union_order_messages:#?}"
     );
 }
 
