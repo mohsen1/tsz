@@ -661,6 +661,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
 #[cfg(test)]
+#[path = "tests/jsx_render_fallback_relation_routing_arch_tests.rs"]
+mod jsx_render_fallback_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
 #[cfg(test)]
