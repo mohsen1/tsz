@@ -1,7 +1,7 @@
-use super::{
-    LineMap, Server, TsServerRequest, parse_identifier_call_expression, positions_overlap,
+use super::{LineMap, Server, TsServerRequest, positions_overlap};
+use crate::handlers_code_fixes_utils::{
+    parse_identifier_call_expression, reorder_import_candidates_for_package_roots,
 };
-use crate::handlers_code_fixes_utils::reorder_import_candidates_for_package_roots;
 use crate::{CheckOptions, LogConfig, LogLevel, ServerMode};
 use rustc_hash::FxHashMap;
 use std::path::PathBuf;

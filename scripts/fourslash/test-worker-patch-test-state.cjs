@@ -1,4 +1,5 @@
 "use strict";
+const path = require("path");
 module.exports = function patchTestState(FourSlash, TszAdapter) {
     const TestState = FourSlash.TestState;
     if (!TestState) throw new Error("Could not find TestState in FourSlash module");
