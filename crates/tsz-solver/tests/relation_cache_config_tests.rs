@@ -164,6 +164,85 @@ fn different_relation_kinds_produce_distinct_keys() {
 }
 
 #[test]
+fn query_cache_relation_kinds_match_uncached_relation_queries() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let optional = interner.intern_string("relationKindOptional");
+    let unrelated = interner.intern_string("relationKindUnrelated");
+    let source = interner.object(vec![PropertyInfo::new(unrelated, TypeId::BOOLEAN)]);
+    let target = interner.object(vec![PropertyInfo::opt(optional, TypeId::NUMBER)]);
+    let policy = RelationPolicy::default();
+    let subtype_key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
+    let assignability_key =
+        RelationCacheKey::for_assignability(source, target, policy.cache_config());
+
+    assert_ne!(
+        subtype_key, assignability_key,
+        "subtype and assignability must occupy distinct cache slots",
+    );
+
+    let uncached_subtype = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let uncached_assignability = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        uncached_subtype,
+        "structural subtype should accept an object against an all-optional target",
+    );
+    assert!(
+        !uncached_assignability,
+        "assignability should reject the unrelated source as a weak-type violation",
+    );
+
+    let subtype_cached = db.is_subtype_of_with_policy(source, target, policy);
+    assert_eq!(
+        subtype_cached, uncached_subtype,
+        "cached subtype result must match the uncached subtype relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "subtype result must be stored in the subtype cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        None,
+        "assignability lookup must not hit the populated subtype slot",
+    );
+
+    let assignability_cached = db.is_assignable_to_with_policy(source, target, policy);
+    assert_eq!(
+        assignability_cached, uncached_assignability,
+        "cached assignability result must match the uncached assignability relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        Some(assignability_cached),
+        "assignability result must be stored in the assignability cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "subtype slot must remain intact after the assignability lookup",
+    );
+}
+
+#[test]
 fn any_propagation_mode_differences_produce_distinct_keys() {
     let any_modes = [
         CachedAnyMode::All,
