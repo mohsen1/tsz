@@ -81,12 +81,12 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
-            return true;
+            return false;
         };
         if self.known_global_value_has_local_shadow(idx, "Object") {
             return false;
         }
-        self.ctx.symbol_is_from_actual_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
+        self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
     }
 
     fn define_property_descriptor_accessor_type(

@@ -46,6 +46,25 @@ fn object_define_property_descriptor_gate_uses_global_identity() {
         !source.contains("object_ident.escaped_text != \"Object\""),
         "Object.defineProperty descriptor detection must not rely on the raw Object spelling"
     );
+    assert!(
+        source.contains("symbol_is_from_actual_or_cloned_lib(sym_id)"),
+        "Object.defineProperty descriptor detection must admit only proven actual/cloned lib identity"
+    );
+}
+
+#[test]
+fn unresolved_object_define_property_without_libs_is_not_global_identity() {
+    assert_no_code(
+        r#"
+Object.defineProperty({}, "x", {
+    get() { return 1; },
+    set(value) {
+        value.toUpperCase();
+    }
+});
+"#,
+        2339,
+    );
 }
 
 #[test]
