@@ -350,6 +350,41 @@ fn test_variadic_tuple_call_return_materializes_prefix_or_constraint() {
     );
 }
 
+#[test]
+fn test_variadic_tuple_call_return_escapes_string_literal_prefixes() {
+    // The materialized prefix literal must carry TypeScript-compatible
+    // string-literal escaping derived from the cooked literal value, not from
+    // trimming the source token and re-wrapping it in quotes. The reported
+    // shapes that the source-slice approach mangled:
+    //   - a single-quoted string with an embedded double quote,
+    //   - a no-substitution template literal (backticks are not quote chars),
+    //   - a double-quoted string containing a backslash.
+    let output = emit_dts_with_binding(
+        r#"
+    declare function collect<Items extends readonly [string, ...string[]]>(
+        ...values: readonly [...Items, number]
+    ): [...Items, number];
+
+    export const sq = collect('a"b', 1);
+    export const tmpl = collect(`c"d`, 1);
+    export const bs = collect("e\\f", 1);
+    "#,
+    );
+
+    assert!(
+        output.contains(r#"export declare const sq: ["a\"b", number];"#),
+        "Single-quoted prefix with an embedded double quote must be re-escaped: {output}"
+    );
+    assert!(
+        output.contains(r#"export declare const tmpl: ["c\"d", number];"#),
+        "No-substitution template prefix must emit an escaped double-quoted literal: {output}"
+    );
+    assert!(
+        output.contains(r#"export declare const bs: ["e\\f", number];"#),
+        "Prefix containing a backslash must preserve the escaped backslash: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================
