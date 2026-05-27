@@ -204,6 +204,86 @@ fn skip_weak_type_checks_partitions_cache_entries() {
 }
 
 #[test]
+fn assignability_cache_skip_weak_type_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let optional = interner.intern_string("optional");
+    let unrelated = interner.intern_string("unrelated");
+    let source = interner.object(vec![PropertyInfo::new(unrelated, TypeId::BOOLEAN)]);
+    let target = interner.object(vec![PropertyInfo::opt(optional, TypeId::NUMBER)]);
+
+    let enforced = RelationPolicy::default().with_skip_weak_type_checks(false);
+    let skipped = RelationPolicy::default().with_skip_weak_type_checks(true);
+    let enforced_key = RelationCacheKey::for_assignability(source, target, enforced.cache_config());
+    let skipped_key = RelationCacheKey::for_assignability(source, target, skipped.cache_config());
+
+    assert_ne!(
+        enforced_key, skipped_key,
+        "weak-type enforcement and skipped-weak policies must occupy distinct cache slots",
+    );
+
+    let uncached_enforced = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        enforced,
+        RelationContext::default(),
+    )
+    .is_related();
+    let uncached_skipped = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        skipped,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !uncached_enforced,
+        "weak-type enforcement should reject an unrelated object source",
+    );
+    assert!(
+        uncached_skipped,
+        "skipping weak-type checks should leave the ordinary optional-property relation assignable",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, enforced),
+        uncached_enforced,
+        "cached weak-type-enforced policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(enforced_key),
+        Some(uncached_enforced),
+        "weak-type-enforced result must be stored in the enforced slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(skipped_key),
+        None,
+        "skipped-weak lookup must not hit the enforced slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, skipped),
+        uncached_skipped,
+        "cached skipped-weak policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(skipped_key),
+        Some(uncached_skipped),
+        "skipped-weak result must be stored in the skipped slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(enforced_key),
+        Some(uncached_enforced),
+        "weak-type-enforced slot must remain intact after the skipped lookup",
+    );
+}
+
+#[test]
 fn erase_generics_partitions_cache_entries() {
     assert_subtype_partitions(
         "erase_generics",

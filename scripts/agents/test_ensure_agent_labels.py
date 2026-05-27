@@ -46,6 +46,10 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     fi
 
                     if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+                      if [[ "$*" != *"--json number,title,labels,body,url"* ]]; then
+                        echo "expected PR audit to request url field: $*" >&2
+                        exit 98
+                      fi
                       printf '%s\n' "${FAKE_GH_PRS}"
                       exit 0
                     fi
@@ -83,12 +87,14 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "chore: intentionally unassigned",
                     "labels": [],
                     "body": "Coordination Notes\n- No canonical agent lane was assigned.",
+                    "url": "https://github.com/mohsen1/tsz/pull/1",
                 },
                 {
                     "number": 2,
                     "title": "fix: owned",
                     "labels": [{"name": "agent:Studio-F"}],
                     "body": "AgentName: Studio-F",
+                    "url": "https://github.com/mohsen1/tsz/pull/2",
                 },
             ]
         )
@@ -96,7 +102,10 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
         self.assertIn("open_prs_missing_agent_label=0", output)
         self.assertIn("open_prs_intentionally_unassigned=1", output)
         self.assertIn("Open PRs Intentionally Unassigned", output)
-        self.assertIn("#1 chore: intentionally unassigned", output)
+        self.assertIn(
+            "#1 chore: intentionally unassigned https://github.com/mohsen1/tsz/pull/1",
+            output,
+        )
 
     def test_audit_still_flags_unexplained_missing_labels(self):
         output = self.run_audit_with_prs(
@@ -106,13 +115,17 @@ class EnsureAgentLabelsAuditTests(unittest.TestCase):
                     "title": "fix: missing label",
                     "labels": [],
                     "body": "AgentName: Studio-F",
+                    "url": "https://github.com/mohsen1/tsz/pull/3",
                 }
             ]
         )
 
         self.assertIn("open_prs_missing_agent_label=1", output)
         self.assertIn("open_prs_intentionally_unassigned=0", output)
-        self.assertIn("#3 fix: missing label", output)
+        self.assertIn(
+            "#3 fix: missing label https://github.com/mohsen1/tsz/pull/3",
+            output,
+        )
 
 
 if __name__ == "__main__":

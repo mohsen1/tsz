@@ -57,7 +57,7 @@ is_canonical_agent_label() {
 existing="$(gh label list --limit 300 --json name --jq '.[].name')"
 
 if [[ "$AUDIT" == true ]]; then
-  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels,body)"
+  prs_json="$(gh pr list --state open --limit 500 --json number,title,labels,body,url)"
   agents_json="$(
     printf '%s\n' "${AGENTS[@]}" | node -e '
       const fs = require("fs");
@@ -120,21 +120,23 @@ console.log(`open_prs_noncanonical_agent_label=${noncanonicalPrs.length}`);
 
 printRows("Missing Canonical Labels", missingCanonicalLabels, (label) => `- ${label}`);
 printRows("Noncanonical Agent Labels", noncanonicalLabels, (label) => `- ${label}`);
-printRows("Open PRs Missing Agent Label", missingPrs, (pr) => `- #${pr.number} ${pr.title}`);
+const prRow = (pr) => `- #${pr.number} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`;
+
+printRows("Open PRs Missing Agent Label", missingPrs, prRow);
 printRows(
   "Open PRs Intentionally Unassigned",
   intentionallyUnassignedPrs,
-  (pr) => `- #${pr.number} ${pr.title}`,
+  prRow,
 );
 printRows(
   "Open PRs With Multiple Agent Labels",
   multiplePrs,
-  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}`,
+  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`,
 );
 printRows(
   "Open PRs With Noncanonical Agent Labels",
   noncanonicalPrs,
-  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}`,
+  (pr) => `- #${pr.number} ${pr.agentLabels.join(", ")} ${pr.title}${pr.url ? ` ${pr.url}` : ""}`,
 );
 NODE
   exit 0
