@@ -577,6 +577,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
 
                 if let Some(mapped_type) = self.arena.get_mapped_type(type_node) {
+                    if self.current_output_is_type_parameter_constraint()
+                        && self.mapped_type_body_can_emit_inline(mapped_type)
+                    {
+                        self.emit_mapped_type_inline(mapped_type);
+                        return;
+                    }
+
                     self.write("{");
                     self.write_line();
                     self.increase_indent();
@@ -1396,6 +1403,78 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         self.emit_type(type_idx);
+    }
+
+    fn current_output_is_type_parameter_constraint(&self) -> bool {
+        let output = self.writer.get_output();
+        let mut balance = 0i32;
+        let mut candidate_start = None;
+        for (idx, ch) in output.char_indices().rev() {
+            match ch {
+                '>' => balance += 1,
+                '<' if balance == 0 => {
+                    candidate_start = Some(idx);
+                    break;
+                }
+                '<' => balance -= 1,
+                _ => {}
+            }
+        }
+
+        let Some(start) = candidate_start else {
+            return false;
+        };
+        let tail = &output[start..];
+        tail.contains(" extends ") && !tail.contains('\n')
+    }
+
+    fn emit_mapped_type_inline(&mut self, mapped_type: &tsz_parser::parser::node::MappedTypeData) {
+        self.write("{ ");
+
+        if let Some(readonly_node) = self.arena.get(mapped_type.readonly_token) {
+            match readonly_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => self.write("+readonly "),
+                k if k == SyntaxKind::MinusToken as u16 => self.write("-readonly "),
+                _ => self.write("readonly "),
+            }
+        }
+
+        self.write("[");
+        if let Some(type_param_node) = self.arena.get(mapped_type.type_parameter)
+            && let Some(type_param) = self.arena.get_type_parameter(type_param_node)
+        {
+            self.emit_node(type_param.name);
+            self.write(" in ");
+            if type_param.constraint.is_some() {
+                self.emit_mapped_type_constraint(type_param.constraint);
+            }
+        }
+
+        if mapped_type.name_type.is_some() {
+            self.emit_mapped_type_as_clause(mapped_type.name_type);
+        }
+
+        self.write("]");
+        if let Some(question_node) = self.arena.get(mapped_type.question_token) {
+            match question_node.kind {
+                k if k == SyntaxKind::PlusToken as u16 => self.write("+?"),
+                k if k == SyntaxKind::MinusToken as u16 => self.write("-?"),
+                _ => self.write("?"),
+            }
+        }
+
+        self.write(": ");
+        self.emit_mapped_type_value_type(mapped_type.type_node);
+        self.write("; }");
+    }
+
+    fn mapped_type_body_can_emit_inline(
+        &self,
+        mapped_type: &tsz_parser::parser::node::MappedTypeData,
+    ) -> bool {
+        self.arena.get(mapped_type.type_node).is_none_or(|node| {
+            node.kind != syntax_kind_ext::TYPE_LITERAL && node.kind != syntax_kind_ext::MAPPED_TYPE
+        })
     }
 
     fn expand_mapped_type_to_portable_properties(&self, type_idx: NodeIndex) -> Option<String> {
