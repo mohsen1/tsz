@@ -85,7 +85,8 @@ impl<'a> CheckerState<'a> {
 
         let source_fn = self.ctx.types.factory().function(normalize(source_shape));
         let target_fn = self.ctx.types.factory().function(normalize(target_shape));
-        self.is_assignable_to_with_env(source_fn, target_fn)
+        self.assign_relation_outcome_with_env(source_fn, target_fn)
+            .related
     }
 
     pub(crate) fn is_assignable_via_generator_never_yield_callback(

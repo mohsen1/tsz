@@ -153,3 +153,31 @@ fn call_finalize_aggregate_rest_recovery_uses_env_relation_outcome_boundary() {
         "aggregate rest recovery should not regress to raw env boolean guards"
     );
 }
+
+#[test]
+fn call_finalize_fresh_arg_recovery_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call_finalize.rs")
+        .expect("failed to read call_finalize.rs");
+    let helper_start = source
+        .find("let fresh_assignable =")
+        .expect("missing fresh assignability recovery block");
+    let helper_end = source[helper_start..]
+        .find("let excess_property_recovery =")
+        .map(|offset| helper_start + offset)
+        .expect("missing excess property recovery block");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "fresh call argument recovery should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "fresh call argument recovery should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("is_assignable_to_with_env("),
+        "fresh call argument recovery should not regress to raw env boolean assignability"
+    );
+}

@@ -364,7 +364,8 @@ impl<'a> CheckerState<'a> {
                                 })
                                 .unwrap_or(TypeId::UNKNOWN);
                             let fresh_assignable = self
-                                .is_assignable_to_with_env(arg_type, expected_param)
+                                .assign_relation_outcome_with_env(arg_type, expected_param)
+                                .related
                                 || self.is_assignable_via_contextual_signatures(
                                     arg_type,
                                     expected_param,
