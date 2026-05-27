@@ -1310,33 +1310,43 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(value_decl);
                 // NOTE: tsc 6.0 does NOT emit TS2585 based on target version.
                 // Value declarations from transitively loaded libs are available.
-                // Prefer value-declaration resolution for merged symbols so we pick
-                // the constructor-side type (e.g. Promise -> PromiseConstructor).
+                // Known lib globals model the value side through a constructor
+                // companion; use it before cross-arena value-declaration fallback.
                 //
                 // For cross-file ALIAS targets, route through the dedicated
                 // cross-file delegation so the local arena's collision with
                 // the target's NodeIndex (different node, same numeric id)
                 // doesn't return the wrong type.
-                let mut value_type =
-                    if let Some((target_sym_id, target_value_decl, target_file_idx)) =
-                        alias_target_merged_value_info
-                    {
-                        self.type_of_value_declaration_for_cross_file_symbol(
-                            target_sym_id,
-                            target_value_decl,
-                            target_file_idx,
-                        )
-                    } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
-                        && file_idx != self.ctx.current_file_idx
-                    {
-                        self.type_of_value_declaration_for_cross_file_symbol(
-                            sym_id,
-                            preferred_value_decl,
-                            file_idx,
-                        )
-                    } else {
-                        self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl)
-                    };
+                let lib_constructor_companion = if self.is_known_global_value_name(name)
+                    || tsz_binder::lib_loader::is_es2015_plus_type(name)
+                {
+                    let constructor_name = format!("{name}Constructor");
+                    self.resolve_lib_type_by_name(&constructor_name)
+                        .filter(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
+                } else {
+                    None
+                };
+                let mut value_type = if let Some(constructor_type) = lib_constructor_companion {
+                    constructor_type
+                } else if let Some((target_sym_id, target_value_decl, target_file_idx)) =
+                    alias_target_merged_value_info
+                {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        target_sym_id,
+                        target_value_decl,
+                        target_file_idx,
+                    )
+                } else if let Some(file_idx) = self.ctx.resolve_symbol_file_index(sym_id)
+                    && file_idx != self.ctx.current_file_idx
+                {
+                    self.type_of_value_declaration_for_cross_file_symbol(
+                        sym_id,
+                        preferred_value_decl,
+                        file_idx,
+                    )
+                } else {
+                    self.type_of_value_declaration_for_symbol(sym_id, preferred_value_decl)
+                };
                 if value_type == TypeId::UNKNOWN || value_type == TypeId::ERROR {
                     for &decl_idx in &symbol_declarations {
                         if decl_idx == preferred_value_decl {
