@@ -141,6 +141,25 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    fn collect_array_element_infer_type_param_names(
+        arena: &NodeArena,
+        root: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::ARRAY_TYPE
+                && let Some(array) = arena.get_array_type(node)
+            {
+                Self::collect_infer_type_param_names(arena, array.element_type, names);
+            }
+            stack.extend(arena.get_children(idx));
+        }
+    }
+
     fn collect_infer_type_param_name_from_node(
         arena: &NodeArena,
         node_idx: NodeIndex,
@@ -500,6 +519,11 @@ impl<'a> CheckerState<'a> {
                     );
                     let mut true_tuple_rest_guard_names = tuple_rest_guard_names.to_vec();
                     Self::collect_tuple_rest_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_tuple_rest_guard_names,
+                    );
+                    Self::collect_array_element_infer_type_param_names(
                         arena,
                         conditional.extends_type,
                         &mut true_tuple_rest_guard_names,

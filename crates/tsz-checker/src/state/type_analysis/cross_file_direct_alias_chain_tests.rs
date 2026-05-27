@@ -1312,6 +1312,40 @@ fn direct_source_file_type_alias_rejects_tuple_conditional_original_arg_recursio
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_array_element_conditional_recursion() {
+    with_two_file_state(
+        "type Exact<Left, Right> = [Left] extends [readonly any[]] ? [Right] extends [readonly any[]] ? [Left, Right] extends [readonly (infer LeftElement)[], readonly (infer RightElement)[]] ? Exact<LeftElement, RightElement> extends LeftElement ? Left : never : never : never : Left;\nexport type Result<Items extends readonly unknown[], Shape extends readonly unknown[]> = Exact<Items, Shape>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (result_ty, result_params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("array element inference structurally guards recursive aliases");
+            assert_ne!(result_ty, TypeId::UNKNOWN);
+            assert_ne!(result_ty, TypeId::ERROR);
+            assert_eq!(result_params.len(), 2, "Result should expose both params");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_array_conditional_original_arg_recursion() {
+    with_two_file_state(
+        "export type Loop<Items> = [Items] extends [readonly (infer Element)[]] ? Loop<Items> : Items;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "array-element conditionals only guard recursive calls that consume the inferred element",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
     with_two_file_state(
         "export type Loop = Loop | string;",
