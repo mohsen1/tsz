@@ -72,6 +72,31 @@ var x = exports.alpha;
 }
 
 #[test]
+fn test_shadowed_object_define_property_does_not_create_same_file_commonjs_export() {
+    let diagnostics = check_commonjs_single_file(
+        "self.js",
+        r#"
+const Object = {
+    defineProperty(target, key, descriptor) {
+        target[key] = descriptor.value;
+    }
+};
+
+Object.defineProperty(exports, "shadowed", { value: 1 });
+/** @type {string} */
+var s = exports.shadowed;
+"#,
+    );
+
+    assert!(
+        diagnostics
+            .iter()
+            .all(|(code, message)| *code != 2322 || !message.contains("number")),
+        "Expected shadowed local `Object.defineProperty` not to synthesize numeric CommonJS export `shadowed`, got: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_chained_undefined_export_assignment_reports_outer_implicit_any() {
     let diagnostics = check_commonjs_single_file(
         "self.js",

@@ -48,3 +48,15 @@ fn strict_object_paths_use_proven_global_identity_helper() {
         "`Object.assign` portability detection must not keep a local Object lib-symbol helper"
     );
 }
+
+#[test]
+fn arena_global_identity_helper_accepts_target_binder_lib_clones() {
+    let source = include_str!("../types/property_access_type/known_globals.rs");
+    assert!(
+        source
+            .matches("binder.lib_symbol_ids.contains(&sym_id)")
+            .count()
+            >= 2,
+        "arena-aware global identity helper must accept lib clones recorded on the target binder"
+    );
+}

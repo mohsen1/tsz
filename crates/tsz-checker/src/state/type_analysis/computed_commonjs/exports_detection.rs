@@ -770,10 +770,7 @@ impl<'a> CheckerState<'a> {
         }
         let callee = self.ctx.arena.get_access_expr(callee_node)?;
         let is_object_define_property = self
-            .ctx
-            .arena
-            .get_identifier_at(callee.expression)
-            .is_some_and(|ident| ident.escaped_text == "Object")
+            .identifier_resolves_to_unshadowed_global(callee.expression, "Object")
             && self
                 .ctx
                 .arena
