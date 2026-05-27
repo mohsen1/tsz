@@ -109,7 +109,7 @@ fn test_optional_parameter_property_emits_undefined_in_constructor_and_property(
 }
 
 #[test]
-fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined() {
+fn test_optional_parenthesized_parameter_property_strips_annotation_parens() {
     let output = emit_dts(
         r#"
     export class C {
@@ -118,14 +118,14 @@ fn test_optional_parenthesized_parameter_property_preserves_explicit_undefined()
     "#,
     );
 
-    // tsc 6.0.2 preserves user-written parens verbatim in .d.ts output.
+    // tsc strips user-written parens from annotation positions.
     assert!(
-        output.contains("x?: (string | undefined);"),
-        "Expected optional parameter property to preserve source parens: {output}"
+        output.contains("x?: string | undefined;"),
+        "Expected optional parameter property annotation parens stripped: {output}"
     );
     assert!(
-        output.contains("constructor(x?: (string | undefined));"),
-        "Expected constructor parameter to preserve source parens: {output}"
+        output.contains("constructor(x?: string | undefined);"),
+        "Expected constructor parameter annotation parens stripped: {output}"
     );
     assert!(
         !output.contains("(string | undefined) | undefined"),
