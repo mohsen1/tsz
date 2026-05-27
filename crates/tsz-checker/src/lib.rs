@@ -763,6 +763,9 @@ mod polymorphic_this_relation_routing_arch_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/private_member_relation_routing_arch_tests.rs"]
+mod private_member_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
