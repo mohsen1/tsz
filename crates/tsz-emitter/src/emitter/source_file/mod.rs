@@ -11,6 +11,8 @@ mod class_es5_field_initializer_tests;
 #[cfg(test)]
 mod class_expression_decorator_tests;
 #[cfg(test)]
+mod class_static_alias_tests;
+#[cfg(test)]
 mod decorator_metadata_tests;
 #[cfg(test)]
 mod derived_constructor_tests;
