@@ -221,3 +221,40 @@ fn async_body_hoists_function_and_nested_var_declarations() {
         "Nested async-body var declarations should hoist and leave initializer assignments in place.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn for_await_captured_iteration_binding_uses_plain_loop_helper() {
+    let output = emit_es5(
+        "async function* stream() { yield 1; }
+        function wait() { return Promise.resolve(); }
+        const log = console.log;
+        (async () => {
+            for await (const entry of stream()) {
+                log(`loop ${entry}`);
+                (async () => {
+                    const inner = entry;
+                    await wait();
+                    log(`inner ${inner} ${entry}`);
+                })();
+            }
+        })();",
+    );
+
+    assert!(
+        output.contains("_loop_1 = function ()"),
+        "Captured for-await iteration variables should get a per-iteration helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("var entry =") && output.contains("log(\"loop \".concat(entry));"),
+        "The captured binding should be local to the helper and template literals should lower with tsc's concat shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return __awaiter(void 0, void 0, void 0, function ()")
+            && output.contains("log(\"inner \".concat(inner, \" \").concat(entry));"),
+        "Nested async arrows inside the helper should still lower through __awaiter and close over the helper-local binding.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_loop_1();"),
+        "The async iterator state machine should call the helper for each awaited result.\nOutput:\n{output}"
+    );
+}

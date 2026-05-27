@@ -483,52 +483,34 @@ impl<'a> AsyncES5Transformer<'a> {
             return IRNode::StringLiteral("".to_string().into());
         };
 
-        // Get head (the initial string before first ${...})
-        let mut parts: Vec<IRNode> = Vec::new();
-        if let Some(head_node) = self.arena.get(template.head)
-            && let Some(lit) = self.arena.get_literal(head_node)
-            && !lit.text.is_empty()
-        {
-            parts.push(IRNode::StringLiteral(lit.text.clone().into()));
-        }
+        let head_text = self
+            .arena
+            .get(template.head)
+            .and_then(|head_node| self.arena.get_literal(head_node))
+            .map_or_else(String::new, |lit| lit.text.clone());
+        let mut result = IRNode::StringLiteral(head_text.into());
 
-        // Process template spans (expression + literal pairs)
         for &span_idx in &template.template_spans.nodes {
             let Some(span_node) = self.arena.get(span_idx) else {
                 continue;
             };
             if let Some(span) = self.arena.get_template_span(span_node) {
-                // Add the expression
-                parts.push(self.expression_to_ir(span.expression));
-
-                // Add the literal part after the expression
-                if let Some(lit_node) = self.arena.get(span.literal)
-                    && let Some(lit) = self.arena.get_literal(lit_node)
-                    && !lit.text.is_empty()
-                {
-                    parts.push(IRNode::StringLiteral(lit.text.clone().into()));
+                let mut arguments = vec![self.expression_to_ir(span.expression)];
+                let literal_text = self
+                    .arena
+                    .get(span.literal)
+                    .and_then(|lit_node| self.arena.get_literal(lit_node))
+                    .map_or_else(String::new, |lit| lit.text.clone());
+                if !literal_text.is_empty() {
+                    arguments.push(IRNode::StringLiteral(literal_text.into()));
                 }
+                result = IRNode::CallExpr {
+                    callee: Box::new(IRNode::prop(result, "concat")),
+                    arguments,
+                };
             }
         }
 
-        // If there's only one part, return it directly
-        if parts.len() == 1 {
-            return parts.remove(0);
-        }
-
-        // Otherwise, build a concatenation chain: part1 + part2 + part3 + ...
-        if parts.is_empty() {
-            return IRNode::StringLiteral("".to_string().into());
-        }
-
-        let mut result = parts.remove(0);
-        for part in parts {
-            result = IRNode::BinaryExpr {
-                left: Box::new(result),
-                operator: "+".to_string().into(),
-                right: Box::new(part),
-            };
-        }
         result
     }
 
