@@ -8,6 +8,7 @@ import {
   forceWithLeaseArgForOid,
   formatResult,
   hasPendingPlaceholderQueueStatus,
+  normalizePullRequestState,
   normalizeRestPullRequest,
   normalizeRestWorkflowRun,
   pendingQueueRun,
@@ -82,6 +83,21 @@ assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123-a56115a-m4c"), 1
 assert.equal(queueBranchPrNumber("automation/merge-queue/pr-123/extra"), null);
 assert.equal(queueBranchPrNumber("automation/merge-queue/not-pr-123"), null);
 assert.equal(queueBranchPrNumber("custom/queue/pr-456", "custom/queue"), 456);
+
+assert.deepEqual(normalizePullRequestState({
+  number: 10271,
+  state: "closed",
+  merged_at: "2026-05-26T20:01:52Z",
+  updated_at: "2026-05-26T20:02:00Z",
+  labels: [{ name: "agent:Studio-E" }],
+}), {
+  number: 10271,
+  state: "closed",
+  merged: true,
+  updatedAt: "2026-05-26T20:02:00Z",
+  owner: "agent:Studio-E",
+});
+
 assert.equal(
   forceWithLeaseArgForOid("automation/merge-queue/pr-123", "a".repeat(40)),
   `--force-with-lease=refs/heads/automation/merge-queue/pr-123:${"a".repeat(40)}`,

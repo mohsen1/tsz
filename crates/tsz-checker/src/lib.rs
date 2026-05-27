@@ -109,6 +109,9 @@ mod async_imported_promise_tests;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
+mod class_implements_index_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]
@@ -442,17 +445,26 @@ mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_context_relation_routing_arch_tests.rs"]
+mod call_context_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]
 #[path = "tests/callable_interface_assignment_tests.rs"]
 mod callable_interface_assignment_tests;
 #[cfg(test)]
+#[path = "tests/callable_union_relation_routing_arch_tests.rs"]
+mod callable_union_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
 #[path = "tests/class_feature_target_gates_tests.rs"]
 mod class_feature_target_gates_tests;
+#[cfg(test)]
+#[path = "tests/class_implements_jsdoc_heritage_relation_routing_arch_tests.rs"]
+mod class_implements_jsdoc_heritage_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
@@ -673,6 +685,9 @@ mod mapped_infer_with_substitution_tests;
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]
+#[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
+mod merged_interface_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
 #[cfg(test)]
@@ -748,6 +763,9 @@ mod relation_flags_boundary_contract_tests;
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
 #[cfg(test)]
+#[path = "tests/return_context_promise_identity_tests.rs"]
+mod return_context_promise_identity_tests;
+#[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
 #[cfg(test)]
@@ -813,6 +831,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
+#[cfg(test)]
+#[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
+mod union_constraint_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;
