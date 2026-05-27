@@ -362,6 +362,86 @@ fn strict_readonly_identity_partitions_cache_entries() {
     );
 }
 
+#[test]
+fn subtype_cache_strict_readonly_identity_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let prop = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::readonly(prop, TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
+
+    let ordinary = RelationPolicy::from_flags(0);
+    let strict_readonly =
+        RelationPolicy::from_flags(RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16);
+    let ordinary_key = RelationCacheKey::for_subtype(source, target, ordinary.cache_config());
+    let strict_key = RelationCacheKey::for_subtype(source, target, strict_readonly.cache_config());
+
+    assert_ne!(
+        ordinary_key, strict_key,
+        "ordinary and strict-readonly identity policies must occupy distinct cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_readonly,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary structural relation should ignore property readonly",
+    );
+    assert!(
+        !strict_uncached,
+        "identity-style relation should treat property readonly as observable",
+    );
+
+    assert_eq!(
+        db.is_subtype_of_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary readonly policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary readonly result must be stored in the ordinary slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        None,
+        "strict-readonly lookup must not hit the ordinary slot",
+    );
+
+    assert_eq!(
+        db.is_subtype_of_with_policy(source, target, strict_readonly),
+        strict_uncached,
+        "cached strict-readonly policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        Some(strict_uncached),
+        "strict-readonly result must be stored in the strict slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary slot must remain intact after the strict-readonly lookup",
+    );
+}
+
 // =============================================================================
 // Sound-mode cache slot isolation
 //
