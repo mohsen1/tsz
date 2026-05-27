@@ -5,10 +5,12 @@ relaunching a lane under the same canonical `AgentName`.
 
 Every session starts by reading its own goal file from repo source, then keeps
 using that file as the remote-control surface. If live PRs still carry the
-lane's `agent:*` label, finish, close with evidence, or hand them off before
-new issue work. If no lane PRs are open, start from that lane's metric and bug
-intake. Cleanup work must ratchet a named metric down or unblock one of the
-listed release gates.
+lane's `agent:*` label, finish them, enqueue them, document the blocker, close
+with evidence, or hand them off before new issue work. Agents should not park
+drafts and start fresh PRs; owned open PRs are the current work queue. If no
+lane PRs are open or actionable, start from that lane's metric and bug intake.
+Cleanup work must ratchet a named metric down or unblock one of the listed
+release gates.
 
 ## M1
 
