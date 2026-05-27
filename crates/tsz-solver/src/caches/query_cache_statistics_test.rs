@@ -1,6 +1,6 @@
 //! Query cache statistics and size-accounting coverage tests.
 
-use crate::caches::db::QueryDatabase;
+use crate::caches::db::{QueryDatabase, TypeApplicationEvalCache};
 use crate::caches::instantiation_cache::{CanonicalSubst, InstantiationCacheKey};
 use crate::caches::query_cache::{QueryCache, QueryCacheStatistics, SharedQueryCache};
 use crate::def::DefId;

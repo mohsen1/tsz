@@ -42,6 +42,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 std::iter::empty(),
                 false,
                 self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                Some(self.ctx.types),
             )
             .result;
         let base_type = if evaluated_base != TypeId::ERROR {
