@@ -197,6 +197,21 @@ pub(crate) fn contextual_function_callable_union_members(
     callable_members
 }
 
+/// Return true when the source is an intersection that directly contains the
+/// target as one of its constituents.
+///
+/// This preserves the solver intersection law `(A & B) <: A` before checker
+/// assignability preparation evaluates a large alias intersection into an
+/// expansive representation.
+pub(crate) fn intersection_source_has_target_constituent(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    target: TypeId,
+) -> bool {
+    tsz_solver::type_queries::get_intersection_members(db, source)
+        .is_some_and(|members| members.contains(&target))
+}
+
 pub(crate) fn contextual_callable_member_failure_is_generic_parameter_drift(
     db: &dyn TypeDatabase,
     failure: Option<&super::relation_types::RelationFailure>,
@@ -810,7 +825,7 @@ pub(crate) fn are_types_overlapping_with_env(
 ) -> bool {
     let mut flags: u16 = 0;
     if strict_null_checks {
-        flags |= tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
+        flags |= RelationFlags::STRICT_NULL_CHECKS;
     }
 
     let policy = tsz_solver::relations::relation_queries::RelationPolicy::from_flags(flags);

@@ -193,13 +193,26 @@ impl<'a> CheckerState<'a> {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
         }
-        if crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
+        // A `keyof` target only widens the source literal in the message when the
+        // key set has no literal context. A concrete `keyof R` (operand is a plain
+        // object type) reduces to a finite unit-literal key set (`"a" | "b"`,
+        // `unique symbol | "str"`) that provides a literal context, so tsc renders
+        // the source literal as-written. A generic/deferred `keyof T` (operand is a
+        // mapped/computed type whose keys cannot be statically enumerated) has the
+        // apparent key universe `string | number | symbol` and no literal context,
+        // so tsc widens the source to its primitive base. Gate the keyof widening
+        // paths on the operand NOT being a concrete object so concrete key unions
+        // keep the source literal spelling.
+        let keyof_target_widens_source = !self.keyof_target_has_concrete_object_operand(target);
+        if keyof_target_widens_source
+            && crate::query_boundaries::common::literal_value(self.ctx.types, source).is_some()
             && self.keyof_type_alias_body_display(target).is_some()
         {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
         }
-        if let Some(target_expr) = self.assignment_target_expression(anchor_idx)
+        if keyof_target_widens_source
+            && let Some(target_expr) = self.assignment_target_expression(anchor_idx)
             && self
                 .keyof_type_alias_annotation_display_for_expression(target_expr)
                 .is_some()
@@ -207,7 +220,8 @@ impl<'a> CheckerState<'a> {
             let widened = self.widen_type_for_display(source);
             return self.format_assignability_type_for_message(widened, target);
         }
-        if let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
+        if keyof_target_widens_source
+            && let Some(annotation) = self.direct_assignment_target_annotation_text(anchor_idx)
             && self
                 .keyof_type_alias_annotation_display(&annotation)
                 .is_some()

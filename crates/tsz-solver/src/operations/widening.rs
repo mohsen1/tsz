@@ -869,7 +869,23 @@ pub fn widen_literal_type(db: &dyn crate::construction::TypeDatabase, type_id: T
             let members = origin_members
                 .as_deref()
                 .map_or(canonical_members.as_ref(), Vec::as_slice);
-            let mapped: Vec<TypeId> = members.iter().map(|&m| widen_literal_type(db, m)).collect();
+            let mut mapped = None;
+            for (index, &member) in members.iter().enumerate() {
+                let widened = widen_literal_type(db, member);
+                if widened != member && mapped.is_none() {
+                    let mut out = Vec::with_capacity(members.len());
+                    out.extend_from_slice(&members[..index]);
+                    mapped = Some(out);
+                }
+                if let Some(mapped) = mapped.as_mut() {
+                    mapped.push(widened);
+                }
+            }
+
+            let Some(mapped) = mapped else {
+                return type_id;
+            };
+
             let result = db.union(mapped.clone());
             display_provenance::record_union_origin(
                 db,

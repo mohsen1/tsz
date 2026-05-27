@@ -4,7 +4,7 @@
 
 use crate::types::*;
 use crate::{
-    evaluation::evaluate::evaluate_type,
+    evaluation::evaluate::{evaluate_index_access, evaluate_type},
     intern::TypeInterner,
     relations::subtype::SubtypeChecker,
     type_queries::{
@@ -80,6 +80,130 @@ fn test_mapped_type_as_never_skips_property() {
         matches!(interner.lookup(result), Some(TypeData::Mapped(_))),
         "Expected mapped type (deferred due to unresolved K), got {:?}",
         interner.lookup(result)
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_indexes_matching_literal() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::NUMBER,
+    )]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let result = evaluate_index_access(&interner, mapped, interner.literal_string("axyz"));
+    assert_eq!(
+        result,
+        TypeId::NUMBER,
+        "mapped template-pattern keys should resolve matching pattern indexes"
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_preserves_per_source_value_type() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+    ]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Type(TypeId::STRING),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("axyz")),
+        TypeId::NUMBER
+    );
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("bxyz")),
+        TypeId::STRING
+    );
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("cxyz")),
+        TypeId::UNDEFINED
+    );
+}
+
+#[test]
+fn remapped_template_pattern_key_matches_renamed_iteration_param_with_suffix() {
+    let interner = TypeInterner::new();
+
+    let source = interner.object(vec![PropertyInfo::new(
+        interner.intern_string("a"),
+        TypeId::BOOLEAN,
+    )]);
+    let key_space = interner.keyof(source);
+
+    let key_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(key_space),
+        default: None,
+        is_const: false,
+    };
+    let key_type = interner.type_param(key_param);
+    let remapped_pattern = interner.template_literal(vec![
+        TemplateSpan::Text(interner.intern_string("pre_")),
+        TemplateSpan::Type(interner.intersection2(TypeId::STRING, key_type)),
+        TemplateSpan::Text(interner.intern_string("_")),
+        TemplateSpan::Type(TypeId::STRING),
+        TemplateSpan::Text(interner.intern_string("_post")),
+    ]);
+
+    let mapped = interner.mapped(MappedType {
+        type_param: key_param,
+        constraint: key_space,
+        name_type: Some(remapped_pattern),
+        template: interner.index_access(source, key_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    assert_eq!(
+        evaluate_index_access(&interner, mapped, interner.literal_string("pre_a_mid_post")),
+        TypeId::BOOLEAN
     );
 }
 
@@ -1077,5 +1201,130 @@ fn test_keyof_generic_remapped_mapped_type_keeps_concrete_lower_bound_keys() {
         checker.is_subtype_of(interner.unique_symbol(sym_ref), keyof_mapped),
         "lower-bound unique symbol key should survive remapped keyof, got {:?}",
         interner.lookup(keyof_mapped)
+    );
+}
+
+fn assert_union_members(
+    interner: &TypeInterner,
+    actual: TypeId,
+    expected: &[TypeId],
+    context: &str,
+) {
+    let members =
+        crate::type_queries::get_union_members(interner, actual).unwrap_or_else(|| vec![actual]);
+    assert_eq!(
+        members.len(),
+        expected.len(),
+        "{context}: expected {} union members, got {:?}",
+        expected.len(),
+        members
+            .iter()
+            .map(|member| interner.lookup(*member))
+            .collect::<Vec<_>>()
+    );
+    for expected_member in expected {
+        assert!(
+            members.contains(expected_member),
+            "{context}: expected member {:?}, got {:?}",
+            interner.lookup(*expected_member),
+            members
+                .iter()
+                .map(|member| interner.lookup(*member))
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+fn evaluated_remapped_property_type(
+    interner: &TypeInterner,
+    iter_name: &str,
+    source: TypeId,
+    name_type: TypeId,
+    property_name: &str,
+) -> TypeId {
+    let iter_info = TypeParamInfo {
+        name: interner.intern_string(iter_name),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.intern(TypeData::TypeParameter(iter_info));
+    let mapped = interner.mapped(MappedType {
+        type_param: iter_info,
+        constraint: interner.keyof(source),
+        name_type: Some(name_type),
+        template: interner.index_access(source, iter_type),
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let evaluated = evaluate_type(interner, mapped);
+    crate::type_queries::get_raw_property_type(
+        interner,
+        evaluated,
+        interner.intern_string(property_name),
+    )
+    .unwrap_or_else(|| {
+        panic!(
+            "expected evaluated mapped property `{property_name}`, got {:?}",
+            interner.lookup(evaluated)
+        )
+    })
+}
+
+#[test]
+fn remapped_key_collisions_union_value_types_for_each_iteration_key_name() {
+    for iter_name in ["K", "P"] {
+        let interner = TypeInterner::new();
+        let collapsed_name = interner.literal_string("all");
+        let source = interner.object(vec![
+            PropertyInfo::new(interner.intern_string("a"), TypeId::NUMBER),
+            PropertyInfo::new(interner.intern_string("b"), TypeId::STRING),
+            PropertyInfo::new(interner.intern_string("c"), TypeId::BOOLEAN),
+        ]);
+
+        let prop_type =
+            evaluated_remapped_property_type(&interner, iter_name, source, collapsed_name, "all");
+
+        assert_union_members(
+            &interner,
+            prop_type,
+            &[TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN],
+            iter_name,
+        );
+    }
+}
+
+#[test]
+fn conditional_remap_collisions_union_value_types_from_both_branches() {
+    let interner = TypeInterner::new();
+    let iter_info = TypeParamInfo {
+        name: interner.intern_string("Q"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let iter_type = interner.intern(TypeData::TypeParameter(iter_info));
+    let source = interner.object(vec![
+        PropertyInfo::new(interner.intern_string("x"), TypeId::NUMBER),
+        PropertyInfo::new(interner.intern_string("y"), TypeId::STRING),
+    ]);
+    let source_value = interner.index_access(source, iter_type);
+    let collapsed_name = interner.literal_string("bucket");
+    let name_type = interner.conditional(ConditionalType {
+        check_type: source_value,
+        extends_type: TypeId::NUMBER,
+        true_type: collapsed_name,
+        false_type: collapsed_name,
+        is_distributive: false,
+    });
+
+    let prop_type = evaluated_remapped_property_type(&interner, "Q", source, name_type, "bucket");
+
+    assert_union_members(
+        &interner,
+        prop_type,
+        &[TypeId::STRING, TypeId::NUMBER],
+        "conditional collision",
     );
 }

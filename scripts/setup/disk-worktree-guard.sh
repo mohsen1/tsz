@@ -15,8 +15,8 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd -P)"
 REPO_PARENT="$(dirname "$REPO_ROOT")"
 WORKTREE_PARENT="$REPO_PARENT"
 
@@ -119,6 +119,12 @@ reuse_candidates="$(
         [[ "$wt" == "$WORKTREE_PARENT"/* ]] || continue
         [[ "$wt" != "$REPO_ROOT" ]] || continue
         [[ -d "$wt" ]] || continue
+
+        dirty="$(
+          git -C "$wt" status --porcelain --untracked-files=normal 2>/dev/null \
+            || printf '__status_failed__\n'
+        )"
+        [[ -z "$dirty" ]] || continue
 
         recent="$(
           find "$wt" \

@@ -1386,6 +1386,42 @@ pub const fn compute_mapped_modifiers(
     (optional, readonly)
 }
 
+/// Merge mapped properties whose `as` clause remaps multiple source keys to
+/// the same output key. TypeScript unions all value contributions for a
+/// colliding key instead of letting a later source key overwrite an earlier one.
+pub fn merge_colliding_mapped_properties(
+    db: &dyn TypeDatabase,
+    properties: &mut Vec<PropertyInfo>,
+) {
+    if properties.len() < 2 {
+        return;
+    }
+
+    let mut merged = Vec::with_capacity(properties.len());
+    let mut by_name: FxHashMap<Atom, usize> = FxHashMap::default();
+
+    for property in properties.drain(..) {
+        if let Some(&existing_index) = by_name.get(&property.name) {
+            let existing: &mut PropertyInfo = &mut merged[existing_index];
+            existing.type_id = db.union_preserve_members(vec![existing.type_id, property.type_id]);
+            existing.write_type =
+                db.union_preserve_members(vec![existing.write_type, property.write_type]);
+            existing.optional &= property.optional;
+            existing.readonly &= property.readonly;
+            existing.is_method &= property.is_method;
+            existing.is_string_named &= property.is_string_named;
+            existing.is_symbol_named &= property.is_symbol_named;
+            existing.single_quoted_name &= property.single_quoted_name;
+            existing.declaration_order = existing.declaration_order.min(property.declaration_order);
+        } else {
+            by_name.insert(property.name, merged.len());
+            merged.push(property);
+        }
+    }
+
+    *properties = merged;
+}
+
 /// Collect source property info from a homomorphic mapped type's source object.
 ///
 /// For a mapped type `{ [K in keyof T]: ... }`, this resolves `T` and collects
@@ -1729,6 +1765,7 @@ pub fn expand_mapped_type_to_properties(
         }
     }
 
+    merge_colliding_mapped_properties(db, &mut properties);
     properties
 }
 

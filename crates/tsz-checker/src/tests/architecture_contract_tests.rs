@@ -5516,16 +5516,16 @@ fn test_namespace_checker_no_raw_lazy_construction() {
 /// `RelationOutcome` helpers instead of locally constructing relation requests.
 #[test]
 fn test_assignability_diagnostics_route_through_relation_outcome_helpers() {
-    let checker_src = fs::read_to_string("src/assignability/assignability_checker.rs")
-        .expect("failed to read src/assignability/assignability_checker.rs");
+    let relation_src = fs::read_to_string("src/assignability/assignability_relation.rs")
+        .expect("failed to read src/assignability/assignability_relation.rs");
     for helper in [
         "fn assign_relation_outcome",
         "fn call_arg_relation_outcome",
         "fn bivariant_callbacks_relation_outcome",
     ] {
         assert!(
-            checker_src.contains(helper),
-            "assignability_checker.rs must expose {helper} for diagnostic relation decisions"
+            relation_src.contains(helper),
+            "assignability_relation.rs must expose {helper} for diagnostic relation decisions"
         );
     }
 

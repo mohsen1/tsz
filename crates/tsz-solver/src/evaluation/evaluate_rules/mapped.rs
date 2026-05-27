@@ -746,6 +746,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
+
         self.sort_mapped_properties_for_display(
             source_object,
             resolved_source_id,
@@ -962,6 +964,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
         }
+
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
 
         Some(self.interner().object(properties))
     }

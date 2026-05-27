@@ -518,6 +518,11 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 return Some(inferred);
             }
+            if let Some(inferred) =
+                self.constructor_option_object_new_expression_type_text(new_expr, &base_text)
+            {
+                return Some(inferred);
+            }
             if let Some(type_id) = self.get_node_type_or_names(&[expr_idx]) {
                 let inferred = self.print_type_id_for_inferred_declaration(type_id);
                 if inferred.starts_with(&format!("{base_text}<")) {
@@ -747,6 +752,300 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    fn constructor_option_object_new_expression_type_text(
+        &self,
+        new_expr: &tsz_parser::parser::node::CallExprData,
+        base_text: &str,
+    ) -> Option<String> {
+        let args = new_expr.arguments.as_ref()?;
+        if args.nodes.is_empty() {
+            return None;
+        }
+
+        let ident = self.get_identifier_text(new_expr.expression)?;
+        let sym_id = self.resolve_identifier_symbol(new_expr.expression, &ident)?;
+        let symbol = self.binder.and_then(|binder| binder.symbols.get(sym_id))?;
+        if symbol.flags & symbol_flags::CLASS == 0 {
+            return None;
+        }
+
+        for &decl_idx in &symbol.declarations {
+            let decl_node = self.arena.get(decl_idx)?;
+            let class_data = self.arena.get_class(decl_node)?;
+            let type_parameters = class_data.type_parameters.as_ref()?;
+            if type_parameters.nodes.is_empty() {
+                continue;
+            }
+
+            let type_param_names = self.collect_type_param_names(type_parameters);
+            let mut inferred = FxHashMap::default();
+            for ctor_idx in class_data.members.nodes.iter().copied() {
+                let Some(ctor_node) = self.arena.get(ctor_idx) else {
+                    continue;
+                };
+                if ctor_node.kind != syntax_kind_ext::CONSTRUCTOR {
+                    continue;
+                }
+                let Some(ctor) = self.arena.get_constructor(ctor_node) else {
+                    continue;
+                };
+                self.infer_constructor_option_object_type_arguments(
+                    ctor,
+                    args,
+                    &type_param_names,
+                    &mut inferred,
+                );
+            }
+
+            if inferred.is_empty() {
+                continue;
+            }
+
+            let inferred_args = type_param_names
+                .iter()
+                .map(|type_param_name| {
+                    inferred.get(type_param_name).cloned().or_else(|| {
+                        self.class_type_parameter_default_text(type_param_name, type_parameters)
+                    })
+                })
+                .map(|type_text| type_text.unwrap_or_else(|| "unknown".to_string()))
+                .collect::<Vec<_>>();
+            if inferred_args
+                .iter()
+                .any(|arg| arg.is_empty() || arg == "any")
+            {
+                continue;
+            }
+
+            return Some(format!("{base_text}<{}>", inferred_args.join(", ")));
+        }
+
+        None
+    }
+
+    fn infer_constructor_option_object_type_arguments(
+        &self,
+        ctor: &tsz_parser::parser::node::ConstructorData,
+        args: &NodeList,
+        class_type_param_names: &[String],
+        inferred: &mut FxHashMap<String, String>,
+    ) {
+        for (&param_idx, &arg_idx) in ctor.parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = self.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.type_annotation.is_some() {
+                continue;
+            }
+
+            let Some(arg_idx) = self.skip_parenthesized_expression(arg_idx) else {
+                continue;
+            };
+            let Some(arg_node) = self.arena.get(arg_idx) else {
+                continue;
+            };
+            if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+
+            let Some(param_type_node) = self.arena.get(param.type_annotation) else {
+                continue;
+            };
+            if param_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+                continue;
+            }
+            let Some(type_ref) = self.arena.get_type_ref(param_type_node) else {
+                continue;
+            };
+            let Some(mut option_type_sym_id) =
+                self.declaration_type_symbol_from_type_node(self.arena, param.type_annotation)
+            else {
+                continue;
+            };
+            if let Some(binder) = self.binder {
+                option_type_sym_id = self
+                    .resolve_portability_import_alias(option_type_sym_id, binder)
+                    .unwrap_or(option_type_sym_id);
+                option_type_sym_id =
+                    self.resolve_portability_declaration_symbol(option_type_sym_id, binder);
+            }
+
+            let Some(object_literal) = self.arena.get_literal_expr(arg_node) else {
+                continue;
+            };
+            for member_idx in object_literal.elements.nodes.iter().copied() {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member_name_idx) = self.object_literal_member_name_idx(member_node) else {
+                    continue;
+                };
+                let Some(member_name) = self.object_literal_member_name_text(member_name_idx)
+                else {
+                    continue;
+                };
+                let Some(type_param_name) = self.constructor_option_member_class_type_param_name(
+                    option_type_sym_id,
+                    &member_name,
+                    type_ref.type_arguments.as_ref(),
+                    class_type_param_names,
+                ) else {
+                    continue;
+                };
+                if inferred.contains_key(&type_param_name) {
+                    continue;
+                }
+                let Some(initializer) = self.object_literal_member_initializer(member_node) else {
+                    continue;
+                };
+                let Some(type_text) = self
+                    .preferred_expression_type_text(initializer)
+                    .or_else(|| self.infer_fallback_type_text_at(initializer, 0))
+                    .filter(|text| !text.is_empty() && text != "any")
+                else {
+                    continue;
+                };
+                inferred.insert(type_param_name, type_text);
+            }
+        }
+    }
+
+    fn constructor_option_member_class_type_param_name(
+        &self,
+        option_type_sym_id: SymbolId,
+        member_name: &str,
+        option_type_arguments: Option<&NodeList>,
+        class_type_param_names: &[String],
+    ) -> Option<String> {
+        let (member_type_text, option_type_param_names) = self
+            .type_member_source_annotation_text_and_type_params(option_type_sym_id, member_name)?;
+        let member_type_name = Self::simple_type_reference_name(&member_type_text)?;
+        if class_type_param_names
+            .iter()
+            .any(|name| name == &member_type_name)
+        {
+            return Some(member_type_name);
+        }
+
+        let position = option_type_param_names
+            .iter()
+            .position(|name| name == &member_type_name)?;
+        let option_type_arg = option_type_arguments
+            .and_then(|type_args| type_args.nodes.get(position).copied())
+            .and_then(|arg_idx| self.simple_type_argument_source_text(arg_idx))?;
+        class_type_param_names
+            .iter()
+            .any(|name| name == &option_type_arg)
+            .then_some(option_type_arg)
+    }
+
+    fn type_member_source_annotation_text_and_type_params(
+        &self,
+        type_sym_id: SymbolId,
+        member_name: &str,
+    ) -> Option<(String, Vec<String>)> {
+        self.with_symbol_declarations(type_sym_id, |source_arena, decl_idx| {
+            let decl_idx = Self::annotation_bearing_declaration_from_arena(source_arena, decl_idx)
+                .unwrap_or(decl_idx);
+            let decl_node = source_arena.get(decl_idx)?;
+            let mut members: Vec<NodeIndex> = Vec::new();
+            let type_param_names = if let Some(interface) = source_arena.get_interface(decl_node) {
+                members.extend(interface.members.nodes.iter().copied());
+                self.collect_optional_type_param_names_from_arena(
+                    source_arena,
+                    interface.type_parameters.as_ref(),
+                )
+            } else if let Some(class_decl) = source_arena.get_class(decl_node) {
+                members.extend(class_decl.members.nodes.iter().copied());
+                self.collect_optional_type_param_names_from_arena(
+                    source_arena,
+                    class_decl.type_parameters.as_ref(),
+                )
+            } else if let Some(type_alias) = source_arena.get_type_alias(decl_node) {
+                if let Some(type_node) = source_arena.get(type_alias.type_node)
+                    && type_node.kind == syntax_kind_ext::TYPE_LITERAL
+                    && let Some(type_literal) = source_arena.get_type_literal(type_node)
+                {
+                    members.extend(type_literal.members.nodes.iter().copied());
+                }
+                self.collect_optional_type_param_names_from_arena(
+                    source_arena,
+                    type_alias.type_parameters.as_ref(),
+                )
+            } else {
+                Vec::new()
+            };
+
+            for member_idx in members {
+                let Some(member_node) = source_arena.get(member_idx) else {
+                    continue;
+                };
+                let annotation = if let Some(signature) = source_arena.get_signature(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, signature.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && signature.type_annotation.is_some()
+                {
+                    Some(signature.type_annotation)
+                } else if let Some(prop_decl) = source_arena.get_property_decl(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, prop_decl.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && prop_decl.type_annotation.is_some()
+                {
+                    Some(prop_decl.type_annotation)
+                } else if let Some(accessor) = source_arena.get_accessor(member_node)
+                    && self
+                        .property_name_text_from_arena(source_arena, accessor.name)
+                        .as_deref()
+                        == Some(member_name)
+                    && accessor.type_annotation.is_some()
+                {
+                    Some(accessor.type_annotation)
+                } else {
+                    None
+                };
+                let Some(annotation) = annotation else {
+                    continue;
+                };
+                let raw = self
+                    .source_slice_from_arena(source_arena, annotation)
+                    .or_else(|| self.emit_type_node_text_from_arena(source_arena, annotation))?;
+                return Some((
+                    raw.trim().trim_end_matches(';').trim().to_string(),
+                    type_param_names,
+                ));
+            }
+
+            None
+        })
+    }
+
+    fn collect_optional_type_param_names_from_arena(
+        &self,
+        source_arena: &NodeArena,
+        type_params: Option<&NodeList>,
+    ) -> Vec<String> {
+        type_params
+            .map(|params| {
+                params
+                    .nodes
+                    .iter()
+                    .filter_map(|&param_idx| {
+                        let param_node = source_arena.get(param_idx)?;
+                        let param = source_arena.get_type_parameter(param_node)?;
+                        self.identifier_text_from_arena(source_arena, param.name)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn relaxed_jsdoc_param_type_for_parameter(

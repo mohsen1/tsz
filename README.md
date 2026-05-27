@@ -83,14 +83,14 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [███████████████████░] 94.8% (12,820 / 13,530 tests)
-Declaration: [██████████████████░░] 91.7% (1,531 / 1,669 tests)
+JavaScript:  [███████████████████░] 96.8% (13,094 / 13,530 tests)
+Declaration: [███████████████████░] 96.2% (1,606 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
-The checked-in emit snapshot is newer than the public block above:
-JavaScript `13,094 / 13,530`, declaration `1,606 / 1,669`. Refresh this block
-from the current CI artifact before publishing a release claim.
+This block is generated from the checked-in emit artifact with
+`python3 scripts/refresh-readme.py --write`; release claims should cite the
+current CI artifact.
 
 ### Language Service
 

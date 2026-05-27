@@ -131,6 +131,12 @@ pub struct DeclarationEmitter<'a> {
     /// use `:` annotation form (`readonly name: "value"`) when this flag is
     /// set.
     pub(super) in_object_type_class_body: bool,
+    /// Constructor reference currently being rendered as an object type.
+    ///
+    /// JS declaration emit elides unannotated methods that construct the same
+    /// recursive surface (`new module.exports.Root()`) while printing the
+    /// member return type, before the object type text is finalized.
+    pub(super) object_type_recursive_constructor_reference: Option<String>,
     /// Track function names that have overload signatures (to skip implementation signatures)
     pub(super) function_names_with_overloads: FxHashSet<String>,
     /// Track whether current class has constructor overloads (to skip implementation constructor)

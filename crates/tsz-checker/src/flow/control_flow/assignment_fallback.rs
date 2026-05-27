@@ -19,10 +19,6 @@ use tsz_scanner::SyntaxKind;
 use tsz_solver::{CallSignature, CallableShape, ParamInfo, PropertyInfo, SymbolRef, TypeId};
 
 impl<'a> FlowAnalyzer<'a> {
-    fn is_builtin_promise_like_name(name: &str) -> bool {
-        name == "Promise" || name == "PromiseLike"
-    }
-
     pub(super) fn assigned_type_for_await_rhs(
         &self,
         rhs: NodeIndex,
@@ -699,7 +695,7 @@ impl<'a> FlowAnalyzer<'a> {
                 .and_then(|node| self.arena.get_function(node))
                 .is_some_and(|func| {
                     func.type_annotation.is_some()
-                        && self.type_annotation_looks_like_promise(func.type_annotation)
+                        && self.type_annotation_is_awaitable(func.type_annotation)
                 })
     }
 
@@ -710,27 +706,17 @@ impl<'a> FlowAnalyzer<'a> {
             .is_some_and(|func| func.is_async)
     }
 
-    fn type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
-        let Some(node) = self.arena.get(type_annotation) else {
+    fn type_annotation_is_awaitable(&self, type_annotation: NodeIndex) -> bool {
+        let Some(annotation_type) = self
+            .node_types
+            .and_then(|nt| nt.get(&type_annotation.0).copied())
+            .filter(|&ty| ty != TypeId::ERROR)
+            .or_else(|| self.fallback_type_from_type_node_syntax(type_annotation))
+        else {
             return false;
         };
 
-        let Some(type_ref) = self.arena.get_type_ref(node) else {
-            return false;
-        };
-        let Some(name_node) = self.arena.get(type_ref.type_name) else {
-            return false;
-        };
-
-        if let Some(ident) = self.arena.get_identifier(name_node) {
-            return Self::is_builtin_promise_like_name(ident.escaped_text.as_str());
-        }
-
-        self.arena
-            .get_qualified_name(name_node)
-            .and_then(|qualified| self.arena.get(qualified.right))
-            .and_then(|node| self.arena.get_identifier(node))
-            .is_some_and(|ident| Self::is_builtin_promise_like_name(ident.escaped_text.as_str()))
+        self.awaited_type_from_type(annotation_type).is_some()
     }
 
     fn call_return_type_from_type(&self, ty: TypeId) -> Option<TypeId> {

@@ -562,6 +562,12 @@ impl<'a> CheckerState<'a> {
             return fallback_type;
         };
 
+        if let Some(raw_application) =
+            self.recursive_mapped_alias_application_ts2403_type(annotation_idx)
+        {
+            return raw_application;
+        }
+
         if ann_node.kind == syntax_kind_ext::TYPE_REFERENCE
             && let Some(type_ref) = self.ctx.arena.get_type_ref(ann_node)
             && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
@@ -616,6 +622,92 @@ impl<'a> CheckerState<'a> {
         }
 
         fallback_type
+    }
+
+    fn recursive_mapped_alias_application_ts2403_type(
+        &mut self,
+        annotation_idx: NodeIndex,
+    ) -> Option<TypeId> {
+        let ann_node = self.ctx.arena.get(annotation_idx)?;
+        if ann_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let type_ref = self.ctx.arena.get_type_ref(ann_node)?;
+        let args = type_ref.type_arguments.as_ref()?;
+        if args.nodes.is_empty() {
+            return None;
+        }
+        let crate::symbol_resolver::TypeSymbolResolution::Type(sym_id) =
+            self.resolve_identifier_symbol_in_type_position_without_tracking(type_ref.type_name)
+        else {
+            return None;
+        };
+        if !self.symbol_declares_recursive_mapped_alias(sym_id) {
+            return None;
+        }
+
+        let type_args = args
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+        let def_id = self.ctx.get_or_create_def_id(sym_id);
+        let base = self.ctx.types.lazy(def_id);
+        Some(self.ctx.types.application(base, type_args))
+    }
+
+    pub(crate) fn symbol_declares_recursive_mapped_alias(&self, sym_id: SymbolId) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return false;
+        }
+        symbol.declarations.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind != syntax_kind_ext::TYPE_ALIAS_DECLARATION {
+                return false;
+            }
+            let Some(alias) = self.ctx.arena.get_type_alias(decl_node) else {
+                return false;
+            };
+            self.ctx
+                .arena
+                .get(alias.type_node)
+                .is_some_and(|body| body.kind == syntax_kind_ext::MAPPED_TYPE)
+                && self.type_node_contains_type_reference_to_symbol(alias.type_node, sym_id)
+        })
+    }
+
+    fn type_node_contains_type_reference_to_symbol(
+        &self,
+        node_idx: NodeIndex,
+        sym_id: SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+            && matches!(
+                self.resolve_identifier_symbol_in_type_position_without_tracking(
+                    type_ref.type_name
+                ),
+                crate::symbol_resolver::TypeSymbolResolution::Type(resolved)
+                    if resolved == sym_id
+            )
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| self.type_node_contains_type_reference_to_symbol(child_idx, sym_id))
     }
 
     /// For TS2403: resolve a property access expression (like `m3.Color` or `M3.Color`)

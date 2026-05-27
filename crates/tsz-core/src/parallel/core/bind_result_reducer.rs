@@ -991,10 +991,16 @@ impl BindResultReducer {
 
                     // CRITICAL: Populate declaration_arenas for user symbols
                     for &decl_idx in &old_sym.declarations {
-                        self.declaration_arenas
+                        let source_arenas = result.declaration_arenas.get(&(old_id, decl_idx));
+                        let target = self
+                            .declaration_arenas
                             .entry((new_id, decl_idx))
-                            .or_default()
-                            .push(Arc::clone(&result.arena));
+                            .or_default();
+                        if source_arenas.is_some() {
+                            // Exact provenance was copied above; avoid adding the user arena too.
+                            continue;
+                        }
+                        target.push(Arc::clone(&result.arena));
                     }
 
                     let mut nested_merges: Vec<(SymbolId, SymbolId)> = Vec::new();

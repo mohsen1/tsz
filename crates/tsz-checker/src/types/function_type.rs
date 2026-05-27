@@ -1,4 +1,5 @@
 //! Function, method, and arrow function type resolution.
+mod contextual_arity;
 mod function_name_diagnostics;
 mod js_prototype;
 mod jsx_body_context;
@@ -160,7 +161,7 @@ impl<'a> CheckerState<'a> {
         let mut this_type = None;
         let mut pushed_this_type = false;
         let this_atom = self.ctx.types.intern_string("this");
-        let closure_already_checked =
+        let mut closure_already_checked =
             is_closure && self.ctx.implicit_any_checked_closures.contains(&idx);
         let (
             contextual_helper_type,
@@ -445,22 +446,45 @@ impl<'a> CheckerState<'a> {
         // Count non-`this` parameters for contextual arity checks.
         // The contextual FunctionShape stores `this` in `this_type`, not in `params`,
         // so the arity passed to contextual extractors must exclude `this` parameters.
-        let non_this_param_count = parameters
-            .nodes
-            .iter()
-            .filter(|&&idx| {
-                self.ctx
-                    .arena
-                    .get(idx)
-                    .and_then(|node| self.ctx.arena.get_parameter(node))
-                    .and_then(|p| self.ctx.arena.get(p.name))
-                    .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
-                    .is_none_or(|ident| {
-                        self.ctx.types.intern_string(&ident.escaped_text) != this_atom
-                    })
-            })
-            .count();
-
+        let mut non_this_param_count = 0;
+        let mut required_non_this_param_count = 0;
+        for &param_idx in &parameters.nodes {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = self.ctx.arena.get_parameter(param_node) else {
+                continue;
+            };
+            let is_this_param = self
+                .ctx
+                .arena
+                .get(param.name)
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .is_some_and(|ident| {
+                    self.ctx.types.intern_string(&ident.escaped_text) == this_atom
+                });
+            if is_this_param {
+                continue;
+            }
+            non_this_param_count += 1;
+            if !param.question_token && param.initializer.is_none() && !param.dot_dot_dot_token {
+                required_non_this_param_count += 1;
+            }
+        }
+        let contextual_signature_accepts_required_arity = ctx_helper
+            .as_ref()
+            .and_then(|helper| helper.expected())
+            .is_none_or(|expected| {
+                self.contextual_signature_accepts_required_callback_params(
+                    expected,
+                    required_non_this_param_count,
+                )
+            });
+        if is_closure && !contextual_signature_accepts_required_arity {
+            self.ctx.implicit_any_checked_closures.remove(&idx);
+            self.ctx.implicit_any_contextual_closures.remove(&idx);
+            closure_already_checked = false;
+        }
         let mut contextual_index = 0;
         for &param_idx in &parameters.nodes {
             if let Some(param_node) = self.ctx.arena.get(param_idx)
@@ -487,7 +511,9 @@ impl<'a> CheckerState<'a> {
                 let is_js_file = self.is_js_file();
                 let is_bare_js_prototype_assignment_function =
                     is_js_file && prototype_owner_expr.is_some() && !has_jsdoc_type_function;
-                let contextual_type = if let Some(ref helper) = ctx_helper {
+                let contextual_type = if !contextual_signature_accepts_required_arity {
+                    None
+                } else if let Some(ref helper) = ctx_helper {
                     let expected_contextual_type = helper.expected().and_then(|expected| {
                         if param.dot_dot_dot_token {
                             self.contextual_parameter_type_with_env_from_expected(
@@ -872,6 +898,7 @@ impl<'a> CheckerState<'a> {
                     }
                 }
                 let cached_param_type = (!has_contextual_type
+                    && contextual_signature_accepts_required_arity
                     && param.type_annotation.is_none()
                     && !(is_bare_js_prototype_assignment_function && ctx_helper.is_none()))
                 .then(|| {
@@ -916,6 +943,13 @@ impl<'a> CheckerState<'a> {
                 } else {
                     type_id
                 };
+                if !contextual_signature_accepts_required_arity
+                    && param.type_annotation.is_none()
+                    && param.initializer.is_none()
+                    && !has_external_binding_context
+                {
+                    type_id = TypeId::ANY;
+                }
                 if let Some(cached_param_type) = cached_param_type {
                     type_id = cached_param_type;
                 }
@@ -1228,7 +1262,8 @@ impl<'a> CheckerState<'a> {
         // need a second chance in the statement-checking pass — don't pre-emptively lock them.
         if is_closure
             && !closure_already_checked
-            && (self.ctx.is_checking_statements || ctx_helper.is_some())
+            && (self.ctx.is_checking_statements
+                || (ctx_helper.is_some() && contextual_signature_accepts_required_arity))
         {
             self.ctx.implicit_any_checked_closures.insert(idx);
         }

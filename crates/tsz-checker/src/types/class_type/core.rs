@@ -1,11 +1,13 @@
 //! Core implementation for class instance type resolution.
 
+use super::helpers::{
+    can_skip_base_instantiation, declaration_is_module_augmentation,
+    exceeds_class_inheritance_depth_limit,
+};
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
 use crate::query_boundaries::common::is_template_literal_type;
-use crate::query_boundaries::common::{
-    ObjectFlags, TypeSubstitution, instantiate_type, is_plain_object_type,
-};
+use crate::query_boundaries::common::{ObjectFlags, TypeSubstitution, instantiate_type};
 use crate::state::CheckerState;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tsz_binder::SymbolId;
@@ -15,185 +17,10 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::{
-    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, TypeParamInfo,
-    Visibility,
+    CallSignature, CallableShape, IndexSignature, ObjectShape, PropertyInfo, TypeId, Visibility,
 };
 
-/// Bookkeeping record for a single type parameter pushed into
-/// `type_parameter_scope`: the parameter name, its previous binding in that
-/// scope (so `pop_type_parameters` can restore it), and a flag indicating
-/// whether the push shadowed an enclosing class's type parameter (so the pop
-/// can restore the class scope entry too).
-type ScopeUpdate = (String, Option<TypeId>, bool);
-
-#[inline]
-pub(in crate::types_domain) const fn can_skip_base_instantiation(
-    base_type_param_count: usize,
-    explicit_type_arg_count: usize,
-) -> bool {
-    base_type_param_count == 0 && explicit_type_arg_count == 0
-}
-
-#[inline]
-const fn exceeds_class_inheritance_depth_limit(depth: usize) -> bool {
-    // Keep well above realistic inheritance chains while bounding pathological recursion.
-    depth > 256
-}
-
-#[inline]
-fn in_progress_class_instance_result(
-    in_resolution_set: bool,
-    cached: Option<TypeId>,
-) -> Option<TypeId> {
-    if in_resolution_set {
-        Some(cached.unwrap_or(TypeId::ERROR))
-    } else {
-        None
-    }
-}
-
-fn declaration_is_module_augmentation(
-    arena: &tsz_parser::parser::NodeArena,
-    decl_idx: NodeIndex,
-) -> bool {
-    let mut current = Some(decl_idx);
-    while let Some(node_idx) = current {
-        let Some(ext) = arena.get_extended(node_idx) else {
-            break;
-        };
-        if ext.parent.is_none() {
-            break;
-        }
-        let parent_idx = ext.parent;
-        let Some(parent_node) = arena.get(parent_idx) else {
-            break;
-        };
-        if parent_node.kind == syntax_kind_ext::MODULE_DECLARATION
-            && let Some(module_decl) = arena.get_module(parent_node)
-            && let Some(name_node) = arena.get(module_decl.name)
-        {
-            if name_node.kind == SyntaxKind::StringLiteral as u16 {
-                return true;
-            }
-            if name_node.kind == SyntaxKind::GlobalKeyword as u16 {
-                return false;
-            }
-            if let Some(ident) = arena.get_identifier(name_node)
-                && ident.escaped_text == "global"
-            {
-                return false;
-            }
-        }
-        current = Some(parent_idx);
-    }
-    false
-}
-
-// =============================================================================
-// Class Type Resolution
-// =============================================================================
-
 impl<'a> CheckerState<'a> {
-    fn class_declaration_symbol(&self, class_idx: NodeIndex) -> Option<SymbolId> {
-        let arena_ptr = self.ctx.arena as *const _ as usize;
-        self.ctx
-            .cross_file_node_symbols_for_arena(self.ctx.binder, arena_ptr)
-            .and_then(|node_symbols| node_symbols.get(&class_idx.0).copied())
-            .or_else(|| self.ctx.binder.get_node_symbol(class_idx))
-    }
-
-    /// Get the instance type of a class declaration.
-    ///
-    /// This is the type that instances of the class will have. It includes:
-    /// - Instance properties and methods
-    /// - Inherited members from base classes
-    /// - Index signatures
-    /// - Private brand property for nominal typing (if class has private/protected members)
-    ///
-    /// # Arguments
-    /// * `class_idx` - The `NodeIndex` of the class declaration
-    /// * `class` - The parsed class data
-    ///
-    /// # Returns
-    /// The `TypeId` representing the instance type of the class
-    pub(crate) fn get_class_instance_type(
-        &mut self,
-        class_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> TypeId {
-        self.get_class_instance_type_with_mode(class_idx, class, true)
-    }
-
-    pub(crate) fn get_class_instance_type_without_module_augmentations(
-        &mut self,
-        class_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-    ) -> TypeId {
-        self.get_class_instance_type_with_mode(class_idx, class, false)
-    }
-
-    fn get_class_instance_type_with_mode(
-        &mut self,
-        class_idx: NodeIndex,
-        class: &tsz_parser::parser::node::ClassData,
-        apply_module_augmentations: bool,
-    ) -> TypeId {
-        let current_sym = self.class_declaration_symbol(class_idx);
-        let is_in_resolution_set = current_sym
-            .is_some_and(|sym_id| self.ctx.class_instance_resolution_set.contains(&sym_id));
-
-        if apply_module_augmentations {
-            // Fast path for re-entrant class instance queries: avoid re-entering
-            // the full inheritance walk while the class is already being resolved.
-            if let Some(result) = in_progress_class_instance_result(
-                is_in_resolution_set,
-                self.ctx.class_instance_type_cache.get(&class_idx).copied(),
-            ) {
-                return result;
-            }
-
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
-                return cached;
-            }
-        } else {
-            // When called without module augmentations (e.g., from constructor type
-            // building), still check the cache. Re-entering get_class_instance_type_inner
-            // when a cached result already exists corrupts shared state:
-            // - Overwrites class_instance_type_cache with an incomplete prescan type
-            // - The prescan type propagates to symbol_instance_types as ERROR
-            // - Subsequent property lookups on generic class instances fail (TS2339)
-            if is_in_resolution_set {
-                return self
-                    .ctx
-                    .class_instance_type_cache
-                    .get(&class_idx)
-                    .copied()
-                    .unwrap_or(TypeId::ERROR);
-            }
-            if let Some(&cached) = self.ctx.class_instance_type_cache.get(&class_idx) {
-                return cached;
-            }
-        }
-
-        let mut visited = FxHashSet::default();
-        let mut visited_nodes = FxHashSet::default();
-        let result = self.get_class_instance_type_inner(
-            class_idx,
-            class,
-            &mut visited,
-            &mut visited_nodes,
-            apply_module_augmentations,
-        );
-
-        if apply_module_augmentations {
-            // Cache all terminal outcomes (including ERROR) so pathological
-            // inheritance graphs don't repeatedly recompute the same failing class.
-            self.ctx.class_instance_type_cache.insert(class_idx, result);
-        }
-
-        result
-    }
-
     /// Inner implementation of class instance type resolution with cycle detection.
     ///
     /// This function builds the complete instance type by:
@@ -284,6 +111,7 @@ impl<'a> CheckerState<'a> {
             impl_optional: bool,
             visibility: Visibility,
             declaration_order: u32,
+            is_symbol_named: bool,
         }
 
         struct AccessorAggregate {
@@ -291,6 +119,7 @@ impl<'a> CheckerState<'a> {
             setter: Option<TypeId>,
             visibility: Visibility,
             declaration_order: u32,
+            is_symbol_named: bool,
         }
 
         struct DeferredAccessor<'b> {
@@ -298,6 +127,7 @@ impl<'a> CheckerState<'a> {
             accessor: &'b tsz_parser::parser::node::AccessorData,
             is_getter: bool,
             name_atom: Atom,
+            is_symbol_named: bool,
             visibility: Visibility,
             declaration_order: u32,
         }
@@ -634,6 +464,7 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     };
+                    let is_symbol_named = self.class_member_name_is_symbol_named(prop.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     let is_readonly = self.has_readonly_modifier(&prop.modifiers)
                         || self.jsdoc_has_readonly_tag(member_idx);
@@ -676,7 +507,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
-                            is_symbol_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         };
                         let mut partial_props: Vec<PropertyInfo> =
@@ -790,7 +621,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order,
                             is_string_named: false,
-                            is_symbol_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         },
                     );
@@ -842,6 +673,7 @@ impl<'a> CheckerState<'a> {
                         }
                         continue;
                     };
+                    let is_symbol_named = self.class_member_name_is_symbol_named(accessor.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     let visibility = self.get_member_visibility(&accessor.modifiers, accessor.name);
                     deferred_accessors.push(DeferredAccessor {
@@ -849,6 +681,7 @@ impl<'a> CheckerState<'a> {
                         accessor,
                         is_getter: k == syntax_kind_ext::GET_ACCESSOR,
                         name_atom,
+                        is_symbol_named,
                         visibility,
                         declaration_order,
                     });
@@ -1121,6 +954,7 @@ impl<'a> CheckerState<'a> {
             partial_prop_names.extend(partial_props.iter().map(|prop| prop.name));
             for (_, method, declaration_order) in &deferred_methods {
                 if let Some(name) = self.get_property_name_resolved(method.name) {
+                    let is_symbol_named = self.class_member_name_is_symbol_named(method.name);
                     let name_atom = self.ctx.types.intern_string(&name);
                     if partial_prop_names.insert(name_atom) {
                         // For methods with explicit return type annotations, use the
@@ -1173,7 +1007,7 @@ impl<'a> CheckerState<'a> {
                             parent_id: current_sym,
                             declaration_order: *declaration_order,
                             is_string_named: false,
-                            is_symbol_named: false,
+                            is_symbol_named,
                             single_quoted_name: false,
                         });
                     }
@@ -1193,7 +1027,7 @@ impl<'a> CheckerState<'a> {
                         parent_id: current_sym,
                         declaration_order: deferred.declaration_order,
                         is_string_named: false,
-                        is_symbol_named: false,
+                        is_symbol_named: deferred.is_symbol_named,
                         single_quoted_name: false,
                     });
                 }
@@ -1312,6 +1146,7 @@ impl<'a> CheckerState<'a> {
                     }
                     continue;
                 };
+                let is_symbol_named = self.class_member_name_is_symbol_named(method.name);
                 let name_atom = self.ctx.types.intern_string(&name);
                 let visibility = self.get_member_visibility(&method.modifiers, method.name);
                 let entry = methods.entry(name_atom).or_insert(MethodAggregate {
@@ -1321,6 +1156,7 @@ impl<'a> CheckerState<'a> {
                     impl_optional: false,
                     visibility,
                     declaration_order,
+                    is_symbol_named,
                 });
                 if method.body.is_none() {
                     entry.overload_signatures.push(signature);
@@ -1368,7 +1204,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: 0,
                     is_string_named: false,
-                    is_symbol_named: false,
+                    is_symbol_named: method.is_symbol_named,
                     single_quoted_name: false,
                 });
             }
@@ -1433,6 +1269,7 @@ impl<'a> CheckerState<'a> {
                             setter: None,
                             visibility: deferred.visibility,
                             declaration_order: deferred.declaration_order,
+                            is_symbol_named: deferred.is_symbol_named,
                         });
                     entry.getter = Some(getter_type);
                 } else {
@@ -1470,6 +1307,7 @@ impl<'a> CheckerState<'a> {
                             setter: None,
                             visibility: deferred.visibility,
                             declaration_order: deferred.declaration_order,
+                            is_symbol_named: deferred.is_symbol_named,
                         });
                     entry.setter = Some(setter_type);
                 }
@@ -1511,7 +1349,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: accessor.declaration_order,
                     is_string_named: false,
-                    is_symbol_named: false,
+                    is_symbol_named: accessor.is_symbol_named,
                     single_quoted_name: false,
                 },
             );
@@ -1561,7 +1399,7 @@ impl<'a> CheckerState<'a> {
                     parent_id: current_sym,
                     declaration_order: method.declaration_order,
                     is_string_named: false,
-                    is_symbol_named: false,
+                    is_symbol_named: method.is_symbol_named,
                     single_quoted_name: false,
                 },
             );
@@ -2150,349 +1988,12 @@ impl<'a> CheckerState<'a> {
             .class_instance_type_to_decl
             .insert(instance_type, class_idx);
 
-        // Register instance type → DefId in the definition store so the TypeFormatter
-        // can display the class name (e.g., "A") instead of expanding structurally
-        // (e.g., "{ a: string }"), even across file boundaries.
-        //
-        // Guard: Only register when the symbol is actually a CLASS. In cross-arena
-        // scenarios, get_node_symbol(class_idx) can return a wrong symbol when a lib
-        // arena's class NodeIndex collides with the user file's node-to-symbol mapping
-        // (e.g., a TYPE_ALIAS like SequenceFactory at the same NodeIndex). Registering
-        // class type params under a non-class symbol's DefId causes false TS2314.
         if let Some(sym_id) = current_sym {
-            let is_class_symbol = self
-                .get_symbol_globally(sym_id)
-                .is_some_and(|s| s.has_any_flags(tsz_binder::symbol_flags::CLASS));
-            if is_class_symbol {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                self.ctx
-                    .definition_store
-                    .register_type_to_def(instance_type, def_id);
-                // Register the class instance type in both type environments
-                // so that Lazy(DefId) can resolve via resolve_lazy during
-                // property access on generic class instances (Application types).
-                // Without this, the solver's property_helpers cannot find the
-                // body type for Application(Lazy(DefId), Args), causing false
-                // TS2339 on property access like `f.x` where f: Vec2<T>.
-                self.ctx
-                    .register_class_instance_in_envs(def_id, instance_type);
-                // Also register the DefId-to-SymbolId mapping and body in the
-                // type environments so the solver can resolve type parameters.
-                self.ctx
-                    .register_resolved_type(sym_id, instance_type, class_type_params.clone());
-                // Use get_type_params_for_symbol to populate the cache with properly
-                // merged params. For merged class+interface declarations (e.g.,
-                // `declare class C<P, S>` + `interface C<P = {}, S = {}>`), the
-                // class AST alone lacks defaults. get_type_params_for_symbol merges
-                // defaults from all declarations and caches the result, preventing
-                // false TS2314 when the merged type has fewer required args.
-                if !class_type_params.is_empty() {
-                    self.get_type_params_for_symbol(sym_id);
-                }
-            }
+            self.register_final_class_instance_type(sym_id, instance_type, &class_type_params);
         }
 
         self.pop_type_parameters(class_type_param_updates);
 
         instance_type
-    }
-
-    /// Check if a method body syntactically returns only `this`.
-    /// Returns true if every return statement in the body has `this` as
-    /// its expression (or the body is an expression-bodied arrow returning `this`).
-    fn method_body_returns_only_this(&self, body_idx: NodeIndex) -> bool {
-        let Some(body_node) = self.ctx.arena.get(body_idx) else {
-            return false;
-        };
-        // Expression body (arrow): check if it's `this`
-        if body_node.kind == SyntaxKind::ThisKeyword as u16 {
-            return true;
-        }
-        // Block body: check all return statements
-        if body_node.kind != syntax_kind_ext::BLOCK {
-            return false;
-        }
-        let Some(block) = self.ctx.arena.get_block(body_node) else {
-            return false;
-        };
-        let mut found_return = false;
-        for &stmt_idx in &block.statements.nodes {
-            let Some(stmt_node) = self.ctx.arena.get(stmt_idx) else {
-                continue;
-            };
-            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT
-                && let Some(return_data) = self.ctx.arena.get_return_statement(stmt_node)
-            {
-                if return_data.expression.is_none() {
-                    continue; // empty return is fine
-                }
-                let Some(expr_node) = self.ctx.arena.get(return_data.expression) else {
-                    return false;
-                };
-                if expr_node.kind != SyntaxKind::ThisKeyword as u16 {
-                    return false; // returns something other than `this`
-                }
-                found_return = true;
-            }
-        }
-        found_return
-    }
-
-    fn merge_class_instance_with_interface(
-        &mut self,
-        instance_type: TypeId,
-        interface_type: TypeId,
-    ) -> TypeId {
-        let factory = self.ctx.types.factory();
-
-        let mut properties = FxHashMap::default();
-        let mut call_signatures = Vec::new();
-        let mut construct_signatures = Vec::new();
-        let mut string_index = None;
-        let mut number_index = None;
-        let mut symbol = None;
-        let mut result_is_callable = false;
-
-        let mut merge_shape = |type_id: TypeId, is_derived_class: bool| {
-            if let Some(shape) = callable_shape_for_type(self.ctx.types, type_id) {
-                result_is_callable = true;
-                if is_derived_class {
-                    symbol = shape.symbol;
-                    string_index = shape.string_index;
-                    number_index = shape.number_index;
-                } else {
-                    if string_index.is_none() {
-                        string_index = shape.string_index;
-                    }
-                    if number_index.is_none() {
-                        number_index = shape.number_index;
-                    }
-                }
-                call_signatures.extend(shape.call_signatures.iter().cloned());
-                construct_signatures.extend(shape.construct_signatures.iter().cloned());
-                for prop in &shape.properties {
-                    properties.entry(prop.name).or_insert_with(|| prop.clone());
-                }
-                return;
-            }
-
-            if let Some(shape) = object_shape_for_type(self.ctx.types, type_id) {
-                if is_derived_class {
-                    symbol = shape.symbol;
-                    string_index = shape.string_index;
-                    number_index = shape.number_index;
-                } else {
-                    if string_index.is_none() {
-                        string_index = shape.string_index;
-                    }
-                    if number_index.is_none() {
-                        number_index = shape.number_index;
-                    }
-                }
-                for prop in &shape.properties {
-                    properties.entry(prop.name).or_insert_with(|| prop.clone());
-                }
-            }
-        };
-
-        merge_shape(instance_type, true);
-        merge_shape(interface_type, false);
-
-        if result_is_callable {
-            return factory.callable(CallableShape {
-                call_signatures,
-                construct_signatures,
-                properties: properties.into_values().collect(),
-                string_index,
-                number_index,
-                symbol,
-                is_abstract: false,
-            });
-        }
-
-        let shape = ObjectShape {
-            properties: properties.into_values().collect(),
-            string_index,
-            number_index,
-            symbol,
-            ..ObjectShape::default()
-        };
-
-        if is_plain_object_type(self.ctx.types, instance_type)
-            && string_index.is_none()
-            && number_index.is_none()
-        {
-            factory.object(shape.properties)
-        } else {
-            factory.object_with_index(shape)
-        }
-    }
-
-    fn merge_union_index_signature(
-        &self,
-        target: &mut Option<IndexSignature>,
-        incoming: IndexSignature,
-    ) {
-        if let Some(existing) = target.as_mut() {
-            if existing.value_type != incoming.value_type {
-                existing.value_type = self
-                    .ctx
-                    .types
-                    .factory()
-                    .union2(existing.value_type, incoming.value_type);
-            }
-            existing.readonly &= incoming.readonly;
-        } else {
-            *target = Some(incoming);
-        }
-    }
-
-    fn merge_index_signature_from_unresolved_computed_name(
-        &mut self,
-        name_idx: NodeIndex,
-        value_type: TypeId,
-        string_index: &mut Option<IndexSignature>,
-        number_index: &mut Option<IndexSignature>,
-    ) {
-        let Some(name_node) = self.ctx.arena.get(name_idx) else {
-            return;
-        };
-        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-            return;
-        }
-        let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
-            return;
-        };
-
-        let prev = self.ctx.preserve_literal_types;
-        self.ctx.preserve_literal_types = true;
-        let key_type = self.get_type_of_node(computed.expression);
-        self.ctx.preserve_literal_types = prev;
-
-        if let Some((wants_string, wants_number)) = self.get_index_key_kind(key_type) {
-            if wants_string {
-                self.merge_union_index_signature(
-                    string_index,
-                    IndexSignature {
-                        key_type: TypeId::STRING,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    },
-                );
-            }
-            if wants_number {
-                self.merge_union_index_signature(
-                    number_index,
-                    IndexSignature {
-                        key_type: TypeId::NUMBER,
-                        value_type,
-                        readonly: false,
-                        param_name: None,
-                    },
-                );
-            }
-        }
-    }
-
-    /// For JS classes without syntax-level type parameters, check the leading
-    /// JSDoc for `@template` tags and create type parameters from them.
-    ///
-    /// Returns `(type_params, scope_updates)` — identical shape to `push_type_parameters`.
-    /// The caller must pass `scope_updates` to `pop_type_parameters` when done.
-    pub(in crate::types_domain) fn push_jsdoc_class_template_type_params(
-        &mut self,
-        class_idx: NodeIndex,
-    ) -> (Vec<TypeParamInfo>, Vec<ScopeUpdate>) {
-        if !self.is_js_file() {
-            return (Vec::new(), Vec::new());
-        }
-
-        let jsdoc = {
-            let sf = match self.ctx.arena.source_files.first() {
-                Some(sf) => sf,
-                None => return (Vec::new(), Vec::new()),
-            };
-            let source_text: &str = &sf.text;
-            let comments = &sf.comments;
-            match self.try_leading_jsdoc(
-                comments,
-                self.ctx.arena.get(class_idx).map_or(0, |n| n.pos),
-                source_text,
-            ) {
-                Some(j) => j,
-                None => return (Vec::new(), Vec::new()),
-            }
-        };
-
-        self.validate_jsdoc_template_tag_syntax_at_decl(class_idx);
-
-        let template_names = Self::jsdoc_template_type_params(&jsdoc);
-        if template_names.is_empty() {
-            return (Vec::new(), Vec::new());
-        }
-
-        let mut type_params = Vec::with_capacity(template_names.len());
-        let mut scope_updates = Vec::with_capacity(template_names.len());
-        let factory = self.ctx.types.factory();
-        let constraint_strs = Self::jsdoc_template_constraint_strings(&jsdoc);
-        for (name, is_const, default_str) in template_names {
-            let atom = self.ctx.types.intern_string(&name);
-            let default = default_str
-                .as_deref()
-                .and_then(|s| self.resolve_jsdoc_reference(s));
-            let constraint = constraint_strs
-                .get(&name)
-                .and_then(|s| self.resolve_jsdoc_reference(s));
-            let info = TypeParamInfo {
-                name: atom,
-                constraint,
-                default,
-                is_const,
-            };
-            let ty = factory.type_param(info);
-            type_params.push(info);
-            let previous = self.ctx.type_parameter_scope.insert(name.clone(), ty);
-            scope_updates.push((name, previous, false));
-        }
-        (type_params, scope_updates)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{
-        can_skip_base_instantiation, exceeds_class_inheritance_depth_limit,
-        in_progress_class_instance_result,
-    };
-    use tsz_solver::TypeId;
-
-    #[test]
-    fn skip_base_instantiation_only_without_generics() {
-        assert!(can_skip_base_instantiation(0, 0));
-        assert!(!can_skip_base_instantiation(1, 0));
-        assert!(!can_skip_base_instantiation(0, 1));
-        assert!(!can_skip_base_instantiation(2, 3));
-    }
-
-    #[test]
-    fn class_inheritance_depth_guard_is_conservative() {
-        assert!(!exceeds_class_inheritance_depth_limit(1));
-        assert!(!exceeds_class_inheritance_depth_limit(100));
-        assert!(!exceeds_class_inheritance_depth_limit(256));
-        assert!(exceeds_class_inheritance_depth_limit(257));
-    }
-
-    #[test]
-    fn in_progress_class_instance_uses_cached_or_error() {
-        assert_eq!(
-            in_progress_class_instance_result(true, Some(TypeId(42))),
-            Some(TypeId(42))
-        );
-        assert_eq!(
-            in_progress_class_instance_result(true, None),
-            Some(TypeId::ERROR)
-        );
-        assert_eq!(in_progress_class_instance_result(false, None), None);
     }
 }

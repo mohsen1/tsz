@@ -57,6 +57,58 @@ fn test_generic_class_with_default() {
 }
 
 #[test]
+fn test_generic_class_constructor_options_infer_object_member_type_arg() {
+    let output = emit_dts_with_binding(
+        r#"
+interface WidgetOptions<State, Computed> {
+    state?: State;
+    computed?: Computed;
+}
+
+declare class Widget<State, Computed> {
+    constructor(options: WidgetOptions<State, Computed>);
+}
+
+let widget = new Widget({
+    state: {
+        title: ""
+    }
+});
+"#,
+    );
+    assert!(
+        output.contains("declare let widget: Widget<{\n    title: string;\n}, unknown>;"),
+        "Expected constructor option object member to infer the matching class type argument: {output}"
+    );
+}
+
+#[test]
+fn test_generic_class_constructor_options_maps_option_type_params_by_position() {
+    let output = emit_dts_with_binding(
+        r#"
+interface SetupBox<Input, Output> {
+    payload?: Input;
+    result?: Output;
+}
+
+declare class Machine<Seed, Product> {
+    constructor(settings: SetupBox<Seed, Product>);
+}
+
+let machine = new Machine({
+    payload: {
+        enabled: true
+    }
+});
+"#,
+    );
+    assert!(
+        output.contains("declare let machine: Machine<{\n    enabled: boolean;\n}, unknown>;"),
+        "Expected option type parameter names to map to class type arguments by position: {output}"
+    );
+}
+
+#[test]
 fn test_multiple_type_parameters() {
     let output = emit_dts(
         "export function map<T, U>(arr: T[], fn: (x: T) => U): U[] { return arr.map(fn); }",
@@ -64,6 +116,38 @@ fn test_multiple_type_parameters() {
     assert!(
         output.contains("<T, U>"),
         "Expected multiple type parameters: {output}"
+    );
+}
+
+#[test]
+fn test_inferred_return_preserves_mapped_parameter_annotation() {
+    let output = emit_dts(
+        r#"
+    export function makeRecord<T, K extends string>(obj: { [P in K]: T }) {
+        return obj;
+    }
+
+    export function makeDictionary<T>(obj: { [x: string]: T }) {
+        return obj;
+    }
+
+    export function makeRecordRenamed<Value, Key extends string>(obj: { [X in Key]: Value }) {
+        return obj;
+    }
+    "#,
+    );
+
+    assert!(
+        output.contains("): { [P in K]: T; };"),
+        "Expected mapped parameter annotation to drive inferred return type: {output}"
+    );
+    assert!(
+        output.contains("): {\n    [x: string]: T;\n};"),
+        "Expected index signature parameter annotation to keep object return layout: {output}"
+    );
+    assert!(
+        output.contains("): { [X in Key]: Value; };"),
+        "Expected renamed mapped variables to use the same return annotation rule: {output}"
     );
 }
 

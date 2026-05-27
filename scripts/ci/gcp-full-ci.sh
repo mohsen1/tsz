@@ -378,6 +378,7 @@ run_lint() {
   node scripts/bench/test-reduction-backlog.mjs || return $?
   node scripts/bench/test-timeout-runner.mjs || return $?
   node scripts/bench/test-check-artifact-readiness.mjs || return $?
+  node scripts/bench/test-gh-pages-benchmark-artifact-gate.mjs || return $?
   for script in scripts/ci/*type-challenges*.mjs; do
     node --check "$script" || return $?
   done
@@ -387,9 +388,14 @@ run_lint() {
   node scripts/ci/test-pr-ready-state.mjs || return $?
   node scripts/ci/test-refresh-green-prs.mjs || return $?
   node scripts/ci/test-check-stale-ci-runs.mjs || return $?
+  node scripts/ci/test-cloudbuild-config-paths.mjs || return $?
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  for test_file in scripts/agents/test_*.py scripts/setup/test_*.py; do
+    [[ -f "$test_file" ]] || continue
+    python3 "$test_file" || return $?
+  done
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
