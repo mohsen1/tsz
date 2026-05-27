@@ -1000,6 +1000,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // that evade TypeId-based cycle detection.
             if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol) {
                 let sym_pair = (s_sym, t_sym);
+                if self.sym_visiting.contains(&(t_sym, s_sym)) {
+                    return self.cycle_result();
+                }
                 if !self.sym_visiting.insert(sym_pair) {
                     // Already visiting this symbol pair — coinductive cycle
                     return self.cycle_result();
@@ -1043,6 +1046,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // to comparing `Opt<X'>` vs `Opt<Y'>`, creating infinite expansion.
             if let (Some(s_sym), Some(t_sym)) = (s_shape.symbol, t_shape.symbol) {
                 let sym_pair = (s_sym, t_sym);
+                if self.sym_visiting.contains(&(t_sym, s_sym)) {
+                    return self.cycle_result();
+                }
                 if !self.sym_visiting.insert(sym_pair) {
                     return self.cycle_result();
                 }
