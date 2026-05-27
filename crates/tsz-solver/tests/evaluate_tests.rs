@@ -22,6 +22,11 @@ fn test_infer_param_from_name(interner: &TypeInterner, name: Atom) -> TypeId {
     interner.intern(TypeData::Infer(TypeParamInfo::simple(name)))
 }
 
+fn assert_evaluates_to(interner: &TypeInterner, input: TypeId, expected: TypeId) {
+    let result = evaluate_type(interner, input);
+    assert_eq!(result, expected);
+}
+
 // Split into under-cap shards by evaluator family while preserving test order.
 include!("evaluate_tests_parts/conditional_infer_core.rs");
 include!("evaluate_tests_parts/conditional_infer_arrays.rs");

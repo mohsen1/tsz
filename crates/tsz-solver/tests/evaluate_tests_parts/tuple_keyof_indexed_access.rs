@@ -162,9 +162,7 @@ fn test_tail_recursive_conditional() {
 fn test_intersection_reduction_disjoint_primitives() {
     let interner = TypeInterner::new();
     let intersection = interner.intersection(vec![TypeId::STRING, TypeId::NUMBER]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(intersection);
-    assert_eq!(result, TypeId::NEVER);
+    assert_evaluates_to(&interner, intersection, TypeId::NEVER);
 }
 
 /// Test intersection reduction with any.
@@ -172,9 +170,7 @@ fn test_intersection_reduction_disjoint_primitives() {
 fn test_intersection_reduction_any() {
     let interner = TypeInterner::new();
     let intersection = interner.intersection(vec![TypeId::STRING, TypeId::ANY]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(intersection);
-    assert_eq!(result, TypeId::ANY);
+    assert_evaluates_to(&interner, intersection, TypeId::ANY);
 }
 
 /// Test union reduction for duplicate types.
@@ -182,9 +178,7 @@ fn test_intersection_reduction_any() {
 fn test_union_reduction_duplicates() {
     let interner = TypeInterner::new();
     let union = interner.union(vec![TypeId::STRING, TypeId::STRING]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(union);
-    assert_eq!(result, TypeId::STRING);
+    assert_evaluates_to(&interner, union, TypeId::STRING);
 }
 
 /// Test union reduction for literal and base type.
@@ -193,9 +187,7 @@ fn test_union_reduction_literal_into_base() {
     let interner = TypeInterner::new();
     let hello = interner.literal_string("hello");
     let union = interner.union(vec![hello, TypeId::STRING]);
-    let mut evaluator = TypeEvaluator::new(&interner);
-    let result = evaluator.evaluate(union);
-    assert_eq!(result, TypeId::STRING);
+    assert_evaluates_to(&interner, union, TypeId::STRING);
 }
 
 /// Homomorphic mapped type with `keyof` constraint preserves optional modifiers.

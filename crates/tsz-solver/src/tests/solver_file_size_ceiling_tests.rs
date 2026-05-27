@@ -231,6 +231,15 @@ fn contains_simple_type_param_wrapper(text: &str, wrapper: &str) -> bool {
     false
 }
 
+fn contains_direct_evaluate_assert_block(text: &str) -> bool {
+    let lines: Vec<_> = text.lines().map(str::trim).collect();
+    lines.windows(3).any(|window| {
+        window[0] == "let mut evaluator = TypeEvaluator::new(&interner);"
+            && window[1].starts_with("let result = evaluator.evaluate(")
+            && window[2].starts_with("assert_eq!(result,")
+    })
+}
+
 /// Ratchet guard: keep generated evaluator test shards named after evaluator
 /// feature families. Anonymous numeric chunks make failures and regeneration
 /// diffs harder to review even when they satisfy the file-size ceiling.
@@ -269,6 +278,34 @@ fn evaluate_tests_use_feature_family_shards() {
         assert!(
             includes.iter().any(|path| path.contains(family)),
             "evaluator test shard list is missing a {family} shard: {includes:?}"
+        );
+    }
+}
+
+/// Ratchet guard: compact evaluator assertions should flow through the shared
+/// helper instead of rebuilding `TypeEvaluator` in individual generated cases.
+#[test]
+fn evaluate_tests_use_shared_evaluation_assert_helper() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+
+    assert!(
+        text.contains("fn assert_evaluates_to("),
+        "{} should define a shared evaluator assertion helper",
+        evaluate_tests.display()
+    );
+
+    for include in include_paths(&text) {
+        let shard = solver_dir.join("tests").join(include);
+        let shard_text = fs::read_to_string(&shard)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", shard.display()));
+
+        assert!(
+            !contains_direct_evaluate_assert_block(&shard_text),
+            "{} should use assert_evaluates_to for direct evaluate assertions",
+            shard.display()
         );
     }
 }
