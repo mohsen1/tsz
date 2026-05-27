@@ -92,6 +92,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                         std::iter::empty(),
                         false,
                         self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+                        Some(self.ctx.types),
                     ),
                 )
             } else {
@@ -569,6 +570,7 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             std::iter::empty(),
             false,
             self.ctx.is_declaration_file() || self.ctx.emit_declarations(),
+            Some(self.ctx.types),
         )
         .result;
 
