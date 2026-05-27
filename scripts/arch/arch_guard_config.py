@@ -778,6 +778,15 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: legacy RelationPolicy::from_flags calls stay at boundary (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src"],
+        re.compile(
+            r'^\s*(?!//)(?:[^"\n]|"[^"\n]*")*?'
+            r"\bRelationPolicy::from_flags\s*\("
+        ),
+        0,
+    ),
+    (
         "Solver relation boundary: query cache uses relation facade (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src" / "caches" / "query_cache.rs"],
         re.compile(r"\b(?:configured_compat_checker|configured_subtype_checker)\s*\("),
