@@ -116,6 +116,21 @@ var r1 = create<number>(1, "hello");
     );
 }
 
+#[test]
+fn unconstrained_outer_type_ref_still_checks_nested_type_arg_arity() {
+    let source = r#"
+type Box<T> = T;
+type Pair<T, U> = T | U;
+type Alias = Box<Pair<string>>;
+"#;
+    let codes = check_source_codes(source);
+
+    assert!(
+        codes.contains(&2314),
+        "Expected TS2314 for nested Pair<string>, got: {codes:?}"
+    );
+}
+
 /// Calling a non-generic function with type arguments should emit TS2558
 /// but NOT emit spurious argument-related errors.
 #[test]
