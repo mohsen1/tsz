@@ -739,24 +739,12 @@ impl<'a> CheckerState<'a> {
                         {
                             self.ensure_relation_input_ready(check_type);
                             self.ensure_relation_input_ready(target_type);
-                            if !self.diagnostic_relation_boolean_guard(check_type, target_type) {
-                                // Emit TS2322 directly with pre-resolved types.
-                                // The standard error pipeline would re-derive
-                                // the source type from the anchor node's parent
-                                // assignment, incorrectly showing the RHS array
-                                // type instead of the element type.
-                                let source_str = self.format_type_diagnostic(check_type);
-                                let target_str = self.format_type_diagnostic(target_type);
-                                let message = crate::diagnostics::format_message(
-                                    diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                    &[&source_str, &target_str],
-                                );
-                                self.error_at_node(
-                                    target_idx,
-                                    &message,
-                                    diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
-                                );
-                            }
+                            self.check_pre_resolved_assignable_or_report_at_exact_anchor(
+                                check_type,
+                                target_type,
+                                target_idx,
+                                target_idx,
+                            );
                         }
                     }
                 }

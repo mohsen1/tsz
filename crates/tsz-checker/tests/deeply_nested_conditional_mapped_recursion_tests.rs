@@ -343,6 +343,55 @@ declare var x: FindConditions<Entity>;
     );
 }
 
+/// Exact shape from `noExcessiveStackDepthError.ts`: two function-local `var`
+/// declarations inside a generic function, with a recursive mapped alias whose
+/// property value also includes a wrapper application.
+#[test]
+fn function_local_find_conditions_wrapper_triggers_ts2403_on_redeclaration() {
+    let source = r#"
+interface FindOperator<T> {
+    foo: T;
+}
+
+type FindConditions<T> = {
+    [P in keyof T]?: FindConditions<T[P]> | FindOperator<FindConditions<T[P]>>;
+};
+
+function foo<Entity>() {
+    var x: FindConditions<any>;
+    var x: FindConditions<Entity>;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2403),
+        "Function-local FindConditions redeclaration must produce TS2403. Got: {codes:?}"
+    );
+}
+
+#[test]
+fn function_local_recursive_mapped_wrapper_with_renamed_binders_triggers_ts2403() {
+    let source = r#"
+interface CriteriaWrapper<Value> {
+    value: Value;
+}
+
+type SearchCriteria<Item> = {
+    [Key in keyof Item]?: SearchCriteria<Item[Key]> | CriteriaWrapper<SearchCriteria<Item[Key]>>;
+};
+
+function search<Row>() {
+    var criteria: SearchCriteria<any>;
+    var criteria: SearchCriteria<Row>;
+}
+"#;
+    let codes = check_source_codes(source);
+    assert!(
+        codes.contains(&2403),
+        "Renamed recursive mapped wrapper redeclaration must produce TS2403. Got: {codes:?}"
+    );
+}
+
 /// Same `FindConditions` pattern with renamed type parameters to confirm the
 /// fix is not keyed on specific identifier names.
 #[test]

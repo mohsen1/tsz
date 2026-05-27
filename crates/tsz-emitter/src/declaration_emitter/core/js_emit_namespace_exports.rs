@@ -1086,13 +1086,18 @@ impl<'a> DeclarationEmitter<'a> {
             && let Some(assigned_initializer) =
                 self.js_assigned_initializer_for_value_reference(initializer)
         {
-            let printed =
-                self.js_synthetic_export_value_type_text_inner(assigned_initializer, depth + 1)?;
-            return Some(self.rewrite_recursive_js_class_expression_type(
-                assigned_initializer,
-                &reference_text,
-                printed,
-            ));
+            if self
+                .arena
+                .get(assigned_initializer)
+                .is_some_and(|node| node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            {
+                return self
+                    .class_expression_constructor_type_text_from_ast_with_recursive_reference(
+                        assigned_initializer,
+                        Some(&reference_text),
+                    );
+            }
+            return self.js_synthetic_export_value_type_text_inner(assigned_initializer, depth + 1);
         }
 
         match init_node.kind {
@@ -1128,46 +1133,6 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             "const "
         }
-    }
-
-    pub(in crate::declaration_emitter) fn rewrite_recursive_js_class_expression_type(
-        &self,
-        initializer: NodeIndex,
-        reference_text: &str,
-        printed: String,
-    ) -> String {
-        let Some(class_expr) = self.arena.get_class_at(initializer) else {
-            return printed;
-        };
-
-        let mut rewritten = printed;
-        for &member_idx in &class_expr.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::METHOD_DECLARATION {
-                continue;
-            }
-            let Some(method) = self.arena.get_method_decl(member_node) else {
-                continue;
-            };
-            if method.type_annotation.is_some()
-                || !method.body.is_some()
-                || !self.function_body_returns_new_reference(method.body, reference_text)
-            {
-                continue;
-            }
-            let Some(method_name) = self.get_identifier_text(method.name) else {
-                continue;
-            };
-            rewritten = rewritten.replacen(
-                &format!("{method_name}(): any;"),
-                &format!("{method_name}(): {};", crate::ELIDED_ANY),
-                1,
-            );
-        }
-
-        rewritten
     }
 
     pub(in crate::declaration_emitter) fn function_body_returns_new_reference(

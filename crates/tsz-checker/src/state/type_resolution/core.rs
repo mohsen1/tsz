@@ -365,12 +365,12 @@ impl<'a> CheckerState<'a> {
                         // During symbol resolution, ensure_relation_input_ready is skipped,
                         // leaving the alias body unregistered in the TypeEnvironment. Without
                         // it the evaluator returns the Application unchanged and TS2589 is missed.
-                        if let Some(base_def_id) =
+                        let base_def_id =
                             crate::query_boundaries::common::get_application_lazy_def_id(
                                 self.ctx.types,
                                 type_id,
-                            )
-                        {
+                            );
+                        if let Some(base_def_id) = base_def_id {
                             let _ = self.resolve_and_insert_def_type(base_def_id);
                         }
 
@@ -382,13 +382,21 @@ impl<'a> CheckerState<'a> {
                         // probes. The TS2589-specific evaluator treats any repeated
                         // Application cycle as overflow, which is too aggressive for
                         // bounded recursive conditional aliases.
-                        let (exceeded, tuple_too_large) = {
-                            self.evaluate_type_with_env_uncached(type_id);
-                            (
-                                self.ctx.depth_exceeded.get(),
-                                self.ctx.types.take_tuple_too_large(),
-                            )
-                        };
+                        let computed_recursive_alias = is_type_alias
+                            && self.type_alias_has_computed_recursive_conditional_body(sym_id);
+                        let (exceeded, tuple_too_large) =
+                            if computed_recursive_alias && let Some(base_def_id) = base_def_id {
+                                (
+                                    self.evaluate_type_for_ts2589_check(type_id, base_def_id),
+                                    self.ctx.types.take_tuple_too_large(),
+                                )
+                            } else {
+                                self.evaluate_type_with_env_uncached(type_id);
+                                (
+                                    self.ctx.depth_exceeded.get(),
+                                    self.ctx.types.take_tuple_too_large(),
+                                )
+                            };
 
                         // Also detect circular mapped-type aliases that the evaluator
                         // can't expand: if the alias body is a mapped type that
@@ -1218,13 +1226,23 @@ impl<'a> CheckerState<'a> {
                             // probes. The TS2589-specific evaluator treats any repeated
                             // Application cycle as overflow, which is too aggressive for
                             // bounded recursive conditional aliases.
-                            let (exceeded, tuple_too_large) = {
-                                self.evaluate_type_with_env_uncached(result);
-                                (
-                                    self.ctx.depth_exceeded.get(),
-                                    self.ctx.types.take_tuple_too_large(),
-                                )
-                            };
+                            let app_def_id = query::get_application_info(self.ctx.types, result)
+                                .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base));
+                            let computed_recursive_alias =
+                                self.type_alias_has_computed_recursive_conditional_body(sym_id);
+                            let (exceeded, tuple_too_large) =
+                                if computed_recursive_alias && let Some(app_def_id) = app_def_id {
+                                    (
+                                        self.evaluate_type_for_ts2589_check(result, app_def_id),
+                                        self.ctx.types.take_tuple_too_large(),
+                                    )
+                                } else {
+                                    self.evaluate_type_with_env_uncached(result);
+                                    (
+                                        self.ctx.depth_exceeded.get(),
+                                        self.ctx.types.take_tuple_too_large(),
+                                    )
+                                };
 
                             // Also detect circular mapped-type aliases that the evaluator
                             // can't expand: if the alias body is a mapped type that

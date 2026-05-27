@@ -632,6 +632,25 @@ impl<'a> CheckerState<'a> {
         prop_name: Atom,
         fallback: TypeId,
     ) -> TypeId {
+        if crate::query_boundaries::type_predicates::is_recursive_operation_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            fallback,
+        ) || self
+            .ctx
+            .types
+            .get_display_alias(fallback)
+            .is_some_and(|alias| {
+                crate::query_boundaries::type_predicates::is_recursive_operation_application(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    alias,
+                )
+            })
+        {
+            return fallback;
+        }
+
         let prop_name_str = self.ctx.types.resolve_atom(prop_name);
 
         if let Some(type_id) =
