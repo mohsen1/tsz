@@ -135,12 +135,12 @@ fn relation_cache_stats_track_hits_and_misses() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        RelationPolicy::from_flags(0).cache_config(),
+        RelationPolicy::unflagged_compatibility().cache_config(),
     );
     let assignability_key = RelationCacheKey::for_assignability(
         hello,
         TypeId::STRING,
-        RelationPolicy::from_flags(0).cache_config(),
+        RelationPolicy::unflagged_compatibility().cache_config(),
     );
 
     assert_eq!(
