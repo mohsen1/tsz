@@ -1350,6 +1350,15 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if is_node_esm_external
+            && !is_exported_var
+            && !self.ctx.options.verbatim_module_syntax
+            && !self.source_is_js_file
+            && !self.import_equals_has_value_usage_after_node(node, import)
+        {
+            return;
+        }
+
         self.emit_import_equals_assignment_prefix(
             import.import_clause,
             is_external,
@@ -1424,17 +1433,36 @@ impl<'a> Printer<'a> {
             && statements.nodes.iter().any(|&stmt_idx| {
                 self.arena.get(stmt_idx).is_some_and(|stmt| {
                     if stmt.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION {
-                        return self.import_equals_declaration_is_external(stmt);
+                        return self.import_equals_declaration_needs_node_esm_create_require(stmt);
                     }
                     if let Some(export) = self.arena.get_export_decl(stmt)
                         && let Some(clause_node) = self.arena.get(export.export_clause)
                         && clause_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
                     {
-                        return self.import_equals_declaration_is_external(clause_node);
+                        return self
+                            .import_equals_declaration_needs_node_esm_create_require(clause_node);
                     }
                     false
                 })
             })
+    }
+
+    fn import_equals_declaration_needs_node_esm_create_require(&self, node: &Node) -> bool {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return false;
+        };
+        if !self.import_equals_declaration_is_external(node) {
+            return false;
+        }
+        if self
+            .arena
+            .has_modifier(&import.modifiers, SyntaxKind::ExportKeyword)
+            || self.ctx.options.verbatim_module_syntax
+            || self.source_is_js_file
+        {
+            return true;
+        }
+        self.import_equals_has_value_usage_after_node(node, import)
     }
 
     pub(in crate::emitter) fn import_equals_declaration_is_external(&self, node: &Node) -> bool {

@@ -18,7 +18,7 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_scoped_static_super_receiver(&mut self) {
+    pub(in crate::emitter) fn emit_scoped_static_super_receiver(&mut self) {
         if let Some(alias) = self.scoped_static_this_alias.as_ref().cloned() {
             self.write(&alias);
         } else {
@@ -26,7 +26,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_scoped_static_super_property_name(&mut self, name_idx: NodeIndex) {
+    pub(in crate::emitter) fn emit_scoped_static_super_property_name(
+        &mut self,
+        name_idx: NodeIndex,
+    ) {
         let Some(name_node) = self.arena.get(name_idx) else {
             self.write("\"\"");
             return;
@@ -65,6 +68,9 @@ impl<'a> Printer<'a> {
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
+            if self.emit_scoped_static_super_assignment_target(&access, false) {
+                return;
+            }
             if self.scoped_static_super_direct_access {
                 self.write(&base_alias);
                 self.write(".");
@@ -598,6 +604,9 @@ impl<'a> Printer<'a> {
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
+            if self.emit_scoped_static_super_assignment_target(&access, true) {
+                return;
+            }
             self.write(&index_alias);
             self.write("(");
             self.emit(access.name_or_argument);
@@ -612,6 +621,9 @@ impl<'a> Printer<'a> {
             && let Some(base_node) = self.arena.get(access.expression)
             && base_node.kind == SyntaxKind::SuperKeyword as u16
         {
+            if self.emit_scoped_static_super_assignment_target(&access, true) {
+                return;
+            }
             if self.scoped_static_super_direct_access {
                 if let Some(index_alias) = self.scoped_static_super_index_alias.as_ref().cloned() {
                     self.write(&index_alias);
@@ -1123,7 +1135,10 @@ impl<'a> Printer<'a> {
         }
     }
 
-    pub(super) fn emit_property_name_without_import_substitution(&mut self, node: NodeIndex) {
+    pub(in crate::emitter) fn emit_property_name_without_import_substitution(
+        &mut self,
+        node: NodeIndex,
+    ) {
         let prev_import = self.suppress_commonjs_named_import_substitution;
         let prev_ns = self.suppress_ns_qualification;
         self.suppress_commonjs_named_import_substitution = true;

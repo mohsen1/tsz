@@ -1,4 +1,5 @@
 //! Tests for expression parsing in the parser.
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_named};
 use tsz_common::diagnostics::diagnostic_codes;
 
@@ -498,6 +499,32 @@ fn object_method_arrow_return_token_prefers_brace_expected_then_ts1434() {
             .iter()
             .all(|d| d.code != diagnostic_codes::PROPERTY_OR_SIGNATURE_EXPECTED),
         "object method recovery should not fall back to TS1131, got {diags:?}"
+    );
+
+    let arena = parser.get_arena();
+    assert!(
+        arena
+            .nodes
+            .iter()
+            .all(|node| node.kind != syntax_kind_ext::METHOD_DECLARATION),
+        "malformed object method `=>` recovery should drop the member and leave the tail as statements"
+    );
+}
+
+#[test]
+fn function_type_colon_recovery_leaves_return_token_as_statement() {
+    let source = "type F = (n: number): string;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).expect("source file");
+    assert!(
+        sf.statements.nodes.iter().any(|&stmt| {
+            arena
+                .get(stmt)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+        }),
+        "function type `:` recovery should leave `string` for statement-level recovery; diagnostics: {:?}",
+        parser.get_diagnostics()
     );
 }
 

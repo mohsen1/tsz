@@ -16,6 +16,49 @@ fn parse_declaration_modules_with_generic_and_type_aliases() {
 }
 
 #[test]
+fn type_void_alias_recovers_as_expression_statements() {
+    let source = "interface I {}\ntype any = I;\ntype void = I;\ntype object = I;";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let sf = arena.get_source_file_at(root).unwrap();
+
+    let kinds: Vec<u16> = sf
+        .statements
+        .nodes
+        .iter()
+        .map(|&stmt| arena.get(stmt).unwrap().kind)
+        .collect();
+
+    assert_eq!(
+        kinds,
+        vec![
+            syntax_kind_ext::INTERFACE_DECLARATION,
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+            syntax_kind_ext::EXPRESSION_STATEMENT,
+            syntax_kind_ext::EXPRESSION_STATEMENT,
+            syntax_kind_ext::EXPRESSION_STATEMENT,
+            syntax_kind_ext::TYPE_ALIAS_DECLARATION,
+        ]
+    );
+
+    let diagnostics: Vec<(u32, u32)> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| (diag.code, diag.start))
+        .collect();
+    let void_pos = source.find("void").unwrap() as u32;
+    let equals_pos = source.find("= I;\ntype object").unwrap() as u32;
+    assert!(
+        diagnostics.contains(&(diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE, void_pos)),
+        "expected TS2457 at `void`, got {diagnostics:?}"
+    );
+    assert!(
+        diagnostics.contains(&(diagnostic_codes::EXPRESSION_EXPECTED, equals_pos)),
+        "expected TS1109 at `=`, got {diagnostics:?}"
+    );
+}
+
+#[test]
 fn parse_declaration_with_recovery_for_invalid_member() {
     let (parser, root) = parse_source(
         "declare namespace NS {\n  export interface I {\n    prop: string = 1;\n  }\n}\n",

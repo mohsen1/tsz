@@ -1149,6 +1149,15 @@ impl ParserState {
                 break;
             }
 
+            if self.is_token(SyntaxKind::OpenBraceToken) {
+                self.parse_error_at_current_token(
+                    "Unexpected token. A constructor, method, accessor, or property was expected.",
+                    diagnostic_codes::UNEXPECTED_TOKEN_A_CONSTRUCTOR_METHOD_ACCESSOR_OR_PROPERTY_WAS_EXPECTED,
+                );
+                self.suppress_next_missing_class_close_brace_error_once = true;
+                break;
+            }
+
             let member = self.parse_class_member();
             if member.is_some() {
                 // Don't consume trailing semicolon if the member itself is a
@@ -1243,6 +1252,22 @@ impl ParserState {
 
     fn recover_invalid_character_class_member(&mut self) {
         use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        if self.current_unknown_starts_braced_unicode_escape_debris() {
+            self.parse_error_at_current_token(
+                diagnostic_messages::INVALID_CHARACTER,
+                diagnostic_codes::INVALID_CHARACTER,
+            );
+            self.next_token();
+            if self.is_identifier_or_keyword() && self.scanner.get_token_text_ref() == "u" {
+                self.parse_error_at_current_token(
+                    "Unexpected keyword or identifier.",
+                    diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                );
+                self.next_token();
+            }
+            return;
+        }
 
         while self.is_token(SyntaxKind::Unknown) {
             self.parse_error_at_current_token(

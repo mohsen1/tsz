@@ -280,12 +280,25 @@ impl<'a> Printer<'a> {
             return false;
         };
         let start = self.skip_trivia_forward(node.pos, node.end) as usize;
-        let Ok(source) = crate::safe_slice::slice(text, start, node.end as usize) else {
+        let source_end = self.arena.get(module.body).map_or(node.end, |body_node| {
+            self.find_block_closing_brace_end(body_node)
+        });
+        let Ok(source) = crate::safe_slice::slice(text, start, source_end as usize) else {
             return false;
         };
+        let base_indent_columns = text[..start]
+            .rsplit_once(['\n', '\r'])
+            .map_or(&text[..start], |(_, line)| line)
+            .chars()
+            .map(|ch| match ch {
+                '\t' => 4,
+                ' ' => 1,
+                _ => 0,
+            })
+            .sum::<usize>();
 
         let mut wrote = false;
-        for line in source.lines() {
+        for (line_index, line) in source.lines().enumerate() {
             let trimmed = line.trim();
             if trimmed.is_empty() {
                 continue;
@@ -293,12 +306,17 @@ impl<'a> Printer<'a> {
             if wrote {
                 self.write_line();
             }
-            let indent_level = line
+            let absolute_indent_columns = line
                 .chars()
                 .take_while(|ch| matches!(ch, ' ' | '\t'))
                 .map(|ch| if ch == '\t' { 4 } else { 1 })
                 .sum::<usize>()
-                / 4;
+                + if line_index == 0 {
+                    base_indent_columns
+                } else {
+                    0
+                };
+            let indent_level = absolute_indent_columns.saturating_sub(base_indent_columns) / 4;
             for _ in 0..indent_level {
                 self.write("    ");
             }
@@ -315,6 +333,9 @@ impl<'a> Printer<'a> {
             wrote = true;
         }
         if wrote {
+            if !self.writer.is_at_line_start() {
+                self.write_line();
+            }
             self.skip_comments_for_erased_node(node);
         }
         wrote

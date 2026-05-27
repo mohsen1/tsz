@@ -33,13 +33,13 @@ pub(in crate::emitter) enum CjsExportAssignmentValue {
     Initializer(NodeIndex),
     LocalName(String),
 }
-
-const fn cjs_export_decl_list_keyword(node: &Node) -> Option<&'static str> {
+const fn cjs_export_decl_list_keyword(node: &Node, target_es5: bool) -> Option<&'static str> {
     let flags = node.flags as u32;
     if flags & node_flags::USING != 0 {
-        return None;
-    }
-    if flags & node_flags::CONST != 0 {
+        None
+    } else if target_es5 {
+        Some("var")
+    } else if flags & node_flags::CONST != 0 {
         Some("const")
     } else if flags & node_flags::LET != 0 {
         Some("let")
@@ -1234,7 +1234,7 @@ impl<'a> Printer<'a> {
         for &decl_list_idx in &var_stmt.declarations.nodes {
             let decl_list_node = self.arena.get(decl_list_idx)?;
             let decl_list = self.arena.get_variable(decl_list_node)?;
-            let keyword = cjs_export_decl_list_keyword(decl_list_node)?;
+            let keyword = cjs_export_decl_list_keyword(decl_list_node, self.ctx.target_es5)?;
             let mut local_group = CjsExportLocalDeclGroup {
                 keyword,
                 declarations: Vec::new(),
@@ -1311,6 +1311,12 @@ impl<'a> Printer<'a> {
         let Some(class) = self.arena.get_class(class_node) else {
             return false;
         };
+        if matches!(
+            self.transforms.get(class_idx),
+            Some(crate::context::transform::TransformDirective::TC39Decorators { .. })
+        ) {
+            return true;
+        }
 
         let needs_private_lowering = !self.ctx.options.target.supports_es2022();
         let target_needs_field_lowering = (self.ctx.options.target as u32)

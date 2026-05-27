@@ -104,12 +104,46 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_parser::syntax::transform_utils::contains_this_reference;
 use tsz_scanner::SyntaxKind;
 
-struct Tc39Es5MemberDecorator {
+#[derive(Clone)]
+pub(super) struct Tc39Es5MemberDecorator {
+    member_idx: NodeIndex,
     decorators_var: String,
     decorator_exprs: Vec<String>,
     kind: &'static str,
-    name: String,
+    name: Tc39Es5MemberName,
     is_static: bool,
+    initializers_var: Option<String>,
+    extra_initializers_var: Option<String>,
+}
+
+impl Tc39Es5MemberDecorator {
+    const fn is_field(&self) -> bool {
+        self.initializers_var.is_some()
+    }
+}
+
+#[derive(Clone)]
+enum Tc39Es5MemberName {
+    Identifier(String),
+    StringLiteral(String),
+    Computed { expr_text: String, key_var: String },
+}
+
+struct Tc39Es5ComputedMemberInjection {
+    kind: &'static str,
+    is_static: bool,
+    expr_text: String,
+    assignments: Vec<String>,
+    decorator_vars: Vec<String>,
+}
+
+fn tc39_es5_propkey_temp_name(offset: u32) -> String {
+    let idx = offset + 1;
+    if idx < 26 {
+        format!("_{}", (b'a' + idx as u8) as char)
+    } else {
+        format!("_{idx}")
+    }
 }
 
 /// Context for ES5 class transformation
@@ -136,6 +170,8 @@ pub struct ES5ClassTransformer<'a> {
     tc39_decorators: bool,
     /// Whether the current TC39-decorated class needs instance extra initializers.
     tc39_has_instance_member_decorators: bool,
+    /// TC39 member decorator metadata for the class currently being transformed.
+    tc39_es5_member_decorators: Vec<Tc39Es5MemberDecorator>,
     /// Base indent level for raw IR strings (0 for top-level, 1+ for nested contexts)
     indent_base: u32,
     /// Counter for generating unique temp variable names (_a, _b, _c, ...)
@@ -146,6 +182,9 @@ pub struct ES5ClassTransformer<'a> {
     current_static_class_alias: Option<String>,
     /// Alias used for class-name self references when class decorators can replace the binding.
     class_self_reference_alias: Option<String>,
+    /// Whether a nested class heritage expression is evaluated in a pre-super
+    /// constructor receiver capture context.
+    extends_this_captured: bool,
     /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
@@ -156,6 +195,7 @@ pub struct ES5ClassTransformer<'a> {
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
     downlevel_iteration: bool,
+    dynamic_import_promise_counter: Cell<u32>,
     async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
     disposable_env_counter: Cell<u32>,
     blocked_disposable_env_names: RefCell<FxHashSet<String>>,
@@ -192,11 +232,13 @@ impl<'a> ES5ClassTransformer<'a> {
             emit_decorator_metadata: false,
             tc39_decorators: false,
             tc39_has_instance_member_decorators: false,
+            tc39_es5_member_decorators: Vec::new(),
             indent_base: 0,
             temp_var_counter: Cell::new(0),
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             class_self_reference_alias: None,
+            extends_this_captured: false,
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             tslib_prefix: false,
@@ -204,6 +246,7 @@ impl<'a> ES5ClassTransformer<'a> {
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
             downlevel_iteration: false,
+            dynamic_import_promise_counter: Cell::new(1),
             async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
             disposable_env_counter: Cell::new(1),
             blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
@@ -240,6 +283,10 @@ impl<'a> ES5ClassTransformer<'a> {
         self.class_self_reference_alias = Some(alias);
     }
 
+    pub const fn set_extends_this_captured(&mut self, captured: bool) {
+        self.extends_this_captured = captured;
+    }
+
     pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {
         self.commonjs_import_substitutions = subs;
     }
@@ -258,6 +305,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_downlevel_iteration(&mut self, downlevel_iteration: bool) {
         self.downlevel_iteration = downlevel_iteration;
+    }
+
+    pub fn set_dynamic_import_promise_counter(&self, next_id: u32) {
+        self.dynamic_import_promise_counter.set(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.dynamic_import_promise_counter.get()
     }
 
     pub fn set_async_generator_inner_name_counts(&mut self, counts: FxHashMap<String, u32>) {
@@ -427,17 +482,10 @@ impl<'a> ES5ClassTransformer<'a> {
         self.source_text = Some(source_text);
     }
 
-    /// Append the property's immediately-preceding leading block comment (if any)
+    /// Append the property's immediately-preceding leading comment (if any)
     /// to `body`. When a class property's initializer is lifted into the
     /// constructor, the comment that decorated the property in source must move
     /// with it — otherwise the user-authored documentation silently disappears.
-    ///
-    /// We scan backwards from the property's `pos` through whitespace and
-    /// newlines and, if the previous bytes form `*/`, capture the enclosing
-    /// `/* ... */` (or `/** ... */`) span as a leading `Raw` IR node. This
-    /// covers the common JSDoc case targeted by this fix; line comments before
-    /// properties are still handled by the existing trivia logic when they
-    /// happen to land in the surrounding leading-comment range.
     fn emit_property_leading_comment(&self, body: &mut Vec<IRNode>, prop_idx: NodeIndex) {
         let Some(prop_node) = self.arena.get(prop_idx) else {
             return;
@@ -452,6 +500,11 @@ impl<'a> ES5ClassTransformer<'a> {
         }
         while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\n' | b'\r') {
             i -= 1;
+        }
+        let line_start = text[..i].rfind('\n').map_or(0, |idx| idx + 1);
+        if text[line_start..i].trim_start().starts_with("//") {
+            body.push(IRNode::Raw(text[line_start..i].to_string().into()));
+            return;
         }
         if i < 2 || &bytes[i - 2..i] != b"*/" {
             return;
@@ -720,6 +773,9 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.disposable_env_counter.get(),
                 self.blocked_disposable_env_names.borrow().iter().cloned(),
             )
+            .with_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get())
+            .with_class_transformer_indent_base(self.indent_base + 2)
+            .with_downlevel_iteration(self.downlevel_iteration)
             .with_module_kind(self.module_kind);
         if let Some(source_text) = self.source_text {
             converter = converter.with_source_text(source_text);
@@ -771,6 +827,8 @@ impl<'a> ES5ClassTransformer<'a> {
         self.temp_var_counter.set(converter.temp_var_counter());
         self.disposable_env_counter
             .set(converter.disposable_env_counter());
+        self.dynamic_import_promise_counter
+            .set(converter.dynamic_import_promise_counter());
         let generated = converter.take_generated_disposable_env_names();
         if !generated.is_empty() {
             let mut blocked = self.blocked_disposable_env_names.borrow_mut();
@@ -891,6 +949,15 @@ impl<'a> ES5ClassTransformer<'a> {
 
     fn convert_expression_this_captured(&self, idx: NodeIndex) -> IRNode {
         let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
+    fn convert_expression_with_lexical_this_capture(&self, idx: NodeIndex) -> IRNode {
+        let converter = self
+            .make_converter()
+            .with_lexical_this_capture_alias(Some("_this".to_string()));
         let result = converter.convert_expression(idx);
         self.collect_from_converter(&converter);
         result
@@ -1423,11 +1490,15 @@ impl<'a> ES5ClassTransformer<'a> {
         }
 
         self.class_name = class_name;
-        self.tc39_has_instance_member_decorators = self.tc39_decorators
-            && self
-                .collect_tc39_es5_member_decorators(class_data)
-                .iter()
-                .any(|member| !member.is_static);
+        self.tc39_es5_member_decorators = if self.tc39_decorators {
+            self.collect_tc39_es5_member_decorators(class_data)
+        } else {
+            Vec::new()
+        };
+        self.tc39_has_instance_member_decorators = self
+            .tc39_es5_member_decorators
+            .iter()
+            .any(|member| !member.is_static && !member.is_field());
 
         // Collect private fields and accessors
         let mut used_private_names = collect_enclosing_source_binding_names(self.arena, class_idx);
@@ -1501,6 +1572,15 @@ impl<'a> ES5ClassTransformer<'a> {
             let Some(computed) = self.arena.get_computed_property(name_node) else {
                 continue;
             };
+            if let Some(Tc39Es5MemberDecorator {
+                name: Tc39Es5MemberName::Computed { key_var, .. },
+                ..
+            }) = self.tc39_es5_decorated_field(member_idx)
+            {
+                self.computed_prop_temp_map
+                    .insert(computed.expression, key_var.clone());
+                continue;
+            }
             let Some(expr_node) = self.arena.get(computed.expression) else {
                 continue;
             };

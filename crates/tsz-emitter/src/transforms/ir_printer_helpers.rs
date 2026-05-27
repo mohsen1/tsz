@@ -22,6 +22,25 @@ impl<'a> IRPrinter<'a> {
         }) // Default to single-line if no source text
     }
 
+    pub(super) fn object_literal_source_has_trailing_comma(&self, pos: u32, end: u32) -> bool {
+        self.source_text.is_some_and(|text| {
+            let start = pos as usize;
+            let end = std::cmp::min(end as usize, text.len());
+            if start >= end {
+                return false;
+            }
+            let slice = &text[start..end];
+            let Some(close_brace) = slice.rfind('}') else {
+                return false;
+            };
+            slice[..close_brace]
+                .chars()
+                .rev()
+                .find(|ch| !ch.is_whitespace())
+                .is_some_and(|ch| ch == ',')
+        })
+    }
+
     pub(super) fn is_body_source_single_line(&self, body_source_range: Option<(u32, u32)>) -> bool {
         body_source_range
             .and_then(|(pos, end)| {
@@ -300,7 +319,39 @@ impl<'a> IRPrinter<'a> {
             return;
         }
 
-        match &prop.key {
+        if matches!(prop.kind, IRPropertyKind::Get | IRPropertyKind::Set) {
+            self.write(if prop.kind == IRPropertyKind::Get {
+                "get "
+            } else {
+                "set "
+            });
+            self.emit_property_key(&prop.key);
+            if let IRNode::FunctionExpr {
+                parameters,
+                body,
+                body_source_range,
+                ..
+            } = &prop.value
+            {
+                self.write("(");
+                self.emit_parameters(parameters);
+                self.write(") ");
+                self.emit_function_body_with_defaults(parameters, body, *body_source_range, false);
+            } else {
+                self.write(" ");
+                self.emit_node(&prop.value);
+            }
+            return;
+        }
+
+        self.emit_property_key(&prop.key);
+
+        self.write(": ");
+        self.emit_node(&prop.value);
+    }
+
+    fn emit_property_key(&mut self, key: &IRPropertyKey) {
+        match key {
             IRPropertyKey::Identifier(name) => self.write(name),
             IRPropertyKey::StringLiteral(s) => {
                 self.write("\"");
@@ -312,17 +363,6 @@ impl<'a> IRPrinter<'a> {
                 self.write("[");
                 self.emit_node(expr);
                 self.write("]");
-            }
-        }
-
-        match prop.kind {
-            IRPropertyKind::Init => {
-                self.write(": ");
-                self.emit_node(&prop.value);
-            }
-            IRPropertyKind::Get | IRPropertyKind::Set => {
-                self.write(" ");
-                self.emit_node(&prop.value);
             }
         }
     }
@@ -379,6 +419,37 @@ impl<'a> IRPrinter<'a> {
             self.write_line();
         }
         self.decrease_indent();
+    }
+
+    pub(super) fn emit_for_initializer(&mut self, init: &IRNode) {
+        match init {
+            IRNode::VarDecl { name, initializer } => {
+                self.write("var ");
+                self.write(name);
+                if let Some(initializer) = initializer {
+                    self.write(" = ");
+                    self.emit_node(initializer);
+                }
+            }
+            IRNode::VarDeclList(decls) => {
+                self.write("var ");
+                for (i, decl) in decls.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    if let IRNode::VarDecl { name, initializer } = decl {
+                        self.write(name);
+                        if let Some(initializer) = initializer {
+                            self.write(" = ");
+                            self.emit_node(initializer);
+                        }
+                    } else {
+                        self.emit_node(decl);
+                    }
+                }
+            }
+            _ => self.emit_node(init),
+        }
     }
 
     pub(super) fn write(&mut self, s: &str) {

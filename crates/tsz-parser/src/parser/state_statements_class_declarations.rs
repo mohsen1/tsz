@@ -18,6 +18,24 @@ impl ParserState {
         // Check for illegal binding identifiers (e.g., 'await' in static blocks)
         self.check_illegal_binding_identifier();
 
+        if self.is_token(SyntaxKind::CloseParenToken) {
+            self.parse_error_at_current_token("'{' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            let end_pos = self.token_full_start();
+            return self.arena.add_class(
+                syntax_kind_ext::CLASS_DECLARATION,
+                start_pos,
+                end_pos,
+                ClassData {
+                    modifiers: None,
+                    name: NodeIndex::NONE,
+                    type_parameters: None,
+                    heritage_clauses: None,
+                    members: self.make_node_list(Vec::new()),
+                },
+            );
+        }
+
         // Parse class name - keywords like 'any', 'string' can be used as class names
         // EXCEPT extends/implements which start heritage clauses
         // AND reserved words like 'void', 'null' which cannot be identifiers

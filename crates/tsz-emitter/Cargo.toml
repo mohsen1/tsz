@@ -199,6 +199,18 @@ name = "function_parameter_native_prologue_tests"
 path = "tests/function_parameter_native_prologue_tests.rs"
 
 [[test]]
+name = "generator_object_literal_emit"
+path = "tests/generator_object_literal_emit.rs"
+
+[[test]]
+name = "async_try_emit"
+path = "tests/async_try_emit.rs"
+
+[[test]]
+name = "async_loop_emit"
+path = "tests/async_loop_emit.rs"
+
+[[test]]
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
 

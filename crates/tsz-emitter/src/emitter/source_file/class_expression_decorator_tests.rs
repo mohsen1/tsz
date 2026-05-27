@@ -39,6 +39,48 @@ fn anonymous_tc39_decorated_class_expression_uses_object_property_name() {
 }
 
 #[test]
+fn anonymous_tc39_member_decorated_class_expression_uses_object_property_name() {
+    let source = "declare var dec: any;\n({ C: class { @dec y: any; } });\n";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("__esDecorate"),
+        "Member decorator transform should run for object-property class expressions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(this, \"C\")"),
+        "Anonymous member-decorated class expression should use the object property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_tc39_decorated_class_expression_uses_literal_computed_object_names() {
+    let source = "\
+declare var dec: any;
+({ [\"C\"]: @dec class {} });
+({ [0]: class { @dec y: any; } });
+({ __proto__: @dec class {} });
+({ [\"__proto__\"]: @dec class {} });
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("__propKey(\"C\")") && !output.contains("__propKey(0)"),
+        "Literal computed property names should not allocate __propKey temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"C\")")
+            && output.contains("__setFunctionName(this, \"0\")"),
+        "Literal computed object properties should pass literal names to __setFunctionName.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"\")")
+            && output.contains("__setFunctionName(_classThis, \"__proto__\")"),
+        "Noncomputed __proto__ should not perform named evaluation, but computed __proto__ should.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn anonymous_tc39_decorated_class_expression_uses_shorthand_default_name() {
     let source = "declare var dec: any;\nvar C;\n({ C = @dec class {} } = {});\n";
     let output = emit_tc39_decorator_source(source);
@@ -50,6 +92,30 @@ fn anonymous_tc39_decorated_class_expression_uses_shorthand_default_name() {
     assert!(
         output.contains("__setFunctionName(_classThis, \"C\")"),
         "Anonymous decorated class expression should use the shorthand property name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_tc39_decorated_class_expressions_use_file_unique_runtime_names() {
+    let source = "\
+declare var dec: any;
+{ let x = @dec class {}; }
+{ let y = @dec class {}; }
+{ let z = @dec class {}; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("var class_1 = class")
+            && output.contains("var class_2 = class")
+            && output.contains("var class_3 = class"),
+        "Repeated decorated anonymous class expressions should allocate file-unique runtime names.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return class_1 = _classThis;")
+            && output.contains("return class_2 = _classThis;")
+            && output.contains("return class_3 = _classThis;"),
+        "Each decorated anonymous class expression should return through its own runtime name.\nOutput:\n{output}"
     );
 }
 
@@ -88,5 +154,250 @@ fn anonymous_tc39_decorated_class_expression_uses_computed_class_field_temp() {
     assert!(
         output.contains("__setFunctionName(_classThis, _a)"),
         "Computed class field should pass the raw temp to __setFunctionName.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn anonymous_tc39_decorated_class_expression_uses_literal_computed_class_field_names() {
+    let source = "\
+declare var dec: any;
+class C { static [\"x\"] = @dec class {}; }
+class D { static [0] = class { @dec y: any; }; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("__propKey(\"x\")") && !output.contains("__propKey(0)"),
+        "Literal computed class field names should not allocate __propKey temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__setFunctionName(_classThis, \"x\")")
+            && output.contains("__setFunctionName(this, \"0\")"),
+        "Literal computed class fields should pass literal names to __setFunctionName.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_fields_render_nested_tc39_decorated_class_initializers() {
+    let source = "\
+declare var dec: any;
+class C { @dec x = @dec class {}; }
+class D { @dec static [\"y\"] = @dec class {}; }
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        !output.contains("@dec class"),
+        "Decorated field initializers should render nested transformed class expressions, not raw source text.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("x = tslib_1.__runInitializers(this, _x_initializers, (() => {")
+            && output.contains(
+                "static [\"y\"] = tslib_1.__runInitializers(this, _static_member_initializers, (() => {"
+            ),
+        "Decorated fields should pass transformed nested class expressions into __runInitializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("tslib_1.__setFunctionName(_classThis, \"x\")")
+            && output.contains("tslib_1.__setFunctionName(_classThis, \"y\")"),
+        "Nested anonymous decorated class expressions should use the containing field name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_class_static_blocks_rewrite_super_member_calls() {
+    let source = "\
+declare var dec: any;
+declare class Base { static method(...args: any[]): void; }
+const method = \"method\";
+
+@dec
+class C extends Base {
+    static {
+        super.method();
+        super[method]();
+        super.method``;
+        super[method]``;
+    }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("Reflect.get(_classSuper, \"method\", _classThis).call(_classThis);")
+            && output.contains("Reflect.get(_classSuper, method, _classThis).call(_classThis);"),
+        "Decorated class static blocks should rewrite static super calls through Reflect.get.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Reflect.get(_classSuper, \"method\", _classThis).bind(_classThis) ``;")
+            && output.contains("Reflect.get(_classSuper, method, _classThis).bind(_classThis) ``;"),
+        "Decorated class static blocks should bind static super tagged-template calls.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("super.method()") && !output.contains("super[method]()"),
+        "Decorated class static blocks should not copy raw static super member access.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_class_static_blocks_rewrite_super_member_writes() {
+    let source = "\
+declare var dec: any;
+declare class Base { static x: number; }
+const key = \"x\";
+
+@dec
+class C extends Base {
+    static {
+        super.x = 1;
+        super.x += 1;
+        super.x++;
+        ++super.x;
+        ({ x: super.x } = { x: 1 });
+        super[key] += 1;
+        super[key]--;
+        ({ x: super[key] } = { x: 1 });
+    }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"x\", 1, _classThis);")
+            && output.contains(
+                "Reflect.set(_classSuper, \"x\", Reflect.get(_classSuper, \"x\", _classThis) + 1, _classThis);"
+            ),
+        "Decorated class static blocks should rewrite static super assignments through Reflect.set.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Reflect.set(_classSuper, \"x\", (_a = Reflect.get(_classSuper, \"x\", _classThis), _a++, _a), _classThis);")
+            && output.contains("Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), ++_b), _classThis);"),
+        "Decorated class static blocks should rewrite static super updates through Reflect.set.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "({ x: ({ set value(_a) { Reflect.set(_classSuper, \"x\", _a, _classThis); } }).value } = { x: 1 });"
+        ) && output.contains(
+            "({ x: ({ set value(_a) { Reflect.set(_classSuper, key, _a, _classThis); } }).value } = { x: 1 });"
+        ),
+        "Decorated class static block destructuring targets should use writable static super setters.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "Reflect.set(_classSuper, _c = key, Reflect.get(_classSuper, _c, _classThis) + 1, _classThis);"
+        ) && output.contains(
+            "Reflect.set(_classSuper, _d = key, (_e = Reflect.get(_classSuper, _d, _classThis), _e--, _e), _classThis);"
+        ),
+        "Decorated class static blocks should evaluate computed static super write keys once.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_class_extends_expression_suppresses_named_evaluation() {
+    let source = "\
+declare var dec: any;
+
+@dec
+class C1 extends class { } {
+    static { super.name; }
+}
+
+@dec
+class C2 extends (function() {} as any) {
+    static { super.name; }
+}
+
+@dec
+class C3 extends ((() => {}) as any) {
+    static { super.name; }
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("let _classSuper = (0, class")
+            && output.contains("let _classSuper = (0, function")
+            && output.contains("let _classSuper = (0, (() =>"),
+        "Decorator superclass capture should render expression bases with named-evaluation suppression.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("as any") && !output.contains("class { } {;"),
+        "Decorator superclass capture should use emitted JS expression text, not raw heritage source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_class_static_field_initializers_rewrite_super_member_calls() {
+    let source = "\
+declare var dec: any;
+declare class Base { static method(...args: any[]): number; }
+const method = \"method\";
+
+@dec
+class C extends Base {
+    static a = super.method();
+    static b = super[method]();
+    static c = super.method``;
+    static d = super[method]``;
+}
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains(
+            "static a = Reflect.get(_classSuper, \"method\", _classThis).call(_classThis);"
+        ) && output
+            .contains("static b = Reflect.get(_classSuper, method, _classThis).call(_classThis);"),
+        "Decorated class static field initializers should rewrite static super calls.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static c = Reflect.get(_classSuper, \"method\", _classThis).bind(_classThis) ``;"
+        ) && output.contains(
+            "static d = Reflect.get(_classSuper, method, _classThis).bind(_classThis) ``;"
+        ),
+        "Decorated class static field initializers should bind static super tagged-template calls.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn decorated_class_static_field_initializers_rewrite_super_member_writes() {
+    let source = "\
+declare var dec: any;
+declare class Base { static x: number; }
+const key = \"x\";
+
+@dec
+class C extends Base {
+    static a = super.x = 1;
+    static b = super.x++;
+    static c = ++super.x;
+    static d = super[key] += 1;
+}
+
+(@dec class extends Base {
+    static e = super.x = 2;
+});
+";
+    let output = emit_tc39_decorator_source(source);
+
+    assert!(
+        output.contains("static a = (() => {")
+            && output.contains("return Reflect.set(_classSuper, \"x\", _a = 1, _classThis), _a;"),
+        "Decorated class static field assignment initializers should return the assigned value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), _a = _b++, _b), _classThis), _a;")
+            && output.contains("return Reflect.set(_classSuper, \"x\", (_b = Reflect.get(_classSuper, \"x\", _classThis), _a = ++_b), _classThis), _a;"),
+        "Decorated class static field update initializers should return the update value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return Reflect.set(_classSuper, _a = key, _b = Reflect.get(_classSuper, _a, _classThis) + 1, _classThis), _b;"),
+        "Decorated class static field computed super writes should evaluate the key once and return the assignment value.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("static e = (() => {")
+            && output.contains("return Reflect.set(_classSuper, \"x\", _a = 2, _classThis), _a;"),
+        "Decorated class-expression static field writes should also return the assigned value.\nOutput:\n{output}"
     );
 }

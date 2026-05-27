@@ -73,6 +73,12 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && let Some(class_decl) = self.arena.get_class(stmt_node)
                 {
+                    if self
+                        .arena
+                        .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        continue;
+                    }
                     let class_name = self.get_identifier_text_idx(class_decl.name);
                     if !class_name.is_empty() && seen.insert(class_name.clone()) {
                         names.push(class_name);
@@ -245,6 +251,16 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        if self
+                            .arena
+                            .get_variable(clause_node)
+                            .is_some_and(|var_stmt| {
+                                self.arena
+                                    .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                            })
+                        {
+                            continue;
+                        }
                         self.collect_system_empty_binding_temps_from_variable_statement(
                             clause_node,
                             true,
@@ -291,6 +307,12 @@ impl<'a> Printer<'a> {
                     if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
                         && let Some(class_decl) = self.arena.get_class(clause_node)
                     {
+                        if self
+                            .arena
+                            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            continue;
+                        }
                         let name = self.get_identifier_text_idx(class_decl.name);
                         if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
                             export_decl.export_clause,
@@ -490,7 +512,10 @@ impl<'a> Printer<'a> {
                         let source_temp = if self
                             .reusable_object_rest_export_source(decl.initializer)
                             .is_some()
-                        {
+                            || self.can_inline_system_destructuring_export_source(
+                                decl.name,
+                                decl.initializer,
+                            ) {
                             None
                         } else {
                             let temp = self.make_unique_name();
@@ -659,7 +684,10 @@ impl<'a> Printer<'a> {
                         let source_temp = if self
                             .reusable_object_rest_export_source(decl.initializer)
                             .is_some()
-                        {
+                            || self.can_inline_system_destructuring_export_source(
+                                decl.name,
+                                decl.initializer,
+                            ) {
                             None
                         } else {
                             let temp = self.make_unique_name();
@@ -759,6 +787,37 @@ impl<'a> Printer<'a> {
             }
         }
         false
+    }
+
+    fn can_inline_system_destructuring_export_source(
+        &self,
+        name_idx: NodeIndex,
+        initializer: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN {
+            return false;
+        }
+        let Some(pattern) = self.arena.get_binding_pattern(name_node) else {
+            return false;
+        };
+        if pattern.elements.nodes.len() != 1 {
+            return false;
+        }
+        let Some(elem_node) = self.arena.get(pattern.elements.nodes[0]) else {
+            return false;
+        };
+        let Some(elem) = self.arena.get_binding_element(elem_node) else {
+            return false;
+        };
+        if elem.dot_dot_dot_token || elem.initializer.is_some() {
+            return false;
+        }
+        self.arena
+            .get(initializer)
+            .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
     }
 
     fn collect_system_nested_top_level_var_hoisted_names(

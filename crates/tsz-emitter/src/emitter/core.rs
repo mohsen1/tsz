@@ -623,6 +623,9 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// File-level class temps reserved ahead of legacy decorator computed-name temps.
+    pub(crate) hoisted_file_level_class_temps: Vec<String>,
+
     /// Private-name backing temps that must be recreated for each block iteration.
     /// Class expressions in loop bodies use `let` declarations in the loop block.
     pub(crate) block_scoped_private_temps: Vec<String>,
@@ -857,6 +860,10 @@ pub struct Printer<'a> {
     /// to a temp variable and the class body uses the temp instead of the expression.
     pub(crate) computed_prop_temp_map: FxHashMap<NodeIndex, String>,
 
+    /// Mapping from legacy-decorated computed member name expression to the temp
+    /// used as the later `__decorate` property key.
+    pub(crate) legacy_decorator_computed_name_temp_map: FxHashMap<NodeIndex, String>,
+
     /// Temporary alias for outer static `this` while emitting a static field initializer.
     /// This must not flow into nested non-arrow function or class scopes.
     pub(crate) scoped_static_this_alias: Option<Arc<str>>,
@@ -875,6 +882,10 @@ pub struct Printer<'a> {
     /// When true, async-method `super[expr]` capture emits through `.value`.
     pub(crate) scoped_static_super_index_value_access: bool,
 
+    /// When true, scoped static `super` property/element access is being emitted
+    /// as a destructuring assignment target and should become a writable setter.
+    pub(crate) scoped_static_super_assignment_target: bool,
+
     /// Temporary alias for named class expressions that are wrapped in a comma
     /// expression, e.g. `(_a = class Foo { m() { return _a; } }, _a.x = 1, _a)`.
     pub(crate) scoped_class_expression_self_alias: Option<(Arc<str>, Arc<str>)>,
@@ -883,6 +894,11 @@ pub struct Printer<'a> {
     /// expression. The boolean is true when the name is a runtime expression
     /// such as a computed property temp, not a string literal.
     pub(crate) pending_tc39_class_expression_name: Option<(String, bool)>,
+
+    /// Whether ES5 class-expression heritage clauses emitted by this nested
+    /// printer should evaluate top-level `this` as the captured constructor
+    /// receiver.
+    pub(crate) es5_class_expression_extends_this_captured: bool,
 
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
@@ -1206,6 +1222,7 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            hoisted_file_level_class_temps: Vec::new(),
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
             system_empty_binding_temps: FxHashMap::default(),
@@ -1260,13 +1277,16 @@ impl<'a> Printer<'a> {
             jsx_legacy_cjs_runtime_var: None,
             source_is_js_file: false,
             computed_prop_temp_map: FxHashMap::default(),
+            legacy_decorator_computed_name_temp_map: FxHashMap::default(),
             scoped_static_this_alias: None,
             scoped_static_super_direct_access: false,
             scoped_static_super_base_alias: None,
             scoped_static_super_index_alias: None,
             scoped_static_super_index_value_access: false,
+            scoped_static_super_assignment_target: false,
             scoped_class_expression_self_alias: None,
             pending_tc39_class_expression_name: None,
+            es5_class_expression_extends_this_captured: false,
             tagged_template_var_map: FxHashMap::default(),
         }
     }
@@ -1279,6 +1299,10 @@ impl<'a> Printer<'a> {
     /// Whether an accessor node is currently being emitted from object-literal syntax.
     pub(crate) const fn is_emitting_object_literal_accessor(&self) -> bool {
         self.object_literal_accessor_depth > 0
+    }
+
+    pub(crate) const fn set_es5_class_expression_extends_this_captured(&mut self, captured: bool) {
+        self.es5_class_expression_extends_this_captured = captured;
     }
 
     /// Emit an object-literal property node, marking accessor members to enable
@@ -1682,12 +1706,14 @@ impl<'a> Printer<'a> {
         let prev_super_alias = self.scoped_static_super_base_alias.clone();
         let prev_super_index_alias = self.scoped_static_super_index_alias.clone();
         let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_super_assignment_target = self.scoped_static_super_assignment_target;
 
         self.scoped_static_this_alias = this_alias.map(Arc::from);
         self.scoped_static_super_direct_access = super_direct_access;
         self.scoped_static_super_base_alias = super_base_alias.map(Arc::from);
         self.scoped_static_super_index_alias = None;
         self.scoped_static_super_index_value_access = false;
+        self.scoped_static_super_assignment_target = false;
 
         self.emit_expression(idx);
         self.scoped_static_this_alias = prev_this_alias;
@@ -1695,6 +1721,7 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.scoped_static_super_assignment_target = prev_super_assignment_target;
     }
 
     /// Enter the CommonJS-export-body mask while emitting `f`: clear
@@ -1709,8 +1736,8 @@ impl<'a> Printer<'a> {
     ) -> R {
         let prev_module = self.ctx.options.module;
         let prev_outer = self.ctx.cjs_export_body_outer_module;
+        self.ctx.cjs_export_body_outer_module = Some(self.ctx.outer_module_kind());
         self.ctx.options.module = ModuleKind::None;
-        self.ctx.cjs_export_body_outer_module = Some(prev_module);
         let result = f(self);
         self.ctx.options.module = prev_module;
         self.ctx.cjs_export_body_outer_module = prev_outer;
@@ -1726,14 +1753,17 @@ impl<'a> Printer<'a> {
         let prev_super_alias = self.scoped_static_super_base_alias.take();
         let prev_super_index_alias = self.scoped_static_super_index_alias.take();
         let prev_super_index_value = self.scoped_static_super_index_value_access;
+        let prev_super_assignment_target = self.scoped_static_super_assignment_target;
         self.scoped_static_super_direct_access = false;
         self.scoped_static_super_index_value_access = false;
+        self.scoped_static_super_assignment_target = false;
         let result = f(self);
         self.scoped_static_this_alias = prev_this_alias;
         self.scoped_static_super_direct_access = prev_super_direct_access;
         self.scoped_static_super_base_alias = prev_super_alias;
         self.scoped_static_super_index_alias = prev_super_index_alias;
         self.scoped_static_super_index_value_access = prev_super_index_value;
+        self.scoped_static_super_assignment_target = prev_super_assignment_target;
         result
     }
 
