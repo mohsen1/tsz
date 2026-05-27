@@ -454,6 +454,9 @@ mod call_spread_constructor_parameters_tests;
 #[path = "tests/callable_interface_assignment_tests.rs"]
 mod callable_interface_assignment_tests;
 #[cfg(test)]
+#[path = "tests/callable_union_relation_routing_arch_tests.rs"]
+mod callable_union_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
