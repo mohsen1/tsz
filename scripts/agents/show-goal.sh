@@ -63,6 +63,9 @@ fi
 
 if [[ "$LOCAL_ONLY" == false ]] \
   && git -C "$ROOT" show "origin/main:${GOAL_PATH}" >"$REMOTE_GOAL" 2>/dev/null; then
+  if [[ -f "$ROOT/$GOAL_PATH" ]] && ! cmp -s "$REMOTE_GOAL" "$ROOT/$GOAL_PATH"; then
+    echo "warning: printed origin/main:${GOAL_PATH}; branch-local ${GOAL_PATH} differs. Use --local to inspect it." >&2
+  fi
   cat "$REMOTE_GOAL"
   exit 0
 fi

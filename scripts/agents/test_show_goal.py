@@ -80,19 +80,33 @@ class ShowGoalTests(unittest.TestCase):
             )
             temp_files = sorted(path.name for path in temp_root.glob("tsz-agent-goal.*"))
             calls = calls_log.read_text(encoding="utf-8").splitlines()
-            return result.stdout, calls, temp_files
+            return result.stdout, result.stderr, calls, temp_files
 
     def test_remote_goal_temp_file_is_cleaned_up(self):
-        output, calls, temp_files = self.run_show_goal(["Studio-F", "--no-fetch"])
+        output, stderr, calls, temp_files = self.run_show_goal(["Studio-F", "--no-fetch"])
 
         self.assertEqual(output, "# remote goal\n")
+        self.assertIn("branch-local docs/plan/agents/Studio-F.md differs", stderr)
+        self.assertIn("-C", calls[1])
+        self.assertEqual(temp_files, [])
+
+    def test_matching_remote_goal_does_not_warn(self):
+        output, stderr, calls, temp_files = self.run_show_goal(
+            ["Studio-F", "--no-fetch"],
+            local_goal="# same goal\n",
+            remote_goal="# same goal\n",
+        )
+
+        self.assertEqual(output, "# same goal\n")
+        self.assertEqual(stderr, "")
         self.assertIn("-C", calls[1])
         self.assertEqual(temp_files, [])
 
     def test_local_mode_skips_remote_goal_lookup(self):
-        output, calls, temp_files = self.run_show_goal(["Studio-F", "--local"])
+        output, stderr, calls, temp_files = self.run_show_goal(["Studio-F", "--local"])
 
         self.assertEqual(output, "# local goal\n")
+        self.assertEqual(stderr, "")
         self.assertEqual(calls, ["rev-parse --show-toplevel"])
         self.assertEqual(temp_files, [])
 
