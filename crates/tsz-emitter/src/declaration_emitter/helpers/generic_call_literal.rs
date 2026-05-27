@@ -216,8 +216,16 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == SyntaxKind::StringLiteral as u16
                 || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
             {
-                let raw = self.get_source_slice(node.pos, node.end)?;
-                Some(format!("\"{}\"", raw.trim().trim_matches(&['"', '\''][..])))
+                // Use the scanner's cooked string value and re-escape for a
+                // double-quoted string literal type. Raw source slicing with
+                // trim_matches broke for single-quoted strings containing `"`
+                // (produced unescaped `"`) and for no-substitution template
+                // literals (backtick delimiters were not stripped).
+                let lit = self.arena.get_literal(node)?;
+                Some(format!(
+                    "\"{}\"",
+                    super::escape_string_for_double_quote(&lit.text)
+                ))
             }
             k if k == SyntaxKind::NumericLiteral as u16 => self
                 .get_source_slice(node.pos, node.end)

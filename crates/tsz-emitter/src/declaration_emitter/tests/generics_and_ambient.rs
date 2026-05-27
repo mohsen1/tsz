@@ -350,6 +350,44 @@ fn test_variadic_tuple_call_return_materializes_prefix_or_constraint() {
     );
 }
 
+/// String literal arguments to variadic tuple calls must be properly escaped when
+/// materialised into the `.d.ts` tuple literal type.  The previous raw-slice
+/// path (`trim_matches` on source text) broke for:
+/// - Single-quoted strings containing `"` → unescaped double quote in output.
+/// - No-substitution template literals → backtick delimiters not stripped.
+/// - Template literals containing `"` → unescaped double quote in output.
+#[test]
+fn test_variadic_tuple_call_escapes_string_literal_content() {
+    let source = r#"
+declare function tag<Items extends readonly [string, ...string[]]>(
+    ...values: readonly [...Items, number]
+): [...Items, number];
+
+export const a = tag('has"quote', 1);
+export const b = tag(`backtick`, 1);
+export const c = tag(`back"tick`, 1);
+export const d = tag("back\\slash", 1);
+"#;
+    let output = emit_dts_with_binding(source);
+
+    assert!(
+        output.contains(r#"export declare const a: ["has\"quote", number];"#),
+        "Single-quoted string with embedded double quote must be escaped in .d.ts tuple type: {output}"
+    );
+    assert!(
+        output.contains(r#"export declare const b: ["backtick", number];"#),
+        "No-substitution template literal must strip backtick delimiters in .d.ts tuple type: {output}"
+    );
+    assert!(
+        output.contains(r#"export declare const c: ["back\"tick", number];"#),
+        "Template literal with embedded double quote must be escaped in .d.ts tuple type: {output}"
+    );
+    assert!(
+        output.contains(r#"export declare const d: ["back\\slash", number];"#),
+        "String with embedded backslash must be double-escaped in .d.ts tuple type: {output}"
+    );
+}
+
 // =============================================================================
 // 7. Ambient / Declare Declarations
 // =============================================================================
