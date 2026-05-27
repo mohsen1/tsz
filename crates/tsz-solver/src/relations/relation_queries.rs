@@ -119,12 +119,21 @@ impl RelationPolicy {
     /// > `strict_function_types_does_not_imply_strict_any` regression test.
     pub const fn from_flags(flags: u16) -> Self {
         let typed_flags = Self::cache_flags_from_packed(flags);
+        Self::from_relation_flags(typed_flags)
+    }
+
+    /// Construct a policy from typed relation flags.
+    ///
+    /// Use this when callers already have [`RelationFlags`]. The packed
+    /// [`RelationPolicy::from_flags`] constructor is reserved for compatibility
+    /// edges that still receive checker-style `u16` masks.
+    pub const fn from_relation_flags(flags: RelationFlags) -> Self {
         // erase_generics defaults to true unless the NO_ERASE_GENERICS flag is set.
         // This preserves backward compatibility while allowing specific paths
         // (implements/extends checking) to disable erasure.
-        let erase_generics = !typed_flags.contains(RelationFlags::NO_ERASE_GENERICS);
+        let erase_generics = !flags.contains(RelationFlags::NO_ERASE_GENERICS);
         Self {
-            flags: typed_flags,
+            flags,
             strict_subtype_checking: false,
             strict_any_propagation: false,
             any_propagation_mode: AnyPropagationMode::All,

@@ -322,7 +322,7 @@ fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
 
     let permissive_policy = RelationPolicy::from_flags(0);
     let strict_policy =
-        RelationPolicy::from_flags(RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16);
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY);
 
     let permissive_uncached = query_relation(
         &interner,
@@ -404,10 +404,9 @@ fn assignability_cache_disable_method_bivariance_matches_uncached_method_policy(
     let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
 
     let bivariant_policy =
-        RelationPolicy::from_flags(RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16);
-    let sound_policy = RelationPolicy::from_flags(
-        (RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::DISABLE_METHOD_BIVARIANCE).bits()
-            as u16,
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let sound_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::DISABLE_METHOD_BIVARIANCE,
     );
 
     let bivariant_uncached = query_relation(

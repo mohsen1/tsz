@@ -109,16 +109,15 @@ fn legacy_flag_constants_match_typed_bitflags() {
 }
 
 #[test]
-fn policy_cache_config_preserves_packed_extended_bits() {
-    let packed = (RelationFlags::STRICT_SUBTYPE_CHECKING
+fn policy_cache_config_preserves_typed_extended_bits() {
+    let typed_flags = RelationFlags::STRICT_SUBTYPE_CHECKING
         | RelationFlags::STRICT_ANY_PROPAGATION
         | RelationFlags::SKIP_WEAK_TYPE_CHECKS
         | RelationFlags::ASSUME_RELATED_ON_CYCLE
         | RelationFlags::IN_CALLBACK_PARAM_CHECK
-        | RelationFlags::STRICT_READONLY_IDENTITY)
-        .bits() as u16;
+        | RelationFlags::STRICT_READONLY_IDENTITY;
 
-    let config = RelationPolicy::from_flags(packed).cache_config();
+    let config = RelationPolicy::from_relation_flags(typed_flags).cache_config();
 
     assert!(
         config
@@ -145,30 +144,73 @@ fn policy_cache_config_preserves_packed_extended_bits() {
 }
 
 #[test]
-fn policy_cache_config_preserves_all_assigned_packed_bits() {
+fn policy_cache_config_preserves_all_assigned_typed_bits() {
     let all_flags = RelationFlags::all();
-    let config = RelationPolicy::from_flags(all_flags.bits() as u16).cache_config();
+    let config = RelationPolicy::from_relation_flags(all_flags).cache_config();
 
     assert_eq!(
         config.flags, all_flags,
-        "explicit packed-bit projection must preserve every assigned relation flag",
+        "typed flag projection must preserve every assigned relation flag",
+    );
+}
+
+#[test]
+fn relation_policy_from_relation_flags_preserves_typed_bits() {
+    let typed_flags = RelationFlags::STRICT_NULL_CHECKS
+        | RelationFlags::STRICT_FUNCTION_TYPES
+        | RelationFlags::NO_ERASE_GENERICS
+        | RelationFlags::IN_CALLBACK_PARAM_CHECK
+        | RelationFlags::STRICT_READONLY_IDENTITY;
+
+    let typed = RelationPolicy::from_relation_flags(typed_flags);
+    let packed = RelationPolicy::from_flags(typed_flags.bits() as u16);
+
+    assert_eq!(
+        typed.cache_config(),
+        packed.cache_config(),
+        "typed relation flags must produce the same cache config as the legacy edge",
+    );
+    assert!(
+        typed.strict_null_checks(),
+        "typed constructor should preserve strict-null policy",
+    );
+    assert!(
+        typed.strict_function_types(),
+        "typed constructor should preserve strict-function policy",
+    );
+    assert!(
+        !typed.erase_generics,
+        "typed constructor should preserve NO_ERASE_GENERICS",
+    );
+    assert!(
+        typed
+            .cache_config()
+            .flags
+            .contains(RelationFlags::IN_CALLBACK_PARAM_CHECK),
+        "typed constructor should preserve transient callback relation mode",
+    );
+    assert_eq!(
+        typed.legacy_packed_flags(),
+        typed_flags.bits() as u16,
+        "compatibility edges should still be able to observe the packed bit layout",
     );
 }
 
 #[test]
 fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
-    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-        | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-        | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
-        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
-        | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE
-        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
-        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST
-        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT
-        | RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
-        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
-    let enabled = RelationPolicy::from_flags(packed);
-    let disabled = RelationPolicy::from_flags(0);
+    let enabled = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS
+            | RelationFlags::STRICT_FUNCTION_TYPES
+            | RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES
+            | RelationFlags::NO_UNCHECKED_INDEXED_ACCESS
+            | RelationFlags::DISABLE_METHOD_BIVARIANCE
+            | RelationFlags::ALLOW_VOID_RETURN
+            | RelationFlags::ALLOW_BIVARIANT_REST
+            | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
+            | RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
+            | RelationFlags::STRICT_READONLY_IDENTITY,
+    );
+    let disabled = RelationPolicy::from_relation_flags(RelationFlags::empty());
 
     assert!(enabled.strict_null_checks());
     assert!(enabled.strict_function_types());
