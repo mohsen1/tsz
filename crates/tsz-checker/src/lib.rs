@@ -181,6 +181,9 @@ mod generator_union_return_type_tests;
 #[path = "tests/generator_yield_identity_tests.rs"]
 mod generator_yield_identity_tests;
 #[cfg(test)]
+#[path = "tests/generic_checker_mod_relation_routing_arch_tests.rs"]
+mod generic_checker_mod_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
 #[cfg(test)]
