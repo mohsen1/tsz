@@ -63,7 +63,9 @@ impl<'a> CheckerState<'a> {
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            !self.diagnostic_relation_boolean_guard(*actual_type, expected_type)
+            !self
+                .assign_relation_outcome(*actual_type, expected_type)
+                .related
         });
 
         let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
@@ -79,7 +81,7 @@ impl<'a> CheckerState<'a> {
 
         if !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && self.diagnostic_relation_boolean_guard(attrs_type, props_type)
+            && self.assign_relation_outcome(attrs_type, props_type).related
         {
             return false;
         }
