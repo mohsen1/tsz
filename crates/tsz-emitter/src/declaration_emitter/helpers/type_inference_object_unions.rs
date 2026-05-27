@@ -6,6 +6,8 @@
 
 use super::super::DeclarationEmitter;
 
+type NestedObjectMemberArmsByProperty = Vec<(String, Vec<(usize, Vec<String>)>)>;
+
 #[derive(Clone, Debug)]
 pub(in crate::declaration_emitter) struct ObjectTypePropertyEntry {
     name: String,
@@ -261,11 +263,11 @@ impl<'a> DeclarationEmitter<'a> {
                 let Some(entry) = entries.iter().find(|entry| entry.name == property_name) else {
                     continue;
                 };
-                let Some(mut nested_arms) =
-                    Self::object_type_literal_union_arms_from_text(&entry.type_text)
-                else {
+                let trimmed = entry.type_text.trim();
+                if !trimmed.starts_with('{') || !trimmed.ends_with('}') {
                     continue;
-                };
+                }
+                let mut nested_arms = vec![trimmed.to_string()];
                 nested_arms = nested_arms
                     .into_iter()
                     .map(|arm| Self::widen_object_literal_member_primitive_literal_types(&arm))
@@ -297,6 +299,63 @@ impl<'a> DeclarationEmitter<'a> {
                     &types[outer_idx],
                     &entry,
                     &nested_type_text,
+                ) {
+                    types[outer_idx] = replaced;
+                }
+            }
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn expand_nested_object_union_member_properties_from_source(
+        types: &mut [String],
+        nested_member_arms_by_property: NestedObjectMemberArmsByProperty,
+    ) {
+        if types.len() <= 1 || nested_member_arms_by_property.is_empty() {
+            return;
+        }
+
+        let entries_by_arm = types
+            .iter()
+            .map(|ty| Self::object_type_top_level_property_entries(ty))
+            .collect::<Vec<_>>();
+
+        for (property_name, nested_arms_by_outer) in nested_member_arms_by_property {
+            let mut all_nested_arms = Vec::<String>::new();
+            let mut replacements = Vec::<(usize, ObjectTypePropertyEntry, Vec<String>)>::new();
+
+            for (outer_idx, nested_arms) in nested_arms_by_outer {
+                let Some(entries) = entries_by_arm.get(outer_idx).and_then(Option::as_ref) else {
+                    continue;
+                };
+                let Some(entry) = entries.iter().find(|entry| entry.name == property_name) else {
+                    continue;
+                };
+                let nested_arms = nested_arms
+                    .into_iter()
+                    .map(|arm| Self::widen_object_literal_member_primitive_literal_types(&arm))
+                    .collect::<Vec<_>>();
+                for arm in &nested_arms {
+                    if !all_nested_arms.iter().any(|existing| existing == arm) {
+                        all_nested_arms.push(arm.clone());
+                    }
+                }
+                replacements.push((outer_idx, entry.clone(), nested_arms));
+            }
+
+            if replacements.len() <= 1 || all_nested_arms.len() <= 1 {
+                continue;
+            }
+            let sibling_names = Self::object_union_sibling_property_names(&all_nested_arms);
+            if sibling_names.is_empty() {
+                continue;
+            }
+
+            for (outer_idx, entry, mut nested_arms) in replacements.into_iter().rev() {
+                Self::expand_object_arms_with_property_names(&mut nested_arms, &sibling_names);
+                if let Some(replaced) = Self::replace_object_property_type_text(
+                    &types[outer_idx],
+                    &entry,
+                    &nested_arms.join(" | "),
                 ) {
                     types[outer_idx] = replaced;
                 }

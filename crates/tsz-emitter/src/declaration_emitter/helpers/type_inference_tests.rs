@@ -449,15 +449,34 @@ fn conditional_empty_then_object_literal_union_preserves_branch_order() {
 }
 
 #[test]
-fn nested_object_union_member_properties_cross_normalize() {
+fn nested_object_union_member_properties_cross_normalize_from_source_arms() {
     let mut types = vec![
         "{\n    kind: string;\n    pos: {\n        x: number;\n        y: number;\n    };\n}"
             .to_string(),
         "{\n    kind: string;\n    pos: {\n        a: string;\n        b?: undefined;\n    } | {\n        b: number;\n        a?: undefined;\n    };\n}"
             .to_string(),
     ];
+    let nested_arms = vec![(
+        "pos".to_string(),
+        vec![
+            (
+                0,
+                vec!["{\n        x: number;\n        y: number;\n    }".to_string()],
+            ),
+            (
+                1,
+                vec![
+                    "{\n        a: string;\n        b?: undefined;\n    }".to_string(),
+                    "{\n        b: number;\n        a?: undefined;\n    }".to_string(),
+                ],
+            ),
+        ],
+    )];
 
-    DeclarationEmitter::expand_nested_object_union_member_properties(&mut types);
+    DeclarationEmitter::expand_nested_object_union_member_properties_from_source(
+        &mut types,
+        nested_arms,
+    );
 
     assert_eq!(
         types,
@@ -531,21 +550,6 @@ fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
     assert_eq!(
         projected,
         Some("{\n    z: number;\n    a: string;\n    b: string;\n}".to_string())
-    );
-}
-
-#[test]
-fn object_spread_projection_splits_object_literal_union_arms() {
-    let arms = DeclarationEmitter::object_type_literal_union_arms_from_text(
-        "{\n    a: string;\n} | {\n    b: string;\n}",
-    );
-
-    assert_eq!(
-        arms,
-        Some(vec![
-            "{\n    a: string;\n}".to_string(),
-            "{\n    b: string;\n}".to_string(),
-        ])
     );
 }
 
