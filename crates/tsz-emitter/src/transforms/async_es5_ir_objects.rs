@@ -318,12 +318,17 @@ impl AsyncES5Transformer<'_> {
             .iter()
             .position(|&element| self.object_element_needs_computed_lowering(element))
             .unwrap_or(elements.len());
+        let prefix_elements = &elements[..first_computed_idx];
+        let prefix_source_range = prefix_elements.last().and_then(|&last_idx| {
+            let last_node = self.arena.get(last_idx)?;
+            source_range.map(|(pos, _)| (pos, last_node.end))
+        });
         let initial_assignment = IRNode::assign(
             IRNode::id(temp.to_string()),
             IRNode::ObjectLiteral {
-                properties: self.convert_object_properties(&elements[..first_computed_idx]),
-                source_range,
-                extra_indent: u8::from(extra_indent),
+                properties: self.convert_object_properties(prefix_elements),
+                source_range: prefix_source_range,
+                extra_indent: u8::from(extra_indent && first_computed_idx == elements.len()),
             },
         );
 
