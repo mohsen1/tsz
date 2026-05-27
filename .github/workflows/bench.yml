@@ -636,10 +636,14 @@ jobs:
           const env = findLocation([
             `/bench-prep/${targetSha}/bench-prep.env`,
             `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -687,16 +691,20 @@ jobs:
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
-            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "$target_sha"; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
-                exit 0
+            if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_cloudbuild_manifest "$target_sha"; then
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+                manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+                manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+                if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                      "${manifest_pgo_optimized}" == "1" ]]; then
+                  exit 0
+                fi
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its artifact manifest did not expose bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
@@ -788,10 +796,14 @@ jobs:
           const env = findLocation([
             `/bench-prep/${targetSha}/bench-prep.env`,
             `bench-prep/${targetSha}/bench-prep.env`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env",
           ]);
           const tar = findLocation([
             `/bench-prep/${targetSha}/bench-prep.tar`,
             `bench-prep/${targetSha}/bench-prep.tar`,
+            "/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
+            "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar",
           ]);
           if (!env || !tar) {
             console.error(`Cloud Build artifact manifest did not include bench prep env/tar for ${targetSha}.`);
@@ -839,16 +851,20 @@ jobs:
             fi
 
             status="$(cloudbuild_status "$cloudbuild_id")"
-            if [[ "$status" == "SUCCESS" ]] && copy_from_cloudbuild_manifest "${target_sha}"; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
-                exit 0
+            if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_cloudbuild_manifest "${target_sha}"; then
+                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+                manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+                manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+                if [[ "${manifest_target_sha}" == "${target_sha}" &&
+                      "${manifest_pgo_optimized}" == "1" ]]; then
+                  exit 0
+                fi
+                echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+                exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its artifact manifest did not expose bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
