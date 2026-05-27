@@ -326,7 +326,10 @@ impl<'a> DeclarationEmitter<'a> {
         None
     }
 
-    fn variable_declaration_from_symbol_decl(&self, decl_idx: NodeIndex) -> Option<NodeIndex> {
+    pub(in crate::declaration_emitter) fn variable_declaration_from_symbol_decl(
+        &self,
+        decl_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
         let mut current = decl_idx;
         for _ in 0..8 {
             let node = self.arena.get(current)?;

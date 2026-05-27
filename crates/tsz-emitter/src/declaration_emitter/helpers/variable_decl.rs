@@ -387,6 +387,21 @@ impl<'a> DeclarationEmitter<'a> {
                 self.write(": ");
                 self.write(&type_text);
             } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
+                && let Some(type_text) = self
+                    .short_circuit_expression_type_text(initializer)
+                    .or_else(|| self.infer_arithmetic_binary_type_text(initializer, 0))
+                    .or_else(|| {
+                        self.preferred_expression_type_text(initializer)
+                            .filter(|text| text != "any")
+                    })
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
                 && let Some(type_text) =
                     self.previous_duplicate_variable_declaration_type_text(decl_idx, decl_name)
             {
@@ -697,17 +712,6 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION)
                 && let Some(type_text) = self.property_access_source_accessor_type_text(initializer)
-            {
-                self.write(": ");
-                self.write(&type_text);
-            } else if has_initializer
-                && self
-                    .arena
-                    .get(initializer)
-                    .is_some_and(|node| node.kind == syntax_kind_ext::BINARY_EXPRESSION)
-                && let Some(type_text) = self
-                    .short_circuit_expression_type_text(initializer)
-                    .or_else(|| self.preferred_expression_type_text(initializer))
             {
                 self.write(": ");
                 self.write(&type_text);

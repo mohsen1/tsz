@@ -706,6 +706,15 @@ impl<'a> DeclarationEmitter<'a> {
                 &declared_members,
                 &mut members,
             );
+            if members.is_empty() && root_symbol.is_some() {
+                self.collect_late_bound_assignment_members_from_node(
+                    scope_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut members,
+                );
+            }
             return members;
         }
 
@@ -723,6 +732,20 @@ impl<'a> DeclarationEmitter<'a> {
                 &declared_members,
                 &mut members,
             );
+        }
+        if members.is_empty() && root_symbol.is_some() {
+            for &stmt_idx in &source_file.statements.nodes {
+                if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
+                    continue;
+                }
+                self.collect_late_bound_assignment_members_from_node(
+                    stmt_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut members,
+                );
+            }
         }
 
         members
