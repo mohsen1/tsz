@@ -11,7 +11,7 @@ use super::*;
 use crate::computation::CompatChecker;
 use crate::relations::subtype::SubtypeChecker;
 
-/// Test suite for SOLV-15: Generic type strict subtyping
+// Test suite for SOLV-15: Generic type strict subtyping
 #[cfg(test)]
 
 include!("integration_tests_parts/part_00.rs");
