@@ -304,3 +304,45 @@ export type C = string extends (number | boolean) ? true : false;
         "union in extends-type or check-type position:\n{dts}"
     );
 }
+
+#[test]
+fn parenthesized_conditional_mapped_type_operands_keep_parens() {
+    let Some(dts) = emit_dts(
+        "conditional_mapped",
+        r#"
+export type T0<T> = ({ [K in keyof T]: ; }) extends ({ [P in keyof T]: T[P]; }) ? number : never;
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("({\n    [K in keyof T]: ;\n}) extends ({\n    [P in keyof T]: T[P];\n}) ? number : never"),
+        "mapped type operands in conditional positions need parens:\n{dts}"
+    );
+}
+
+#[test]
+fn mapped_type_indexed_access_value_keeps_object_operand_parens() {
+    let Some(dts) = emit_dts(
+        "mapped_indexed_access",
+        r#"
+export type Clone<T> = {
+    [P in keyof (T & {})]: (T & {})[P];
+};
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("[P in keyof (T & {})]: (T & {})[P];"),
+        "indexed access object operand in mapped type value needs parens:\n{dts}"
+    );
+    assert!(
+        !dts.contains("T & {}[P]"),
+        "indexed access must not collapse into an unparenthesized intersection:\n{dts}"
+    );
+}
