@@ -5,13 +5,13 @@ steps:
   - id: download-bench-prep
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     script: |
-      #!/usr/bin/env bash
+      #!/bin/sh
       set +e
 
-      {
-        set -euo pipefail
+      (
+        set -eu
 
-        if [[ -f bench-prep.env && -f bench-prep.tar ]]; then
+        if [ -f bench-prep.env ] && [ -f bench-prep.tar ]; then
           echo "Using benchmark prep artifact from the Cloud Build source archive."
         else
           gcloud storage cp \
@@ -25,16 +25,16 @@ steps:
         tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
         tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
         # shellcheck disable=SC1091
-        source bench-prep.env
-        if [[ "${BENCH_TARGET_SHA:-}" != "${_BENCH_TARGET_SHA}" ]]; then
+        . ./bench-prep.env
+        if [ "${BENCH_TARGET_SHA:-}" != "${_BENCH_TARGET_SHA}" ]; then
           echo "Bench prep artifact is for ${BENCH_TARGET_SHA:-unknown}; expected ${_BENCH_TARGET_SHA}."
           exit 1
         fi
-        if [[ "${BENCH_PGO_OPTIMIZED:-}" != "1" ]]; then
+        if [ "${BENCH_PGO_OPTIMIZED:-}" != "1" ]; then
           echo "Bench prep artifact is not marked PGO optimized."
           exit 1
         fi
-      } > bench-prep-fetch.log 2>&1
+      ) > bench-prep-fetch.log 2>&1
       fetch_status=$?
       cat bench-prep-fetch.log
       {
