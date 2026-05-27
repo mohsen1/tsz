@@ -8,12 +8,16 @@ steps:
       #!/usr/bin/env bash
       set -euo pipefail
 
-      gcloud storage cp \
-        "gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env" \
-        bench-prep.env
-      gcloud storage cp \
-        "gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar" \
-        bench-prep.tar
+      if [[ -f bench-prep.env && -f bench-prep.tar ]]; then
+        echo "Using benchmark prep artifact from the Cloud Build source archive."
+      else
+        gcloud storage cp \
+          "gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env" \
+          bench-prep.env
+        gcloud storage cp \
+          "gs://tsz-ci_cloudbuild/bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar" \
+          bench-prep.tar
+      fi
 
       tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
       tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
