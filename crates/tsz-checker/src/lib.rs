@@ -601,6 +601,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
+mod index_signature_value_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]
