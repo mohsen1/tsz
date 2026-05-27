@@ -867,6 +867,95 @@ fn strict_function_types_and_strict_any_have_distinct_keys() {
     );
 }
 
+#[test]
+fn assignability_cache_strict_function_types_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let narrow = interner.literal_string("narrow-param");
+    let source = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(narrow)],
+        TypeId::VOID,
+    ));
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(TypeId::STRING)],
+        TypeId::VOID,
+    ));
+
+    let legacy_bivariant = RelationPolicy::from_flags(0);
+    let strict_contravariant =
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES);
+    let legacy_key =
+        RelationCacheKey::for_assignability(source, target, legacy_bivariant.cache_config());
+    let strict_key =
+        RelationCacheKey::for_assignability(source, target, strict_contravariant.cache_config());
+
+    assert_ne!(
+        legacy_key, strict_key,
+        "strict function types must occupy a distinct cache slot",
+    );
+
+    let legacy_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        legacy_bivariant,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_contravariant,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        legacy_uncached,
+        "legacy bivariant function-parameter mode should allow the narrow source parameter",
+    );
+    assert!(
+        !strict_uncached,
+        "strict function types must reject the narrow source parameter contravariantly",
+    );
+
+    let strict_cached = db.is_assignable_to_with_policy(source, target, strict_contravariant);
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict-function-types result must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict-function-types result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(legacy_key),
+        None,
+        "legacy lookup must not hit the strict-function-types slot",
+    );
+
+    let legacy_cached = db.is_assignable_to_with_policy(source, target, legacy_bivariant);
+    assert_eq!(
+        legacy_cached, legacy_uncached,
+        "cached legacy bivariant result must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(legacy_key),
+        Some(legacy_cached),
+        "legacy bivariant result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_key),
+        Some(strict_cached),
+        "strict-function-types slot must remain intact after the legacy lookup",
+    );
+}
+
 // =============================================================================
 // 3. Typed policy projection preserves stable external bits
 // =============================================================================
