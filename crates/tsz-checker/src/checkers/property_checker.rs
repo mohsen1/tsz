@@ -98,7 +98,7 @@ impl<'a> CheckerState<'a> {
             .and_then(|node| self.ctx.arena.get_identifier(node))
             .is_some();
 
-        if self.union_restricted_property_is_missing(object_expr, property_name, object_type) {
+        if self.union_restricted_property_is_missing(property_name, object_type) {
             self.error_property_not_exist_at(property_name, object_type, error_node);
             return false;
         }
@@ -832,17 +832,63 @@ impl<'a> CheckerState<'a> {
         self.is_assignment_operator(binary.operator_token)
     }
 
-    /// Check if a union type has a property that should be treated as "not existing"
-    /// because one or more members have it as private/protected while other members
-    /// have it publicly or from a different declaring class.
+    /// AST classes in which `property_name` is declared as a *restricted*
+    /// (private/protected) member, reachable from `member`.
     ///
-    /// Matches tsc's `createUnionOrIntersectionProperty` logic: when a property has a
-    /// private/protected declaration in one constituent but is missing, public, or has
-    /// a different declaration in another constituent, the property doesn't exist on
-    /// the union type (TS2339) rather than getting a specific accessibility error.
-    fn union_restricted_property_is_missing(
+    /// A single class contributes its own (possibly inherited) declaring class.
+    /// An intersection contributes every constituent's restricted declaration,
+    /// because an intersection's apparent property merges the declarations of
+    /// all its constituents. `None` means the member exposes `property_name`
+    /// only publicly, lacks it, or is not a class type — in any of those cases
+    /// it cannot share a restricted declaration with another union member.
+    fn restricted_property_declarations(
         &mut self,
-        _object_expr: NodeIndex,
+        member: tsz_solver::TypeId,
+        property_name: &str,
+        is_static: bool,
+    ) -> Option<Vec<NodeIndex>> {
+        let intersection_parts =
+            crate::query_boundaries::property_access::intersection_members(self.ctx.types, member)
+                .or_else(|| {
+                    self.ctx.types.get_display_alias(member).and_then(|alias| {
+                        crate::query_boundaries::property_access::intersection_members(
+                            self.ctx.types,
+                            alias,
+                        )
+                    })
+                });
+        if let Some(parts) = intersection_parts {
+            let mut declarations: Vec<NodeIndex> = Vec::new();
+            for part in parts {
+                let part = self.resolve_type_for_property_access(part);
+                if let Some(class_idx) = self.get_class_decl_from_type(part)
+                    && let Some(info) =
+                        self.find_member_access_info(class_idx, property_name, is_static)
+                    && !declarations.contains(&info.declaring_class_idx)
+                {
+                    declarations.push(info.declaring_class_idx);
+                }
+            }
+            return (!declarations.is_empty()).then_some(declarations);
+        }
+
+        let resolved = self.resolve_type_for_property_access(member);
+        let class_idx = self.get_class_decl_from_type(resolved)?;
+        let info = self.find_member_access_info(class_idx, property_name, is_static)?;
+        Some(vec![info.declaring_class_idx])
+    }
+
+    /// tsc exposes a restricted (private/protected) member on a union only when
+    /// every constituent shares a *common declaration* of it — not merely an
+    /// identically-named symbol (see the
+    /// `unionPropertyOfProtectedAndIntersectionProperty` conformance test). A
+    /// constituent that exposes the member publicly, lacks it, or declares it
+    /// in an unrelated class breaks that sharing and makes the property absent.
+    ///
+    /// The "common declaration" comparison is keyed on declaring-class identity,
+    /// so it is independent of the class/property/type-parameter names chosen.
+    pub(crate) fn union_restricted_property_is_missing(
+        &mut self,
         property_name: &str,
         object_type: tsz_solver::TypeId,
     ) -> bool {
@@ -863,42 +909,31 @@ impl<'a> CheckerState<'a> {
         let is_static = self.is_constructor_type(object_type);
 
         let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
+        let mut has_conflict = false;
+        // Declarations of the first constituent that exposes the member as
+        // restricted; later constituents must share at least one of them.
+        let mut shared_declarations: Option<Vec<NodeIndex>> = None;
 
         for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                // Non-class member in the union (e.g., object literal type).
-                // Treated as a different declaration from any class member.
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    // Property is restricted (private/protected) in this member
+            match self.restricted_property_declarations(member, property_name, is_static) {
+                Some(declarations) => {
                     has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            // Different declaring class — counts as "other"
-                            has_other = true;
+                    match &shared_declarations {
+                        None => shared_declarations = Some(declarations),
+                        Some(reference) => {
+                            if !declarations.iter().any(|decl| reference.contains(decl)) {
+                                has_conflict = true;
+                            }
                         }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
                     }
                 }
-                None => {
-                    // Property is public or not found in this class member
-                    has_other = true;
-                }
+                // Public, missing, or non-class member: a different declaration
+                // from any restricted member.
+                None => has_conflict = true,
             }
         }
 
-        // If any member has a restricted property and there's at least one member
-        // with a different declaration (public, missing, or different class),
-        // the property doesn't exist on the union type.
-        has_restricted && has_other
+        has_restricted && has_conflict
     }
 
     fn intersection_private_property_is_missing(

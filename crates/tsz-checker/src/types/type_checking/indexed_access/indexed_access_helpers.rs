@@ -631,52 +631,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Indexed-access (`(A | B)["k"]`) form of the union restricted-property
+    /// rule. Delegates to the shared
+    /// [`CheckerState::union_restricted_property_is_missing`] so the type-level
+    /// and expression-level (`x.k`) paths stay in lockstep, including the
+    /// intersection-constituent "common declaration" handling.
     pub(super) fn union_restricted_literal_property_is_missing(
         &mut self,
         property_name: &str,
         object_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::state::checking;
-
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
-            return false;
-        };
-        if members.len() < 2 {
-            return false;
-        }
-
-        let is_static = self.is_constructor_type(object_type);
-        let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
-
-        for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            has_other = true;
-                        }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
-                    }
-                }
-                None => has_other = true,
-            }
-        }
-
-        has_restricted && has_other
+        self.union_restricted_property_is_missing(property_name, object_type)
     }
 
     pub(super) fn error_at_index_type_span(
