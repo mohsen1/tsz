@@ -1203,18 +1203,8 @@ fn test_conditional_infer_tuple_multiple_positions() {
     // Create infer placeholders for A and B
     let a_name = interner.intern_string("A");
     let b_name = interner.intern_string("B");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_a = test_infer_param_from_name(&interner, a_name);
+    let infer_b = test_infer_param_from_name(&interner, b_name);
 
     // Create extends pattern: [infer A, infer B]
     let pattern = interner.tuple(vec![
@@ -1437,21 +1427,9 @@ fn test_template_literal_hyphen_prefix_extraction() {
     // Pattern: T extends `hello-${infer R}` ? R : never
     // Input: "hello-world" => R = "world"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends `hello-${infer R}` ? R : never
     let extends_template = interner.template_literal(vec![
@@ -1485,26 +1463,10 @@ fn test_template_literal_hyphen_two_part_extraction() {
     // Pattern: T extends `${infer First}-${infer Rest}` ? [First, Rest] : never
     // Input: "foo-bar-baz" => First = "foo", Rest = "bar-baz"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("First"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("Rest"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_first = test_infer_param(&interner, "First").1;
+    let infer_rest = test_infer_param(&interner, "Rest").1;
 
     // T extends `${infer First}-${infer Rest}` ? [First, Rest] : never
     let extends_template = interner.template_literal(vec![
@@ -1568,21 +1530,9 @@ fn test_template_literal_hyphen_suffix_pattern() {
     // Pattern: T extends `${infer R}-handler` ? R : never
     // Input: "click-handler" => R = "click"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends `${infer R}-handler` ? R : never
     let extends_template = interner.template_literal(vec![
@@ -1616,21 +1566,9 @@ fn test_template_literal_hyphen_distributive_union() {
     // Pattern: T extends `event-${infer R}` ? R : never (distributive)
     // Input: "event-click" | "event-load" => "click" | "load"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends `event-${infer R}` ? R : never
     let extends_template = interner.template_literal(vec![
@@ -1669,21 +1607,9 @@ fn test_template_literal_hyphen_no_match_returns_never() {
     // Pattern: T extends `prefix-${infer R}` ? R : never
     // Input: "other-value" (doesn't start with "prefix-") => never
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // T extends `prefix-${infer R}` ? R : never
     let extends_template = interner.template_literal(vec![
@@ -1717,21 +1643,9 @@ fn test_template_literal_prefix_infer_suffix_extraction() {
     // Pattern: T extends `start-${infer M}-end` ? M : never
     // Input: "start-middle-end" => M = "middle"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("M");
-    let infer_m = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_m) = test_infer_param(&interner, "M");
 
     // T extends `start-${infer M}-end` ? M : never
     let extends_template = interner.template_literal(vec![

@@ -294,12 +294,7 @@ fn test_base_constraint_assignability_evaluate_keyof() {
 fn test_keyof_type_param_no_constraint_deferred() {
     let interner = TypeInterner::new();
 
-    let type_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let type_param = test_type_param(&interner, "T").1;
 
     let result = evaluate_keyof(&interner, type_param);
     match interner.lookup(result) {
@@ -315,12 +310,7 @@ fn test_keyof_type_param_with_type_param_constraint_not_collapsed() {
     // keyof B ⊇ keyof A — they are distinct types.
     let interner = TypeInterner::new();
 
-    let a_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: interner.intern_string("A"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let a_param = test_type_param(&interner, "A").1;
 
     let b_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
         name: interner.intern_string("B"),

@@ -216,6 +216,21 @@ fn include_paths(text: &str) -> Vec<&str> {
         .collect()
 }
 
+fn contains_simple_type_param_wrapper(text: &str, wrapper: &str) -> bool {
+    let mut remaining = text;
+    while let Some(offset) = remaining.find(wrapper) {
+        let window = &remaining[offset..remaining.len().min(offset + 320)];
+        if window.contains("constraint: None")
+            && window.contains("default: None")
+            && window.contains("is_const: false")
+        {
+            return true;
+        }
+        remaining = &remaining[offset + wrapper.len()..];
+    }
+    false
+}
+
 /// Ratchet guard: keep generated evaluator test shards named after evaluator
 /// feature families. Anonymous numeric chunks make failures and regeneration
 /// diffs harder to review even when they satisfy the file-size ceiling.
@@ -254,6 +269,48 @@ fn evaluate_tests_use_feature_family_shards() {
         assert!(
             includes.iter().any(|path| path.contains(family)),
             "evaluator test shard list is missing a {family} shard: {includes:?}"
+        );
+    }
+}
+
+/// Ratchet guard: generated evaluator shards should use the shared fixture
+/// helpers for unconstrained type and infer parameters instead of repeating the
+/// same `TypeParamInfo` setup in each case.
+#[test]
+fn evaluate_tests_use_shared_type_param_helpers() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+
+    assert!(
+        text.contains("fn test_type_param("),
+        "{} should define a shared type-parameter fixture helper",
+        evaluate_tests.display()
+    );
+    assert!(
+        text.contains("fn test_infer_param("),
+        "{} should define a shared infer-parameter fixture helper",
+        evaluate_tests.display()
+    );
+
+    for include in include_paths(&text) {
+        let shard = solver_dir.join("tests").join(include);
+        let shard_text = fs::read_to_string(&shard)
+            .unwrap_or_else(|e| panic!("failed to read {}: {e}", shard.display()));
+
+        assert!(
+            !contains_simple_type_param_wrapper(
+                &shard_text,
+                "TypeData::TypeParameter(TypeParamInfo {",
+            ),
+            "{} should use test_type_param for generated type parameters",
+            shard.display()
+        );
+        assert!(
+            !contains_simple_type_param_wrapper(&shard_text, "TypeData::Infer(TypeParamInfo {"),
+            "{} should use test_infer_param for generated infer parameters",
+            shard.display()
         );
     }
 }

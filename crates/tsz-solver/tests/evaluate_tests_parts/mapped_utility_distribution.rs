@@ -1267,13 +1267,7 @@ fn test_short_circuit_unknown_extends_unknown() {
 fn test_deferred_unresolved_type_param_check() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     let lit_true = interner.literal_string("true");
     let lit_false = interner.literal_string("false");
@@ -1298,13 +1292,7 @@ fn test_deferred_unresolved_type_param_check() {
 fn test_deferred_unresolved_type_param_extends() {
     let interner = TypeInterner::new();
 
-    let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_u_name, u_param) = test_type_param(&interner, "U");
 
     let lit_true = interner.literal_string("true");
     let lit_false = interner.literal_string("false");
@@ -1360,21 +1348,9 @@ fn test_deferred_constrained_type_param() {
 fn test_deferred_nested_type_params() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
-    let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_u_name, u_param) = test_type_param(&interner, "U");
 
     let lit_1 = interner.literal_number(1.0);
     let lit_2 = interner.literal_number(2.0);
@@ -1408,13 +1384,7 @@ fn test_deferred_nested_type_params() {
 fn test_partially_deferred_outer_resolves() {
     let interner = TypeInterner::new();
 
-    let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_u_name, u_param) = test_type_param(&interner, "U");
 
     let lit_1 = interner.literal_number(1.0);
     let lit_2 = interner.literal_number(2.0);
@@ -1484,13 +1454,7 @@ fn test_distributive_large_union_basic() {
     // Result: true | false
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let lit_true = interner.literal_boolean(true);
     let lit_false = interner.literal_boolean(false);
@@ -1532,13 +1496,7 @@ fn test_distributive_large_union_all_match() {
     // Result: union of all input strings
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -1572,13 +1530,7 @@ fn test_distributive_large_union_none_match() {
     // Result: never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -1610,13 +1562,7 @@ fn test_distributive_nested_conditional() {
     // Result: 1 | 2 | 3
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let lit_a = interner.literal_string("a");
     let lit_b = interner.literal_string("b");
@@ -1665,21 +1611,9 @@ fn test_distributive_with_infer_filter() {
     // Result: string | number
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let extends_array = interner.array(infer_r);
 
@@ -1717,13 +1651,7 @@ fn test_distributive_with_mapped_branches() {
     // Result: "a" | "num" | "other"
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let lit_a = interner.literal_string("a");
     let lit_num = interner.literal_string("num");
