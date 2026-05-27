@@ -891,6 +891,7 @@ impl<'a> Printer<'a> {
         es5_emitter
             .set_block_scope_reserved_names(self.ctx.block_scope_state.visible_reserved_names());
         es5_emitter.set_outer_rename_map(self.ctx.block_scope_state.visible_outer_rename_map());
+        es5_emitter.set_dynamic_import_promise_counter(self.next_dynamic_import_promise_id);
         let blocked_disposable_names = self.blocked_disposable_names_for_transform();
         es5_emitter
             .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
@@ -927,6 +928,7 @@ impl<'a> Printer<'a> {
         self.ctx.destructuring_state.temp_var_counter = es5_emitter.temp_var_counter();
         self.async_generator_inner_name_counts =
             es5_emitter.take_async_generator_inner_name_counts();
+        self.next_dynamic_import_promise_id = es5_emitter.dynamic_import_promise_counter();
         self.next_disposable_env_id = es5_emitter.disposable_env_counter();
         for generated_name in es5_emitter.take_generated_disposable_env_names() {
             self.generated_temp_names.insert(generated_name);

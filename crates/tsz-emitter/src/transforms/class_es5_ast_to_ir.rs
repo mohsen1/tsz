@@ -194,6 +194,11 @@ impl<'a> AstToIr<'a> {
         self
     }
 
+    pub fn with_dynamic_import_promise_counter(self, counter: u32) -> Self {
+        self.dynamic_import_promise_counter.set(counter);
+        self
+    }
+
     pub fn with_disposable_env_context<I>(self, next_id: u32, blocked_names: I) -> Self
     where
         I: IntoIterator<Item = String>,
@@ -211,6 +216,10 @@ impl<'a> AstToIr<'a> {
 
     pub const fn disposable_env_counter(&self) -> u32 {
         self.disposable_env_counter.get()
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.dynamic_import_promise_counter.get()
     }
 
     pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
@@ -918,6 +927,7 @@ impl<'a> AstToIr<'a> {
     fn convert_class_declaration(&self, idx: NodeIndex) -> IRNode {
         let mut transformer = ES5ClassTransformer::new(self.arena);
         transformer.set_module_kind(self.module_kind);
+        transformer.set_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get());
         transformer.set_indent_base(self.class_transformer_indent_base);
         transformer.set_downlevel_iteration(self.downlevel_iteration);
         if let Some(transforms) = self.transforms.clone() {
@@ -939,6 +949,8 @@ impl<'a> AstToIr<'a> {
         }
 
         if let Some(ir) = transformer.transform_class_to_ir(idx) {
+            self.dynamic_import_promise_counter
+                .set(transformer.dynamic_import_promise_counter());
             return ir;
         }
 
@@ -1067,11 +1079,16 @@ impl<'a> AstToIr<'a> {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
             transformer.set_module_kind(self.module_kind);
+            transformer
+                .dynamic_import_promise_counter
+                .set(self.dynamic_import_promise_counter.get());
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
             let ir = transformer.transform_async_function(idx);
             self.temp_var_counter.set(transformer.temp_var_counter());
+            self.dynamic_import_promise_counter
+                .set(transformer.dynamic_import_promise_counter.get());
             return ir;
         }
 
@@ -2623,21 +2640,8 @@ impl<'a> AstToIr<'a> {
 
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
-            // Async arrow functions need __awaiter/__generator lowering.
-            // Delegate to the main emitter via ASTRef so the ES5ArrowFunction
-            // directive triggers the full async arrow emit path.
             if arrow.is_async {
-                if let Some(substitution) = self.current_this_substitution.take() {
-                    self.current_this_substitution
-                        .set(Some(substitution.clone()));
-                    if let ThisSubstitution::Identifier(alias) = substitution {
-                        return IRNode::ASTRefWithGeneratorThis {
-                            node: idx,
-                            generator_this: alias.into(),
-                        };
-                    }
-                }
-                return IRNode::ASTRef(idx);
+                return self.convert_async_arrow_function(arrow);
             }
             let hoisted_before = self.hoisted_temps.borrow().len();
             let saved_temp_counter = self.temp_var_counter.get();
@@ -2729,6 +2733,65 @@ impl<'a> AstToIr<'a> {
             }
         } else {
             IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_async_arrow_function(&self, arrow: &FunctionData) -> IRNode {
+        let mut transformer = AsyncES5Transformer::new(self.arena);
+        transformer.set_temp_var_counter(self.temp_var_counter.get());
+        transformer.set_module_kind(self.module_kind);
+        transformer
+            .dynamic_import_promise_counter
+            .set(self.dynamic_import_promise_counter.get());
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        let has_await = transformer.body_contains_await(arrow.body);
+        let mut generator_body = transformer.transform_generator_body(arrow.body, has_await);
+        self.temp_var_counter.set(transformer.temp_var_counter());
+        self.dynamic_import_promise_counter
+            .set(transformer.dynamic_import_promise_counter.get());
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+        let this_arg = self.async_arrow_awaiter_this_arg();
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: self.convert_parameters(&arrow.parameters),
+            body: vec![IRNode::AwaiterCall {
+                this_arg: Box::new(this_arg),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: None,
+                multiline_callback: false,
+                directives: Vec::new(),
+            }],
+            is_expression_body: true,
+            body_source_range: None,
+        }
+    }
+
+    fn async_arrow_awaiter_this_arg(&self) -> IRNode {
+        if let Some(substitution) = self.current_this_substitution.take() {
+            self.current_this_substitution
+                .set(Some(substitution.clone()));
+            return match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::id(alias),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            };
+        }
+        if let Some(substitution) = self.lexical_this_capture_alias.take() {
+            self.lexical_this_capture_alias
+                .set(Some(substitution.clone()));
+            return match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::id(alias),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            };
+        }
+        if self.this_captured.get() {
+            IRNode::id("_this")
+        } else {
+            IRNode::void_0()
         }
     }
 

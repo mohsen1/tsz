@@ -141,12 +141,14 @@ fn amd_es5_async_dynamic_import_callbacks_are_file_sequenced() {
     let output = emit_wrapped(
         r#"export async function f() { const req = await import("./one"); }
 export const obj = { m: async () => { const req = await import("./two"); } };
+export class C { async m() { const req = await import("./three"); } }
+export class D { p = { m: async () => { const req = await import("./four"); } }; }
 "#,
         ModuleKind::AMD,
         ScriptTarget::ES5,
     );
 
-    for (specifier, id) in [("./one", 1), ("./two", 2)] {
+    for (specifier, id) in [("./one", 1), ("./two", 2), ("./three", 3), ("./four", 4)] {
         let expected = format!(
             "new Promise(function (resolve_{id}, reject_{id}) {{ require([\"{specifier}\"], resolve_{id}, reject_{id}); }}).then(__importStar)"
         );
@@ -155,4 +157,8 @@ export const obj = { m: async () => { const req = await import("./two"); } };
             "AMD ES5 async dynamic import callback ids should be file-sequenced.\nExpected: {expected}\nOutput:\n{output}"
         );
     }
+    assert!(
+        output.contains("m: function () { return __awaiter(_this, void 0, void 0, function () {"),
+        "ES5 instance field async arrows should preserve lexical this through _this.\nOutput:\n{output}"
+    );
 }

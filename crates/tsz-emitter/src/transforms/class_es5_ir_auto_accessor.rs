@@ -252,6 +252,7 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         prop_idx: NodeIndex,
         use_this: bool,
+        lexical_this_capture: bool,
     ) -> Option<IRNode> {
         let prop_node = self.arena.get(prop_idx)?;
         let prop_data = self.arena.get_property_decl(prop_node)?;
@@ -272,14 +273,19 @@ impl<'a> ES5ClassTransformer<'a> {
         let prop_name = self.get_property_name_ir(prop_data.name)?;
 
         let mut value = if has_initializer_equals {
-            self.convert_async_arrow_property_initializer(prop_data.initializer)
-                .unwrap_or_else(|| {
-                    if use_this {
-                        self.convert_expression_this_captured(prop_data.initializer)
-                    } else {
-                        self.convert_expression(prop_data.initializer)
-                    }
-                })
+            self.convert_async_arrow_property_initializer(
+                prop_data.initializer,
+                lexical_this_capture,
+            )
+            .unwrap_or_else(|| {
+                if use_this {
+                    self.convert_expression_this_captured(prop_data.initializer)
+                } else if lexical_this_capture {
+                    self.convert_expression_with_lexical_this_capture(prop_data.initializer)
+                } else {
+                    self.convert_expression(prop_data.initializer)
+                }
+            })
         } else {
             IRNode::void_0()
         };
@@ -344,7 +350,11 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    fn convert_async_arrow_property_initializer(&self, initializer: NodeIndex) -> Option<IRNode> {
+    fn convert_async_arrow_property_initializer(
+        &self,
+        initializer: NodeIndex,
+        lexical_this_capture: bool,
+    ) -> Option<IRNode> {
         let node = self.arena.get(initializer)?;
         if node.kind != syntax_kind_ext::ARROW_FUNCTION {
             return None;
@@ -359,10 +369,15 @@ impl<'a> ES5ClassTransformer<'a> {
             async_transformer.set_source_text(source_text);
         }
         async_transformer.set_module_kind(self.module_kind);
+        async_transformer
+            .dynamic_import_promise_counter
+            .set(self.dynamic_import_promise_counter.get());
         self.configure_async_disposable_context(&mut async_transformer);
         let has_await = async_transformer.body_contains_await(arrow.body);
         let mut generator_body = async_transformer.transform_generator_body(arrow.body, has_await);
         self.sync_async_disposable_context(&mut async_transformer);
+        self.dynamic_import_promise_counter
+            .set(async_transformer.dynamic_import_promise_counter.get());
         let hoisted_var_groups =
             AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
 
@@ -370,7 +385,11 @@ impl<'a> ES5ClassTransformer<'a> {
             name: None,
             parameters: self.extract_parameters(&arrow.parameters),
             body: vec![IRNode::AwaiterCall {
-                this_arg: Box::new(IRNode::id("_this")),
+                this_arg: Box::new(if lexical_this_capture {
+                    IRNode::id("_this")
+                } else {
+                    IRNode::void_0()
+                }),
                 needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
                 generator_body: Box::new(generator_body),
                 hoisted_var_groups,

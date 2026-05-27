@@ -511,11 +511,16 @@ impl<'a> ES5ClassTransformer<'a> {
                             async_transformer.set_source_text(source_text);
                         }
                         async_transformer.set_module_kind(self.module_kind);
+                        async_transformer
+                            .dynamic_import_promise_counter
+                            .set(self.dynamic_import_promise_counter.get());
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
                         self.sync_async_disposable_context(&mut async_transformer);
+                        self.dynamic_import_promise_counter
+                            .set(async_transformer.dynamic_import_promise_counter.get());
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,
@@ -659,11 +664,16 @@ impl<'a> ES5ClassTransformer<'a> {
                             async_transformer.set_source_text(source_text);
                         }
                         async_transformer.set_module_kind(self.module_kind);
+                        async_transformer
+                            .dynamic_import_promise_counter
+                            .set(self.dynamic_import_promise_counter.get());
                         self.configure_async_disposable_context(&mut async_transformer);
                         let has_await = async_transformer.body_contains_await(method_data.body);
                         let mut generator_body =
                             async_transformer.transform_generator_body(method_data.body, has_await);
                         self.sync_async_disposable_context(&mut async_transformer);
+                        self.dynamic_import_promise_counter
+                            .set(async_transformer.dynamic_import_promise_counter.get());
                         let hoisted_var_groups =
                             AsyncES5Transformer::extract_and_remove_var_decl_groups(
                                 &mut generator_body,

@@ -195,6 +195,7 @@ pub struct ES5ClassTransformer<'a> {
     commonjs_import_substitutions: FxHashMap<String, String>,
     module_kind: ModuleKind,
     downlevel_iteration: bool,
+    dynamic_import_promise_counter: Cell<u32>,
     async_generator_inner_name_counts: RefCell<FxHashMap<String, u32>>,
     disposable_env_counter: Cell<u32>,
     blocked_disposable_env_names: RefCell<FxHashSet<String>>,
@@ -245,6 +246,7 @@ impl<'a> ES5ClassTransformer<'a> {
             commonjs_import_substitutions: FxHashMap::default(),
             module_kind: ModuleKind::None,
             downlevel_iteration: false,
+            dynamic_import_promise_counter: Cell::new(1),
             async_generator_inner_name_counts: RefCell::new(FxHashMap::default()),
             disposable_env_counter: Cell::new(1),
             blocked_disposable_env_names: RefCell::new(FxHashSet::default()),
@@ -303,6 +305,14 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub const fn set_downlevel_iteration(&mut self, downlevel_iteration: bool) {
         self.downlevel_iteration = downlevel_iteration;
+    }
+
+    pub fn set_dynamic_import_promise_counter(&self, next_id: u32) {
+        self.dynamic_import_promise_counter.set(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.dynamic_import_promise_counter.get()
     }
 
     pub fn set_async_generator_inner_name_counts(&mut self, counts: FxHashMap<String, u32>) {
@@ -763,6 +773,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.disposable_env_counter.get(),
                 self.blocked_disposable_env_names.borrow().iter().cloned(),
             )
+            .with_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get())
             .with_class_transformer_indent_base(self.indent_base + 2)
             .with_downlevel_iteration(self.downlevel_iteration)
             .with_module_kind(self.module_kind);
@@ -816,6 +827,8 @@ impl<'a> ES5ClassTransformer<'a> {
         self.temp_var_counter.set(converter.temp_var_counter());
         self.disposable_env_counter
             .set(converter.disposable_env_counter());
+        self.dynamic_import_promise_counter
+            .set(converter.dynamic_import_promise_counter());
         let generated = converter.take_generated_disposable_env_names();
         if !generated.is_empty() {
             let mut blocked = self.blocked_disposable_env_names.borrow_mut();
@@ -936,6 +949,15 @@ impl<'a> ES5ClassTransformer<'a> {
 
     fn convert_expression_this_captured(&self, idx: NodeIndex) -> IRNode {
         let converter = self.make_converter().with_this_captured(true);
+        let result = converter.convert_expression(idx);
+        self.collect_from_converter(&converter);
+        result
+    }
+
+    fn convert_expression_with_lexical_this_capture(&self, idx: NodeIndex) -> IRNode {
+        let converter = self
+            .make_converter()
+            .with_lexical_this_capture_alias(Some("_this".to_string()));
         let result = converter.convert_expression(idx);
         self.collect_from_converter(&converter);
         result

@@ -195,7 +195,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Instance property initializations
                     for &prop_idx in &instance_props {
                         self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                        if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+                        if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                             ctor_body.push(ir);
                         }
                     }
@@ -207,7 +207,9 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 // Non-derived class default constructor
                 // Check if instance property initializers need _this capture
-                if self.instance_props_need_this_capture(&instance_props) {
+                let instance_props_need_this_capture =
+                    self.instance_props_need_this_capture(&instance_props);
+                if instance_props_need_this_capture {
                     ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
                 }
                 if moved_initializers_contain_new_target {
@@ -222,7 +224,11 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Instance property initializations
                 for &prop_idx in &instance_props {
                     self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                    if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
+                    if let Some(ir) = self.emit_property_initializer_ir(
+                        prop_idx,
+                        false,
+                        instance_props_need_this_capture,
+                    ) {
                         ctor_body.push(ir);
                     }
                 }
@@ -432,7 +438,7 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit instance property initializers
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 body.push(ir);
             }
         }
@@ -527,7 +533,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(&mut try_body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 try_body.push(ir);
             }
         }
@@ -618,7 +624,7 @@ impl<'a> ES5ClassTransformer<'a> {
 
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 body.push(ir);
             }
         }
@@ -946,7 +952,8 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit instance property initializers
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false, needs_this_capture)
+            {
                 body.push(ir);
             }
         }

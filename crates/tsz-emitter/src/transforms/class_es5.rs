@@ -219,6 +219,14 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.temp_var_counter()
     }
 
+    pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
+        self.transformer.set_dynamic_import_promise_counter(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.transformer.dynamic_import_promise_counter()
+    }
+
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
     where
         I: IntoIterator<Item = String>,
