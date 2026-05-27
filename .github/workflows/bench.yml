@@ -18,12 +18,10 @@ on:
         default: false
         type: boolean
 
-# Do not use workflow-level concurrency here. A queued workflow run would start
-# after the active benchmark finishes and benchmark an old "next" commit. The
-# gate below skips duplicate current-target runs, but cancels obsolete active
-# runs before letting the current main benchmark proceed. Release-only daily
-# runs are allowed to publish the latest artifact without waiting behind
-# benchmark shards.
+# Do not use workflow-level concurrency here. Let one active benchmark finish
+# even if `main` moves while it is running; benchmark freshness is about
+# avoiding very old public data, not forcing exact-head timing. The gate below
+# skips duplicate active runs and rejects genuinely old targets.
 
 permissions:
   contents: write
@@ -37,6 +35,7 @@ env:
   BENCH_PGO: "1"
   BENCH_REQUIRE_PGO: "1"
   HYPERFINE_VER: "1.18.0"
+  BENCH_MAX_TARGET_AGE_HOURS: "48"
   GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   BENCH_TARGET_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
   CARGO_HOME: ${{ github.workspace }}/.ci-cache/cargo-home
@@ -85,10 +84,18 @@ jobs:
             release_only=true
           fi
 
+          max_target_age_hours="${BENCH_MAX_TARGET_AGE_HOURS:-48}"
+          if ! [[ "$max_target_age_hours" =~ ^[0-9]+$ ]]; then
+            max_target_age_hours=48
+          fi
           if [[ "$release_only" != "true" ]]; then
-            main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-            if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-              echo "Benchmark target ${target_sha} is stale; current main is ${main_sha}. Skipping obsolete run."
+            target_date="$(gh api "repos/${{ github.repository }}/commits/${target_sha}" --jq '.commit.committer.date' 2>/dev/null || true)"
+            target_epoch="$(date -u -d "${target_date}" +%s 2>/dev/null || true)"
+            now_epoch="$(date -u +%s)"
+            max_target_age_seconds=$((max_target_age_hours * 3600))
+            if [[ "$target_epoch" =~ ^[0-9]+$ &&
+                  $((now_epoch - target_epoch)) -gt "$max_target_age_seconds" ]]; then
+              echo "Benchmark target ${target_sha} is older than ${max_target_age_hours}h (${target_date}); skipping genuinely stale run."
               should_run=false
             fi
           fi
@@ -105,22 +112,12 @@ jobs:
               } | sort -u
             )"
             active_runs=""
-            obsolete_runs=""
             while IFS=$'\t' read -r run_id run_sha run_url; do
               [[ -n "${run_id:-}" ]] || continue
-              if [[ -n "${run_sha:-}" && "${run_sha}" != "${target_sha}" ]]; then
-                obsolete_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
-                gh run cancel "$run_id" --repo "${{ github.repository }}" >/dev/null 2>&1 || true
-                continue
-              fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
-            if [[ -n "$obsolete_runs" ]]; then
-              echo "Cancelling obsolete Bench run(s) before benchmarking ${target_sha}."
-              printf '%s\n' "$obsolete_runs"
-            fi
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run for ${target_sha} is already active; skipping duplicate run instead of queuing."
+              echo "Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
@@ -561,43 +558,11 @@ jobs:
           bash scripts/install.sh --version latest --dir "${install_dir}"
           "${install_dir}/tsz" --version
 
-  bench-prep-target-fresh:
-    name: bench-prep-target-fresh
+  bench-prep-artifact:
+    name: bench-prep-artifact
     needs: [bench-prepare, bench-prepare-cloudbuild]
     if: >-
       always() &&
-      (needs.bench-prepare.outputs.should_run == 'true' ||
-       (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
-        !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
-        !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
-        needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
-      !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.fresh.outputs.should_run }}
-    steps:
-      - id: fresh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          should_run=true
-          target_sha="${{ env.BENCH_TARGET_SHA }}"
-          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-            echo "Benchmark target ${target_sha} became stale before prep artifact download; current main is ${main_sha}. Skipping self-hosted prep wait."
-            should_run=false
-          fi
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-
-  bench-prep-artifact:
-    name: bench-prep-artifact
-    needs: [bench-prepare, bench-prepare-cloudbuild, bench-prep-target-fresh]
-    if: >-
-      always() &&
-      needs.bench-prep-target-fresh.outputs.should_run == 'true' &&
       (needs.bench-prepare.outputs.should_run == 'true' ||
        (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
         !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
@@ -968,36 +933,10 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
-  bench-target-fresh:
-    name: bench-target-fresh
-    needs: bench-prep-artifact
-    if: always() && needs.bench-prep-artifact.result == 'success'
-    runs-on: ubuntu-latest
-    outputs:
-      should_run: ${{ steps.fresh.outputs.should_run }}
-    steps:
-      - id: fresh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          should_run=true
-          target_sha="${{ env.BENCH_TARGET_SHA }}"
-          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
-          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
-            echo "Benchmark target ${target_sha} became stale after prep; current main is ${main_sha}. Skipping shard fanout."
-            should_run=false
-          fi
-          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
-
   bench:
     name: bench-${{ matrix.label }}
-    needs: [bench-prep-artifact, bench-target-fresh]
-    if: >-
-      always() &&
-      needs.bench-prep-artifact.result == 'success' &&
-      needs.bench-target-fresh.outputs.should_run == 'true'
+    needs: bench-prep-artifact
+    if: always() && needs.bench-prep-artifact.result == 'success'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -1287,9 +1226,6 @@ jobs:
 
           if [[ -n "${MAIN_SHA}" && "${TARGET_SHA}" != "${MAIN_SHA}" ]]; then
             echo "Bench target ${TARGET_SHA} is behind current main ${MAIN_SHA}; publishing because active benchmark runs are intentionally allowed to finish."
-            echo "catchup_main_sha=${MAIN_SHA}" >> "$GITHUB_OUTPUT"
-          else
-            echo "catchup_main_sha=" >> "$GITHUB_OUTPUT"
           fi
 
           gsutil -q cp "$GITHUB_WORKSPACE/bench-results.json" \
@@ -1423,18 +1359,3 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/gh-pages.yml/dispatches" \
             -d '{"ref":"main"}'
-
-      - name: Trigger benchmark catch-up
-        if: steps.publish.outputs.should_redeploy == 'true' && steps.publish.outputs.catchup_main_sha != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          echo "Benchmark target ${BENCH_TARGET_SHA:-${GITHUB_SHA}} was behind current main ${{ steps.publish.outputs.catchup_main_sha }}; dispatching a catch-up benchmark."
-          curl -fsSL \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${GH_TOKEN}" \
-            -H "X-GitHub-Api-Version: 2022-11-28" \
-            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/bench.yml/dispatches" \
-            -d '{"ref":"main","inputs":{"publish_latest_pgo":"false"}}'
