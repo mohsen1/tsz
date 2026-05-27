@@ -129,7 +129,7 @@ pub(crate) fn types_are_assignable(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    checker.diagnostic_relation_boolean_guard(source, target)
+    checker.assign_relation_outcome(source, target).related
 }
 
 pub(crate) fn has_object_shape(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
@@ -389,4 +389,24 @@ fn contains_anonymous_object_surface_inner(
             .iter()
             .any(|&member| contains_anonymous_object_surface_inner(db, def_store, member, visited))
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn types_are_assignable_uses_relation_outcome_boundary() {
+        let source = include_str!("jsx.rs");
+        let legacy = concat!("diagnostic_relation", "_boolean_guard(");
+
+        assert!(
+            source.contains("checker.assign_relation_outcome(source, target).related"),
+            "JSX assignability boundary should route relation decisions through \
+             the shared relation outcome boundary"
+        );
+        assert!(
+            !source.contains(legacy),
+            "JSX assignability boundary should not use raw diagnostic relation \
+             boolean guards"
+        );
+    }
 }
