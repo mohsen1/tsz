@@ -147,7 +147,8 @@ impl<'a> CheckerState<'a> {
         let Some(function_type) = self.global_function_type_id() else {
             return false;
         };
-        self.diagnostic_relation_boolean_guard(decorator_type, function_type)
+        self.assign_relation_outcome(decorator_type, function_type)
+            .related
     }
 
     fn global_function_type_id(&mut self) -> Option<TypeId> {
