@@ -696,6 +696,26 @@ fn direct_source_file_type_alias_lowers_index_signature_type_literal_access() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_renamed_numeric_index_signature_type_literal_access() {
+    with_two_file_state(
+        "type Cell<Data> = { item: Data };\nexport type TableEntry<Row> = { [slot: number]: Cell<Row> }[number];",
+        "import { TableEntry } from './target';",
+        |state, target_binder| {
+            let table_entry_sym = target_binder
+                .file_locals
+                .get("TableEntry")
+                .expect("TableEntry");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(table_entry_sym, Some(1), true)
+                .expect("renamed numeric index-signature type literals should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "TableEntry should expose Row");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_type_literal_with_computed_name() {
     with_two_file_state(
         "declare const key: unique symbol;\nexport type Box<T> = { [key]: T };",
