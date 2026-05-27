@@ -162,6 +162,37 @@ class Widget {
 }
 
 #[test]
+fn static_private_method_assignment_uses_alias_and_update_receiver_temp() {
+    let source = r#"
+class A3 {
+    static #method() { };
+    constructor(a, b) {
+        A3.#method = () => {};
+        a.#method = () => {};
+        b.#method = () => {};
+        ({ x: A3.#method } = { x: () => {}});
+        let x = A3.#method;
+        b.#method++;
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "({ x: ({ set value(_b) { __classPrivateFieldSet(_a, _a, _b, \"m\"); } }).value } = { x: () => { } });"
+        ),
+        "Static class private method destructuring targets should write through the class alias without an extra receiver temp.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "__classPrivateFieldSet(_b = b, _a, (_c = __classPrivateFieldGet(_b, _a, \"m\", _A3_method), _c++, _c), \"m\")"
+        ),
+        "Private method update expressions should capture the receiver shared by get and set.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_async_generator_helpers_preserve_function_kind() {
     let source = r#"
 const Widget = class {
