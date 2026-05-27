@@ -220,3 +220,55 @@ fn evaluate_application_class_uses_construct_signature_return_type() {
         "class application must reduce to the instance type produced by the construct signature"
     );
 }
+
+/// Phase 4 — interner-routed application-eval cache read.
+///
+/// The per-file application-eval cache lives on the `QueryCache`, which an
+/// evaluator sees through its interner (`&dyn TypeDatabase`). An evaluator that
+/// was NOT handed an explicit `query_db` (here, `TypeEvaluator::new`, which uses
+/// a `NoopResolver`) must still consume an authoritative cache entry through the
+/// interner rather than recomputing — this is the read-side widening that lets
+/// the otherwise-cacheless expansion paths reuse finished results.
+///
+/// Structural axis (CLAUDE.md §25/§26): the rule is keyed on the `(DefId, args)`
+/// identity, not on a spelling, so the test varies both the def id and the
+/// argument type to prove the lookup is structural.
+#[test]
+fn evaluate_application_reads_cache_through_interner_without_query_db() {
+    use crate::caches::db::TypeApplicationEvalCache;
+    use crate::caches::query_cache::QueryCache;
+
+    for (def_raw, arg, cached) in [
+        (501u32, TypeId::STRING, TypeId::NUMBER),
+        (777u32, TypeId::BOOLEAN, TypeId::STRING),
+    ] {
+        let interner = TypeInterner::new();
+        let def_id = DefId(def_raw);
+        let app = interner.application(interner.lazy(def_id), vec![arg]);
+
+        // A `NoopResolver` evaluator cannot resolve the alias body, so without a
+        // cache entry the application stays opaque.
+        {
+            let qc = QueryCache::new(&interner);
+            let mut evaluator = TypeEvaluator::new(&qc);
+            assert_eq!(
+                evaluator.evaluate(app),
+                app,
+                "without a cache entry the unresolvable application must stay opaque"
+            );
+        }
+
+        // With an authoritative entry seeded on the per-file cache, the same
+        // resolver-less evaluator must return the cached result via its interner.
+        {
+            let qc = QueryCache::new(&interner);
+            qc.insert_application_eval_cache(def_id, &[arg], false, cached);
+            let mut evaluator = TypeEvaluator::new(&qc);
+            assert_eq!(
+                evaluator.evaluate(app),
+                cached,
+                "evaluator without query_db must read the per-file app-eval cache through its interner"
+            );
+        }
+    }
+}

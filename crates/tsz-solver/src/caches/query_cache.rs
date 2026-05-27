@@ -5,8 +5,8 @@
 //! database implementation used by the checker at runtime.
 
 use crate::caches::db::{
-    QueryDatabase, TypeCompilerOptions, TypeDatabase, TypeDisplayProvenance, TypePredicateCache,
-    TypeTupleLimitSignal,
+    QueryDatabase, TypeApplicationEvalCache, TypeCompilerOptions, TypeDatabase,
+    TypeDisplayProvenance, TypePredicateCache, TypeTupleLimitSignal,
 };
 use crate::caches::instantiation_cache::{InstantiationCache, InstantiationCacheKey};
 use crate::caches::query_trace;
@@ -1133,6 +1133,39 @@ impl TypeCompilerOptions for QueryCache<'_> {
     }
 }
 
+impl TypeApplicationEvalCache for QueryCache<'_> {
+    fn lookup_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        self.check_application_eval_cache((
+            def_id,
+            smallvec::SmallVec::from_slice(args),
+            no_unchecked_indexed_access,
+        ))
+    }
+
+    fn insert_application_eval_cache(
+        &self,
+        def_id: DefId,
+        args: &[TypeId],
+        no_unchecked_indexed_access: bool,
+        result: TypeId,
+    ) {
+        QueryCache::insert_application_eval_cache(
+            self,
+            (
+                def_id,
+                smallvec::SmallVec::from_slice(args),
+                no_unchecked_indexed_access,
+            ),
+            result,
+        );
+    }
+}
+
 impl TypeDatabase for QueryCache<'_> {
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
@@ -1610,36 +1643,6 @@ impl QueryDatabase for QueryCache<'_> {
             query_trace::unary_end(query_id, "evaluate_type_with_options", result, false);
         }
         result
-    }
-
-    fn lookup_application_eval_cache(
-        &self,
-        def_id: DefId,
-        args: &[TypeId],
-        no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        self.check_application_eval_cache((
-            def_id,
-            smallvec::SmallVec::from_slice(args),
-            no_unchecked_indexed_access,
-        ))
-    }
-
-    fn insert_application_eval_cache(
-        &self,
-        def_id: DefId,
-        args: &[TypeId],
-        no_unchecked_indexed_access: bool,
-        result: TypeId,
-    ) {
-        self.insert_application_eval_cache(
-            (
-                def_id,
-                smallvec::SmallVec::from_slice(args),
-                no_unchecked_indexed_access,
-            ),
-            result,
-        );
     }
 
     /// Look up a cross-call `instantiate_type` result.

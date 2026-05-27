@@ -201,12 +201,50 @@ pub trait TypeCompilerOptions {
     }
 }
 
+/// Per-file cache hooks for evaluated generic applications.
+///
+/// The cache is keyed by the resolver-independent `(DefId, args,
+/// no_unchecked_indexed_access)` triple, so reads are safe for any evaluator
+/// regardless of how it was spawned. Writes remain gated by callers to
+/// authoritative full-resolver contexts. Keeping these hooks separate from
+/// [`TypeDatabase`] makes application-eval cache access a narrow cache
+/// capability instead of growing the general type storage interface.
+pub trait TypeApplicationEvalCache {
+    /// Look up a shared cache entry for evaluated generic applications.
+    ///
+    /// The default returns `None` so raw `TypeInterner` backends and tests opt
+    /// out.
+    fn lookup_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+    ) -> Option<TypeId> {
+        None
+    }
+
+    /// Store an evaluated generic application result in the shared per-file
+    /// cache. The default is a no-op so non-cache backends opt out.
+    fn insert_application_eval_cache(
+        &self,
+        _def_id: DefId,
+        _args: &[TypeId],
+        _no_unchecked_indexed_access: bool,
+        _result: TypeId,
+    ) {
+    }
+}
+
 /// Query interface for the solver.
 ///
 /// This keeps solver components generic and prevents them from reaching
 /// into concrete storage structures directly.
 pub trait TypeDatabase:
-    TypePredicateCache + TypeTupleLimitSignal + TypeDisplayProvenance + TypeCompilerOptions
+    TypePredicateCache
+    + TypeTupleLimitSignal
+    + TypeDisplayProvenance
+    + TypeCompilerOptions
+    + TypeApplicationEvalCache
 {
     fn intern(&self, key: TypeData) -> TypeId;
     fn lookup(&self, id: TypeId) -> Option<TypeData>;
@@ -487,6 +525,8 @@ impl TypeCompilerOptions for TypeInterner {
         TypeInterner::exact_optional_property_types(self)
     }
 }
+
+impl TypeApplicationEvalCache for TypeInterner {}
 
 impl TypeDatabase for TypeInterner {
     fn intern(&self, key: TypeData) -> TypeId {
@@ -936,26 +976,6 @@ pub trait QueryDatabase: TypeDatabase + TypeResolver {
 
     fn evaluate_mapped(&self, mapped: &MappedType) -> TypeId {
         crate::evaluation::evaluate::evaluate_mapped(self.as_type_database(), mapped)
-    }
-
-    /// Look up a shared cache entry for evaluated generic applications.
-    fn lookup_application_eval_cache(
-        &self,
-        _def_id: DefId,
-        _args: &[TypeId],
-        _no_unchecked_indexed_access: bool,
-    ) -> Option<TypeId> {
-        None
-    }
-
-    /// Store an evaluated generic application result in the shared cache.
-    fn insert_application_eval_cache(
-        &self,
-        _def_id: DefId,
-        _args: &[TypeId],
-        _no_unchecked_indexed_access: bool,
-        _result: TypeId,
-    ) {
     }
 
     /// Look up a cross-call `instantiate_type` cache entry.
