@@ -55,10 +55,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     applicable_index_value_types.push(string_index.value_type);
-                    if self.diagnostic_relation_boolean_guard(
-                        source_prop.type_id,
-                        string_index.value_type,
-                    ) {
+                    if self
+                        .assign_relation_outcome(source_prop.type_id, string_index.value_type)
+                        .related
+                    {
                         accepted_by_index = true;
                         break;
                     }
@@ -70,10 +70,10 @@ impl<'a> CheckerState<'a> {
                         continue;
                     }
                     applicable_index_value_types.push(number_index.value_type);
-                    if self.diagnostic_relation_boolean_guard(
-                        source_prop.type_id,
-                        number_index.value_type,
-                    ) {
+                    if self
+                        .assign_relation_outcome(source_prop.type_id, number_index.value_type)
+                        .related
+                    {
                         accepted_by_index = true;
                         break;
                     }
@@ -99,7 +99,10 @@ impl<'a> CheckerState<'a> {
             ) {
                 continue;
             }
-            if self.diagnostic_relation_boolean_guard(source_prop.type_id, target_value_type) {
+            if self
+                .assign_relation_outcome(source_prop.type_id, target_value_type)
+                .related
+            {
                 continue;
             }
 
