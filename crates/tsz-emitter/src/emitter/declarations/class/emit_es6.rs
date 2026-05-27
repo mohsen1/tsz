@@ -2,7 +2,7 @@ use super::super::super::core::PropertyNameEmit;
 use super::super::super::{Printer, ScriptTarget};
 use super::replace_identifier;
 use super::{AutoAccessorEmitOptions, AutoAccessorInfo, StaticFieldInit};
-use crate::emitter::core::PrivateMemberInfo;
+use crate::emitter::core::{PrivateMemberInfo, PrivateMethodDef};
 use crate::transforms::private_fields_es5::{
     PrivateAccessorInfo, PrivateFieldInfo, PrivateMethodInfo,
     collect_enclosing_source_binding_names, collect_private_accessors_with_reserved,
@@ -1055,11 +1055,13 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 if let Some(body_idx) = method.body {
-                    self.pending_private_method_defs.push((
-                        method.fn_var_name.clone(),
-                        body_idx,
-                        method.parameters.clone(),
-                    ));
+                    self.pending_private_method_defs.push(PrivateMethodDef {
+                        var_name: method.fn_var_name.clone(),
+                        body: body_idx,
+                        params: method.parameters.clone(),
+                        is_async: method.is_async,
+                        is_generator: method.is_generator,
+                    });
                 }
             }
 
@@ -2918,14 +2920,12 @@ impl<'a> Printer<'a> {
                     self.write(init);
                     first = false;
                 }
-                for (var_name, body_idx, params) in &method_defs {
+                for def in &method_defs {
                     if !first {
                         self.write(", ");
                     }
                     self.emit_private_method_function_def(
-                        var_name,
-                        *body_idx,
-                        params,
+                        def,
                         private_member_def_needs_class_alias,
                         class_value_alias.as_deref(),
                         &class_name,
@@ -3501,37 +3501,16 @@ impl<'a> Printer<'a> {
             }
 
             // Private method function definitions
-            for (var_name, body_idx, params) in &method_defs {
+            for def in &method_defs {
                 self.write(",");
                 self.write_line();
                 self.increase_indent();
-                self.write(var_name);
-                self.write(" = function ");
-                self.write(var_name);
-                self.write("(");
-                for (i, &param_idx) in params.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    if let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(*body_idx);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_method_function_def(
+                    def,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 self.decrease_indent();
             }
 
@@ -3703,14 +3682,12 @@ impl<'a> Printer<'a> {
 
             // Private method function definitions:
             // _C_method = function _C_method(params) { ... }
-            for (var_name, body_idx, params) in &method_defs {
+            for def in &method_defs {
                 if !first {
                     self.write(", ");
                 }
                 self.emit_private_method_function_def(
-                    var_name,
-                    *body_idx,
-                    params,
+                    def,
                     private_member_def_needs_class_alias,
                     class_value_alias.as_deref(),
                     &class_name,

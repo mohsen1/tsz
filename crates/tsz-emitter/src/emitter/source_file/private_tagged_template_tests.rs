@@ -97,3 +97,35 @@ class Widget {
         "Extracted private method definitions should preserve rest parameters.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn static_private_async_generator_helpers_preserve_function_kind() {
+    let source = r#"
+const Widget = class {
+    static async #load() { return await Promise.resolve(1); }
+    static *#values() { yield 1; }
+    static async *#stream() {
+        yield (await Promise.resolve(2));
+    }
+    static run() {
+        this.#load();
+        this.#values();
+        this.#stream();
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2019);
+
+    assert!(
+        output.contains("_Widget_load = async function _Widget_load()"),
+        "Extracted async private methods should stay async functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_Widget_values = function* _Widget_values()"),
+        "Extracted generator private methods should stay generator functions.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_Widget_stream = async function* _Widget_stream() {\n        yield (await Promise.resolve(2));\n    }"),
+        "Extracted async generator private methods should preserve function kind and multiline body formatting.\nOutput:\n{output}"
+    );
+}
