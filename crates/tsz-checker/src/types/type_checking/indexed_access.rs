@@ -584,7 +584,8 @@ impl<'a> CheckerState<'a> {
             index_constraint = Some(ast_constraint);
         }
         if index_constraint.is_some_and(|constraint| {
-            self.mapped_key_constraint_filters_current_object_keys(
+            crate::query_boundaries::checkers::generic::mapped_key_constraint_semantically_filters_current_object_keys(
+                self,
                 constraint,
                 object_type,
                 object_type,

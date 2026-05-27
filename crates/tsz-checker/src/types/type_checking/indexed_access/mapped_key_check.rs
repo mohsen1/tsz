@@ -201,24 +201,14 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_from_type_node(outer_tp.constraint);
                                 if outer_c_type != tsz_solver::TypeId::ERROR
                                     && outer_c_type != tsz_solver::TypeId::UNKNOWN
+                                    && crate::query_boundaries::checkers::generic::mapped_key_constraint_semantically_filters_current_object_keys(
+                                        self,
+                                        outer_c_type,
+                                        object_type,
+                                        object_type_for_check,
+                                    )
                                 {
-                                    let outer_c_eval = self.evaluate_type_with_env(outer_c_type);
-                                    let keyof_obj = self.ctx.types.factory().keyof(object_type);
-                                    if self
-                                        .diagnostic_relation_boolean_guard(outer_c_eval, keyof_obj)
-                                        || self.is_keyof_for_current_object(
-                                            outer_c_eval,
-                                            object_type,
-                                            object_type_for_check,
-                                        )
-                                        || self.is_keyof_for_current_object(
-                                            outer_c_type,
-                                            object_type,
-                                            object_type_for_check,
-                                        )
-                                    {
-                                        return true;
-                                    }
+                                    return true;
                                 }
                                 break; // found the definition; did not satisfy check
                             }
@@ -233,58 +223,13 @@ impl<'a> CheckerState<'a> {
                     object_type,
                 ) {
                     let constraint_type = self.get_type_from_type_node(tp.constraint);
-                    let constraint_eval = self.evaluate_type_with_env(constraint_type);
-                    let keyof_object_param = self.ctx.types.factory().keyof(object_type);
-                    if self.diagnostic_relation_boolean_guard(constraint_eval, keyof_object_param) {
-                        return true;
-                    }
-                    // Also handle constraints that structurally contain `keyof T`.
-                    if self.is_keyof_for_current_object(
-                        constraint_eval,
-                        object_type,
-                        object_type_for_check,
-                    ) || self.is_keyof_for_current_object(
-                        constraint_type,
-                        object_type,
-                        object_type_for_check,
-                    ) || self.mapped_key_constraint_filters_current_object_keys(
+                    if crate::query_boundaries::checkers::generic::mapped_key_constraint_semantically_filters_current_object_keys(
+                        self,
                         constraint_type,
                         object_type,
                         object_type_for_check,
                     ) {
                         return true;
-                    }
-                    // Follow the constraint chain transitively (P → K → keyof T).
-                    let mut chain = constraint_type;
-                    for _ in 0..4 {
-                        let Some(next) = crate::query_boundaries::common::type_parameter_constraint(
-                            self.ctx.types,
-                            chain,
-                        ) else {
-                            break;
-                        };
-                        let next_eval = self.evaluate_type_with_env(next);
-                        if self.is_keyof_for_current_object(
-                            next_eval,
-                            object_type,
-                            object_type_for_check,
-                        ) || self.is_keyof_for_current_object(
-                            next,
-                            object_type,
-                            object_type_for_check,
-                        ) {
-                            return true;
-                        }
-                        if self.diagnostic_relation_boolean_guard(next_eval, keyof_object_param) {
-                            return true;
-                        }
-                        if !crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            next_eval,
-                        ) {
-                            break;
-                        }
-                        chain = next_eval;
                     }
                 }
                 return false;
@@ -425,125 +370,6 @@ impl<'a> CheckerState<'a> {
             }
         }
 
-        false
-    }
-
-    pub(super) fn mapped_key_constraint_filters_current_object_keys(
-        &mut self,
-        mut constraint_type: TypeId,
-        object_type: TypeId,
-        object_type_for_check: TypeId,
-    ) -> bool {
-        let mut seen = rustc_hash::FxHashSet::default();
-        for _ in 0..8 {
-            if !seen.insert(constraint_type) {
-                return false;
-            }
-
-            if let Some(candidates) =
-                crate::query_boundaries::checkers::generic::conditional_key_filter_candidates(
-                    self.ctx.types.as_type_database(),
-                    constraint_type,
-                )
-            {
-                let keyof_object = self.ctx.types.factory().keyof(object_type);
-                return candidates
-                    .into_iter()
-                    .filter(|&candidate| candidate != TypeId::NEVER)
-                    .any(|candidate| {
-                        let evaluated = self.evaluate_type_with_env(candidate);
-                        self.is_keyof_for_current_object(
-                            candidate,
-                            object_type,
-                            object_type_for_check,
-                        ) || self.is_keyof_for_current_object(
-                            evaluated,
-                            object_type,
-                            object_type_for_check,
-                        ) || self.diagnostic_relation_boolean_guard(evaluated, keyof_object)
-                    });
-            }
-
-            if let Some(param_info) =
-                crate::query_boundaries::common::type_param_info(self.ctx.types, constraint_type)
-                && let Some(constraint) = param_info.constraint
-            {
-                constraint_type = constraint;
-                continue;
-            }
-
-            if let Some(name_atom) = crate::query_boundaries::checkers::generic::type_parameter_name(
-                self.ctx.types.as_type_database(),
-                constraint_type,
-            ) {
-                let name = self.ctx.types.resolve_atom(name_atom);
-                if let Some(&scoped_type_id) = self.ctx.type_parameter_scope.get(&name)
-                    && scoped_type_id != constraint_type
-                    && let Some(constraint) =
-                        crate::query_boundaries::common::type_parameter_constraint(
-                            self.ctx.types,
-                            scoped_type_id,
-                        )
-                {
-                    constraint_type = constraint;
-                    continue;
-                }
-            }
-
-            let Some(app) =
-                crate::query_boundaries::common::type_application(self.ctx.types, constraint_type)
-            else {
-                let evaluated = self.evaluate_type_with_env(constraint_type);
-                if evaluated == constraint_type {
-                    return false;
-                }
-                constraint_type = evaluated;
-                continue;
-            };
-            let Some(def_id) =
-                crate::query_boundaries::common::lazy_def_id(self.ctx.types, app.base)
-            else {
-                return false;
-            };
-            let body_and_params = self
-                .ctx
-                .definition_store
-                .get(def_id)
-                .and_then(|def| {
-                    (def.kind == tsz_solver::def::DefKind::TypeAlias)
-                        .then_some((def.body?, def.type_params))
-                })
-                .or_else(|| {
-                    let body = self
-                        .ctx
-                        .type_env
-                        .try_borrow()
-                        .ok()
-                        .and_then(|env| env.get_def(def_id))?;
-                    let params = self.ctx.get_def_type_params(def_id)?;
-                    Some((body, params))
-                });
-            let Some((body, params)) = body_and_params else {
-                return false;
-            };
-            if params.len() != app.args.len() {
-                return false;
-            };
-            let Some(instantiated) =
-                crate::query_boundaries::checkers::generic::instantiate_alias_application_body(
-                    self.ctx.types,
-                    body,
-                    &params,
-                    &app.args,
-                )
-            else {
-                return false;
-            };
-            if instantiated == constraint_type {
-                return false;
-            }
-            constraint_type = self.resolve_lazy_type(instantiated);
-        }
         false
     }
 }

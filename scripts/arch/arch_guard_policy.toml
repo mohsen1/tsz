@@ -158,7 +158,7 @@ ignore_comment_lines = true
 [[pattern_checks]]
 name = "Checker boundary: semantic proof helpers stay behind query boundaries (#9673)"
 base = "crates/tsz-checker/src"
-pattern = '\bfull_conditional_type_components\s*\(|\bquery_boundaries::common::instantiate_generic\s*\('
+pattern = '\bfull_conditional_type_components\s*\(|\bquery_boundaries::common::instantiate_generic\s*\(|\bfn\s+mapped_key_constraint_filters_current_object_keys\b|\bconditional_key_filter_candidates\s*\(|\binstantiate_alias_application_body\s*\('
 exclude_dirs = ["query_boundaries", "tests"]
 exclude_files = [
   # Pre-existing generic-checker semantic proof debt; #9673 only ratchets the

@@ -264,6 +264,23 @@ class ArchGuardCheckerSemanticProofBoundaryTests(unittest.TestCase):
         )
         self.assertEqual(hits, [1, 2])
 
+    def test_rule_flags_checker_local_mapped_key_proof_wrappers(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "\n".join(
+            [
+                "fn mapped_key_constraint_filters_current_object_keys(&mut self) -> bool {",
+                "let candidates = generic::conditional_key_filter_candidates(db, ty);",
+                "let next = generic::instantiate_alias_application_body(db, body, params, args);",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3])
+
     def test_rule_ignores_query_boundaries_tests_and_comments(self):
         pattern, excludes = self._semantic_proof_check()
         text = "let components = query::full_conditional_type_components(db, ty);"
