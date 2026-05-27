@@ -107,10 +107,13 @@ impl<'a> InferenceContext<'a> {
         &self,
         contra_candidates: &[crate::inference::infer::InferenceCandidate],
     ) -> TypeId {
-        let mut contra_types: Vec<TypeId> = Vec::new();
+        let mut contra_types: Vec<InferenceCandidate> = Vec::new();
         for candidate in contra_candidates {
-            if !contra_types.contains(&candidate.type_id) {
-                contra_types.push(candidate.type_id);
+            if !contra_types
+                .iter()
+                .any(|existing| existing.type_id == candidate.type_id)
+            {
+                contra_types.push(*candidate);
             }
         }
 
@@ -121,14 +124,19 @@ impl<'a> InferenceContext<'a> {
         // This matches tsc's behavior where `any` is treated as uninformative
         // during inference resolution.
         if contra_types.len() > 1 {
-            let has_non_any = contra_types.iter().any(|&t| t != TypeId::ANY);
+            let has_non_any = contra_types
+                .iter()
+                .any(|candidate| candidate.type_id != TypeId::ANY);
             if has_non_any {
-                contra_types.retain(|&t| t != TypeId::ANY);
+                contra_types.retain(|candidate| candidate.type_id != TypeId::ANY);
             }
         }
 
         if contra_types.len() <= 1 {
-            return contra_types.first().copied().unwrap_or(TypeId::UNKNOWN);
+            return contra_types
+                .first()
+                .map(|candidate| candidate.type_id)
+                .unwrap_or(TypeId::UNKNOWN);
         }
 
         // Filter out `any` from the tournament when there are non-any candidates.
@@ -138,41 +146,45 @@ impl<'a> InferenceContext<'a> {
         // of everything, it always wins the tournament incorrectly.
         let non_any: Vec<TypeId> = contra_types
             .iter()
-            .copied()
-            .filter(|&t| t != TypeId::ANY)
+            .map(|candidate| candidate.type_id)
+            .filter(|&ty| ty != TypeId::ANY)
             .collect();
-        let effective_types = if non_any.is_empty() {
-            &contra_types
+        let effective_types: Vec<TypeId> = if non_any.is_empty() {
+            contra_types
+                .iter()
+                .map(|candidate| candidate.type_id)
+                .collect()
         } else {
-            &non_any
+            non_any
         };
 
         if effective_types.len() <= 1 {
             return effective_types.first().copied().unwrap_or(TypeId::UNKNOWN);
         }
 
-        // Tournament: find the most-specific candidate in O(N).
-        // The most-specific type must be a subtype of all others.
-        // Walk the list, keeping the current "winner" — replace it whenever
-        // a new candidate is a subtype of it.
+        let best_priority = contra_types.iter().map(|c| c.priority).min();
+        let priority_implies_combination = best_priority.is_some_and(|priority| {
+            matches!(
+                priority,
+                InferencePriority::ReturnType
+                    | InferencePriority::LowPriority
+                    | InferencePriority::MappedType
+                    | InferencePriority::LiteralKeyof
+            )
+        });
+        if priority_implies_combination {
+            return self.interner.intersection(effective_types);
+        }
+
+        // Mirror tsc's `getCommonSubtype`: return the leftmost type for which
+        // no type to the right is a subtype.
         let mut winner = effective_types[0];
         for &candidate in &effective_types[1..] {
             if self.is_subtype(candidate, winner) {
                 winner = candidate;
             }
         }
-
-        // Verify the winner is actually a subtype of ALL candidates (O(N)).
-        // If verification fails, there's no single most-specific type.
-        let verified = effective_types
-            .iter()
-            .all(|&other| winner == other || self.is_subtype(winner, other));
-
-        if verified {
-            winner
-        } else {
-            self.interner.intersection(effective_types.to_vec())
-        }
+        winner
     }
 
     // =========================================================================
@@ -673,6 +685,7 @@ impl<'a> InferenceContext<'a> {
                     InferencePriority::ReturnType
                         | InferencePriority::LowPriority
                         | InferencePriority::MappedType
+                        | InferencePriority::LiteralKeyof
                 )
             })
             .unwrap_or(false);

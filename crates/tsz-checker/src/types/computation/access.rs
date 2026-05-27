@@ -1466,6 +1466,28 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        if result_type.is_none()
+            && !skip_flow_narrowing
+            && self.is_generic_index_type(index_type)
+            && crate::query_boundaries::common::is_index_access_type(
+                self.ctx.types,
+                raw_object_type,
+            )
+            && self.get_element_access_type(
+                object_type_for_access,
+                index_type_for_access,
+                literal_index,
+            ) != TypeId::ERROR
+        {
+            result_type = Some(
+                self.ctx
+                    .types
+                    .factory()
+                    .index_access(raw_object_type, index_type),
+            );
+            use_index_signature_check = false;
+        }
+
         let mut result_type = result_type.unwrap_or_else(|| {
             if crate::query_boundaries::common::is_type_parameter(
                 self.ctx.types,
