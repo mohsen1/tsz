@@ -132,11 +132,11 @@ impl RelationPolicy {
         let erase_generics = !flags.contains(RelationFlags::NO_ERASE_GENERICS);
         Self {
             flags,
-            strict_subtype_checking: false,
-            strict_any_propagation: false,
+            strict_subtype_checking: flags.contains(RelationFlags::STRICT_SUBTYPE_CHECKING),
+            strict_any_propagation: flags.contains(RelationFlags::STRICT_ANY_PROPAGATION),
             any_propagation_mode: AnyPropagationMode::All,
             assume_related_on_cycle: true,
-            skip_weak_type_checks: false,
+            skip_weak_type_checks: flags.contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS),
             erase_generics,
         }
     }
