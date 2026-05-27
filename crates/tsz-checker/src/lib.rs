@@ -223,6 +223,12 @@ mod jsdoc_this_arrow_tests;
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
+#[path = "tests/jsx_component_props_relation_routing_arch_tests.rs"]
+mod jsx_component_props_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_overload_relation_routing_arch_tests.rs"]
+mod jsx_overload_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/lib_abstract_member_ts2515_tests.rs"]
 mod lib_abstract_member_ts2515_tests;
 #[cfg(test)]
@@ -721,14 +727,32 @@ mod jsx_element_type_constraint_tests;
 #[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
 mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
+#[path = "tests/jsx_generic_spread_relation_routing_arch_tests.rs"]
+mod jsx_generic_spread_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_react_alias_relation_routing_arch_tests.rs"]
+mod jsx_react_alias_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
+#[cfg(test)]
+#[path = "tests/jsx_render_fallback_relation_routing_arch_tests.rs"]
+mod jsx_render_fallback_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/jsx_single_child_precise_relation_routing_arch_tests.rs"]
 mod jsx_single_child_precise_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsx_spread_assignability_relation_routing_arch_tests.rs"]
+mod jsx_spread_assignability_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/jsx_text_child_relation_routing_arch_tests.rs"]
+mod jsx_text_child_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
+#[cfg(test)]
+#[path = "tests/jsx_union_props_relation_routing_arch_tests.rs"]
+mod jsx_union_props_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/keyof_function_type_is_never_tests.rs"]
 mod keyof_function_type_is_never_tests;
