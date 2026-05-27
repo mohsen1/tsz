@@ -789,7 +789,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     ///
     /// This is used to configure the `CompatChecker` with settings from
     /// the `CompilerOptions` (passed through `JudgeConfig`).
-    pub fn apply_config(&mut self, config: &crate::judge::JudgeConfig) {
+    pub fn apply_config(&mut self, config: &crate::relations::judge::JudgeConfig) {
         self.strict_function_types = config.strict_function_types;
         self.strict_null_checks = config.strict_null_checks;
         self.exact_optional_property_types = config.exact_optional_property_types;

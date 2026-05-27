@@ -344,6 +344,12 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver API boundary: root judge convenience re-export (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^\s*pub\s+mod\s+judge\s*\{"),
+        0,
+    ),
+    (
         "Solver relation boundary: legacy relation flag bridge surface (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src"],
         re.compile(
