@@ -155,10 +155,16 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
     /// Create a new evaluator without a resolver.
     pub fn new(interner: &'a dyn TypeDatabase) -> Self {
         static NOOP: NoopResolver = NoopResolver;
+        Self::with_resolver_and_defaults(interner, &NOOP)
+    }
+}
+
+impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
+    fn with_resolver_and_defaults(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
         TypeEvaluator {
             interner,
             query_db: None,
-            resolver: &NOOP,
+            resolver,
             no_unchecked_indexed_access: false,
             cache: FxHashMap::default(),
             guard: crate::recursion::RecursionGuard::with_profile(
@@ -180,9 +186,7 @@ impl<'a> TypeEvaluator<'a, NoopResolver> {
             detection_growth_runs: FxHashMap::default(),
         }
     }
-}
 
-impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Return entry and size accounting for this evaluator's operation-local caches.
     #[must_use]
     pub fn cache_statistics(&self) -> TypeEvaluatorCacheStatistics {
@@ -267,30 +271,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
     /// Create a new evaluator with a custom resolver.
     pub fn with_resolver(interner: &'a dyn TypeDatabase, resolver: &'a R) -> Self {
-        TypeEvaluator {
-            interner,
-            query_db: None,
-            resolver,
-            no_unchecked_indexed_access: false,
-            cache: FxHashMap::default(),
-            guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
-            keyof_constraint_guard: crate::recursion::RecursionGuard::with_profile(
-                crate::recursion::RecursionProfile::TypeEvaluation,
-            ),
-            def_depth: FxHashMap::default(),
-            real_instantiation_depth_count: 0,
-            suppress_this_binding: false,
-            conditional_subtype_cache: FxHashMap::default(),
-            contains_infer_cache: FxHashMap::default(),
-            max_mapped_keys: DEFAULT_MAX_MAPPED_KEYS,
-            flag_depth_on_app_cycle: false,
-            expand_application_display_alias_args: false,
-            apparent_conditional_branch: None,
-            silent_depth_bailed: false,
-            detection_growth_runs: FxHashMap::default(),
-        }
+        Self::with_resolver_and_defaults(interner, resolver)
     }
 
     /// Set the query database for Salsa-backed memoization.

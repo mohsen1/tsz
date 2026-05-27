@@ -230,6 +230,12 @@ fn evaluation_engine_keeps_request_stage_boundary() {
         "evaluation/evaluate.rs must consume typed request/result stages instead of owning loose shell setup"
     );
     assert!(
+        evaluate_rs.contains("fn with_resolver_and_defaults(")
+            && evaluate_rs.matches("TypeEvaluator {").count() == 1
+            && evaluate_rs.matches("with_resolver_and_defaults").count() >= 3,
+        "TypeEvaluator construction must keep request-local cache/guard defaults in one path"
+    );
+    assert!(
         query_cache_rs
             .contains("use crate::evaluation::request::{EvaluationCacheKey, EvaluationRequest};")
             && query_cache_rs.contains("request.cache_key()")
