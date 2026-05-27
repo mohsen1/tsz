@@ -38,8 +38,8 @@ impl AssignabilityOverrideProvider for AlwaysRejectOverride {
 #[test]
 fn query_relation_assignable_respects_strict_null_flags() {
     let interner = TypeInterner::new();
-    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let non_strict_policy = RelationPolicy::from_flags(0);
+    let strict_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let non_strict_policy = RelationPolicy::unflagged_compatibility();
 
     let strict_result = query_relation(
         &interner,
@@ -86,8 +86,8 @@ fn query_relation_bivariant_callback_mode_relaxes_function_parameter_variance() 
         is_method: false,
     });
 
-    let policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES,
+    let policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::STRICT_FUNCTION_TYPES,
     );
 
     let strict_result = query_relation(
@@ -114,7 +114,7 @@ fn query_relation_bivariant_callback_mode_relaxes_function_parameter_variance() 
 #[test]
 fn query_relation_subtype_and_overlap_work() {
     let interner = TypeInterner::new();
-    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
 
     let subtype_result = query_relation(
         &interner,
@@ -149,7 +149,7 @@ fn query_relation_subtype_and_overlap_work() {
 #[test]
 fn query_relation_redeclaration_identity_uses_compat_identity_rules() {
     let interner = TypeInterner::new();
-    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
 
     // any is NOT identical to non-any types for redeclaration (TS2403).
     // var x: any; var x: string; should error because types differ.
@@ -194,7 +194,7 @@ fn query_relation_with_overrides_can_short_circuit_assignability() {
     let interner = TypeInterner::new();
     let resolver = NoopResolver;
     let overrides = AlwaysRejectOverride;
-    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
 
     let result = query_relation_with_overrides(RelationQueryInputs {
         interner: &interner,
@@ -237,7 +237,7 @@ fn redeclaration_identity_evaluates_keyof_to_literal_union() {
     // to `"a" | "b"`. The normalization step in the compat checker must evaluate
     // KeyOf types before comparing for redeclaration identity.
     let interner = TypeInterner::new();
-    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
 
     let a_atom = interner.intern_string("a");
     let b_atom = interner.intern_string("b");
@@ -290,7 +290,7 @@ fn redeclaration_identity_union_vs_nonunion_not_identical() {
     // C | D is NOT identical to C even when D is a subtype of C.
     // This matches tsc's isTypeIdenticalTo semantics for TS2403.
     let interner = TypeInterner::new();
-    let policy = RelationPolicy::from_flags(0);
+    let policy = RelationPolicy::unflagged_compatibility();
 
     let name = interner.intern_string("name");
     let foo = interner.intern_string("foo");
@@ -339,7 +339,7 @@ fn redeclaration_identity_union_vs_nonunion_not_identical() {
 fn redeclaration_identity_same_union_is_identical() {
     // C | D should be identical to C | D for redeclaration.
     let interner = TypeInterner::new();
-    let policy = RelationPolicy::from_flags(0);
+    let policy = RelationPolicy::unflagged_compatibility();
 
     let name = interner.intern_string("name");
     let foo = interner.intern_string("foo");
