@@ -33,3 +33,37 @@ fn call_checker_generator_recovery_uses_relation_outcome_boundary() {
         "generator recovery diagnostics should not use raw diagnostic boolean relation probes"
     );
 }
+
+#[test]
+fn call_checker_adapter_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/checkers/call_checker/mod.rs"),
+    )
+    .expect("failed to read call checker adapter");
+
+    let adapter_start = source
+        .find("impl AssignabilityChecker for CheckerCallAssignabilityAdapter")
+        .expect("missing call checker assignability adapter");
+    let adapter_end = source[adapter_start..]
+        .find("impl CheckerState")
+        .map(|offset| adapter_start + offset)
+        .expect("missing post-adapter CheckerState impl");
+    let adapter = &source[adapter_start..adapter_end];
+
+    assert!(
+        adapter.matches("assign_relation_outcome(").count() >= 3,
+        "call checker adapter should route default assignability probes through RelationOutcome"
+    );
+    assert!(
+        adapter.matches(".related").count() >= 3,
+        "call checker adapter should use relation outcome decisions"
+    );
+    assert!(
+        !adapter.contains("state.is_assignable_to(source, target)"),
+        "call checker adapter default assignability should not regress to raw checker assignability"
+    );
+    assert!(
+        !adapter.contains("state.is_assignable_to(a_resolved, b_resolved)"),
+        "call checker adapter identity comparison should not regress to raw checker assignability"
+    );
+}
