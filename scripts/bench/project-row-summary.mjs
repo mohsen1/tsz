@@ -277,6 +277,11 @@ export function formatPlainText(coverage) {
   return lines.join("\n");
 }
 
+export function appendStepSummary(coverage, stepSummaryPath) {
+  if (!stepSummaryPath) return;
+  fs.appendFileSync(stepSummaryPath, `${formatMarkdown(coverage)}\n`);
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const args = process.argv.slice(2);
   const markdown = args.includes("--markdown");
@@ -294,10 +299,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 
   // When running in GitHub Actions, also append the markdown table to the
   // step summary so it's visible in the PR checks UI without a second run.
-  const stepSummary = process.env.GITHUB_STEP_SUMMARY;
-  if (!markdown && stepSummary) {
-    fs.appendFileSync(stepSummary, `${formatMarkdown(coverage)}\n`);
-  }
+  appendStepSummary(coverage, process.env.GITHUB_STEP_SUMMARY);
 
   if (coverage.drift.length > 0) {
     process.exit(1);
