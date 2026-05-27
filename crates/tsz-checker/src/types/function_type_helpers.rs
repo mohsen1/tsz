@@ -601,8 +601,12 @@ impl<'a> CheckerState<'a> {
                     when_true = self.unwrap_promise_type(when_true).unwrap_or(when_true);
                     when_false = self.unwrap_promise_type(when_false).unwrap_or(when_false);
                 }
-                !self.diagnostic_relation_boolean_guard(when_true, expected_return_type)
-                    || !self.diagnostic_relation_boolean_guard(when_false, expected_return_type)
+                !self
+                    .return_relation_outcome(when_true, expected_return_type)
+                    .related
+                    || !self
+                        .return_relation_outcome(when_false, expected_return_type)
+                        .related
             });
         if conditional_branch_mismatch
             && !self
