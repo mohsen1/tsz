@@ -74,19 +74,7 @@ impl<'a> CheckerState<'a> {
     }
 
     fn object_define_property_base_is_global_object(&self, idx: NodeIndex) -> bool {
-        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
-            return false;
-        };
-        if base_ident.escaped_text != "Object" {
-            return false;
-        }
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
-            return false;
-        };
-        if self.known_global_value_has_local_shadow(idx, "Object") {
-            return false;
-        }
-        self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
+        self.identifier_resolves_to_proven_lib_global(idx, "Object")
     }
 
     fn define_property_descriptor_accessor_type(

@@ -5,7 +5,7 @@
 //! experimentation so they do not imply shipped Sound Mode semantics.
 
 use crate::construction::TypeDatabase;
-use crate::judge::JudgeConfig;
+use crate::relations::judge::JudgeConfig;
 use crate::relations::subtype::{SubtypeChecker, TypeEnvironment};
 use crate::types::{TypeData, TypeId};
 
