@@ -4,8 +4,8 @@
 
 use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::instantiate_generic;
+use crate::objects::PropertyCollectionResult;
 use crate::objects::apparent::literal_value_intrinsic_kind;
-use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::relations::subtype::TypeResolver;
 use crate::type_queries::narrow_keyof_intersection_member_by_literal_discriminants;
 use crate::types::{
@@ -248,7 +248,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         if let Some(source) = constraint_source {
             let resolved_source = self.evaluate(source);
-            match collect_properties(resolved_source, self.interner(), self.resolver()) {
+            match crate::objects::collect_properties_cached(
+                resolved_source,
+                self.interner(),
+                self.resolver(),
+                self.query_db(),
+            ) {
                 PropertyCollectionResult::Properties {
                     properties,
                     string_index,

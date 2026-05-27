@@ -36,6 +36,9 @@ pub(super) fn string_index_signature_applies<R: TypeResolver>(
     }
 
     let mut checker = SubtypeChecker::with_resolver(evaluator.interner(), evaluator.resolver());
+    if let Some(db) = evaluator.query_db() {
+        checker = checker.with_query_db(db);
+    }
     checker.is_subtype_of(index_type, string_index.key_type)
 }
 

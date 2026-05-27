@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 2;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -239,6 +239,12 @@ pub struct PerfCounterSnapshot {
     /// order. This splits the post-#6191 `symbol_arenas` residue into
     /// cacheable first misses versus structural non-cacheable cases.
     pub source_file_symbol_arena_cache_eligibility_outcomes: Vec<NamedCount>,
+    /// Top semantic `check_source_file` durations observed in attribution mode.
+    ///
+    /// This is a bounded list of the slowest files, sorted by descending
+    /// elapsed time. It is empty when `TSZ_PERF_COUNTERS` is unset or no file
+    /// ran semantic checking.
+    pub slow_check_file_timings: Vec<SlowCheckFileTiming>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -685,6 +691,7 @@ impl PerfCounters {
                     count: load(&c.source_file_symbol_arena_cache_eligibility_outcome[i]),
                 })
                 .collect(),
+            slow_check_file_timings: Self::snapshot_slow_check_file_timings(),
         }
     }
 
@@ -811,6 +818,20 @@ impl PerfCounters {
                 .then_with(|| a.symbol.cmp(&b.symbol))
                 .then_with(|| a.declaration_count.cmp(&b.declaration_count))
         });
+        rows
+    }
+
+    fn snapshot_slow_check_file_timings() -> Vec<SlowCheckFileTiming> {
+        let mut rows = slow_check_file_timings()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.elapsed_ms
+                .total_cmp(&a.elapsed_ms)
+                .then_with(|| a.file.cmp(&b.file))
+        });
+        rows.truncate(SLOW_CHECK_FILE_TIMING_LIMIT);
         rows
     }
 

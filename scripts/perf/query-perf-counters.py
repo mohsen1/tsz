@@ -133,6 +133,14 @@ def print_summary(snap: dict) -> None:
         f"  compute_type_of_symbol  calls={fmt_int(cot_calls)}  "
         f"hits={fmt_int(cot_hits)}  hit%={cot_hit_pct:.2f}"
     )
+    slow_files = snap.get("slow_check_file_timings") or []
+    if slow_files:
+        print("  slowest semantic check files:")
+        for row in slow_files[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"diags={fmt_int(row.get('diagnostics', 0)):>4}  {row['file']}"
+            )
     print()
     print("overlay copy:")
     print(
@@ -244,6 +252,16 @@ def print_diff(post: dict, base: dict) -> None:
         "compute_type_of_symbol_cache_hits",
     ):
         print(f"  {delta(post['checker'], base['checker'], k)}")
+    post_slow = post.get("slow_check_file_timings") or []
+    base_slow = base.get("slow_check_file_timings") or []
+    if post_slow or base_slow:
+        print("  slowest semantic check file:")
+        if base_slow:
+            b = base_slow[0]
+            print(f"    baseline {b['elapsed_ms']:.2f} ms  {b['file']}")
+        if post_slow:
+            a = post_slow[0]
+            print(f"    current  {a['elapsed_ms']:.2f} ms  {a['file']}")
     print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}
     base_rows = {r["reason"]: r for r in by_reason_rows(base, optional=True)}
