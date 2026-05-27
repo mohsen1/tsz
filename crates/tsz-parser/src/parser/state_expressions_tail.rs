@@ -743,6 +743,9 @@ impl ParserState {
         let start_pos = self.token_pos();
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
+        if self.is_token(SyntaxKind::Unknown) {
+            self.scanner.re_scan_unknown_token_as_identifier_name();
+        }
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
             let atom = self.scanner.get_token_atom();

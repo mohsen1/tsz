@@ -12,7 +12,7 @@
 
 use crate::SyntaxKind;
 use crate::char_codes::CharacterCodes;
-use crate::scanner_impl::{ScannerState, is_digit};
+use crate::scanner_impl::{ScannerState, is_digit, is_identifier_part, is_identifier_start};
 use wasm_bindgen::prelude::wasm_bindgen;
 
 #[wasm_bindgen]
@@ -180,6 +180,36 @@ impl ScannerState {
             return self.token;
         }
         self.token = crate::text_to_keyword(&self.token_value).unwrap_or(SyntaxKind::Identifier);
+        self.token
+    }
+
+    /// Re-scan a raw unknown token as an `IdentifierName` without applying the
+    /// target's astral-identifier gate.
+    ///
+    /// This is intentionally narrower than normal identifier scanning. It
+    /// rescues raw source text such as a single astral identifier after a
+    /// property-access dot in ES5, while escaped braced astrals (`\u{...}`)
+    /// remain invalid recovery tokens because their raw token starts with `\`.
+    #[wasm_bindgen(js_name = reScanUnknownTokenAsIdentifierName)]
+    pub fn re_scan_unknown_token_as_identifier_name(&mut self) -> SyntaxKind {
+        if self.token != SyntaxKind::Unknown {
+            return self.token;
+        }
+
+        let text = self.get_token_text_ref().to_string();
+        let mut chars = text.chars();
+        let Some(first) = chars.next() else {
+            return self.token;
+        };
+        if !is_identifier_start(first as u32) {
+            return self.token;
+        }
+        if !chars.all(|c| is_identifier_part(c as u32)) {
+            return self.token;
+        }
+
+        self.token = crate::text_to_keyword(&text).unwrap_or(SyntaxKind::Identifier);
+        self.token_value = text;
         self.token
     }
 }
@@ -386,5 +416,32 @@ mod tests {
         let mut scanner = scan_one("foo");
         scanner.token_value = String::from("class");
         assert_eq!(scanner.re_scan_invalid_identifier(), SyntaxKind::Identifier);
+    }
+
+    #[test]
+    fn unknown_identifier_name_rescue_recovers_raw_astral_token() {
+        let mut scanner = ScannerState::new("𐊧".to_string(), true);
+        scanner.set_language_version(tsz_common::ScriptTarget::ES5);
+        scanner.scan();
+
+        assert_eq!(scanner.get_token(), SyntaxKind::Unknown);
+        assert_eq!(
+            scanner.re_scan_unknown_token_as_identifier_name(),
+            SyntaxKind::Identifier
+        );
+        assert_eq!(scanner.get_token_value_ref(), "𐊧");
+    }
+
+    #[test]
+    fn unknown_identifier_name_rescue_rejects_braced_unicode_escape() {
+        let mut scanner = ScannerState::new(r"\u{102A7}".to_string(), true);
+        scanner.set_language_version(tsz_common::ScriptTarget::ES5);
+        scanner.scan();
+
+        assert_eq!(scanner.get_token(), SyntaxKind::Unknown);
+        assert_eq!(
+            scanner.re_scan_unknown_token_as_identifier_name(),
+            SyntaxKind::Unknown
+        );
     }
 }

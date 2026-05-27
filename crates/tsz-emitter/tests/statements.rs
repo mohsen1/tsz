@@ -34,6 +34,23 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn parse_and_emit_strict_target(source: &str, file_name: &str, target: ScriptTarget) -> String {
+    let mut parser =
+        ParserState::new_with_language_version(file_name.to_string(), source.to_string(), target);
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
     let mut parser = ParserState::new(file_name.to_string(), source.to_string());
     let root = parser.parse_source_file();
@@ -99,6 +116,46 @@ export const b = (null as any as import("pkg", { with: {1234, "resolution-mode":
     assert_eq!(
         output.trim_end(),
         "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.b = exports.a = void 0;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface\n    & import(\"pkg\", { with: { 1234: , \"resolution-mode\": \"import\" } }).ImportInterface;\nexports.a = null;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface;\n;\nexports.b = null;\n1234, \"resolution-mode\";\n\"import\";\nImportInterface;\n;"
+    );
+}
+
+#[test]
+fn es5_property_access_preserves_raw_astral_identifier_name() {
+    let source = "class Foo { methodA() { return this.\u{102A7}; } }";
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("return this.\u{102A7};"),
+        "Raw astral IdentifierName after property access should survive ES5 recovery.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return this.;"),
+        "Raw astral IdentifierName after property access should not be emitted as a missing name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_class_member_tail_emits_as_outer_statements() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+    methodA() {
+        return this.𐊧;
+    }
+}
+"#;
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("}());\n{\n    102;\n    A7;\n}\nstring;\nconstructor();"),
+        "Invalid braced astral class member tail should be recovered after the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return this.𐊧;"),
+        "Recovered method body should still preserve raw astral IdentifierName property access.\nOutput:\n{output}"
     );
 }
 
