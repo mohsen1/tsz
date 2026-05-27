@@ -2170,38 +2170,22 @@ impl LspServer {
             .and_then(|p| p.get("color"))
             .ok_or_else(|| anyhow::anyhow!("Missing color"))?;
 
-        let r = color.get("red").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let g = color.get("green").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let b = color.get("blue").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let a = color.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0);
+        let color = tsz_lsp::Color {
+            red: color.get("red").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            green: color.get("green").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            blue: color.get("blue").and_then(|v| v.as_f64()).unwrap_or(0.0),
+            alpha: color.get("alpha").and_then(|v| v.as_f64()).unwrap_or(1.0),
+        };
 
-        let ri = (r * 255.0).round() as u8;
-        let gi = (g * 255.0).round() as u8;
-        let bi = (b * 255.0).round() as u8;
-
-        let mut presentations = Vec::new();
-
-        // #rrggbb format
-        presentations.push(serde_json::json!({
-            "label": format!("#{ri:02x}{gi:02x}{bi:02x}"),
-        }));
-
-        // #rrggbbaa format (only if alpha != 1.0)
-        if (a - 1.0).abs() > f64::EPSILON {
-            let ai = (a * 255.0).round() as u8;
-            presentations.push(serde_json::json!({
-                "label": format!("#{ri:02x}{gi:02x}{bi:02x}{ai:02x}"),
-            }));
-        }
-
-        // rgb() format
-        presentations.push(serde_json::json!({
-            "label": if (a - 1.0).abs() > f64::EPSILON {
-                format!("rgba({ri}, {gi}, {bi}, {a:.2})")
-            } else {
-                format!("rgb({ri}, {gi}, {bi})")
-            },
-        }));
+        let presentations: Vec<Value> =
+            tsz_lsp::DocumentColorProvider::provide_color_presentations(&color)
+                .into_iter()
+                .map(|presentation| {
+                    serde_json::json!({
+                        "label": presentation.label,
+                    })
+                })
+                .collect();
 
         Ok(Value::Array(presentations))
     }
