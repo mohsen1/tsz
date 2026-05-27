@@ -38,10 +38,6 @@ mod flow_analysis;
 mod inference;
 mod instantiation;
 mod intern;
-pub mod judge {
-    //! Re-exports from `relations::judge` for convenience.
-    pub use crate::relations::judge::*;
-}
 pub mod narrowing;
 pub mod objects;
 pub mod operations;

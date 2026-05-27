@@ -927,6 +927,25 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
         self.assertIn("lib.rs:1", hits[0])
 
+    def test_flags_root_solver_judge_convenience_reexport(self):
+        pattern, _max_lines = self._check_by_name("root judge convenience")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/lib.rs": (
+                    "pub mod judge {\n"
+                    "    pub use crate::relations::judge::*;\n"
+                    "}\n"
+                    "pub mod query {\n"
+                    "    pub use crate::visitors::visitor::*;\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("lib.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_flags_legacy_relation_flag_bridge_surface(self):
         pattern, _max_lines = self._check_by_name("legacy relation flag bridge surface")
         root = self._make_tree(

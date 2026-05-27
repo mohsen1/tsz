@@ -253,8 +253,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
-            "crates/tsz-checker/src/types/queries/core.rs",
-            "crates/tsz-checker/src/types/queries/lib.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers.rs",
             "crates/tsz-checker/src/types/type_checking/duplicate_identifiers_helpers.rs",
             "crates/tsz-checker/src/types/utilities/core.rs",
@@ -656,6 +654,12 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
         [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
         re.compile(r"^pub use (?:[A-Za-z_][A-Za-z0-9_]*::)+\*;"),
+        0,
+    ),
+    (
+        "Solver API boundary: root judge convenience re-export (#8204)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "lib.rs"],
+        re.compile(r"^\s*pub\s+mod\s+judge\s*\{"),
         0,
     ),
     (
