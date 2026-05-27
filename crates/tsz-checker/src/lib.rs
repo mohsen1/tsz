@@ -868,6 +868,9 @@ mod string_literal_union_display_order_tests;
 #[path = "tests/super_call_ts2376_ts17009_priority_tests.rs"]
 mod super_call_ts2376_ts17009_priority_tests;
 #[cfg(test)]
+#[path = "tests/symbol_for_identity_helper_tests.rs"]
+mod symbol_for_identity_helper_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
 #[cfg(test)]
