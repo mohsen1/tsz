@@ -95,6 +95,14 @@ impl<'a> CheckerState<'a> {
                             })
                     });
                 }
+                if self.type_reference_filters_keyof_current_object(
+                    tp.constraint,
+                    object_node_idx,
+                    object_type,
+                    object_type_for_check,
+                ) {
+                    return true;
+                }
                 // AST-based outer mapped type walk (scope-independent).
                 //
                 // When the inner mapped type `[P in K]` has a simple-name constraint like
@@ -193,24 +201,14 @@ impl<'a> CheckerState<'a> {
                                     self.get_type_from_type_node(outer_tp.constraint);
                                 if outer_c_type != tsz_solver::TypeId::ERROR
                                     && outer_c_type != tsz_solver::TypeId::UNKNOWN
+                                    && crate::query_boundaries::checkers::generic::mapped_key_constraint_semantically_filters_current_object_keys(
+                                        self,
+                                        outer_c_type,
+                                        object_type,
+                                        object_type_for_check,
+                                    )
                                 {
-                                    let outer_c_eval = self.evaluate_type_with_env(outer_c_type);
-                                    let keyof_obj = self.ctx.types.factory().keyof(object_type);
-                                    if self
-                                        .diagnostic_relation_boolean_guard(outer_c_eval, keyof_obj)
-                                        || self.is_keyof_for_current_object(
-                                            outer_c_eval,
-                                            object_type,
-                                            object_type_for_check,
-                                        )
-                                        || self.is_keyof_for_current_object(
-                                            outer_c_type,
-                                            object_type,
-                                            object_type_for_check,
-                                        )
-                                    {
-                                        return true;
-                                    }
+                                    return true;
                                 }
                                 break; // found the definition; did not satisfy check
                             }
@@ -225,54 +223,13 @@ impl<'a> CheckerState<'a> {
                     object_type,
                 ) {
                     let constraint_type = self.get_type_from_type_node(tp.constraint);
-                    let constraint_eval = self.evaluate_type_with_env(constraint_type);
-                    let keyof_object_param = self.ctx.types.factory().keyof(object_type);
-                    if self.diagnostic_relation_boolean_guard(constraint_eval, keyof_object_param) {
-                        return true;
-                    }
-                    // Also handle constraints that structurally contain `keyof T`.
-                    if self.is_keyof_for_current_object(
-                        constraint_eval,
-                        object_type,
-                        object_type_for_check,
-                    ) || self.is_keyof_for_current_object(
+                    if crate::query_boundaries::checkers::generic::mapped_key_constraint_semantically_filters_current_object_keys(
+                        self,
                         constraint_type,
                         object_type,
                         object_type_for_check,
                     ) {
                         return true;
-                    }
-                    // Follow the constraint chain transitively (P → K → keyof T).
-                    let mut chain = constraint_type;
-                    for _ in 0..4 {
-                        let Some(next) = crate::query_boundaries::common::type_parameter_constraint(
-                            self.ctx.types,
-                            chain,
-                        ) else {
-                            break;
-                        };
-                        let next_eval = self.evaluate_type_with_env(next);
-                        if self.is_keyof_for_current_object(
-                            next_eval,
-                            object_type,
-                            object_type_for_check,
-                        ) || self.is_keyof_for_current_object(
-                            next,
-                            object_type,
-                            object_type_for_check,
-                        ) {
-                            return true;
-                        }
-                        if self.diagnostic_relation_boolean_guard(next_eval, keyof_object_param) {
-                            return true;
-                        }
-                        if !crate::query_boundaries::common::is_type_parameter_like(
-                            self.ctx.types,
-                            next_eval,
-                        ) {
-                            break;
-                        }
-                        chain = next_eval;
                     }
                 }
                 return false;
@@ -285,6 +242,58 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    fn type_reference_filters_keyof_current_object(
+        &mut self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(type_args) = type_ref.type_arguments.as_ref() else {
+            return false;
+        };
+        let Some(&first_arg) = type_args.nodes.first() else {
+            return false;
+        };
+        self.type_node_is_keyof_current_object(
+            first_arg,
+            object_node_idx,
+            object_type,
+            object_type_for_check,
+        )
+    }
+
+    fn type_node_is_keyof_current_object(
+        &mut self,
+        node_idx: NodeIndex,
+        object_node_idx: NodeIndex,
+        object_type: TypeId,
+        object_type_for_check: TypeId,
+    ) -> bool {
+        self.ctx
+            .arena
+            .get(node_idx)
+            .and_then(|node| self.ctx.arena.get_type_operator(node))
+            .is_some_and(|type_operator| {
+                type_operator.operator == SyntaxKind::KeyOfKeyword as u16
+                    && self.mapped_keyof_target_matches_object(
+                        type_operator.type_node,
+                        object_node_idx,
+                        object_type,
+                        object_type_for_check,
+                    )
+            })
     }
 
     /// Check if the keyof target in a mapped type constraint matches the object being indexed.

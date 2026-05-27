@@ -156,6 +156,24 @@ exclude_dirs = ["query_boundaries", "tests"]
 ignore_comment_lines = true
 
 [[pattern_checks]]
+name = "Checker boundary: semantic proof helpers stay behind query boundaries (#9673)"
+base = "crates/tsz-checker/src"
+pattern = '\bfull_conditional_type_components\s*\(|\bquery_boundaries::common::instantiate_generic\s*\(|\bfn\s+mapped_key_constraint_filters_current_object_keys\b|\bfn\s+generic_index_filters_current_type_param_keys\b|\bconditional_key_filter_candidates\s*\(|\binstantiate_alias_application_body\s*\('
+exclude_dirs = ["query_boundaries", "tests"]
+exclude_files = [
+  # Pre-existing generic-checker semantic proof debt; #9673 only ratchets the
+  # two new proof helpers in this PR.
+  "crates/tsz-checker/src/checkers/generic_checker/conditional_constraint_helpers.rs",
+  "crates/tsz-checker/src/checkers/generic_checker/constraint_validation.rs",
+  "crates/tsz-checker/src/checkers/generic_checker/infer_conditional_constraints.rs",
+  "crates/tsz-checker/src/jsdoc/resolution/name_resolution.rs",
+  "crates/tsz-checker/src/state/type_resolution/core.rs",
+  "crates/tsz-checker/src/state/type_resolution/reference_helpers.rs",
+  "crates/tsz-checker/src/types/computation/complex_js_constructor.rs",
+]
+ignore_comment_lines = true
+
+[[pattern_checks]]
 name = "Checker query boundary: call_checker must not construct CompatChecker directly"
 base = "crates/tsz-checker/src/query_boundaries"
 pattern = '\bCompatChecker::with_resolver\s*\('
