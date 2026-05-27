@@ -175,6 +175,12 @@ impl<'a> Printer<'a> {
 
             let has_optional_call_token =
                 self.has_optional_call_token(node, call.expression, call.arguments.as_ref());
+            if has_optional_call_token
+                && self
+                    .emit_optional_private_field_call_expression(call.expression, &call.arguments)
+            {
+                return;
+            }
             if let Some(call_expr) = self.arena.get(call.expression)
                 && (call_expr.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
                     || call_expr.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
