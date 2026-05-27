@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 4;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 5;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -251,6 +251,11 @@ pub struct PerfCounterSnapshot {
     /// kind and byte offsets rather than source snippets so attribution remains
     /// structural and cheap.
     pub slow_check_statement_timings: Vec<SlowCheckStatementTiming>,
+    /// Top type-alias checking phase durations observed in attribution mode.
+    ///
+    /// This bounded list is sorted by descending elapsed time. Alias names are
+    /// labels for humans reading the report, not compiler-policy inputs.
+    pub slow_type_alias_check_timings: Vec<SlowTypeAliasCheckTiming>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -699,6 +704,7 @@ impl PerfCounters {
                 .collect(),
             slow_check_file_timings: Self::snapshot_slow_check_file_timings(),
             slow_check_statement_timings: Self::snapshot_slow_check_statement_timings(),
+            slow_type_alias_check_timings: Self::snapshot_slow_type_alias_check_timings(),
         }
     }
 
@@ -856,6 +862,24 @@ impl PerfCounters {
                 .then_with(|| a.kind.cmp(&b.kind))
         });
         rows.truncate(SLOW_CHECK_STATEMENT_TIMING_LIMIT);
+        rows
+    }
+
+    fn snapshot_slow_type_alias_check_timings() -> Vec<SlowTypeAliasCheckTiming> {
+        let mut rows = slow_type_alias_check_timings()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.elapsed_ms
+                .total_cmp(&a.elapsed_ms)
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.name.cmp(&b.name))
+                .then_with(|| a.phase.cmp(b.phase))
+                .then_with(|| a.pos.cmp(&b.pos))
+                .then_with(|| a.end.cmp(&b.end))
+        });
+        rows.truncate(SLOW_TYPE_ALIAS_CHECK_TIMING_LIMIT);
         rows
     }
 
