@@ -428,13 +428,12 @@ impl<'a> CheckerState<'a> {
         if self.should_suppress_assignability_for_parse_recovery(spread_expr, spread_expr) {
             return;
         }
-        if self.diagnostic_relation_boolean_guard(source, rest_target_type) {
-            return;
-        }
-
         // Use the canonical assign relation outcome so the weak-union hint is collected
         // alongside the failure reason and can be reused by the skip gate.
         let outcome = self.assign_relation_outcome(source, rest_target_type);
+        if outcome.related {
+            return;
+        }
         if self.should_skip_weak_union_error_with_outcome(
             source,
             rest_target_type,
