@@ -118,38 +118,26 @@ assert.match(
 
 assert.match(
   workflow,
-  /TARGET_SHA="\$\{BENCH_TARGET_SHA:-\$\{GITHUB_SHA\}\}"[\s\S]+if \[\[ -n "\$\{MAIN_SHA\}" && "\$\{TARGET_SHA\}" != "\$\{MAIN_SHA\}" \]\]; then[\s\S]+echo "catchup_main_sha=\$\{MAIN_SHA\}" >> "\$GITHUB_OUTPUT"/,
-  "benchmark publish should expose the current main SHA when a finished run publishes an older target",
+  /BENCH_MAX_TARGET_AGE_HOURS: "48"[\s\S]+target_date="\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/commits\/\$\{target_sha\}" --jq '\.commit\.committer\.date' 2>\/dev\/null \|\| true\)"[\s\S]+Benchmark target \$\{target_sha\} is older than \$\{max_target_age_hours\}h/,
+  "bench gate should reject genuinely old targets by age instead of exact-main mismatch",
 );
 
 assert.match(
   workflow,
-  /- name: Trigger benchmark catch-up[\s\S]+steps\.publish\.outputs\.catchup_main_sha != ''[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+-d '\{"ref":"main","inputs":\{"publish_latest_pgo":"false"\}\}'/,
-  "stale benchmark publishes should dispatch a catch-up benchmark for current main",
+  /Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\./,
+  "bench gate should let active runs finish and skip duplicate runs",
 );
 
-assert.match(
+assert.doesNotMatch(
   workflow,
-  /if \[\[ -n "\$\{run_sha:-\}" && "\$\{run_sha\}" != "\$\{target_sha\}" \]\]; then[\s\S]+obsolete_runs\+="\$\{run_id\}"\$'\\t'"\$\{run_sha\}"\$'\\t'"\$\{run_url\}"\$'\\n'[\s\S]+gh run cancel "\$run_id" --repo "\$\{\{ github\.repository \}\}" >\/dev\/null 2>&1 \|\| true[\s\S]+continue[\s\S]+fi[\s\S]+active_runs\+="\$\{run_id\}"\$'\\t'"\$\{run_sha\}"\$'\\t'"\$\{run_url\}"\$'\\n'/,
-  "bench gate should cancel obsolete active runs instead of letting stale SHA runs block current main",
+  /gh run cancel/,
+  "bench gate must not cancel active benchmark runs just because main moved",
 );
 
-assert.match(
+assert.doesNotMatch(
   workflow,
-  /Cancelling obsolete Bench run\(s\) before benchmarking \$\{target_sha\}\.[\s\S]+Another Bench run for \$\{target_sha\} is already active; skipping duplicate run instead of queuing\./,
-  "bench gate should distinguish obsolete active runs from duplicate current-target runs",
-);
-
-assert.match(
-  workflow,
-  /bench-prep-target-fresh:[\s\S]+needs: \[bench-prepare, bench-prepare-cloudbuild\][\s\S]+target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/git\/ref\/heads\/main" --jq '\.object\.sha' 2>\/dev\/null \|\| true\)"[\s\S]+Benchmark target \$\{target_sha\} became stale before prep artifact download; current main is \$\{main_sha\}\. Skipping self-hosted prep wait\.[\s\S]+echo "should_run=\$\{should_run\}" >> "\$GITHUB_OUTPUT"[\s\S]+bench-prep-artifact:[\s\S]+needs: \[bench-prepare, bench-prepare-cloudbuild, bench-prep-target-fresh\][\s\S]+needs\.bench-prep-target-fresh\.outputs\.should_run == 'true'/,
-  "bench prep artifact polling should re-check target freshness before occupying a self-hosted runner",
-);
-
-assert.match(
-  workflow,
-  /bench-target-fresh:[\s\S]+needs: bench-prep-artifact[\s\S]+target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/git\/ref\/heads\/main" --jq '\.object\.sha' 2>\/dev\/null \|\| true\)"[\s\S]+Benchmark target \$\{target_sha\} became stale after prep; current main is \$\{main_sha\}\. Skipping shard fanout\.[\s\S]+echo "should_run=\$\{should_run\}" >> "\$GITHUB_OUTPUT"[\s\S]+bench:[\s\S]+needs: \[bench-prep-artifact, bench-target-fresh\][\s\S]+needs\.bench-target-fresh\.outputs\.should_run == 'true'/,
-  "bench shards should re-check target freshness after prep so obsolete runs cannot fan out while a current-main run is active",
+  /bench-prep-target-fresh:|bench-target-fresh:|catchup_main_sha|Trigger benchmark catch-up/,
+  "benchmark workflow should not kill or chase in-flight runs when main moves a few commits",
 );
 
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";

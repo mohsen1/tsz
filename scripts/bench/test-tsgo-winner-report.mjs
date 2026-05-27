@@ -481,6 +481,59 @@ withTempDir((dir) => {
   assert.match(report.target_gaps[0].attribution_status.generated_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const perfPath = path.join(dir, "bench.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsz",
+        factor: 1.1,
+        tsz_ms: 100,
+        tsgo_ms: 110,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "timing",
+    delegate: { misses: 0 },
+    checker: { with_parent_cache_constructed: 2 },
+    slow_check_file_timings: [
+      { file: "ts-essentials/lib/xor/index.ts", elapsed_ms: 150, diagnostics: 0 },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 0\/1/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_below_target, 1);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["ts-essentials-project"]);
+  assert.deepEqual(report.target_gaps[0].attribution_status, {
+    present: true,
+    path: path.relative(ROOT, perfPath).split(path.sep).join("/"),
+    url: null,
+    generated_at: report.target_gaps[0].attribution_status.generated_at,
+    mode: "timing",
+    dominant_subsystem: null,
+    warning: "sidecar perf snapshot mode is not attribution",
+  });
+});
+
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
 assert.match(
   benchWorkflow,
