@@ -71,6 +71,8 @@ use tsz::lsp::{
 
 #[path = "tsz_lsp/tsz_lsp_dispatch.rs"]
 mod tsz_lsp_dispatch;
+#[path = "tsz_lsp/tsz_lsp_notification_handlers.rs"]
+mod tsz_lsp_notification_handlers;
 #[path = "tsz_lsp/tsz_lsp_request_handlers.rs"]
 mod tsz_lsp_request_handlers;
 
