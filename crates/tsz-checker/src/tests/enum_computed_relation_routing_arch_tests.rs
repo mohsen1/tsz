@@ -14,7 +14,11 @@ fn computed_enum_member_ts18033_uses_relation_outcome_boundary() {
         "computed enum-member TS18033 diagnostics should route the final relation through assign_relation_outcome"
     );
     assert!(
-        !source.contains("if !self.diagnostic_relation_boolean_guard(init_type, TypeId::NUMBER)"),
-        "computed enum-member TS18033 diagnostics should not pre-gate final emission with a raw boolean relation"
+        source.contains("assign_relation_outcome(init_type, TypeId::STRING)"),
+        "computed enum-member import fallback should route string assignability through assign_relation_outcome"
+    );
+    assert!(
+        !source.contains("diagnostic_relation_boolean_guard"),
+        "computed enum-member diagnostics should not regress to raw boolean relation guards"
     );
 }

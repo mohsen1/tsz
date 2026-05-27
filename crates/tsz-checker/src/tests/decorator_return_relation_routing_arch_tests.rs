@@ -25,4 +25,22 @@ fn decorator_return_diagnostics_use_relation_outcome_boundary() {
         !source.contains("diagnostic_relation_boolean_guard(return_type, TypeId::VOID)"),
         "void-or-any decorator return diagnostics should not pre-gate with a raw boolean relation"
     );
+
+    let callee_probe_start = source
+        .find("fn decorator_callee_is_untyped_function")
+        .expect("find decorator callee Function probe");
+    let callee_probe_end = callee_probe_start
+        + source[callee_probe_start..]
+            .find("fn global_function_type_id")
+            .expect("find end of decorator callee Function probe");
+    let callee_probe = &source[callee_probe_start..callee_probe_end];
+
+    assert!(
+        callee_probe.contains("assign_relation_outcome(decorator_type, function_type)"),
+        "decorator Function fallback should route relation probing through assign_relation_outcome"
+    );
+    assert!(
+        !callee_probe.contains("diagnostic_relation_boolean_guard(decorator_type, function_type)"),
+        "decorator Function fallback should not use a raw boolean relation guard"
+    );
 }

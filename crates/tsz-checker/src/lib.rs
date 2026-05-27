@@ -115,6 +115,9 @@ mod class_extends_index_relation_routing_arch_tests;
 #[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
 mod class_implements_index_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_whole_type_relation_routing_arch_tests.rs"]
+mod class_implements_whole_type_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/class_member_closure_tests.rs"]
 mod class_member_closure_tests;
 #[cfg(test)]
@@ -181,11 +184,17 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
+mod index_signature_check_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/interface_heritage_property_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_property_index_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/interface_index_conflict_relation_routing_arch_tests.rs"]
+mod interface_index_conflict_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
@@ -475,6 +484,9 @@ mod callable_interface_assignment_tests;
 #[path = "tests/callable_union_relation_routing_arch_tests.rs"]
 mod callable_union_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/class_boundary_fallback_relation_routing_arch_tests.rs"]
+mod class_boundary_fallback_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/class_duplicate_extends_skip_resolution_tests.rs"]
 mod class_duplicate_extends_skip_resolution_tests;
 #[cfg(test)]
@@ -537,6 +549,9 @@ mod dispatch_tests;
 #[cfg(test)]
 #[path = "tests/do_while_exit_narrowing_tests.rs"]
 mod do_while_exit_narrowing_tests;
+#[cfg(test)]
+#[path = "tests/duplicate_identifier_relation_routing_arch_tests.rs"]
+mod duplicate_identifier_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/dynamic_import_relation_routing_arch_tests.rs"]
 mod dynamic_import_relation_routing_arch_tests;
@@ -607,8 +622,14 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_property_relation_routing_arch_tests.rs"]
+mod index_signature_property_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
 mod index_signature_value_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/initializer_relation_routing_arch_tests.rs"]
+mod initializer_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
@@ -757,6 +778,9 @@ mod object_spread_optional_merge_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]
+#[path = "tests/overlap_relation_helper_routing_arch_tests.rs"]
+mod overlap_relation_helper_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
@@ -769,11 +793,17 @@ mod polymorphic_this_relation_routing_arch_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/private_member_relation_routing_arch_tests.rs"]
+mod private_member_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
 #[path = "tests/property_alias_display_tests.rs"]
 mod property_alias_display_tests;
+#[cfg(test)]
+#[path = "tests/property_index_key_relation_routing_arch_tests.rs"]
+mod property_index_key_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/recursive_alias_application_target_display_tests.rs"]
 mod recursive_alias_application_target_display_tests;
@@ -864,6 +894,9 @@ mod union_call_resolution_tests;
 #[cfg(test)]
 #[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
 mod union_constraint_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/union_index_signature_relation_routing_arch_tests.rs"]
+mod union_index_signature_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;
