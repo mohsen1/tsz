@@ -35,6 +35,7 @@ pub mod extended_constructors;
 pub mod flow;
 pub mod iterable;
 pub mod mapped;
+pub mod mapped_declaration_surface;
 pub mod shape_queries;
 pub mod traversal;
 
@@ -91,6 +92,7 @@ pub use data::*;
 pub use flow::*;
 pub use iterable::*;
 pub use mapped::*;
+pub use mapped_declaration_surface::*;
 pub use shape_queries::*;
 pub use traversal::*;
 
