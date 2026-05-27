@@ -14,6 +14,8 @@ mod property_names;
 // `cargo test --release`. Gate the module on `debug_assertions` so the
 // release-mode test build doesn't try to run (or compile) tests that have
 // nothing to capture.
+#[cfg(test)]
+mod keyof_alias_display_tests;
 #[cfg(all(test, debug_assertions))]
 pub mod test_tracing;
 #[cfg(test)]
