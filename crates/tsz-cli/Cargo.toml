@@ -3,6 +3,7 @@ name = "tsz-cli"
 description = "CLI binaries for the tsz TypeScript compiler"
 version.workspace = true
 edition.workspace = true
+autobins = false
 autotests = false
 repository.workspace = true
 license.workspace = true

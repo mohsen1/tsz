@@ -206,6 +206,58 @@ fn source_line_count(path: &Path) -> usize {
         .count()
 }
 
+fn include_paths(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("include!(\"")
+                .and_then(|rest| rest.strip_suffix("\");"))
+        })
+        .collect()
+}
+
+/// Ratchet guard: keep generated evaluator test shards named after evaluator
+/// feature families. Anonymous numeric chunks make failures and regeneration
+/// diffs harder to review even when they satisfy the file-size ceiling.
+#[test]
+fn evaluate_tests_use_feature_family_shards() {
+    let solver_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let evaluate_tests = solver_dir.join("tests/evaluate_tests.rs");
+    let text = fs::read_to_string(&evaluate_tests)
+        .unwrap_or_else(|e| panic!("failed to read {}: {e}", evaluate_tests.display()));
+    let includes = include_paths(&text);
+
+    assert!(
+        !includes.is_empty(),
+        "{} should include evaluator test shards",
+        evaluate_tests.display()
+    );
+
+    let anonymous: Vec<_> = includes
+        .iter()
+        .copied()
+        .filter(|path| path.contains("evaluate_tests_parts/part_"))
+        .collect();
+    assert!(
+        anonymous.is_empty(),
+        "evaluator test shards should be named by feature family, not numeric chunks: {anonymous:?}"
+    );
+
+    for family in [
+        "conditional",
+        "infer",
+        "indexed_access",
+        "keyof",
+        "mapped",
+        "template_literal",
+    ] {
+        assert!(
+            includes.iter().any(|path| path.contains(family)),
+            "evaluator test shard list is missing a {family} shard: {includes:?}"
+        );
+    }
+}
+
 /// Ratchet guard: prevent solver source files from growing beyond
 /// maintainability limits. Baseline values live in `file_size_baselines.txt`
 /// and can be updated via `TSZ_FILE_SIZE_RATCHET_UPDATE=1`.
