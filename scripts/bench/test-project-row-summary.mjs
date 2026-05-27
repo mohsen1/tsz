@@ -1,8 +1,12 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import {
   BENCH_RUNNER_EXCLUDED_ROWS,
   COMPILE_GUARD_EXCLUDED_ROWS,
+  appendStepSummary,
   computeCoverage,
   extractBenchRunnerRows,
   extractCompileGuardFallbackRows,
@@ -244,6 +248,18 @@ function baseSurfaces() {
   const cleanSummary = `All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`;
   assert.ok(text.includes("Project Row Coverage"), "plain text missing heading");
   assert.ok(text.includes(cleanSummary), "plain text missing clean summary");
+}
+
+// Step summary appends markdown regardless of the selected stdout format.
+{
+  const coverage = computeCoverage(baseSurfaces());
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "project-row-summary-"));
+  const summaryPath = path.join(dir, "summary.md");
+  appendStepSummary(coverage, summaryPath);
+  const summary = fs.readFileSync(summaryPath, "utf8");
+  assert.ok(summary.includes("## Project Row Coverage"), "step summary missing markdown heading");
+  assert.ok(summary.includes(`All ${PROJECT_ROW_DEFINITIONS.length} rows consistent`), "step summary missing clean summary");
+  fs.rmSync(dir, { recursive: true, force: true });
 }
 
 // Extractor: bench runner rows from shell snippet.
