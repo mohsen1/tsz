@@ -235,6 +235,9 @@ mod jsdoc_prototype_assignment_target_display;
 #[path = "../tests/jsdoc_this_arrow_tests.rs"]
 mod jsdoc_this_arrow_tests;
 #[cfg(test)]
+#[path = "tests/jsx_children_relation_routing_arch_tests.rs"]
+mod jsx_children_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/jsx_component_attribute_tests.rs"]
 mod jsx_component_attribute_tests;
 #[cfg(test)]
