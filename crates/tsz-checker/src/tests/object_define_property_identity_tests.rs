@@ -1,7 +1,7 @@
 //! `Object.defineProperty` descriptor typing must be gated by the actual
 //! builtin/global `Object` value, not by an arbitrary binding named `Object`.
 
-use crate::test_utils::{check_source_diagnostics, diagnostic_codes};
+use crate::test_utils::{check_js_source_diagnostics, check_source_diagnostics, diagnostic_codes};
 
 fn assert_no_code(source: &str, code: u32) {
     let diags = check_source_diagnostics(source);
@@ -9,6 +9,15 @@ fn assert_no_code(source: &str, code: u32) {
     assert!(
         !codes.contains(&code),
         "expected no TS{code}, got codes {codes:?}\nDiagnostics: {diags:#?}",
+    );
+}
+
+fn assert_js_has_code(source: &str, code: u32) {
+    let diags = check_js_source_diagnostics(source);
+    let codes = diagnostic_codes(&diags);
+    assert!(
+        codes.contains(&code),
+        "expected TS{code}, got codes {codes:?}\nDiagnostics: {diags:#?}",
     );
 }
 
@@ -32,6 +41,30 @@ Object.defineProperty({}, "x", {
 });
 "#,
         2339,
+    );
+}
+
+#[test]
+fn local_object_define_property_does_not_mark_js_function_constructable() {
+    assert_js_has_code(
+        r#"
+const Object = {
+    /**
+     * @param {*} target
+     * @param {string} key
+     * @param {*} descriptor
+     */
+    defineProperty(target, key, descriptor) {}
+};
+
+function C() {}
+Object.defineProperty(C.prototype, "x", {
+    get() { return 1; }
+});
+
+new C();
+"#,
+        7009,
     );
 }
 
