@@ -4,6 +4,7 @@
 //! - `validation.rs`: post-binding validation, lib symbol diagnostics, and resolution statistics.
 
 pub(crate) mod declaration;
+pub(crate) mod stack_guard;
 mod validation;
 
 pub(crate) use declaration::SemanticDefDetails;
