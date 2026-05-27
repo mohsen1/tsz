@@ -1602,22 +1602,24 @@ impl<'a> Printer<'a> {
                     value_name
                 };
 
-                let empty_name = self.get_temp_var_name();
-                self.write(", ");
-                self.write(&empty_name);
-                self.write(" = ");
+                // For an empty array pattern with downlevel_iteration, trigger the
+                // iterator protocol (__read(source, 0)) so the iterable is consumed.
+                // For an empty object pattern or an empty array without downlevel
+                // iteration, the source read above is sufficient.
                 if self
                     .arena
                     .get(elem.name)
                     .is_some_and(|node| node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN)
                     && self.ctx.options.downlevel_iteration
                 {
+                    let empty_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&empty_name);
+                    self.write(" = ");
                     self.write_helper("__read");
                     self.write("(");
                     self.write(&source_name);
                     self.write(", 0)");
-                } else {
-                    self.write(&source_name);
                 }
                 return Some(rest_prop);
             }

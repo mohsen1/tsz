@@ -737,6 +737,7 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         idx: NodeIndex,
         is_static: bool,
+        emit_await_as_yield: bool,
         class_alias: Option<&str>,
         lexical_this_capture_alias: Option<&str>,
         trailing_comment_limit: Option<u32>,
@@ -746,6 +747,9 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_trailing_comment_limit(trailing_comment_limit);
         if is_static {
             converter = converter.with_static(true);
+        }
+        if emit_await_as_yield {
+            converter = converter.with_await_as_yield(true);
         }
         if let Some(alias) = class_alias {
             converter = converter.with_class_alias(Some(alias.to_string()));
@@ -1193,6 +1197,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     converted.push(self.convert_statement_with_context(
                         stmt_idx,
                         is_static,
+                        is_static,
                         class_alias.as_deref(),
                         lexical_this_capture_alias.as_deref(),
                         trailing_comment_limit,
@@ -1267,6 +1272,7 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 try_body.push(self.convert_statement_with_context(
                     stmt_idx,
+                    is_static,
                     is_static,
                     class_alias,
                     lexical_this_capture_alias,

@@ -2169,7 +2169,9 @@ fn tc39_decorated_commonjs_class_namespace_merge_reuses_class_binding() {
         target: ScriptTarget::ES2022,
         ..Default::default()
     };
-    let mut printer = Printer::with_options(&parser.arena, options);
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
     printer.set_source_text(source);
     printer.emit(root);
     let output = printer.get_output().to_string();
