@@ -300,6 +300,17 @@ impl<'a> ScopeWalker<'a> {
         target: NodeIndex,
         path: &mut Vec<NodeIndex>,
     ) -> Option<SymbolId> {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.walk_to_node_inner(current, target, path)
+        })
+    }
+
+    fn walk_to_node_inner(
+        &mut self,
+        current: NodeIndex,
+        target: NodeIndex,
+        path: &mut Vec<NodeIndex>,
+    ) -> Option<SymbolId> {
         if current == target {
             // Found the target! Try to resolve it
             if let Some(node) = self.arena.get(current) {
@@ -340,7 +351,8 @@ impl<'a> ScopeWalker<'a> {
 
         path.push(current);
 
-        // Recurse into children using for_each_child
+        // Recurse through the stacker-guarded wrapper to prevent stack overflow
+        // on deeply-nested ASTs (e.g. long inheritance chains, deeply nested classes).
         let result = self.for_each_child(current, |walker, child_idx| {
             walker.walk_to_node(child_idx, target, path)
         });
@@ -694,6 +706,17 @@ impl<'a> ScopeWalker<'a> {
         target: NodeIndex,
         result: &mut Option<Vec<SymbolTable>>,
     ) -> bool {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.walk_for_scope_inner(current, target, result)
+        })
+    }
+
+    fn walk_for_scope_inner(
+        &mut self,
+        current: NodeIndex,
+        target: NodeIndex,
+        result: &mut Option<Vec<SymbolTable>>,
+    ) -> bool {
         if current == target {
             // Found the target! If this node itself creates a new scope (e.g., it
             // is a Block that contains the cursor in whitespace), register its own
@@ -738,7 +761,8 @@ impl<'a> ScopeWalker<'a> {
             self.register_local_declarations(current);
         }
 
-        // Recurse into children
+        // Recurse through the stacker-guarded wrapper to prevent stack overflow
+        // on deeply-nested ASTs (e.g. long inheritance chains, deeply nested classes).
         let found = self
             .for_each_child(current, |walker, child_idx| {
                 walker
