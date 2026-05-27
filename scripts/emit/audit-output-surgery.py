@@ -317,6 +317,19 @@ def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> N
             print(f"  {finding.line_no}: {finding.text}")
 
 
+def format_pass_summary(findings: list[Finding], failures: list[str]) -> str:
+    summary = summarize_failures(failures)
+    return (
+        "Output-surgery audit passed: "
+        f"total_findings={len(findings)}, "
+        f"files_with_findings={len(grouped_counts(findings))}, "
+        f"unallowlisted_calls={summary.unallowlisted}, "
+        f"over_allowlist_files={summary.over_allowlist_files}, "
+        f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
+        f"stale_allowlist_files={summary.stale_allowlist_files}."
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--list", action="store_true", help="print all tracked findings")
@@ -353,10 +366,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    print(
-        f"Output-surgery audit passed: {len(findings)} ratcheted call(s) across "
-        f"{len(grouped_counts(findings))} file(s)."
-    )
+    print(format_pass_summary(findings, failures))
     return 0
 
 
