@@ -10,7 +10,7 @@
 use super::*;
 use crate::construction::TypeInterner;
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
-use crate::types::{MappedModifier, TypeData};
+use crate::types::{MappedModifier, PropertyInfo, TypeData};
 
 /// Build `{ <modifier> [ITER in keyof T]: TEMPLATE }` where `TEMPLATE` is the
 /// identity `T[ITER]` (when `wrap` is false) or the element-wrapping `[T[ITER]]`
@@ -181,4 +181,65 @@ fn explicit_remove_readonly_over_readonly_array_strips_readonly() {
         !is_readonly(&interner, result),
         "`-readonly` must strip readonly from a readonly array source"
     );
+}
+
+#[test]
+fn constant_template_over_object_inherits_source_property_modifiers() {
+    let interner = TypeInterner::new();
+    let item_name = interner.intern_string("item");
+    let source = interner.object(vec![PropertyInfo {
+        name: item_name,
+        type_id: TypeId::STRING,
+        write_type: TypeId::STRING,
+        optional: true,
+        readonly: true,
+        ..Default::default()
+    }]);
+
+    let t_name = interner.intern_string("T");
+    let t_param = TypeParamInfo::simple(t_name);
+    let t_type = interner.intern(TypeData::TypeParameter(t_param));
+    let keyof_t = interner.keyof(t_type);
+    let iter_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: iter_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: TypeId::UNKNOWN,
+        readonly_modifier: None,
+        optional_modifier: None,
+    });
+    let mut subst = TypeSubstitution::new();
+    subst.insert(t_name, source);
+    let result = instantiate_type(&interner, mapped, &subst);
+
+    let TypeData::Object(shape_id) = interner
+        .lookup(result)
+        .expect("instantiated homomorphic mapped type must be concrete")
+    else {
+        panic!(
+            "expected concrete object result, got {:?}",
+            interner.lookup(result)
+        );
+    };
+    let shape = interner.object_shape(shape_id);
+    let prop = shape
+        .properties
+        .iter()
+        .find(|prop| prop.name == item_name)
+        .expect("mapped object should contain the source property");
+    assert!(
+        prop.optional,
+        "homomorphic object mapping must copy optional"
+    );
+    assert!(
+        prop.readonly,
+        "homomorphic object mapping must copy readonly"
+    );
+    assert_eq!(prop.type_id, TypeId::UNKNOWN);
 }
