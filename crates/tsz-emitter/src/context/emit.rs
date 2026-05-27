@@ -61,6 +61,11 @@ pub struct EmitFlags {
     /// Set by expression-statement and for-loop incrementor emitters so that
     /// postfix unary lowering can use the simpler (non-value-preserving) form.
     pub in_statement_expression: bool,
+
+    /// A recovered JSX conditional with a missing false branch just emitted its
+    /// synthetic `:`. The enclosing JSX expression owns the recovered close-tail
+    /// line breaks that follow the missing branch.
+    pub recovered_jsx_missing_false_tail_break_pending: bool,
 }
 
 /// State for arrow function ES5 transformation

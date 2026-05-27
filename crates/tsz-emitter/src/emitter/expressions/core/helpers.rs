@@ -717,6 +717,8 @@ impl<'a> Printer<'a> {
         // multiline ternary formatting (tsc preserves these line breaks).
         let (newline_before_question, newline_before_colon) =
             self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
+        let missing_false_after_recovered_jsx_true =
+            self.missing_false_after_recovered_jsx_true(cond.when_true, cond.when_false);
 
         // When lowering optional chains or nullish coalescing in the condition
         // (e.g., `o?.b ? 1 : 0` → `(o === null ... : o.b) ? 1 : 0`,
@@ -788,8 +790,14 @@ impl<'a> Printer<'a> {
         } else if newline_before_colon {
             self.write(" ? ");
             self.emit(cond.when_true);
-            let colon_on_new_line = !self.colon_on_true_line(cond.when_true, cond.when_false);
-            if colon_on_new_line {
+            if missing_false_after_recovered_jsx_true {
+                self.write_line();
+                self.write(":");
+                self.write_line();
+                self.ctx
+                    .flags
+                    .recovered_jsx_missing_false_tail_break_pending = true;
+            } else if !self.colon_on_true_line(cond.when_true, cond.when_false) {
                 // Newline before `:` — e.g.:
                 //   var v = a ? b
                 //       : c;
@@ -877,6 +885,9 @@ impl<'a> Printer<'a> {
         let false_node = self.arena.get(_when_false);
         let newline_before_colon = match (true_node, false_node) {
             (Some(t), Some(f)) => {
+                if self.missing_false_after_recovered_jsx_true(when_true, _when_false) {
+                    return (newline_before_question, true);
+                }
                 let bytes = text.as_bytes();
                 let f_pos = std::cmp::min(f.pos as usize, bytes.len());
                 // Find `:` scanning backward from when_false.pos
@@ -902,6 +913,26 @@ impl<'a> Printer<'a> {
         };
 
         (newline_before_question, newline_before_colon)
+    }
+
+    fn missing_false_after_recovered_jsx_true(
+        &self,
+        when_true: NodeIndex,
+        when_false: NodeIndex,
+    ) -> bool {
+        if !self.arena.is_missing_recovery_identifier(when_false) {
+            return false;
+        }
+        let Some(true_node) = self.arena.get(when_true) else {
+            return false;
+        };
+        if true_node.kind != syntax_kind_ext::JSX_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_FRAGMENT
+        {
+            return false;
+        }
+        true
     }
 
     /// Check whether the `?` token in a conditional expression is on the
