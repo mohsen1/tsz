@@ -139,6 +139,28 @@ function baseSurfaces() {
   );
 }
 
+// Row in fixture source that is not defined in project-rows.mjs.
+{
+  const surfaces = baseSurfaces();
+  surfaces.fixtureSourceRows = [...surfaces.fixtureSourceRows, "fixture-ghost-row"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("fixture-ghost-row") && d.includes("scripts/bench/project-fixtures.sh") && d.includes("not defined")),
+    `Expected fixture source orphan drift for fixture-ghost-row, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
+// Row in compatibility corpus that is not defined in project-rows.mjs.
+{
+  const surfaces = baseSurfaces();
+  surfaces.compatCorpusRows = [...surfaces.compatCorpusRows, "compat-ghost-row"].sort();
+  const coverage = computeCoverage(surfaces);
+  assert.ok(
+    coverage.drift.some((d) => d.includes("compat-ghost-row") && d.includes("COMPATIBILITY_CORPUS_ROWS") && d.includes("not defined")),
+    `Expected compatibility corpus orphan drift for compat-ghost-row, got: ${coverage.drift.join("; ")}`,
+  );
+}
+
 // Row has pinned repo/ref but missing from fixture source.
 {
   const surfaces = baseSurfaces();
