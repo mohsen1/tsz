@@ -316,6 +316,9 @@ impl<'a> DeclarationEmitter<'a> {
         } else {
             let is_unique_symbol =
                 keyword == "const" && has_initializer && self.is_symbol_call(initializer);
+            let is_mutable_function_initializer = keyword != "const"
+                && has_initializer
+                && self.is_js_function_initializer(initializer);
 
             // For `const x = null` / `const x = undefined`, tsc always emits `: any`.
             // For `let`/`var`, tsc preserves the solver's type (e.g., `let x: null`).
@@ -634,35 +637,42 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                 }
             } else if has_initializer
-                && (self.emit_ts_late_bound_function_initializer_type_annotation(
-                    decl_name,
-                    initializer,
-                ) || ((self.function_initializer_has_type_predicate(
-                    decl_idx,
-                    decl_name,
-                    initializer,
-                ) || self.function_initializer_needs_source_signature(initializer)
-                    || self.function_initializer_has_inline_parameter_comments(initializer)
-                    || self.function_initializer_is_self_returning_for(initializer, decl_name)
-                    || self.function_initializer_returns_unique_identifier(initializer)
-                    || self.function_initializer_has_typeof_in_param_annotations(initializer)
-                    || self.function_initializer_has_destructured_parameters(initializer)
-                    || self.function_initializer_has_inferred_return_via_symbol(
-                        decl_idx,
+                && ((!is_mutable_function_initializer
+                    && self.emit_ts_late_bound_function_initializer_type_annotation(
                         decl_name,
                         initializer,
                     ))
-                    && {
-                        self.maybe_emit_non_portable_function_return_diagnostic(
-                            decl_name,
-                            initializer,
-                        );
-                        self.emit_function_initializer_type_annotation(
+                    || ((self.function_initializer_has_type_predicate(
+                        decl_idx,
+                        decl_name,
+                        initializer,
+                    ) || self.function_initializer_needs_source_signature(initializer)
+                        || self.function_initializer_has_inline_parameter_comments(initializer)
+                        || self
+                            .function_initializer_is_self_returning_for(initializer, decl_name)
+                        || self.function_initializer_returns_unique_identifier(initializer)
+                        || (keyword != "const"
+                            && self.function_initializer_has_parameter_type_annotations(
+                                initializer,
+                            ))
+                        || self.function_initializer_has_typeof_in_param_annotations(initializer)
+                        || self.function_initializer_has_destructured_parameters(initializer)
+                        || self.function_initializer_has_inferred_return_via_symbol(
                             decl_idx,
                             decl_name,
                             initializer,
-                        )
-                    }))
+                        ))
+                        && {
+                            self.maybe_emit_non_portable_function_return_diagnostic(
+                                decl_name,
+                                initializer,
+                            );
+                            self.emit_function_initializer_type_annotation(
+                                decl_idx,
+                                decl_name,
+                                initializer,
+                            )
+                        }))
             {
             } else if has_initializer
                 && self
