@@ -733,6 +733,9 @@ mod optional_key_extraction_tests;
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
+#[path = "tests/overload_param_relation_routing_arch_tests.rs"]
+mod overload_param_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/partial_pick_indexed_access_write_tests.rs"]
 mod partial_pick_indexed_access_write_tests;
 #[cfg(test)]
