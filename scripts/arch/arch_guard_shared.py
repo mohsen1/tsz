@@ -238,11 +238,9 @@ LINE_LIMIT_CHECKS = [
             # delete it from this set in the same diff and the
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
-            "crates/tsz-checker/src/assignability/assignability_checker.rs",
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
             "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
-            "crates/tsz-checker/src/error_reporter/call_errors/display_formatting.rs",
             "crates/tsz-checker/src/error_reporter/properties.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
             "crates/tsz-checker/src/jsdoc/diagnostics.rs",
@@ -254,7 +252,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/state/variable_checking/core.rs",
             "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
-            "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
@@ -524,7 +521,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down to the live merged count after #10311 and #10359
         # narrowed checker-side direct common references; removal condition
         # remains #8225 narrowing this quarantine.
-        3338,
+        #
+        # Ratcheted down after current-main guard tests caught slack in the
+        # live direct-reference count.
+        3269,
     ),
 ]
 
