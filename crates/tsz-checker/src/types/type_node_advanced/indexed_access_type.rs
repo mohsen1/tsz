@@ -459,25 +459,20 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
     /// so union-key access (`I["x" | "y"]`) is validated the same way as a single
     /// literal regardless of where the indexed access appears syntactically.
     fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
-        if let Some(members) =
-            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
-        {
-            return members
-                .iter()
-                .filter_map(|&member| {
-                    crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
-                })
-                .map(|atom| self.ctx.types.resolve_atom(atom))
-                .collect();
+        use crate::query_boundaries::common::{string_literal_value, union_members};
+        let members = union_members(self.ctx.types, index_type).unwrap_or_else(|| vec![index_type]);
+        let keys: Vec<String> = members
+            .iter()
+            .filter_map(|&member| string_literal_value(self.ctx.types, member))
+            .map(|atom| self.ctx.types.resolve_atom(atom))
+            .collect();
+        if keys.is_empty() {
+            get_string_literal_from_type_index(self.ctx.arena, index_node)
+                .into_iter()
+                .collect()
+        } else {
+            keys
         }
-        if let Some(atom) =
-            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
-        {
-            return vec![self.ctx.types.resolve_atom(atom)];
-        }
-        get_string_literal_from_type_index(self.ctx.arena, index_node)
-            .into_iter()
-            .collect()
     }
 
     /// Emit TS2339 when `key` is not a property of the indexed object and no
@@ -491,7 +486,9 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         property_object: TypeId,
         index_node: NodeIndex,
     ) {
-        use crate::query_boundaries::common::PropertyAccessResult;
+        use crate::query_boundaries::common::{
+            PropertyAccessResult, enum_def_id, lazy_def_id, object_shape_for_type,
+        };
         let prop_result = crate::query_boundaries::property_access::resolve_property_access(
             self.ctx.types,
             property_object,
@@ -501,11 +498,10 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
             return;
         }
         let has_index_sig =
-            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_object)
-                .is_some_and(|shape| {
-                    shape.string_index.is_some()
-                        || (shape.number_index.is_some() && key.parse::<f64>().is_ok())
-                });
+            object_shape_for_type(self.ctx.types, resolved_object).is_some_and(|shape| {
+                shape.string_index.is_some()
+                    || (shape.number_index.is_some() && key.parse::<f64>().is_ok())
+            });
         if has_index_sig {
             return;
         }
@@ -513,16 +509,13 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         // (e.g. `type C1 = Color`), tsc displays the underlying enum's nominal
         // name in TS2339 messages. The default formatter would follow the
         // Lazy(DefId) to the alias name, producing `'C1'` instead of `'Color'`.
-        let alias_enum_name =
-            crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)
-                .and_then(|def_id| self.ctx.definition_store.get(def_id))
-                .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
-                .and_then(|_| {
-                    crate::query_boundaries::common::enum_def_id(self.ctx.types, resolved_object)
-                })
-                .and_then(|enum_def_id| self.ctx.def_to_symbol_id(enum_def_id))
-                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                .map(|symbol| symbol.escaped_name.to_string());
+        let alias_enum_name = lazy_def_id(self.ctx.types, object_type)
+            .and_then(|def_id| self.ctx.definition_store.get(def_id))
+            .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+            .and_then(|_| enum_def_id(self.ctx.types, resolved_object))
+            .and_then(|enum_def_id| self.ctx.def_to_symbol_id(enum_def_id))
+            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+            .map(|symbol| symbol.escaped_name.to_string());
         let type_str = alias_enum_name.unwrap_or_else(|| {
             let mut formatter = self.ctx.create_type_formatter();
             formatter.format(object_type).into_owned()
