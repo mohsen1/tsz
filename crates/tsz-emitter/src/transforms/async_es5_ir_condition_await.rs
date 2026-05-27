@@ -475,12 +475,14 @@ impl<'a> AsyncES5Transformer<'a> {
         if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
             if let Some(var_list) = self.arena.get_variable(init_node) {
                 let decls: Vec<NodeIndex> = var_list.declarations.nodes.clone();
+                let mut trailing_comment = None;
                 for decl_idx in decls {
                     self.process_variable_declaration(
                         decl_idx,
                         cases,
                         current_statements,
                         current_label,
+                        &mut trailing_comment,
                     );
                 }
             }

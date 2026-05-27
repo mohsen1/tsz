@@ -1054,6 +1054,7 @@ impl<'a> Printer<'a> {
                     if synced_visual_indent {
                         self.writer.set_indent_level(original_indent_level);
                     }
+                    self.skip_comments_for_async_lowered_body(func.body);
                     self.pop_temp_scope();
                     return;
                 }
@@ -1109,6 +1110,7 @@ impl<'a> Printer<'a> {
         if synced_visual_indent {
             self.writer.set_indent_level(original_indent_level);
         }
+        self.skip_comments_for_async_lowered_body(func.body);
         self.pop_temp_scope();
     }
 

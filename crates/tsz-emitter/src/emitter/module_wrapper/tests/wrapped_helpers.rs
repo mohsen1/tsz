@@ -155,6 +155,28 @@ fn amd_es5_exported_async_arrow_const_downlevels_to_var() {
 }
 
 #[test]
+fn amd_es5_async_dynamic_import_preserves_await_trailing_comment() {
+    let output = emit_wrapped(
+        "export async function f() {\n    const req = await import(\"./dep\") // ONE\n}\n",
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, new Promise(function (resolve_1, reject_1) { require([\"./dep\"], resolve_1, reject_1); }).then(__importStar)]; // ONE"),
+        "Async ES5 lowering should carry the trailing comment onto the yielded import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("req = _a.sent() // ONE\n"),
+        "Async ES5 lowering should carry the trailing comment onto the resumed assignment before the generated semicolon.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("\n// ONE\n"),
+        "The source trailing comment should not be replayed after the lowered function.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn amd_es5_async_dynamic_import_callbacks_are_file_sequenced() {
     let output = emit_wrapped(
         r#"export async function f() { const req = await import("./one"); }

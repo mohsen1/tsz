@@ -203,6 +203,32 @@ impl<'a> AsyncES5Transformer<'a> {
         self.source_text = Some(source_text);
     }
 
+    fn extract_trailing_line_comment_in_node(&self, idx: NodeIndex) -> Option<String> {
+        let node = self.arena.get(idx)?;
+        let source_text = self.source_text?;
+        let bytes = source_text.as_bytes();
+        let mut scan_end = std::cmp::min(node.end as usize, bytes.len());
+        while scan_end < bytes.len() && !matches!(bytes[scan_end], b'\n' | b'\r') {
+            scan_end += 1;
+        }
+        for comment in tsz_common::comments::get_comment_ranges(source_text) {
+            if comment.is_multi_line || comment.pos < node.pos || comment.end as usize > scan_end {
+                continue;
+            }
+            let mut line_start = comment.pos as usize;
+            while line_start > 0 && !matches!(bytes[line_start - 1], b'\n' | b'\r') {
+                line_start -= 1;
+            }
+            if !source_text[line_start..comment.pos as usize]
+                .trim()
+                .is_empty()
+            {
+                return Some(comment.get_text(source_text).to_string());
+            }
+        }
+        None
+    }
+
     pub fn with_class_super_context(
         mut self,
         has_super: bool,
@@ -2796,6 +2822,7 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 // Structure: VARIABLE_STATEMENT -> VARIABLE_DECLARATION_LIST -> VARIABLE_DECLARATION
                 if let Some(var_stmt) = self.arena.get_variable(node) {
+                    let mut trailing_comment = self.extract_trailing_line_comment_in_node(idx);
                     for &decl_list_idx in &var_stmt.declarations.nodes {
                         if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                             && let Some(decl_list) = self.arena.get_variable(decl_list_node)
@@ -2806,6 +2833,7 @@ impl<'a> AsyncES5Transformer<'a> {
                                     cases,
                                     current_statements,
                                     current_label,
+                                    &mut trailing_comment,
                                 );
                             }
                         }
@@ -3495,6 +3523,23 @@ impl<'a> AsyncES5Transformer<'a> {
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
     ) {
+        self.process_await_expression_with_trailing_comment(
+            idx,
+            cases,
+            current_statements,
+            current_label,
+            None,
+        );
+    }
+
+    fn process_await_expression_with_trailing_comment(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        trailing_comment: Option<&str>,
+    ) {
         let Some(node) = self.arena.get(idx) else {
             return;
         };
@@ -3546,6 +3591,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     comment: Some("yield".to_string().into()),
                 },
             ))));
+            if let Some(comment) = trailing_comment {
+                current_statements.push(IRNode::TrailingComment(comment.to_string().into()));
+            }
 
             // Create new case for code after await
             cases.push(IRGeneratorCase {
@@ -3684,6 +3732,7 @@ impl<'a> AsyncES5Transformer<'a> {
         cases: &mut Vec<IRGeneratorCase>,
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
+        trailing_comment: &mut Option<String>,
     ) {
         let Some(node) = self.arena.get(idx) else {
             return;
@@ -3695,6 +3744,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
             // Check if initializer contains await
             if decl.initializer.is_some() && self.is_suspension_expression(decl.initializer) {
+                let trailing_comment = trailing_comment.take();
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
@@ -3702,11 +3752,12 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
-                self.process_await_expression(
+                self.process_await_expression_with_trailing_comment(
                     decl.initializer,
                     cases,
                     current_statements,
                     current_label,
+                    trailing_comment.as_deref(),
                 );
 
                 // Assign the sent value to the variable
@@ -3717,6 +3768,9 @@ impl<'a> AsyncES5Transformer<'a> {
                         right: Box::new(IRNode::GeneratorSent),
                     },
                 )));
+                if let Some(comment) = trailing_comment {
+                    current_statements.push(IRNode::TrailingComment(comment.into()));
+                }
             } else if decl.initializer.is_some() && self.contains_await_recursive(decl.initializer)
             {
                 // Initializer contains await but is not a direct await expression

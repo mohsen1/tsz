@@ -512,6 +512,12 @@ impl<'a> Printer<'a> {
         );
     }
 
+    pub(in crate::emitter) fn skip_comments_for_async_lowered_body(&mut self, body: NodeIndex) {
+        if let Some(body_node) = self.arena.get(body) {
+            self.skip_comments_for_erased_node(body_node);
+        }
+    }
+
     pub(in crate::emitter) fn emit_async_function_es5_body(
         &mut self,
         func_name: &str,
@@ -616,6 +622,7 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.decrease_indent();
                 self.write("}");
+                self.skip_comments_for_async_lowered_body(body);
                 return;
             }
 
@@ -704,6 +711,7 @@ impl<'a> Printer<'a> {
                 self.decrease_indent();
                 self.write("}");
                 self.pop_temp_scope();
+                self.skip_comments_for_async_lowered_body(body);
                 return;
             }
             if !body_has_await
@@ -755,6 +763,7 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.decrease_indent();
                     self.write("}");
+                    self.skip_comments_for_async_lowered_body(body);
                     // emit_function_parameters_es5() pushed a temp scope; the
                     // other early-return paths in this function (and the
                     // multi-line/normal exit below) all call pop_temp_scope.
@@ -846,6 +855,7 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
             self.write("}");
             self.pop_temp_scope();
+            self.skip_comments_for_async_lowered_body(body);
             return;
         }
 

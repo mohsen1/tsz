@@ -105,6 +105,17 @@ impl<'a> IRPrinter<'a> {
         )
     }
 
+    fn is_generator_sent_assignment(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ExpressionStatement(expr)
+                if matches!(
+                    expr.as_ref(),
+                    IRNode::BinaryExpr { right, .. } if matches!(right.as_ref(), IRNode::GeneratorSent)
+                )
+        )
+    }
+
     const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
             expr,
