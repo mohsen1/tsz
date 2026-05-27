@@ -122,6 +122,18 @@ assert.match(
   "stale benchmark publishes should dispatch a catch-up benchmark for current main",
 );
 
+assert.match(
+  workflow,
+  /if \[\[ -n "\$\{run_sha:-\}" && "\$\{run_sha\}" != "\$\{target_sha\}" \]\]; then[\s\S]+obsolete_runs\+="\$\{run_id\}"\$'\\t'"\$\{run_sha\}"\$'\\t'"\$\{run_url\}"\$'\\n'[\s\S]+gh run cancel "\$run_id" --repo "\$\{\{ github\.repository \}\}" >\/dev\/null 2>&1 \|\| true[\s\S]+continue[\s\S]+fi[\s\S]+active_runs\+="\$\{run_id\}"\$'\\t'"\$\{run_sha\}"\$'\\t'"\$\{run_url\}"\$'\\n'/,
+  "bench gate should cancel obsolete active runs instead of letting stale SHA runs block current main",
+);
+
+assert.match(
+  workflow,
+  /Cancelling obsolete Bench run\(s\) before benchmarking \$\{target_sha\}\.[\s\S]+Another Bench run for \$\{target_sha\} is already active; skipping duplicate run instead of queuing\./,
+  "bench gate should distinguish obsolete active runs from duplicate current-target runs",
+);
+
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";
 assert.match(
   benchJob,

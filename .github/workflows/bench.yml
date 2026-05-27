@@ -20,9 +20,10 @@ on:
 
 # Do not use workflow-level concurrency here. A queued workflow run would start
 # after the active benchmark finishes and benchmark an old "next" commit. The
-# gate below skips new non-release runs while another Bench run is active
-# instead. Release-only daily runs are allowed to publish the latest artifact
-# without waiting behind benchmark shards.
+# gate below skips duplicate current-target runs, but cancels obsolete active
+# runs before letting the current main benchmark proceed. Release-only daily
+# runs are allowed to publish the latest artifact without waiting behind
+# benchmark shards.
 
 permissions:
   contents: write
@@ -104,12 +105,22 @@ jobs:
               } | sort -u
             )"
             active_runs=""
+            obsolete_runs=""
             while IFS=$'\t' read -r run_id run_sha run_url; do
               [[ -n "${run_id:-}" ]] || continue
+              if [[ -n "${run_sha:-}" && "${run_sha}" != "${target_sha}" ]]; then
+                obsolete_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
+                gh run cancel "$run_id" --repo "${{ github.repository }}" >/dev/null 2>&1 || true
+                continue
+              fi
               active_runs+="${run_id}"$'\t'"${run_sha}"$'\t'"${run_url}"$'\n'
             done <<< "$active_runs_raw"
+            if [[ -n "$obsolete_runs" ]]; then
+              echo "Cancelling obsolete Bench run(s) before benchmarking ${target_sha}."
+              printf '%s\n' "$obsolete_runs"
+            fi
             if [[ -n "$active_runs" ]]; then
-              echo "Another Bench run is already active; skipping ${target_sha} instead of cancelling or queuing."
+              echo "Another Bench run for ${target_sha} is already active; skipping duplicate run instead of queuing."
               printf '%s\n' "$active_runs"
               should_run=false
             fi
