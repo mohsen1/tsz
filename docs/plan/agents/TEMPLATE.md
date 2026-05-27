@@ -32,14 +32,18 @@ scripts/agents/list-owned-work.sh <AgentName>
 ## Existing Work To Inspect First
 
 - Live owned PRs from `scripts/agents/list-owned-work.sh <AgentName>`.
+- Draft parking risks and queue candidates from
+  `node scripts/ci/pr-ownership-report.mjs`.
 - Open issues with the lane's subsystem labels.
 - Recent merged PRs touching the same invariant.
 - Current dashboard/artifact data for the lane's release gate.
 
 ## Non-Overlap Rules
 
-- Complete, close with evidence, or hand off live lane PRs before new issue
-  work.
+- Move live lane PRs to `merge-queue`, ready, refreshed draft/WIP with a signed
+  blocker, evidence-linked closure, or signed handoff before new issue work.
+- Keep at most two unstacked draft PRs unless extras are intentional stack
+  children or carry fresh signed blocker comments.
 - Do not duplicate another active PR's invariant. Comment there instead.
 - If you take over, leave a signed comment and update `agent:*` labels.
 - State the structural rule; never patch one test name, source spelling,

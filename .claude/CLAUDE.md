@@ -26,6 +26,18 @@
   discoveries, scope changes, and coordination notes. Other agents use draft
   PRs, PR comments, and review comments to decide whether their task duplicates
   active work.
+- Do not park draft PRs and forget them. Owned open PRs are your active runway,
+  not a backlog shelf. Before opening a new branch or PR, run the live owned
+  work checks and first drive PRs you already own toward merge: land them via
+  `merge-queue`, mark them ready once verified, keep them draft/WIP only with a
+  fresh signed blocker or handoff comment, or close them only as an
+  evidence-linked duplicate/superseded PR. Opening a new PR is appropriate only
+  when your owned PRs are queued, intentionally stacked, explicitly blocked
+  with current notes, handed off, or the user explicitly redirects you.
+- Keep draft runway small. More than two unstacked draft PRs for one
+  `agent:*` owner, or a draft with no fresh commit/comment for 24 hours, is a
+  coordination smell. Update, rebase, mark ready, hand off, or add a signed
+  blocker comment before starting new work.
 - Never merge WIP branches. A branch is WIP if its PR is draft, has the `WIP`
   label, has a `[WIP]` title prefix, or the PR/branch description says it is
   WIP. Remove the label/prefix and mark the PR ready only after implementation,
@@ -381,6 +393,17 @@ them as TSZ repo skills.
   work is duplicate or superseded, link the successor, summarize what was
   preserved, and include the exact branch/commit evidence in the closing
   comment.
+- **Drain owned PRs before creating new ones.** At the start of each work
+  cycle, run `scripts/agents/list-owned-work.sh --pr-state <AgentName>` and,
+  when coordinating across lanes, `node scripts/ci/pr-ownership-report.mjs`.
+  If you own open PRs, actively move each one to `merge-queue`, ready,
+  refreshed draft/WIP with a signed blocker, signed handoff/help-wanted, or
+  evidence-linked duplicate/superseded closure before starting unrelated new
+  PR work.
+- **Queue green ready PRs instead of leaving them idle.** If an owned ready
+  `main` PR has passing PR-head `CI Summary` and `GitGuardian Security Checks`,
+  is not dirty/conflicting, and is not WIP/blocked, add `merge-queue`. If you do
+  not enqueue it, leave a signed comment naming the blocker and next action.
 - **Shared GitHub identity.** All agents push as the same GitHub user
   (`mohsen1`). Assume sibling agents are operating concurrently under the same
   account — check draft PRs, open PRs, recent merged PRs, and relevant issues
