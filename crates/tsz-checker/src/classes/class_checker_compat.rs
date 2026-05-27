@@ -1032,8 +1032,8 @@ impl<'a> CheckerState<'a> {
                                 // Different bases provide conflicting index signatures.
                                 // tsc emits TS2430 ("incorrectly extends") against the
                                 // later base, not TS2320 ("cannot simultaneously extend").
-                                if !self.diagnostic_relation_boolean_guard(prev_val, value_type)
-                                    && !self.diagnostic_relation_boolean_guard(value_type, prev_val)
+                                if !self.assign_relation_outcome(prev_val, value_type).related
+                                    && !self.assign_relation_outcome(value_type, prev_val).related
                                 {
                                     // The later base's index signature conflicts with
                                     // what was inherited from earlier bases.

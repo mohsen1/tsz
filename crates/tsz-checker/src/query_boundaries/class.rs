@@ -394,7 +394,7 @@ pub(crate) fn interface_overload_trailing_signature_assignable(
     allow_fresh_generic_retry: bool,
 ) -> bool {
     checker.is_assignable_to_no_erase_generics(source, target)
-        || (allow_fresh_generic_retry && checker.diagnostic_relation_boolean_guard(source, target))
+        || (allow_fresh_generic_retry && checker.assign_relation_outcome(source, target).related)
 }
 
 /// Check if a DIRECT (own) member type mismatch should be reported (TS2416).
@@ -430,7 +430,7 @@ pub(crate) fn should_report_own_member_type_mismatch(
     // source vs `IteratorResult<T, void>` target — `any` is a universal sink
     // for the standard relation but the strict path keeps the args nominally
     // distinct). tsc does not emit TS2416 here.
-    if checker.diagnostic_relation_boolean_guard(source, target) {
+    if checker.assign_relation_outcome(source, target).related {
         return false;
     }
     if source_this_parameter_is_acceptable_for_target_without_this(checker, source, target) {

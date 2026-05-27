@@ -551,13 +551,13 @@ impl<'a> CheckerState<'a> {
                             let elaborated_obj =
                                 self.initializer_reaches_object_literal_through_wrappers(
                                     facts.initializer,
-                                ) && !self.diagnostic_relation_boolean_guard(
-                                    checked_init_type,
-                                    declared_type,
-                                ) && self.try_elaborate_object_literal_properties_for_var_init(
-                                    facts.initializer,
-                                    declared_type,
-                                );
+                                ) && !self
+                                    .assign_relation_outcome(checked_init_type, declared_type)
+                                    .related
+                                    && self.try_elaborate_object_literal_properties_for_var_init(
+                                        facts.initializer,
+                                        declared_type,
+                                    );
                             if !elaborated_obj {
                                 let skip_generic_outer_error = self
                                     .ctx
@@ -611,10 +611,9 @@ impl<'a> CheckerState<'a> {
                                         declared_type,
                                     )))
                                 && !(initializer_is_function
-                                    && !self.diagnostic_relation_boolean_guard(
-                                        checked_init_type,
-                                        declared_type,
-                                    )
+                                    && !self
+                                        .assign_relation_outcome(checked_init_type, declared_type)
+                                        .related
                                     && self.try_elaborate_assignment_source_error(
                                         facts.initializer,
                                         declared_type,
@@ -673,14 +672,14 @@ impl<'a> CheckerState<'a> {
                                     // contextual-typing decisions (`callsOnComplexSignatures`).
                                     if !(self.initializer_reaches_object_literal_through_wrappers(
                                         facts.initializer,
-                                    ) && !self.diagnostic_relation_boolean_guard(
-                                        checked_init_type,
-                                        declared_type,
-                                    ) && self
-                                        .try_elaborate_object_literal_properties_for_var_init(
-                                            facts.initializer,
-                                            declared_type,
-                                        ))
+                                    ) && !self
+                                        .assign_relation_outcome(checked_init_type, declared_type)
+                                        .related
+                                        && self
+                                            .try_elaborate_object_literal_properties_for_var_init(
+                                                facts.initializer,
+                                                declared_type,
+                                            ))
                                     {
                                         // Disable callable-with-type-params suppression
                                         // for variable declarations. The suppression is
@@ -691,10 +690,12 @@ impl<'a> CheckerState<'a> {
                                         // (e.g., (cb: (x: string, ...rest: T) => void) => void
                                         //   vs (cb: (...args: never) => void) => void)
                                         if jsdoc_new_expression_relation
-                                            && !self.diagnostic_relation_boolean_guard(
-                                                checked_init_type,
-                                                declared_type,
-                                            )
+                                            && !self
+                                                .assign_relation_outcome(
+                                                    checked_init_type,
+                                                    declared_type,
+                                                )
+                                                .related
                                         {
                                             self.error_type_not_assignable_generic_at(
                                                 checked_init_type,
