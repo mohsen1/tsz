@@ -337,6 +337,14 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
+        if self.arena.get(initializer).is_some_and(|node| {
+            node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+        }) {
+            return self
+                .function_expression_type_text_from_ast_at(initializer, depth + 1)
+                .or_else(|| self.infer_fallback_type_text_at(initializer, depth));
+        }
         self.preferred_expression_type_text(initializer)
             .or_else(|| self.infer_fallback_type_text_at(initializer, depth))
     }
