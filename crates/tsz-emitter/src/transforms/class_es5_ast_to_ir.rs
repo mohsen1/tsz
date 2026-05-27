@@ -8,7 +8,7 @@ use crate::context::transform::TransformDirective;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
-use tsz_parser::parser::node::{FunctionData, Node};
+use tsz_parser::parser::node::{ForInOfData, FunctionData, Node};
 use tsz_parser::parser::node_flags;
 use tsz_parser::syntax::transform_utils::{
     contains_new_target_reference, contains_super_reference,
@@ -30,6 +30,8 @@ pub struct AstToIr<'a> {
     transforms: Option<TransformContext>,
     /// Base indentation for class declarations converted directly by this statement converter.
     class_transformer_indent_base: u32,
+    /// Whether ES5 for-of lowering should use the full iterator protocol.
+    downlevel_iteration: bool,
     /// Current `this` substitution to use when lowering static initializer contexts.
     current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Capture alias for lexical `this` inside arrows within the current member body.
@@ -80,6 +82,7 @@ impl<'a> AstToIr<'a> {
             this_captured: Cell::new(false),
             transforms: None,
             class_transformer_indent_base: 0,
+            downlevel_iteration: false,
             current_this_substitution: Cell::new(None),
             lexical_this_capture_alias: Cell::new(None),
             has_super: false,
@@ -136,6 +139,11 @@ impl<'a> AstToIr<'a> {
 
     pub const fn with_class_transformer_indent_base(mut self, indent_base: u32) -> Self {
         self.class_transformer_indent_base = indent_base;
+        self
+    }
+
+    pub const fn with_downlevel_iteration(mut self, enabled: bool) -> Self {
+        self.downlevel_iteration = enabled;
         self
     }
 
@@ -333,6 +341,12 @@ impl<'a> AstToIr<'a> {
 
     /// Generate a unique temp variable name and register it for hoisting
     fn generate_hoisted_temp(&self) -> String {
+        let name = self.generate_temp_name();
+        self.hoisted_temps.borrow_mut().push(name.clone());
+        name
+    }
+
+    fn generate_temp_name(&self) -> String {
         let counter = self.temp_var_counter.get();
         let name = if counter < 26 {
             format!("_{}", (b'a' + counter as u8) as char)
@@ -340,8 +354,14 @@ impl<'a> AstToIr<'a> {
             format!("_{counter}")
         };
         self.temp_var_counter.set(counter + 1);
-        self.hoisted_temps.borrow_mut().push(name.clone());
         name
+    }
+
+    fn source_has_identifier(&self, name: &str) -> bool {
+        self.arena
+            .identifiers
+            .iter()
+            .any(|identifier| identifier.escaped_text == name)
     }
 
     /// Set whether `this` should be captured as `_this`
@@ -899,6 +919,7 @@ impl<'a> AstToIr<'a> {
         let mut transformer = ES5ClassTransformer::new(self.arena);
         transformer.set_module_kind(self.module_kind);
         transformer.set_indent_base(self.class_transformer_indent_base);
+        transformer.set_downlevel_iteration(self.downlevel_iteration);
         if let Some(transforms) = self.transforms.clone() {
             transformer.set_transforms(transforms);
         }
@@ -1371,6 +1392,13 @@ impl<'a> AstToIr<'a> {
         let Some(loop_data) = self.arena.get_for_in_of(node) else {
             return IRNode::ASTRef(idx);
         };
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && !self.downlevel_iteration
+            && !loop_data.await_modifier
+            && let Some(ir) = self.convert_for_of_array_indexing(loop_data)
+        {
+            return ir;
+        }
         let kind = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
             if loop_data.await_modifier {
                 std::borrow::Cow::Borrowed("await of")
@@ -1420,6 +1448,76 @@ impl<'a> AstToIr<'a> {
             body: Box::new(self.convert_statement(loop_data.statement)),
             multiline_body: false,
         }
+    }
+
+    fn convert_for_of_array_indexing(&self, loop_data: &ForInOfData) -> Option<IRNode> {
+        let init_node = self.arena.get(loop_data.initializer)?;
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let var_data = self.arena.get_variable(init_node)?;
+        if var_data.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = var_data.declarations.nodes[0];
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        let binding_name = get_identifier_text(self.arena, decl.name)?;
+
+        let index_name = if self.temp_var_counter.get() == 0 && !self.source_has_identifier("_i") {
+            "_i".to_string()
+        } else {
+            self.generate_temp_name()
+        };
+        let array_name = self.generate_temp_name();
+        let iterable = self.convert_expression(loop_data.expression);
+
+        let mut body = vec![IRNode::VarDecl {
+            name: binding_name.into(),
+            initializer: Some(Box::new(IRNode::elem(
+                IRNode::id(array_name.clone()),
+                IRNode::id(index_name.clone()),
+            ))),
+        }];
+        body.extend(self.convert_loop_body_statements(loop_data.statement));
+
+        Some(IRNode::ForStatement {
+            initializer: Some(Box::new(IRNode::VarDeclList(vec![
+                IRNode::VarDecl {
+                    name: index_name.clone().into(),
+                    initializer: Some(Box::new(IRNode::number("0"))),
+                },
+                IRNode::VarDecl {
+                    name: array_name.clone().into(),
+                    initializer: Some(Box::new(iterable)),
+                },
+            ]))),
+            condition: Some(Box::new(IRNode::BinaryExpr {
+                left: Box::new(IRNode::id(index_name.clone())),
+                operator: "<".into(),
+                right: Box::new(IRNode::prop(IRNode::id(array_name), "length")),
+            })),
+            incrementor: Some(Box::new(IRNode::PostfixUnaryExpr {
+                operand: Box::new(IRNode::id(index_name)),
+                operator: "++".into(),
+            })),
+            body: Box::new(IRNode::Block(body)),
+        })
+    }
+
+    fn convert_loop_body_statements(&self, statement_idx: NodeIndex) -> Vec<IRNode> {
+        if let Some(statement_node) = self.arena.get(statement_idx)
+            && statement_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(statement_node)
+        {
+            return block
+                .statements
+                .nodes
+                .iter()
+                .map(|&stmt_idx| self.convert_statement(stmt_idx))
+                .collect();
+        }
+        vec![self.convert_statement(statement_idx)]
     }
 
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {

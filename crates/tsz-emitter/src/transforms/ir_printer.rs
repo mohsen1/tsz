@@ -1081,22 +1081,12 @@ impl<'a> IRPrinter<'a> {
                 self.write("if (");
                 self.emit_node(condition);
                 self.write(") ");
-                if let IRNode::Block(stmts) = then_branch.as_ref()
-                    && stmts.is_empty()
-                {
-                    self.emit_empty_block_multiline();
-                } else {
-                    self.emit_node(then_branch);
-                }
+                self.emit_node(then_branch);
                 if let Some(else_br) = else_branch {
                     self.write_line();
                     self.write_indent();
                     self.write("else");
                     match else_br.as_ref() {
-                        IRNode::Block(stmts) if stmts.is_empty() => {
-                            self.write(" ");
-                            self.emit_empty_block_multiline();
-                        }
                         IRNode::Block(_) | IRNode::IfStatement { .. } => {
                             self.write(" ");
                             self.emit_node(else_br);
@@ -1138,7 +1128,7 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.write("for (");
                 if let Some(init) = initializer {
-                    self.emit_node(init);
+                    self.emit_for_initializer(init);
                 }
                 self.write(";");
                 if let Some(cond) = condition {
@@ -1151,13 +1141,7 @@ impl<'a> IRPrinter<'a> {
                     self.emit_node(incr);
                 }
                 self.write(") ");
-                if let IRNode::Block(stmts) = body.as_ref()
-                    && stmts.is_empty()
-                {
-                    self.emit_empty_block_multiline();
-                } else {
-                    self.emit_node(body);
-                }
+                self.emit_node(body);
             }
             IRNode::ForInOfStatement {
                 kind,

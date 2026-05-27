@@ -124,6 +124,28 @@ fn pre_super_object_literal_accessors_stay_native_when_keys_are_static() {
 }
 
 #[test]
+fn pre_super_control_flow_recovery_matches_es5_shapes() {
+    let source = "class Base {}\nlet a, b;\nconst DerivedWithLoops = [\n    class extends Base {\n        prop = true;\n        constructor() {\n            for(super();;) {}\n        }\n    },\n    class extends Base {\n        prop = true;\n        constructor() {\n            for (const x of super()) {}\n        }\n    },\n    class extends Base {\n        prop = true;\n        constructor() {\n            if (super()) {}\n        }\n    },\n];\n";
+
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains("for (_this = _super.call(this) || this;;) { }"),
+        "Recovered for headers with super should print empty bodies in tsc's single-line ES5 shape.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "for (var _i = 0, _a = _this = _super.call(this) || this; _i < _a.length; _i++) {\n                var x = _a[_i];\n            }"
+        ),
+        "For-of headers with rewritten super should downlevel through ES5 array indexing.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("if (_this = _super.call(this) || this) { }"),
+        "Recovered if conditions with super should print empty bodies in tsc's single-line ES5 shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn pre_super_this_capture_stops_at_ordinary_functions() {
     let source = "class Base {}\nclass FnDecl extends Base {\n    prop = true;\n    constructor() {\n        function declaration(param = this) {\n            return this;\n        }\n        super();\n    }\n}\nclass FnExpr extends Base {\n    prop = true;\n    constructor() {\n        (function () {\n            return this;\n        })();\n        super();\n    }\n}\nclass Arrow extends Base {\n    prop = true;\n    constructor() {\n        (() => this)();\n        super();\n    }\n}\nclass ClassDecl extends Base {\n    memberClass = class {};\n    constructor() {\n        class Inner extends this.memberClass {\n            method() {\n                return this;\n            }\n        }\n        super();\n    }\n}\nclass ClassExpr extends Base {\n    memberClass = class {};\n    constructor() {\n        console.log(class extends this.memberClass {});\n        super();\n    }\n}\n";
 

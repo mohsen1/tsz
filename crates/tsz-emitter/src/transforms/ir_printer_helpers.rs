@@ -421,6 +421,37 @@ impl<'a> IRPrinter<'a> {
         self.decrease_indent();
     }
 
+    pub(super) fn emit_for_initializer(&mut self, init: &IRNode) {
+        match init {
+            IRNode::VarDecl { name, initializer } => {
+                self.write("var ");
+                self.write(name);
+                if let Some(initializer) = initializer {
+                    self.write(" = ");
+                    self.emit_node(initializer);
+                }
+            }
+            IRNode::VarDeclList(decls) => {
+                self.write("var ");
+                for (i, decl) in decls.iter().enumerate() {
+                    if i > 0 {
+                        self.write(", ");
+                    }
+                    if let IRNode::VarDecl { name, initializer } = decl {
+                        self.write(name);
+                        if let Some(initializer) = initializer {
+                            self.write(" = ");
+                            self.emit_node(initializer);
+                        }
+                    } else {
+                        self.emit_node(decl);
+                    }
+                }
+            }
+            _ => self.emit_node(init),
+        }
+    }
+
     pub(super) fn write(&mut self, s: &str) {
         self.output.push_str(s);
     }
