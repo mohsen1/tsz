@@ -457,6 +457,9 @@ mod class_duplicate_extends_skip_resolution_tests;
 #[path = "tests/class_feature_target_gates_tests.rs"]
 mod class_feature_target_gates_tests;
 #[cfg(test)]
+#[path = "tests/class_implements_jsdoc_heritage_relation_routing_arch_tests.rs"]
+mod class_implements_jsdoc_heritage_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/class_index_signature_compat_tests.rs"]
 mod class_index_signature_compat_tests;
 #[cfg(test)]
@@ -750,6 +753,9 @@ mod relation_flags_boundary_contract_tests;
 #[cfg(test)]
 #[path = "../tests/repro_parserreal.rs"]
 mod repro_parserreal;
+#[cfg(test)]
+#[path = "tests/return_context_promise_identity_tests.rs"]
+mod return_context_promise_identity_tests;
 #[cfg(test)]
 #[path = "../tests/reverse_mapped_inference_tests.rs"]
 mod reverse_mapped_inference_tests;
