@@ -2455,13 +2455,11 @@ impl<'a> TypeLowering<'a> {
         if node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
             && let Some(computed) = self.arena.get_computed_property(node)
         {
-            if let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression) {
-                return Some(self.interner.intern_string(&symbol_name));
-            }
-            // Try the computed name resolver for user-defined computed properties
-            // (e.g., [k] where k is a unique symbol variable). The arena-aware
-            // variant takes precedence: it distinguishes the same NodeIndex value
-            // across different arenas (cross-arena merged-interface lowering).
+            // Try the checker-provided computed-name resolver before the
+            // syntax-only well-known Symbol fallback. The resolver can use
+            // binding identity, which matters when user code shadows `Symbol`.
+            // The arena-aware variant takes precedence: it distinguishes the same
+            // NodeIndex value across different arenas (cross-arena lowering).
             let arena_ptr: *const NodeArena = self.arena;
             if let Some(resolver) = self.computed_name_resolver_with_arena
                 && let Some(name) = resolver(computed.expression, arena_ptr)
@@ -2471,6 +2469,9 @@ impl<'a> TypeLowering<'a> {
                 && let Some(name) = resolver(computed.expression)
             {
                 return Some(name);
+            }
+            if let Some(symbol_name) = self.get_well_known_symbol_name(computed.expression) {
+                return Some(self.interner.intern_string(&symbol_name));
             }
         }
         None
@@ -2497,18 +2498,15 @@ impl<'a> TypeLowering<'a> {
         let Some(computed) = self.arena.get_computed_property(node) else {
             return false;
         };
-        if self
-            .get_well_known_symbol_name(computed.expression)
-            .is_some()
-        {
-            return true;
-        }
         let arena_ptr: *const NodeArena = self.arena;
         if let Some(resolver) = self.computed_symbol_name_resolver_with_arena {
             return resolver(computed.expression, arena_ptr);
         }
-        self.computed_symbol_name_resolver
-            .is_some_and(|resolver| resolver(computed.expression))
+        if let Some(resolver) = self.computed_symbol_name_resolver {
+            return resolver(computed.expression);
+        }
+        self.get_well_known_symbol_name(computed.expression)
+            .is_some()
     }
 
     /// Try to resolve a computed property expression to a well-known symbol name.

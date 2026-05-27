@@ -98,6 +98,56 @@ const n: number = ok.iterator;
     );
 }
 
+#[test]
+fn shadowed_symbol_interface_member_uses_resolved_literal_key() {
+    let diags = check_source_diagnostics(
+        r#"
+export {};
+const Symbol = { iterator: "iterator" } as const;
+interface Shape { [Symbol.iterator]: number }
+const ok: Shape = { iterator: 1 };
+const n: number = ok.iterator;
+"#,
+    );
+    let bad: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2322 | 2339 | 2353 | 2741))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "local Symbol shadow should produce the interface literal `iterator` key, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn shadowed_symbol_class_member_uses_resolved_literal_key() {
+    let diags = check_source_diagnostics(
+        r#"
+export {};
+const Symbol = { iterator: "iterator" } as const;
+class C { [Symbol.iterator]: number = 1; }
+const c = new C();
+const n: number = c.iterator;
+"#,
+    );
+    let bad: Vec<_> = diags
+        .iter()
+        .filter(|d| matches!(d.code, 2339 | 2564 | 7053))
+        .collect();
+    assert!(
+        bad.is_empty(),
+        "local Symbol shadow should produce the class literal `iterator` key, got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 // ── async and generator method shorthand variants ───────────────────────────
 
 #[test]
