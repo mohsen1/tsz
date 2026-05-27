@@ -936,10 +936,36 @@ jobs:
           if-no-files-found: error
           compression-level: 1
 
-  bench:
-    name: bench-${{ matrix.label }}
+  bench-target-fresh:
+    name: bench-target-fresh
     needs: bench-prep-artifact
     if: always() && needs.bench-prep-artifact.result == 'success'
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.fresh.outputs.should_run }}
+    steps:
+      - id: fresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+            echo "Benchmark target ${target_sha} became stale after prep; current main is ${main_sha}. Skipping shard fanout."
+            should_run=false
+          fi
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
+  bench:
+    name: bench-${{ matrix.label }}
+    needs: [bench-prep-artifact, bench-target-fresh]
+    if: >-
+      always() &&
+      needs.bench-prep-artifact.result == 'success' &&
+      needs.bench-target-fresh.outputs.should_run == 'true'
     runs-on: [self-hosted, tsz-cloud-run]
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
