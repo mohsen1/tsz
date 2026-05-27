@@ -226,7 +226,9 @@ impl<'a> CheckerState<'a> {
                 && request.contextual_type.is_some()
                 && self
                     .async_contextual_return_call_has_only_fixed_arguments(return_data.expression)
-                && !self.diagnostic_relation_boolean_guard(return_type, expected_type)
+                && !self
+                    .return_relation_outcome(return_type, expected_type)
+                    .related
             {
                 self.invalidate_expression_for_contextual_retry(return_data.expression);
                 let mut raw_return_type = self
@@ -330,7 +332,9 @@ impl<'a> CheckerState<'a> {
             && (!expected_contains_error_nested || allow_check_through_nested_error)
         {
             if is_conditional_expr
-                && !self.diagnostic_relation_boolean_guard(return_type, expected_type)
+                && !self
+                    .return_relation_outcome(return_type, expected_type)
+                    .related
             {
                 // Per-branch error elaboration for conditional expressions.
                 // Instead of "Type '1 | 2' is not assignable to type '3'" at `return`,
@@ -405,7 +409,7 @@ impl<'a> CheckerState<'a> {
                                 );
                             }
                             callable_members.into_iter().any(|member| {
-                                let outcome = self.assign_relation_outcome(return_type, member);
+                                let outcome = self.return_relation_outcome(return_type, member);
                                 outcome.related
                                     || crate::query_boundaries::assignability::contextual_callable_member_failure_is_generic_parameter_drift(
                                         self.ctx.types,

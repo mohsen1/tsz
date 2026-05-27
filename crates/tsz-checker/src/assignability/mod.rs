@@ -18,4 +18,5 @@ mod index_access_normalization;
 mod nullish_error_targets;
 mod polymorphic_this_diagnostics;
 mod readonly_tuple_diagnostics;
+mod relation_outcome_helpers;
 pub mod subtype_identity_checker;

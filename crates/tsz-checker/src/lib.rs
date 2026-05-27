@@ -244,6 +244,9 @@ mod rest_parameter_tests;
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
 #[cfg(test)]
+#[path = "tests/return_relation_routing_arch_tests.rs"]
+mod return_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/spread_rest_diagnostics_tests.rs"]
 mod spread_rest_diagnostics_tests;
 #[cfg(test)]
