@@ -277,6 +277,12 @@ pub struct ParserState {
     /// TS1359 at the reserved word and then cascades the statement's
     /// diagnostics (`'(' expected.` / `')' expected.`) at the following tokens.
     pub(crate) namespace_import_yielded_to_statement: bool,
+    /// Function declarations recover hard reserved parameter-name keywords by
+    /// leaving the keyword in the token stream for statement-level recovery.
+    pub(crate) recover_reserved_parameter_as_statement_tail_allowed: bool,
+    /// Set when the current function declaration parameter list yielded a hard
+    /// reserved keyword back to the statement parser.
+    pub(crate) reserved_parameter_yielded_to_statement: bool,
 }
 
 impl ParserState {
@@ -380,6 +386,8 @@ impl ParserState {
             recover_jsx_closing_tag_extra_namespace_tail: false,
             recover_jsx_invalid_namespace_head_tail: false,
             namespace_import_yielded_to_statement: false,
+            recover_reserved_parameter_as_statement_tail_allowed: false,
+            reserved_parameter_yielded_to_statement: false,
         }
     }
 
@@ -431,6 +439,8 @@ impl ParserState {
         self.recover_jsx_closing_tag_extra_namespace_tail = false;
         self.recover_jsx_invalid_namespace_head_tail = false;
         self.namespace_import_yielded_to_statement = false;
+        self.recover_reserved_parameter_as_statement_tail_allowed = false;
+        self.reserved_parameter_yielded_to_statement = false;
         // The high-water mark tracks the count of scanner diagnostics that
         // have been considered by the parser-side dedup at `parse_error_at`.
         // When the parser is reused via `reset()` the caller passes a fresh
@@ -1508,6 +1518,53 @@ impl ParserState {
             }
             SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword => {
                 self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn is_statement_tail_reserved_parameter_keyword(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::EnumKeyword
+                | SyntaxKind::ClassKeyword
+                | SyntaxKind::FunctionKeyword
+                | SyntaxKind::WhileKeyword
+                | SyntaxKind::ForKeyword
+        )
+    }
+
+    /// Report TS1390 and the companion parser recovery diagnostic for hard
+    /// reserved parameter names, but leave the keyword in the token stream so
+    /// statement-level recovery can parse the tail just like `tsc`.
+    pub(crate) fn error_reserved_word_in_parameter_name_without_consuming(&mut self) {
+        use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
+
+        let keyword = self.token();
+        let keyword_end = self.token_end();
+        if self.should_report_error() {
+            let word = self.current_keyword_text();
+            let msg = diagnostic_messages::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME.replace("{0}", word);
+            self.parse_error_at_current_token(
+                &msg,
+                diagnostic_codes::IS_NOT_ALLOWED_AS_A_PARAMETER_NAME,
+            );
+        }
+
+        match keyword {
+            SyntaxKind::EnumKeyword | SyntaxKind::FunctionKeyword => {
+                self.parse_error_at(
+                    keyword_end,
+                    1,
+                    "Identifier expected.",
+                    diagnostic_codes::IDENTIFIER_EXPECTED,
+                );
+            }
+            SyntaxKind::ClassKeyword => {
+                self.parse_error_at(keyword_end, 1, "'{' expected.", diagnostic_codes::EXPECTED);
+            }
+            SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword => {
+                self.parse_error_at(keyword_end, 1, "'(' expected.", diagnostic_codes::EXPECTED);
             }
             _ => {}
         }

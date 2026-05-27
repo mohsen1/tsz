@@ -152,6 +152,10 @@ mod legacy_octal_bigint_continuation_tests;
 #[path = "../../tests/computed_property_binding_recovery_tests.rs"]
 mod computed_property_binding_recovery_tests;
 
+#[cfg(test)]
+#[path = "../../tests/reserved_parameter_recovery_tests.rs"]
+mod reserved_parameter_recovery_tests;
+
 // Re-export flags
 pub use flags::{modifier_flags, node_flags, transform_flags};
 

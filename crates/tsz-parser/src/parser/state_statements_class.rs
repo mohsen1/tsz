@@ -352,6 +352,14 @@ impl ParserState {
                 break;
             }
 
+            if self.recover_reserved_parameter_as_statement_tail_allowed
+                && self.is_statement_tail_reserved_parameter_keyword()
+            {
+                self.error_reserved_word_in_parameter_name_without_consuming();
+                self.reserved_parameter_yielded_to_statement = true;
+                break;
+            }
+
             if self.is_token(SyntaxKind::ColonToken) {
                 use tsz_common::diagnostics::{diagnostic_codes, diagnostic_messages};
                 self.parse_error_at_current_token(

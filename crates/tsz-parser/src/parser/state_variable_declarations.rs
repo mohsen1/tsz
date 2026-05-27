@@ -346,6 +346,44 @@ impl ParserState {
             self.parse_identifier()
         };
 
+        if self.is_token(SyntaxKind::CloseParenToken)
+            && self
+                .arena
+                .get(name)
+                .and_then(|node| self.arena.get_identifier(node))
+                .is_some_and(|identifier| identifier.escaped_text.is_empty())
+        {
+            self.next_token();
+            let end_pos = self.token_full_start();
+            let empty_statements = self.make_node_list(Vec::new());
+            let body = self.arena.add_block(
+                syntax_kind_ext::BLOCK,
+                end_pos,
+                end_pos,
+                BlockData {
+                    statements: empty_statements,
+                    multi_line: false,
+                },
+            );
+            self.context_flags = saved_flags;
+            return self.arena.add_function(
+                syntax_kind_ext::FUNCTION_DECLARATION,
+                start_pos,
+                end_pos,
+                FunctionData {
+                    modifiers,
+                    is_async,
+                    asterisk_token,
+                    name,
+                    type_parameters: None,
+                    parameters: self.make_node_list(Vec::new()),
+                    type_annotation: NodeIndex::NONE,
+                    body,
+                    equals_greater_than_token: false,
+                },
+            );
+        }
+
         // Parse optional type parameters: <T, U extends V>
         let type_parameters = self
             .is_token(SyntaxKind::LessThanToken)
@@ -357,13 +395,54 @@ impl ParserState {
         // straight into the body instead of parsing the body as a destructuring
         // parameter list.
         let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
+        let mut reserved_parameter_yielded_to_statement = false;
         let parameters = if !has_open_paren && self.is_token(SyntaxKind::OpenBraceToken) {
             NodeList::new()
         } else {
+            let previous_reserved_parameter_recovery =
+                self.recover_reserved_parameter_as_statement_tail_allowed;
+            self.recover_reserved_parameter_as_statement_tail_allowed = true;
             let params = self.parse_parameter_list();
-            self.parse_expected(SyntaxKind::CloseParenToken);
+            reserved_parameter_yielded_to_statement = self.reserved_parameter_yielded_to_statement;
+            self.reserved_parameter_yielded_to_statement = false;
+            self.recover_reserved_parameter_as_statement_tail_allowed =
+                previous_reserved_parameter_recovery;
+            if !reserved_parameter_yielded_to_statement {
+                self.parse_expected(SyntaxKind::CloseParenToken);
+            }
             params
         };
+
+        if reserved_parameter_yielded_to_statement {
+            self.context_flags = saved_flags;
+            let end_pos = self.token_full_start();
+            let empty_statements = self.make_node_list(Vec::new());
+            let body = self.arena.add_block(
+                syntax_kind_ext::BLOCK,
+                end_pos,
+                end_pos,
+                BlockData {
+                    statements: empty_statements,
+                    multi_line: false,
+                },
+            );
+            return self.arena.add_function(
+                syntax_kind_ext::FUNCTION_DECLARATION,
+                start_pos,
+                end_pos,
+                FunctionData {
+                    modifiers,
+                    is_async,
+                    asterisk_token,
+                    name,
+                    type_parameters,
+                    parameters,
+                    type_annotation: NodeIndex::NONE,
+                    body,
+                    equals_greater_than_token: false,
+                },
+            );
+        }
 
         // For reserved-word function names other than `function` itself,
         // tsc emits TS1005 ("'=>' expected") when the body opens — matches

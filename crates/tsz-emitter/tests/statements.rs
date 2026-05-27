@@ -58,6 +58,17 @@ fn reserved_void_type_alias_name_emits_recovered_runtime_statements() {
 }
 
 #[test]
+fn hard_reserved_parameter_names_emit_statement_tail_recovery() {
+    let source = "function f1(enum) {}\nfunction f2(class) {}\nfunction f3(function) {}\nfunction f4(while) {}\nfunction f5(for) {}";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction f1() { }\nvar ;\n(function () {\n})( || ( = {}));\n{ }\nfunction f2() { }\nclass {\n}\n{ }\nfunction f3() { }\nfunction () { }\n{ }\nfunction f4() { }\nwhile () { }\nfunction f5() { }\nfor (;;) { }"
+    );
+}
+
+#[test]
 fn variable_arrow_initializer_places_semicolon_before_following_comment() {
     let output =
         parse_and_emit_strict_es2015("var f = (a: any)\n=> a\n\n// Should be valid.\n;\n", "a.ts");
