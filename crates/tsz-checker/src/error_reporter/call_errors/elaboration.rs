@@ -611,7 +611,9 @@ impl<'a> CheckerState<'a> {
                     || branch_type == TypeId::ANY
                     || target_type == TypeId::ERROR
                     || target_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(branch_type, target_type)
+                    || self
+                        .assign_relation_outcome(branch_type, target_type)
+                        .related
                 {
                     continue;
                 }
@@ -990,7 +992,9 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
+                    || self
+                        .assign_relation_outcome(body_type, expected_return_type)
+                        .related
                 {
                     return false;
                 }
@@ -1066,7 +1070,9 @@ impl<'a> CheckerState<'a> {
                     || body_type == TypeId::ANY
                     || expected_return_type == TypeId::ERROR
                     || expected_return_type == TypeId::ANY
-                    || self.diagnostic_relation_boolean_guard(body_type, expected_return_type)
+                    || self
+                        .assign_relation_outcome(body_type, expected_return_type)
+                        .related
                 {
                     return false;
                 }
