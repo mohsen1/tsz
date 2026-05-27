@@ -302,3 +302,25 @@ var fromNs = Merge.p2 + Merge.p3;
         "Expected namespace exports to keep value facts: {output}"
     );
 }
+
+#[test]
+fn self_referential_expando_assignment_uses_resolved_rhs_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function Counter() {
+}
+Counter.value = 1;
+Counter.value = Counter.value + 1;
+var total = Counter.value;
+"#,
+    );
+
+    assert!(
+        output.contains("var value: number;"),
+        "Expected self-referential expando assignment to keep number member type: {output}"
+    );
+    assert!(
+        output.contains("declare var total: number;"),
+        "Expected later reads of the expando member to remain numeric: {output}"
+    );
+}

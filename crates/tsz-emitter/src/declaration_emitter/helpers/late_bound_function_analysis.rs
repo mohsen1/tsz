@@ -329,6 +329,7 @@ impl<'a> DeclarationEmitter<'a> {
         expr_idx: NodeIndex,
         root_name: &str,
         root_symbol: Option<SymbolId>,
+        existing_members: &[LateBoundAssignmentMember],
     ) -> Option<LateBoundAssignmentMember> {
         let expr_idx = self
             .arena
@@ -400,19 +401,229 @@ impl<'a> DeclarationEmitter<'a> {
         if self.source_is_js_file && property_name_text == "prototype" {
             return None;
         }
-        let type_text = self
-            .preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
-            .or_else(|| {
-                self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx))
-                    .map(|resolved| resolved.emitted_type_text)
-            })
-            .unwrap_or_else(|| "any".to_string());
+        let rhs_references_root =
+            self.expression_references_late_bound_root(rhs_idx, root_name, root_symbol, 0);
+        let resolved_type_text = || {
+            self.resolve_declaration_type_text(&[rhs_idx], Some(rhs_idx))
+                .map(|resolved| resolved.emitted_type_text)
+                .or_else(|| {
+                    self.get_node_type_or_names(&[rhs_idx])
+                        .filter(|type_id| {
+                            !matches!(
+                                *type_id,
+                                tsz_solver::types::TypeId::ANY
+                                    | tsz_solver::types::TypeId::UNKNOWN
+                                    | tsz_solver::types::TypeId::ERROR
+                            )
+                        })
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+        };
+        let type_text = if rhs_references_root {
+            self.late_bound_self_referential_rhs_type_text(
+                rhs_idx,
+                root_name,
+                root_symbol,
+                existing_members,
+                0,
+            )
+            .or_else(resolved_type_text)
+        } else {
+            self.preferred_object_member_initializer_type_text(rhs_idx, self.indent_level + 1)
+                .or_else(resolved_type_text)
+        }
+        .unwrap_or_else(|| "any".to_string());
 
         Some(LateBoundAssignmentMember {
             property_name_text,
             namespace_member_name,
             type_text,
         })
+    }
+
+    fn late_bound_self_referential_rhs_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+        existing_members: &[LateBoundAssignmentMember],
+        depth: u8,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == SyntaxKind::NumericLiteral as u16 => Some("number".to_string()),
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
+            {
+                Some("string".to_string())
+            }
+            k if k == SyntaxKind::TrueKeyword as u16 || k == SyntaxKind::FalseKeyword as u16 => {
+                Some("boolean".to_string())
+            }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+                || k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION =>
+            {
+                if !self.late_bound_access_root_matches(expr_idx, root_name, root_symbol) {
+                    return None;
+                }
+                let (property_name, _) = self.late_bound_assignment_property_key_parts(expr_idx)?;
+                existing_members
+                    .iter()
+                    .rev()
+                    .find(|member| member.property_name_text == property_name)
+                    .map(|member| member.type_text.clone())
+            }
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                let binary = self.arena.get_binary_expr(expr_node)?;
+                let left = self.late_bound_self_referential_rhs_type_text(
+                    binary.left,
+                    root_name,
+                    root_symbol,
+                    existing_members,
+                    depth + 1,
+                )?;
+                let right = self.late_bound_self_referential_rhs_type_text(
+                    binary.right,
+                    root_name,
+                    root_symbol,
+                    existing_members,
+                    depth + 1,
+                )?;
+                Self::late_bound_binary_result_type_text(binary.operator_token, &left, &right)
+            }
+            _ => None,
+        }
+    }
+
+    fn late_bound_binary_result_type_text(
+        operator: u16,
+        left: &str,
+        right: &str,
+    ) -> Option<String> {
+        match operator {
+            k if k == SyntaxKind::PlusToken as u16 => {
+                if left == "string" || right == "string" {
+                    Some("string".to_string())
+                } else if left == "number" && right == "number" {
+                    Some("number".to_string())
+                } else {
+                    None
+                }
+            }
+            k if k == SyntaxKind::MinusToken as u16
+                || k == SyntaxKind::AsteriskToken as u16
+                || k == SyntaxKind::SlashToken as u16
+                || k == SyntaxKind::PercentToken as u16
+                || k == SyntaxKind::AsteriskAsteriskToken as u16
+                || k == SyntaxKind::LessThanLessThanToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanToken as u16
+                || k == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16
+                || k == SyntaxKind::AmpersandToken as u16
+                || k == SyntaxKind::BarToken as u16
+                || k == SyntaxKind::CaretToken as u16 =>
+            {
+                (left == "number" && right == "number").then(|| "number".to_string())
+            }
+            _ => None,
+        }
+    }
+
+    fn expression_references_late_bound_root(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+        depth: u8,
+    ) -> bool {
+        if depth > 64 {
+            return false;
+        }
+
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        if depth > 0
+            && (expr_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || expr_node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || expr_node.kind == syntax_kind_ext::ARROW_FUNCTION
+                || expr_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                || expr_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                || expr_node.kind == syntax_kind_ext::MODULE_DECLARATION)
+        {
+            return false;
+        }
+
+        if (expr_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            || expr_node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+            && self.late_bound_access_root_matches(expr_idx, root_name, root_symbol)
+        {
+            return true;
+        }
+
+        self.arena
+            .get_children(expr_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.expression_references_late_bound_root(
+                    child_idx,
+                    root_name,
+                    root_symbol,
+                    depth + 1,
+                )
+            })
+    }
+
+    fn late_bound_access_root_matches(
+        &self,
+        access_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: Option<SymbolId>,
+    ) -> bool {
+        let Some(root_idx) = self.late_bound_access_root_idx(access_idx, 0) else {
+            return false;
+        };
+        let Some(receiver_name) = self.get_identifier_text(root_idx) else {
+            return false;
+        };
+        if receiver_name != root_name {
+            return false;
+        }
+        if let Some(root_symbol) = root_symbol
+            && let Some(receiver_symbol) = self.resolve_identifier_symbol(root_idx, &receiver_name)
+        {
+            return receiver_symbol == root_symbol;
+        }
+        true
+    }
+
+    fn late_bound_access_root_idx(&self, expr_idx: NodeIndex, depth: u8) -> Option<NodeIndex> {
+        if depth > 16 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return Some(expr_idx);
+        }
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        self.late_bound_access_root_idx(access.expression, depth + 1)
     }
 
     fn collect_late_bound_assignment_members_from_node(
@@ -436,9 +647,12 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if let Some(member) =
-            self.late_bound_assignment_member_for_expression(node_idx, root_name, root_symbol)
-        {
+        if let Some(member) = self.late_bound_assignment_member_for_expression(
+            node_idx,
+            root_name,
+            root_symbol,
+            members,
+        ) {
             Self::record_late_bound_assignment_member(members, member, declared_members);
         }
 
