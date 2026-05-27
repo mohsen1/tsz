@@ -185,6 +185,28 @@ impl<'a> TypePrinter<'a> {
         self.type_cache?.def_types.get(&def_id.0).copied()
     }
 
+    /// Resolve the function type backing a recursive `App(Lazy(def_id), args)`
+    /// for depth-limited DTS expansion.
+    ///
+    /// A `TypeEnvironment`-bound def (e.g. an inner block-scoped const-arrow)
+    /// is recorded in `def_types`. A top-level const-arrow whose recursion
+    /// targets its own value symbol has no environment binding — its resolved
+    /// type lives in `symbol_types` keyed by the symbol — so fall back through
+    /// `def_to_symbol`. The self-referential guards used by the inline symbol
+    /// fallbacks are deliberately skipped: a recursive function shape legitimately
+    /// references its own symbol, and that reference is what the expansion unrolls.
+    fn recursive_application_function_type(
+        &self,
+        def_id: tsz_solver::def::DefId,
+    ) -> Option<TypeId> {
+        if let Some(def_type) = self.def_type_fallback(def_id) {
+            return Some(def_type);
+        }
+        let cache = self.type_cache?;
+        let sym_id = cache.def_to_symbol.get(&def_id).copied()?;
+        cache.symbol_types.get(&sym_id).copied()
+    }
+
     /// tsc caps recursive generic function DTS expansion at 10 levels; beyond that it
     /// emits `/*elided*/ any` to prevent infinite output. This method implements that
     /// depth guard: given the already-resolved `shape_id` and the concrete `type_args`,
@@ -668,7 +690,7 @@ impl<'a> TypePrinter<'a> {
             // expanded depth-limitedly (up to 10 levels, then `/*elided*/ any`) rather than
             // printed as a named type reference like "fnName<Args>".
             let recursive_shape_id = visitor::lazy_def_id(self.interner, app.base)
-                .and_then(|def_id| self.def_type_fallback(def_id))
+                .and_then(|def_id| self.recursive_application_function_type(def_id))
                 .and_then(|func_type| visitor::function_shape_id(self.interner, func_type))
                 .filter(|&shape_id| {
                     !self
