@@ -217,3 +217,54 @@ type Bad<T, U> = {
         "[mapped union] expected one TS2536 for foreign keys, got {count}: {diagnostics:#?}"
     );
 }
+
+#[test]
+fn homomorphic_mapped_read_keeps_source_indexed_value_type() {
+    let libs = load_default_lib_files();
+    let diagnostics = check_source_with_libs(
+        r#"
+type Box<T> = { value: T };
+type Boxified<T> = { [P in keyof T]: Box<T[P]> };
+
+function unbox<T>(x: Box<T>): T {
+  return x.value;
+}
+
+function unboxify<T extends object>(obj: Boxified<T>): T {
+  let result = {} as T;
+  for (let k in obj) {
+    result[k] = unbox(obj[k]);
+  }
+  return result;
+}
+"#,
+        "test.ts",
+        tsz_checker::test_utils::strict_checker_options(),
+        &libs,
+    );
+    let count = diagnostic_count(&diagnostics, 2322);
+    assert_eq!(
+        count, 0,
+        "[homomorphic mapped read] expected no TS2322, got {count}: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn intersection_keyof_still_reports_when_indexing_bare_type_param() {
+    let libs = load_default_lib_files();
+    let diagnostics = check_source_with_libs(
+        r#"
+function ff3<T>(t: T, k: keyof (T & {})) {
+  t[k];
+}
+"#,
+        "test.ts",
+        tsz_checker::test_utils::strict_checker_options(),
+        &libs,
+    );
+    let count = diagnostic_count(&diagnostics, 2536);
+    assert_eq!(
+        count, 1,
+        "[intersection keyof] expected one TS2536, got {count}: {diagnostics:#?}"
+    );
+}

@@ -666,12 +666,6 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
-        if crate::query_boundaries::checkers::generic::generic_index_filters_current_type_param_keys(
-            self, index_type, type_param,
-        ) {
-            return true;
-        }
-
         if let Some(members) =
             crate::query_boundaries::common::intersection_members(self.ctx.types, index_type)
         {
@@ -833,12 +827,6 @@ impl<'a> CheckerState<'a> {
         index_type: TypeId,
         type_param: TypeId,
     ) -> bool {
-        if crate::query_boundaries::checkers::generic::generic_index_filters_current_type_param_keys(
-            self, index_type, type_param,
-        ) {
-            return false;
-        }
-
         if let Some(keyof_inner) =
             crate::query_boundaries::common::keyof_inner_type(self.ctx.types, index_type)
         {

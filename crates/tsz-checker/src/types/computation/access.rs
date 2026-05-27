@@ -1501,18 +1501,6 @@ impl<'a> CheckerState<'a> {
                         .index_access(pre_resolution_object_type, index_type);
                 }
 
-                if crate::query_boundaries::checkers::generic::generic_index_filters_current_type_param_keys(
-                    self,
-                    index_type,
-                    pre_resolution_object_type,
-                ) {
-                    return self
-                        .ctx
-                        .types
-                        .factory()
-                        .index_access(pre_resolution_object_type, index_type);
-                }
-
                 // When indexing a type parameter T with keys from a different type
                 // parameter (e.g., `keyof U` where `U extends T`), tsc emits TS2536.
                 // We should not defer this case to IndexAccess(T, ...).
