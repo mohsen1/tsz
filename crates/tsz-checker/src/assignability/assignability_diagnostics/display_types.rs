@@ -69,7 +69,7 @@ impl<'a> CheckerState<'a> {
         }
 
         // Check assignability using the actual types (return types)
-        if self.diagnostic_relation_boolean_guard(source, target) {
+        if self.assign_relation_outcome(source, target).related {
             return true;
         }
 
