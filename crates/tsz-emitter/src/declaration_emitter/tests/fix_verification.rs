@@ -1790,3 +1790,79 @@ let gResult3 = g(helloOrWorld);
         );
     }
 }
+
+// === Definite assignment assertion (!) preservation ===
+
+#[test]
+fn fix_class_property_definite_assignment_assertion_preserved() {
+    // tsc preserves `!` in .d.ts so downstream consumers see the same contract.
+    let output = emit_dts("export class C { name!: string; }");
+    assert!(
+        output.contains("name!: string;"),
+        "definite assignment `!` must be preserved on class property: {output}"
+    );
+}
+
+#[test]
+fn fix_class_property_question_token_not_affected_by_daa_change() {
+    // `?` optional marker must still work after the `!` fix.
+    let output = emit_dts("export class C { name?: string; }");
+    assert!(
+        output.contains("name?: string;"),
+        "optional `?` must be preserved on class property: {output}"
+    );
+    assert!(
+        !output.contains("name!"),
+        "optional property must not gain `!`: {output}"
+    );
+}
+
+#[test]
+fn fix_class_property_plain_without_daa_unchanged() {
+    // An ordinary (non-optional, non-definite) property must not gain `!`.
+    let output = emit_dts("export class C { name: string; }");
+    assert!(
+        output.contains("name: string;"),
+        "plain property must be emitted unchanged: {output}"
+    );
+    assert!(
+        !output.contains("name!"),
+        "plain property must not gain `!`: {output}"
+    );
+}
+
+#[test]
+fn fix_class_property_daa_different_names() {
+    // Rule holds regardless of the property name chosen by the user.
+    let output = emit_dts("export class C { foo!: number; bar!: boolean; }");
+    assert!(
+        output.contains("foo!: number;"),
+        "daa preserved for `foo`: {output}"
+    );
+    assert!(
+        output.contains("bar!: boolean;"),
+        "daa preserved for `bar`: {output}"
+    );
+}
+
+#[test]
+fn fix_variable_declaration_definite_assignment_assertion_preserved() {
+    // `export let x!: T` — the `!` must be preserved in the emitted .d.ts.
+    // Uses emit_dts_with_usage_analysis so the exported variable reaches
+    // the emit_exported_variable code path (same as the full compiler).
+    let output = emit_dts_with_usage_analysis("export let x!: string;");
+    assert!(
+        output.contains("x!: string;"),
+        "definite assignment `!` must be preserved on exported variable declaration: {output}"
+    );
+}
+
+#[test]
+fn fix_variable_declaration_daa_different_names() {
+    // Rule holds regardless of the variable name.
+    let output = emit_dts_with_usage_analysis("export let myVar!: number;");
+    assert!(
+        output.contains("myVar!: number;"),
+        "daa preserved for variable `myVar`: {output}"
+    );
+}

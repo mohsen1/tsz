@@ -2160,6 +2160,9 @@ impl<'a> DeclarationEmitter<'a> {
                         }
 
                         self.emit_node(decl.name);
+                        if decl.exclamation_token {
+                            self.write("!");
+                        }
                         // When a variable's initializer is a simple reference to an
                         // import-equals alias (e.g. `var bVal2 = b` where `import b = a.foo`),
                         // tsc emits `typeof b` instead of expanding the type.

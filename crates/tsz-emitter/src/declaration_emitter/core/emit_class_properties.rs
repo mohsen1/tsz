@@ -137,9 +137,14 @@ impl<'a> DeclarationEmitter<'a> {
             self.emit_node(prop.name);
         }
 
-        // Optional marker
+        // Optional/definite-assignment marker: properties can have `?` (optional)
+        // or `!` (definite assignment assertion), but not both.  tsc preserves
+        // whichever is present in the .d.ts so that consumers see the same
+        // optionality contract.
         if prop.question_token {
             self.write("?");
+        } else if prop.exclamation_token {
+            self.write("!");
         }
 
         // Check if readonly for literal initializer form
