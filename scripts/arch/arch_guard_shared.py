@@ -759,6 +759,12 @@ REGEX_LINE_COUNT_CHECKS = [
         0,
     ),
     (
+        "Solver relation boundary: legacy flag decoder avoids cache-key constants (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bRelationCacheKey::FLAG_[A-Z0-9_]+\b"),
+        0,
+    ),
+    (
         "Solver relation boundary: legacy RelationPolicy::from_flags calls stay at boundary (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src"],
         re.compile(
