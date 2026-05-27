@@ -775,6 +775,27 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.type_annotation.is_some() {
+                continue;
+            }
+            self.infer_object_argument_substitutions_from_type_node(
+                source_arena,
+                param.type_annotation,
+                arg_idx,
+                type_param_names,
+                &[],
+                &mut substitutions,
+                0,
+            );
+        }
+
         substitutions
     }
 
@@ -1299,6 +1320,9 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_constraint: Option<&str>,
     ) -> Option<String> {
         if let Some(type_text) = self.referenced_parameter_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
+        if let Some(type_text) = self.reference_declared_source_type_annotation_text(arg_idx) {
             return Some(type_text);
         }
         if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {

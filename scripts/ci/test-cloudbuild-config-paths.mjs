@@ -61,6 +61,16 @@ for (const config of expectedConfigs) {
   );
 }
 
+const benchPrepareConfig = fs.readFileSync(
+  path.join(ROOT, "scripts", "cloudbuild", "cloudbuild-bench-prepare.yaml"),
+  "utf8",
+);
+assert.match(
+  benchPrepareConfig,
+  /literal_scoped_dir='bench-prep\/\$\{_BENCH_TARGET_SHA\}'[\s\S]+cp bench-prep\.tar bench-prep\.env "\$\{literal_scoped_dir\}\/"/,
+  "benchmark prep should mirror artifacts to the literal target path for Cloud Build artifact glob compatibility",
+);
+
 for (const workflow of workflowFiles) {
   const configs = workflowConfigs.get(workflow) ?? [];
   const workflowText = fs.readFileSync(path.join(ROOT, workflow), "utf8");

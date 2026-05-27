@@ -135,6 +135,7 @@ impl<'a> DeclarationEmitter<'a> {
                                 self.indent_level + 1,
                                 false,
                                 false,
+                                None,
                             );
                     }
                 }
@@ -158,6 +159,7 @@ impl<'a> DeclarationEmitter<'a> {
                 self.indent_level + 1,
                 getter_names.contains(&name_text),
                 setter_names.contains(&name_text),
+                None,
             ) else {
                 continue;
             };
