@@ -84,7 +84,9 @@ impl<'a> CheckerState<'a> {
                 && param.rest
             {
                 let rest_array_type = self.evaluate_type_with_env(param.type_id);
-                let is_assignable = self.is_assignable_to_with_env(inner_type, rest_array_type);
+                let is_assignable = self
+                    .assign_relation_outcome_with_env(inner_type, rest_array_type)
+                    .related;
                 if is_assignable {
                     continue;
                 }
@@ -203,7 +205,9 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            let is_assignable = self.is_assignable_to_with_env(actual, expected)
+            let is_assignable = self
+                .assign_relation_outcome_with_env(actual, expected)
+                .related
                 || self.is_assignable_via_contextual_signatures(actual, expected);
 
             if !is_assignable {
