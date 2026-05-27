@@ -697,6 +697,7 @@ impl PerfCounters {
     fn dump_slow_check_timings(snap: &PerfCounterSnapshot) -> String {
         if snap.slow_check_file_timings.is_empty()
             && snap.slow_check_statement_timings.is_empty()
+            && snap.slow_type_alias_check_timings.is_empty()
         {
             return String::new();
         }
@@ -717,6 +718,15 @@ impl PerfCounters {
                 out.push_str(&format!(
                     "  {:>8.2} ms  kind={:>4}  span={:>8}..{:<8}  {}\n",
                     row.elapsed_ms, row.kind, row.pos, row.end, row.file
+                ));
+            }
+        }
+        if !snap.slow_type_alias_check_timings.is_empty() {
+            out.push_str("\nSlowest type alias check phases:\n");
+            for row in snap.slow_type_alias_check_timings.iter().take(10) {
+                out.push_str(&format!(
+                    "  {:>8.2} ms  phase={:<24} span={:>8}..{:<8}  {}  {}\n",
+                    row.elapsed_ms, row.phase, row.pos, row.end, row.name, row.file
                 ));
             }
         }

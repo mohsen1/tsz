@@ -91,8 +91,6 @@ impl<'a> Printer<'a> {
         if let Some(names) = self.file_level_class_temp_reservations.get_mut(&class_idx)
             && let Some(name) = names.pop_front()
         {
-            self.hoisted_file_level_class_temps
-                .retain(|temp| temp != &name);
             return name;
         }
 
