@@ -140,6 +140,12 @@ assert.match(
   "bench gate should distinguish obsolete active runs from duplicate current-target runs",
 );
 
+assert.match(
+  workflow,
+  /bench-target-fresh:[\s\S]+needs: bench-prep-artifact[\s\S]+target_sha="\$\{\{ env\.BENCH_TARGET_SHA \}\}"[\s\S]+main_sha="\$\(gh api "repos\/\$\{\{ github\.repository \}\}\/git\/ref\/heads\/main" --jq '\.object\.sha' 2>\/dev\/null \|\| true\)"[\s\S]+Benchmark target \$\{target_sha\} became stale after prep; current main is \$\{main_sha\}\. Skipping shard fanout\.[\s\S]+echo "should_run=\$\{should_run\}" >> "\$GITHUB_OUTPUT"[\s\S]+bench:[\s\S]+needs: \[bench-prep-artifact, bench-target-fresh\][\s\S]+needs\.bench-target-fresh\.outputs\.should_run == 'true'/,
+  "bench shards should re-check target freshness after prep so obsolete runs cannot fan out while a current-main run is active",
+);
+
 const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";
 assert.match(
   benchJob,
