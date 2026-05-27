@@ -1060,15 +1060,40 @@ impl<'a> CheckerContext<'a> {
     /// let params = vec![TypeParamInfo { name: "T", ... }];
     /// ctx.insert_def_type_params(def_id, params);
     /// ```
-    pub fn insert_def_type_params(&self, def_id: DefId, params: Vec<tsz_solver::TypeParamInfo>) {
-        if !params.is_empty() {
-            // Sync type params into the DefinitionStore so the TypeFormatter
-            // can display generic types with their type parameter names
-            // (e.g., `MyClass<T>` instead of just `MyClass`).
-            self.definition_store
-                .set_type_params(def_id, params.clone());
-            self.def_type_params.borrow_mut().insert(def_id, params);
+    pub fn insert_def_type_params(
+        &self,
+        def_id: DefId,
+        mut params: Vec<tsz_solver::TypeParamInfo>,
+    ) {
+        if params.is_empty() {
+            return;
         }
+
+        let existing = self
+            .def_type_params
+            .borrow()
+            .get(&def_id)
+            .cloned()
+            .or_else(|| self.definition_store.get_type_params(def_id));
+        if let Some(existing) = existing
+            && existing.len() == params.len()
+        {
+            for (param, existing_param) in params.iter_mut().zip(existing) {
+                if param.constraint.is_none() {
+                    param.constraint = existing_param.constraint;
+                }
+                if param.default.is_none() {
+                    param.default = existing_param.default;
+                }
+            }
+        }
+
+        // Sync type params into the DefinitionStore so the TypeFormatter
+        // can display generic types with their type parameter names
+        // (e.g., `MyClass<T>` instead of just `MyClass`).
+        self.definition_store
+            .set_type_params(def_id, params.clone());
+        self.def_type_params.borrow_mut().insert(def_id, params);
     }
 
     /// Get type parameters for a `DefId`.
