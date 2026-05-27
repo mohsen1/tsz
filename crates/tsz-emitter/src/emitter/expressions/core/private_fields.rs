@@ -588,6 +588,61 @@ impl<'a> Printer<'a> {
         true
     }
 
+    pub(in crate::emitter) fn emit_optional_private_field_call_expression(
+        &mut self,
+        callee: NodeIndex,
+        args: &Option<NodeList>,
+    ) -> bool {
+        let Some(access) = self.try_extract_private_field_access(callee) else {
+            return false;
+        };
+
+        let receiver_temp = if self.private_call_receiver_is_simple(access.expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+        let receiver_temp = receiver_temp.as_deref();
+        let func_temp = self.make_unique_name_hoisted_value();
+
+        self.write("(");
+        self.write(&func_temp);
+        self.write(" = ");
+        self.write_helper("__classPrivateFieldGet");
+        self.write("(");
+        if let Some(temp) = receiver_temp {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit_private_receiver(access.expression, &access.clean_name);
+            self.write(")");
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        self.write(", ");
+        self.emit_private_state_var(&access.weakmap_name, &access.clean_name);
+        self.emit_private_field_get_close(&access.clean_name);
+        self.write(")");
+        self.write(" === null || ");
+        self.write(&func_temp);
+        self.write(" === void 0 ? void 0 : ");
+        self.write(&func_temp);
+        self.write(".call(");
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        if let Some(args) = args
+            && !args.nodes.is_empty()
+        {
+            self.write(", ");
+            self.emit_comma_separated(&args.nodes);
+        }
+        self.write(")");
+        true
+    }
+
     pub(in crate::emitter) fn emit_binary_expression(&mut self, node: &Node) {
         let Some(binary) = self.arena.get_binary_expr(node) else {
             return;
