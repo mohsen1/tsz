@@ -374,6 +374,80 @@ fn assignability_cache_no_unchecked_indexed_access_matches_uncached_policy() {
 }
 
 #[test]
+fn assignability_cache_exact_optional_property_types_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let property = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::new(property, TypeId::UNDEFINED)]);
+    let target = interner.object(vec![PropertyInfo::opt(property, TypeId::NUMBER)]);
+
+    let loose_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let exact_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+    );
+    let loose_key =
+        RelationCacheKey::for_assignability(source, target, loose_policy.cache_config());
+    let exact_key =
+        RelationCacheKey::for_assignability(source, target, exact_policy.cache_config());
+
+    assert_ne!(
+        loose_key, exact_key,
+        "exact optional property policy must partition assignability cache entries",
+    );
+
+    let loose_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        loose_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let exact_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        exact_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        loose_uncached,
+        "without exactOptionalPropertyTypes, a present undefined value should satisfy an optional property",
+    );
+    assert!(
+        !exact_uncached,
+        "with exactOptionalPropertyTypes, a present undefined value must not satisfy an optional number property",
+    );
+
+    let loose_cached = db.is_assignable_to_with_policy(source, target, loose_policy);
+    let exact_cached = db.is_assignable_to_with_policy(source, target, exact_policy);
+
+    assert_eq!(
+        loose_cached, loose_uncached,
+        "cached loose optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        exact_cached, exact_uncached,
+        "cached exact optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        Some(loose_cached),
+        "loose optional-property policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(exact_key),
+        Some(exact_cached),
+        "exact optional-property policy result must use its own cache slot",
+    );
+}
+
+#[test]
 fn subtype_cache_allow_void_return_matches_uncached_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
