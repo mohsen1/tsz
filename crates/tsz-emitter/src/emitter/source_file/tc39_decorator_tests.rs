@@ -1509,7 +1509,8 @@ class D {
     );
 
     assert!(
-        output.contains(
+        output.contains("__runInitializers(this, _instanceExtraInitializers);")
+            && output.contains(
             "Object.defineProperty(C.prototype, (_get_method1_decorators = [dec(11)], _set_method1_decorators = [dec(12)], _get_member_decorators = [dec(21)], _set_member_decorators = [dec(22)], _get_member_decorators_1 = [dec(31)], _b = __propKey(method3)), {"
         )
             && output.contains(

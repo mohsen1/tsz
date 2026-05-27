@@ -1098,6 +1098,20 @@ impl<'a> ES5ClassTransformer<'a> {
         )));
     }
 
+    pub(super) fn emit_tc39_instance_extra_initializers_if_unconsumed_ir(
+        &self,
+        body: &mut Vec<IRNode>,
+        use_this: bool,
+    ) {
+        if !self.tc39_instance_initializers_needed() || self.tc39_has_instance_decorated_fields() {
+            return;
+        }
+        let receiver_text = if use_this { "_this" } else { "this" };
+        body.push(IRNode::expr_stmt(IRNode::Raw(
+            format!("__runInitializers({receiver_text}, _instanceExtraInitializers)").into(),
+        )));
+    }
+
     fn accessor_metadata_strings(
         &self,
         members: &[NodeIndex],

@@ -148,7 +148,10 @@ impl<'a> ES5ClassTransformer<'a> {
             let moved_initializers_contain_new_target =
                 self.moved_instance_initializers_contain_new_target(&instance_props);
             if self.has_extends && !self.extends_null {
-                if instance_props.is_empty() && !has_private_fields {
+                if instance_props.is_empty()
+                    && !has_private_fields
+                    && !self.tc39_instance_initializers_needed()
+                {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
                     ctor_body.push(IRNode::ret(Some(IRNode::logical_or(
                         IRNode::logical_and(
@@ -199,6 +202,10 @@ impl<'a> ES5ClassTransformer<'a> {
                             ctor_body.push(ir);
                         }
                     }
+                    self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(
+                        &mut ctor_body,
+                        true,
+                    );
                     self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, true);
 
                     // return _this;
@@ -232,6 +239,7 @@ impl<'a> ES5ClassTransformer<'a> {
                         ctor_body.push(ir);
                     }
                 }
+                self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(&mut ctor_body, false);
                 self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, false);
             }
         }
