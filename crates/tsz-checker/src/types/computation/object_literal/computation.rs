@@ -1449,8 +1449,14 @@ impl<'a> CheckerState<'a> {
                     let mut method_type = self.get_type_of_function_impl(elem_idx, &method_request);
                     let has_concrete_method_context =
                         self.request_has_concrete_contextual_type(&method_request);
-                    if has_concrete_method_context {
-                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                    if method_request.contextual_type.is_some()
+                        && method_request.contextual_type != Some(TypeId::NEVER)
+                    {
+                        let spans = if has_concrete_method_context {
+                            self.function_like_param_spans_for_node(elem_idx)
+                        } else {
+                            self.contextually_typed_param_spans_for_node(elem_idx)
+                        };
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
                             &pre_refresh_snap,
@@ -1718,8 +1724,14 @@ impl<'a> CheckerState<'a> {
                     );
                     let pre_refresh_snap = self.ctx.snapshot_diagnostics();
                     let method_type = self.get_type_of_function_impl(elem_idx, &method_request);
-                    if self.request_has_concrete_contextual_type(&method_request) {
-                        let spans = self.function_like_param_spans_for_node(elem_idx);
+                    if method_request.contextual_type.is_some()
+                        && method_request.contextual_type != Some(TypeId::NEVER)
+                    {
+                        let spans = if self.request_has_concrete_contextual_type(&method_request) {
+                            self.function_like_param_spans_for_node(elem_idx)
+                        } else {
+                            self.contextually_typed_param_spans_for_node(elem_idx)
+                        };
                         self.clear_stale_function_like_implicit_any_diagnostics(
                             &spans,
                             &pre_refresh_snap,
