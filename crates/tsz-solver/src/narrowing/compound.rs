@@ -82,21 +82,27 @@ impl<'a> NarrowingContext<'a> {
             return source_type;
         };
 
-        // Filter union members: keep only non-object types
         let members = self.db.type_list(members);
-        let kept: Vec<TypeId> = members
-            .iter()
-            .filter(|&&member| {
-                let resolved_member = self.resolve_type(member);
-                !self.is_typeof_object(resolved_member)
-            })
-            .copied()
-            .collect();
+        let mut kept = None;
+        for (index, &member) in members.iter().enumerate() {
+            let resolved_member = self.resolve_type(member);
+            if self.is_typeof_object(resolved_member) {
+                if kept.is_none() {
+                    let mut filtered = Vec::with_capacity(members.len().saturating_sub(1));
+                    filtered.extend_from_slice(&members[..index]);
+                    kept = Some(filtered);
+                }
+            } else if let Some(kept) = kept.as_mut() {
+                kept.push(member);
+            }
+        }
+
+        let Some(kept) = kept else {
+            return source_type;
+        };
 
         if kept.is_empty() {
             TypeId::NEVER
-        } else if kept.len() == members.len() {
-            source_type
         } else {
             self.db.union(kept)
         }
@@ -203,16 +209,26 @@ impl<'a> NarrowingContext<'a> {
         // Handle unions: filter out primitive members
         if let Some(members_id) = union_list_id(self.db, resolved) {
             let members = self.db.type_list(members_id);
-            let kept: Vec<TypeId> = members
-                .iter()
-                .filter(|&&member| !self.is_definitely_primitive(member))
-                .copied()
-                .collect();
+            let mut kept = None;
+            for (index, &member) in members.iter().enumerate() {
+                if self.is_definitely_primitive(member) {
+                    if kept.is_none() {
+                        let mut filtered = Vec::with_capacity(members.len().saturating_sub(1));
+                        filtered.extend_from_slice(&members[..index]);
+                        kept = Some(filtered);
+                    }
+                } else if let Some(kept) = kept.as_mut() {
+                    kept.push(member);
+                }
+            }
+
+            let Some(kept) = kept else {
+                return source_type;
+            };
 
             return match kept.len() {
                 0 => TypeId::NEVER,
                 1 => kept[0],
-                n if n == members.len() => source_type, // All members kept
                 _ => self.db.union(kept),
             };
         }
