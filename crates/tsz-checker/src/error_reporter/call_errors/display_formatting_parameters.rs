@@ -438,6 +438,10 @@ impl<'a> CheckerState<'a> {
             return display;
         }
 
+        if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
+            return display;
+        }
+
         if let Some(display) = self.generic_call_parameter_alias_display(param_type, arg_idx)
             && (display.contains("IterableIterator<") || !display.contains("IterableIterator"))
             && (display.contains("Promise<") || !display.contains("Promise"))
@@ -460,10 +464,6 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) = self.instantiated_call_parameter_display(arg_idx) {
             return self.strip_synthetic_optional_from_display_for_arg(display, arg_type);
-        }
-
-        if let Some(display) = self.contextual_keyof_parameter_display(param_type, arg_idx) {
-            return display;
         }
 
         if let Some(display_type) =
