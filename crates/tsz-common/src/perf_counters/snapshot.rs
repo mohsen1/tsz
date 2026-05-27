@@ -1,6 +1,6 @@
 /// Stable schema version for `PerfCounterSnapshot`. Bump when the JSON
 /// shape changes in a way the bench harness must adapt to.
-pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 3;
+pub const PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION: u32 = 4;
 
 /// Frozen value-object view of the counter state. Built by
 /// [`PerfCounters::snapshot`]; serializable to JSON via serde.
@@ -245,6 +245,12 @@ pub struct PerfCounterSnapshot {
     /// elapsed time. It is empty when `TSZ_PERF_COUNTERS` is unset or no file
     /// ran semantic checking.
     pub slow_check_file_timings: Vec<SlowCheckFileTiming>,
+    /// Top top-level statement durations observed inside semantic checking.
+    ///
+    /// This is a bounded list sorted by descending elapsed time. Rows use syntax
+    /// kind and byte offsets rather than source snippets so attribution remains
+    /// structural and cheap.
+    pub slow_check_statement_timings: Vec<SlowCheckStatementTiming>,
 }
 
 /// Per-bucket "is this wired up to its producer?" flag. Lets the bench
@@ -692,6 +698,7 @@ impl PerfCounters {
                 })
                 .collect(),
             slow_check_file_timings: Self::snapshot_slow_check_file_timings(),
+            slow_check_statement_timings: Self::snapshot_slow_check_statement_timings(),
         }
     }
 
@@ -832,6 +839,23 @@ impl PerfCounters {
                 .then_with(|| a.file.cmp(&b.file))
         });
         rows.truncate(SLOW_CHECK_FILE_TIMING_LIMIT);
+        rows
+    }
+
+    fn snapshot_slow_check_statement_timings() -> Vec<SlowCheckStatementTiming> {
+        let mut rows = slow_check_statement_timings()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        rows.sort_by(|a, b| {
+            b.elapsed_ms
+                .total_cmp(&a.elapsed_ms)
+                .then_with(|| a.file.cmp(&b.file))
+                .then_with(|| a.pos.cmp(&b.pos))
+                .then_with(|| a.end.cmp(&b.end))
+                .then_with(|| a.kind.cmp(&b.kind))
+        });
+        rows.truncate(SLOW_CHECK_STATEMENT_TIMING_LIMIT);
         rows
     }
 
