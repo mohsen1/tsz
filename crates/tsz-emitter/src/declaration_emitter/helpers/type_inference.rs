@@ -1797,19 +1797,15 @@ impl<'a> DeclarationEmitter<'a> {
             for (protected_name, param_name) in protected_type_param_names {
                 type_text = type_text.replace(&protected_name, &param_name);
             }
-            if Self::leading_type_reference_name(&type_text)
-                .is_some_and(Self::is_builtin_conditional_utility_type_name)
-                && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
-            {
-                return Some(self.print_type_id_expanded_for_inferred_declaration(type_id));
-            }
-            if explicit_type_args.is_empty()
-                && !has_call_site_type_param_substitutions
-                && std::ptr::eq(source_arena, self.arena)
-                && let Some(type_id) = self.get_node_type_or_names(&[callable.type_annotation])
-                && let Some(surface) = self.inferred_declaration_mapped_constraint_surface(type_id)
-            {
-                return Some(self.print_type_id_for_inferred_declaration(surface));
+            if let Some(surface_text) = self.call_expression_declared_return_surface_text(
+                expr_idx,
+                source_arena,
+                callable.type_annotation,
+                &type_text,
+                &explicit_type_args,
+                has_call_site_type_param_substitutions,
+            ) {
+                return Some(surface_text);
             }
             if let Some(expanded) =
                 self.event_like_correlated_alias_return_text(source_arena, &type_text, call)

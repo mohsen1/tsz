@@ -212,7 +212,7 @@ pub struct ObjectLiteralTracking {
 
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TypeCache {
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,

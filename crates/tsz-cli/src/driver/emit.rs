@@ -40,6 +40,19 @@ struct JsBundleChunk {
     contents: String,
 }
 
+fn type_cache_view(cache: &tsz::checker::TypeCache) -> tsz_emitter::type_cache_view::TypeCacheView {
+    tsz_emitter::type_cache_view::TypeCacheView {
+        node_types: cache.node_types.to_hash_map(),
+        symbol_types: cache.symbol_types.to_hash_map(),
+        def_to_symbol: cache.def_to_symbol.clone(),
+        def_types: cache.def_types.clone(),
+        def_type_params: cache.def_type_params.clone(),
+        boxed_types: cache.boxed_types.clone(),
+        boxed_def_ids: cache.boxed_def_ids.clone(),
+        def_to_name: cache.def_to_name.clone(),
+    }
+}
+
 pub(crate) struct EmitOutputsContext<'a> {
     pub(crate) program: &'a MergedProgram,
     pub(crate) options: &'a ResolvedCompilerOptions,
@@ -548,17 +561,7 @@ pub(crate) fn emit_outputs(
 
                 // Create emitter with type information and binder
                 let mut emitter = if let Some(ref cache) = type_cache {
-                    use tsz_emitter::type_cache_view::TypeCacheView;
-                    let cache_view = TypeCacheView {
-                        node_types: cache.node_types.to_hash_map(),
-                        symbol_types: cache.symbol_types.to_hash_map(),
-                        def_to_symbol: cache.def_to_symbol.clone(),
-                        def_types: cache.def_types.clone(),
-                        def_type_params: cache.def_type_params.clone(),
-                        boxed_types: cache.boxed_types.clone(),
-                        boxed_def_ids: cache.boxed_def_ids.clone(),
-                        def_to_name: cache.def_to_name.clone(),
-                    };
+                    let cache_view = type_cache_view(cache);
                     let mut emitter = DeclarationEmitter::with_type_info(
                         &file.arena,
                         cache_view,
@@ -654,20 +657,10 @@ pub(crate) fn emit_outputs(
                     use tsz::declaration_emitter::usage_analyzer::{
                         UsageAnalyzer, UsageAnalyzerSourceFlags,
                     };
-                    use tsz_emitter::type_cache_view::TypeCacheView;
 
                     // Empty import_name_map for this usage (not needed for auto-import calculation)
                     let import_name_map = FxHashMap::default();
-                    let cache_view = TypeCacheView {
-                        node_types: cache.node_types.to_hash_map(),
-                        symbol_types: cache.symbol_types.to_hash_map(),
-                        def_to_symbol: cache.def_to_symbol.clone(),
-                        def_types: cache.def_types.clone(),
-                        def_type_params: cache.def_type_params.clone(),
-                        boxed_types: cache.boxed_types.clone(),
-                        boxed_def_ids: cache.boxed_def_ids.clone(),
-                        def_to_name: cache.def_to_name.clone(),
-                    };
+                    let cache_view = type_cache_view(cache);
 
                     let mut analyzer = UsageAnalyzer::new(
                         &file.arena,
