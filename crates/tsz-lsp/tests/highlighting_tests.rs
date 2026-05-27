@@ -1850,3 +1850,39 @@ fn test_highlight_static_method() {
         assert!(hl.len() >= 2);
     }
 }
+
+/// Regression test: `walk_to_node` and `walk_for_scope` must not stack-overflow
+/// on deeply-nested class hierarchies (e.g. long inherited-property chains).
+///
+/// Before the fix both recursive walkers lacked `stacker::maybe_grow` guards,
+/// so an AST whose depth exceeded the default stack size would SIGABRT
+/// (as seen in the fourslash `documentHighlightAtInheritedProperties6` test).
+#[test]
+fn test_highlight_deep_inheritance_no_stack_overflow() {
+    // Build a chain: A0 extends A1, A1 extends A2, ... A{N-1} extends A{N}
+    // Each class has a shared method `run()` to give `collect_member_access_reference_nodes`
+    // something to walk back to root for.  N=60 produces a genuinely deep AST.
+    let n = 60usize;
+    let mut source = String::new();
+    // Base class
+    source.push_str(&format!("class A{n} {{ run(): void {{}} }}\n"));
+    for i in (0..n).rev() {
+        source.push_str(&format!("class A{i} extends A{} {{ }}\n", i + 1));
+    }
+    // Instantiate each and call the inherited method so there are many
+    // property-access expressions for `collect_member_access_reference_nodes`.
+    for i in 0..=n {
+        source.push_str(&format!("const o{i} = new A{i}();\no{i}.run();\n"));
+    }
+
+    let (parser, root) = parse_test_source(&source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(&source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, &source);
+
+    // Highlight `run` in the base class declaration (line 0, col ~12).
+    // The exact column doesn't matter — the test just must not panic/SIGABRT.
+    let _ = provider.get_document_highlights(root, Position::new(0, 12));
+}
