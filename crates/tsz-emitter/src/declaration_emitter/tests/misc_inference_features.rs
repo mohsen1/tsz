@@ -217,23 +217,23 @@ const stringOrBooleanOrNumber = stringOrBoolean || number;
 "#,
     );
 
-    // When the left operand of `||` is an always-truthy literal type (non-empty string),
-    // tsc gives just the left type — the right operand is unreachable.
     assert!(
-        output.contains("declare const stringOrNumber: \"string\";"),
-        "Expected `||` over definitely-truthy literal consts to keep the reachable left arm: {output}"
+        output.contains("declare const stringOrNumber: \"string\" | \"number\";"),
+        "Expected `||` over literal-typed identifiers to preserve the source union: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBoolean: \"string\";"),
-        "Expected `||` to drop the unreachable right arm for a definitely-truthy left literal: {output}"
+        output.contains("declare const stringOrBoolean: \"string\" | \"boolean\";"),
+        "Expected `||` over literal-typed identifiers to include the right operand: {output}"
     );
     assert!(
-        output.contains("declare const booleanOrNumber: \"number\";"),
-        "Expected `||` to keep the reachable left operand when it is definitely truthy: {output}"
+        output.contains("declare const booleanOrNumber: \"number\" | \"boolean\";"),
+        "Expected `||` over literal-typed identifiers to preserve numeric and boolean arms: {output}"
     );
     assert!(
-        output.contains("declare const stringOrBooleanOrNumber: \"string\";"),
-        "Expected chained `||` to keep pruning unreachable right operands: {output}"
+        output.contains(
+            "declare const stringOrBooleanOrNumber: \"string\" | \"number\" | \"boolean\";"
+        ),
+        "Expected chained `||` over literal-typed identifiers to preserve all source arms: {output}"
     );
 }
 
