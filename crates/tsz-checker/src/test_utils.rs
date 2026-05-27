@@ -1543,18 +1543,17 @@ class C {}
         let source = format!(
             "declare namespace NS {{\n\
                  type Unit = \"x\" | \"y\";\n\
-                 type Plural<{P} extends Unit> = {P} | {{ x: \"xs\"; y: \"ys\" }}[{P}];\n\
-                 interface RoundOpts<{P} extends Unit> {{\n\
-                     small?: Plural<{P}> | undefined;\n\
+                 type Plural<{param_name} extends Unit> = {param_name} | {{ x: \"xs\"; y: \"ys\" }}[{param_name}];\n\
+                 interface RoundOpts<{param_name} extends Unit> {{\n\
+                     small?: Plural<{param_name}> | undefined;\n\
                      mode?: \"a\" | \"b\" | undefined;\n\
                  }}\n\
-                 interface RoundOptsLargest<{P} extends Unit> extends RoundOpts<{P}> {{\n\
-                     large?: \"auto\" | Plural<{P}> | undefined;\n\
+                 interface RoundOptsLargest<{param_name} extends Unit> extends RoundOpts<{param_name}> {{\n\
+                     large?: \"auto\" | Plural<{param_name}> | undefined;\n\
                  }}\n\
                  interface RelativeOpts {{ relative?: string | undefined; }}\n\
                  interface DurationOpts extends RelativeOpts, RoundOptsLargest<Unit> {{}}\n\
-             }}\n",
-            P = param_name
+             }}\n"
         );
         vec![Arc::new(LibFile::from_source(
             "lib.es2099.synthetic.d.ts".to_string(),
