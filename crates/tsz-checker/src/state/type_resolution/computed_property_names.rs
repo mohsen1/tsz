@@ -249,6 +249,15 @@ impl<'a> CheckerState<'a> {
         {
             return Some(name);
         }
+        if let Some(literal_type) = self.const_object_member_literal_type_query(computed.expression)
+            && let Some(name) =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    literal_type,
+                )
+        {
+            return Some(self.ctx.types.resolve_atom_ref(name).to_string());
+        }
         let prev = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
         let prev_preserve = self.ctx.preserve_literal_types;

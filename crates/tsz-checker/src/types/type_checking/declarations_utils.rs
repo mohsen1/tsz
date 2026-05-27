@@ -407,6 +407,14 @@ impl<'a> CheckerState<'a> {
         if base_ident.escaped_text != "Symbol" {
             return None;
         }
+        if !self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol") {
+            let literal_type = self.const_object_member_literal_type_query(expr_idx)?;
+            let name = crate::query_boundaries::type_computation::access::literal_property_name(
+                self.ctx.types,
+                literal_type,
+            )?;
+            return Some(self.ctx.types.resolve_atom_ref(name).to_string());
+        }
 
         let name_node = self.ctx.arena.get(access.name_or_argument)?;
         if let Some(ident) = self.ctx.arena.get_identifier(name_node) {

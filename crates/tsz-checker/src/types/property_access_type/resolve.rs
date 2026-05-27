@@ -149,10 +149,6 @@ impl<'a> CheckerState<'a> {
         if self.ctx.checking_computed_property_name.is_some()
             && let Some(base_ident) = self.ctx.arena.get_identifier_at(access.expression)
             && base_ident.escaped_text == "Symbol"
-            && self
-                .local_current_file_value_symbol_named("Symbol")
-                .is_none()
-            && self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol")
             && let Some(prop_ident) = self.ctx.arena.get_identifier(name_node)
         {
             let symbol_value_type = self.type_of_value_symbol_by_name("Symbol");
