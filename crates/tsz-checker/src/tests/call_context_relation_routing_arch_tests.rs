@@ -123,3 +123,31 @@ fn contextual_generic_call_retry_uses_env_relation_outcome_boundary() {
         );
     }
 }
+
+#[test]
+fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call/inner.rs")
+        .expect("failed to read call inner source");
+    let start = source
+        .find("let contextual_params_fit_args =")
+        .expect("missing contextual return substitution fit block");
+    let end = source[start..]
+        .find("drop(generic_inference_arg_types);")
+        .map(|offset| start + offset)
+        .expect("missing contextual return substitution end marker");
+    let helper = &source[start..end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        3,
+        "contextual return substitution should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.matches(".related").count() >= 3,
+        "contextual return substitution should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("is_assignable_to_with_env("),
+        "contextual return substitution should not regress to raw env boolean assignability"
+    );
+}
