@@ -11,7 +11,9 @@
 //! consulted by the diagnostic printer. These tests lock the contract via the
 //! highest-fidelity public surface available: full source → diagnostic text.
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{
+    DiagnosticShape, assert_diagnostic_shape, check_source_diagnostics, diagnostic_line_column,
+};
 
 /// TS2859 ("Excessive complexity comparing types") must reference the
 /// as-written alias name (`T1 | null`) rather than the flattened union body.
@@ -50,6 +52,87 @@ function f2(x: T1 | null, y: T1 & T2) {
         "Target half must not leak T1's expanded body. Got: {}",
         ts2859.message_text
     );
+}
+
+/// A prior relation against `T1` must not leak an overflow diagnostic or target
+/// display into the later `T1 | null` assignment.
+#[test]
+fn ts2859_full_fixture_reports_target_union_site() {
+    let source = r#"// @strict: true
+
+type Digits = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7';
+type T1 = `${Digits}${Digits}${Digits}${Digits}` | undefined;
+type T2 = { a: string } | { b: number };
+
+function f1(x: T1, y: T1 & T2) {
+    x = y;
+}
+
+function f2(x: T1 | null, y: T1 & T2) {
+    x = y;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shape(
+        source,
+        &diags,
+        &DiagnosticShape::code(2859).at(12, 5).with_message_fragment(
+            "Excessive complexity comparing types 'T1 & T2' and 'T1 | null'.",
+        ),
+    );
+
+    for diag in diags.iter().filter(|diag| diag.code == 2859) {
+        assert_eq!(
+            diagnostic_line_column(source, diag),
+            (12, 5),
+            "TS2859 must not be reported at the earlier T1 assignment: {diags:?}"
+        );
+        assert!(
+            !diag.message_text.contains("'T1'."),
+            "TS2859 target must not collapse to the T1 constituent: {diags:?}"
+        );
+    }
+}
+
+/// The same constituent-intersection rule must hold under unrelated alias and
+/// property names: `S & U` is assignable to `S`, so the first assignment must
+/// not consume the relation-complexity diagnostic that belongs to `S | null`.
+#[test]
+fn ts2859_constituent_intersection_rule_survives_renamed_aliases() {
+    let source = r#"// @strict: true
+
+type OctalDigit = '0' | '1' | '2' | '3' | '4' | '5' | '6' | '7';
+type Serial = `${OctalDigit}${OctalDigit}${OctalDigit}${OctalDigit}` | undefined;
+type Variant = { left: string } | { right: number };
+
+function first(slot: Serial, value: Serial & Variant) {
+    slot = value;
+}
+
+function second(slot: Serial | null, value: Serial & Variant) {
+    slot = value;
+}
+"#;
+    let diags = check_source_diagnostics(source);
+    assert_diagnostic_shape(
+        source,
+        &diags,
+        &DiagnosticShape::code(2859).at(12, 5).with_message_fragment(
+            "Excessive complexity comparing types 'Serial & Variant' and 'Serial | null'.",
+        ),
+    );
+
+    for diag in diags.iter().filter(|diag| diag.code == 2859) {
+        assert_eq!(
+            diagnostic_line_column(source, diag),
+            (12, 5),
+            "TS2859 must not be reported at the earlier constituent assignment: {diags:?}"
+        );
+        assert!(
+            !diag.message_text.contains("'Serial'."),
+            "TS2859 target must not collapse to the Serial constituent: {diags:?}"
+        );
+    }
 }
 
 /// Source-written string literal unions do not always display in declaration
