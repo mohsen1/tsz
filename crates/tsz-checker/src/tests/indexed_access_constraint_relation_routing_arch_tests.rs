@@ -26,3 +26,29 @@ fn indexed_access_constraint_uses_relation_outcome_boundary() {
         "the keyed-object to object-keys relation should route through RelationOutcome"
     );
 }
+
+#[test]
+fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
+    let source_path =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/types/computation/access_helpers.rs");
+    let source = fs::read_to_string(&source_path).expect("read access helper source");
+
+    let function_start = source
+        .find("pub(crate) fn narrow_string_index_signature_rejects_index")
+        .expect("find narrow string index helper");
+    let rest = &source[function_start..];
+    let function_end = rest
+        .find("\n    pub(crate) fn is_generic_key_space")
+        .expect("find next helper");
+    let function = &rest[..function_end];
+
+    assert!(
+        !function.contains("diagnostic_relation_boolean_guard"),
+        "indexed-access key-space diagnostics must use the shared relation outcome boundary"
+    );
+    assert_eq!(
+        function.matches("assign_relation_outcome").count(),
+        3,
+        "string-index, constrained-keyof, and union-member key-space checks should route through RelationOutcome"
+    );
+}
