@@ -125,7 +125,7 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
-                self.function_expression_type_text_from_ast(node_id)
+                self.function_expression_type_text_from_ast_at(node_id, depth + 1)
             }
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.preferred_expression_type_text(node_id)
@@ -663,7 +663,7 @@ impl<'a> DeclarationEmitter<'a> {
         found
     }
 
-    fn function_expression_return_type_text(
+    pub(in crate::declaration_emitter) fn function_expression_return_type_text(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
         depth: u32,
