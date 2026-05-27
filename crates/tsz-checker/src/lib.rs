@@ -742,6 +742,9 @@ mod nullish_target_relation_routing_arch_tests;
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
+#[path = "tests/object_literal_relation_architecture_tests.rs"]
+mod object_literal_relation_architecture_tests;
+#[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;
 #[cfg(test)]
