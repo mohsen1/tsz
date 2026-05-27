@@ -1529,6 +1529,45 @@ pub fn record_slow_check_statement_timing(
     rows.truncate(SLOW_CHECK_STATEMENT_TIMING_LIMIT);
 }
 
+/// Record one type-alias checking phase duration in attribution mode.
+///
+/// Callers gate `Instant::now()` behind [`enabled_fast`], so timing-mode runs
+/// do not pay for clock reads. The alias name is an output label only; it must
+/// never drive compiler behavior.
+pub fn record_slow_type_alias_check_timing(
+    file: &str,
+    name: Option<&str>,
+    phase: &'static str,
+    pos: u32,
+    end: u32,
+    elapsed_ns: u64,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let mut rows = slow_type_alias_check_timings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rows.push(SlowTypeAliasCheckTiming {
+        file: file.to_owned(),
+        name: name.unwrap_or("<anonymous>").to_owned(),
+        phase,
+        pos,
+        end,
+        elapsed_ms: elapsed_ns as f64 / 1_000_000.0,
+    });
+    rows.sort_by(|a, b| {
+        b.elapsed_ms
+            .total_cmp(&a.elapsed_ms)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.phase.cmp(b.phase))
+            .then_with(|| a.pos.cmp(&b.pos))
+            .then_with(|| a.end.cmp(&b.end))
+    });
+    rows.truncate(SLOW_TYPE_ALIAS_CHECK_TIMING_LIMIT);
+}
+
 /// Record a raw `SymbolId`-shaped `DefId` redirect inside
 /// `TypeEnvironment::resolve_lazy`.
 ///
