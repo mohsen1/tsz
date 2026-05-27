@@ -45,6 +45,16 @@ impl ParserState {
             if !self.parse_optional(SyntaxKind::CommaToken) {
                 if self.is_js_file() && self.is_token(SyntaxKind::ColonToken) {
                     self.error_comma_expected();
+                    self.next_token();
+                    if !self.is_greater_than_or_compound()
+                        && !self.is_token(SyntaxKind::EndOfFileToken)
+                    {
+                        let recover_start = self.token_pos();
+                        let _ = self.parse_type();
+                        if self.token_pos() == recover_start {
+                            self.next_token();
+                        }
+                    }
                 }
                 break;
             }

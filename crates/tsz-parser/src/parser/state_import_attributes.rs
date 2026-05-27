@@ -221,6 +221,7 @@ impl ParserState {
                 // and following qualifier recover as ordinary statements. Keep
                 // the current token in the stream so the outer parser can emit
                 // those statement tails instead of swallowing the whole object.
+                self.report_invalid_import_attribute_tail_recovery_from_current_invalid_key();
                 self.abort_intersection_continuation = true;
                 self.import_attribute_tail_recovered = true;
                 aborted_on_invalid_key = true;
@@ -317,5 +318,73 @@ impl ParserState {
                 );
             }
         }
+    }
+
+    fn report_invalid_import_attribute_tail_recovery_from_current_invalid_key(&mut self) {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        let last_error_pos = self.last_error_pos;
+        let scanner_diagnostics_high_water_mark = self.scanner_diagnostics_high_water_mark;
+
+        let mut nested_brace_depth = 0u32;
+        loop {
+            if self.is_token(SyntaxKind::EndOfFileToken) {
+                break;
+            }
+
+            match self.token() {
+                SyntaxKind::OpenBraceToken => {
+                    nested_brace_depth = nested_brace_depth.saturating_add(1);
+                }
+                SyntaxKind::CloseBraceToken => {
+                    nested_brace_depth = nested_brace_depth.saturating_sub(1);
+                }
+                SyntaxKind::CloseParenToken if nested_brace_depth == 0 => {
+                    self.parse_error_at_current_token(
+                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+                }
+                SyntaxKind::DotToken if nested_brace_depth == 0 => {
+                    let dot_start = self.token_pos();
+                    let dot_len = self.token_end().saturating_sub(dot_start);
+                    self.parse_error_at(
+                        dot_start,
+                        dot_len,
+                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
+                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                    );
+
+                    self.next_token();
+                    if self.is_identifier_or_keyword() {
+                        let ident_snapshot = self.scanner.save_state();
+                        let ident_token = self.current_token;
+                        let ident_start = self.token_pos();
+                        let ident_len = self.token_end().saturating_sub(ident_start);
+                        self.next_token();
+                        let next_has_line_break = self.scanner.has_preceding_line_break();
+                        self.scanner.restore_state(ident_snapshot);
+                        self.current_token = ident_token;
+                        if !next_has_line_break {
+                            self.parse_error_at(
+                                ident_start,
+                                ident_len,
+                                diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                                diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+                            );
+                        }
+                    }
+                    break;
+                }
+                _ => {}
+            }
+
+            self.next_token();
+        }
+
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        self.last_error_pos = last_error_pos;
+        self.scanner_diagnostics_high_water_mark = scanner_diagnostics_high_water_mark;
     }
 }

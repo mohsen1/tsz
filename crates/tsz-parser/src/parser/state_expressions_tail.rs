@@ -744,7 +744,19 @@ impl ParserState {
         // Capture end position BEFORE consuming the token
         let end_pos = self.token_end();
         if self.is_token(SyntaxKind::Unknown) {
+            let unknown_start = self.token_pos();
+            let unknown_len = self.token_end().saturating_sub(unknown_start);
+            let starts_braced_unicode_escape =
+                self.current_unknown_starts_braced_unicode_escape_debris();
             self.scanner.re_scan_unknown_token_as_identifier_name();
+            if starts_braced_unicode_escape || self.is_identifier_or_keyword() {
+                self.parse_error_at(
+                    unknown_start,
+                    unknown_len,
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+            }
         }
         let (atom, text, original_text) = if self.is_identifier_or_keyword() {
             // OPTIMIZATION: Capture atom for O(1) comparison
@@ -763,6 +775,17 @@ impl ParserState {
             } else {
                 self.scanner.get_token_value_ref().to_string()
             };
+            if !self.language_version.supports_es2015()
+                && let Some((offset, ch)) =
+                    text.char_indices().find(|(_, ch)| (*ch as u32) > 0xFFFF)
+            {
+                self.parse_error_at(
+                    start_pos.saturating_add(offset as u32),
+                    ch.len_utf8() as u32,
+                    tsz_common::diagnostics::diagnostic_messages::INVALID_CHARACTER,
+                    diagnostic_codes::INVALID_CHARACTER,
+                );
+            }
             // Preserve unicode escape sequences for emission parity with tsc
             let original_text = if has_unicode_escape {
                 let src = self.scanner.source_text();
