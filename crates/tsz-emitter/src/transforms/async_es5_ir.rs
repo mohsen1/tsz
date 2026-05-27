@@ -2963,12 +2963,150 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                self.process_with_statement_in_async(idx, cases, current_statements, current_label);
+            }
+
             _ => {
                 // Pass through other statements as-is
                 let ir = self.statement_to_ir(idx);
                 current_statements.push(ir);
             }
         }
+    }
+
+    fn process_with_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(with_data) = self.arena.get_with_statement(node) else {
+            return;
+        };
+
+        let expression_has_await = self.contains_await_recursive(with_data.expression);
+        let body_has_await = self.contains_await_recursive(with_data.then_statement);
+        if !expression_has_await && !body_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: temp.clone().into(),
+            initializer: None,
+        });
+
+        if expression_has_await {
+            self.emit_nested_suspension(
+                with_data.expression,
+                cases,
+                current_statements,
+                current_label,
+            );
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                IRNode::GeneratorSent,
+            ))));
+        } else {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                self.expression_to_ir(with_data.expression),
+            ))));
+        }
+
+        let body_label = self.state.next_label();
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(body_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = body_label;
+
+        let mut nested_cases = Vec::new();
+        let mut nested_current = Vec::new();
+        let mut nested_label = *current_label;
+        self.process_block_or_statement_in_async(
+            with_data.then_statement,
+            &mut nested_cases,
+            &mut nested_current,
+            &mut nested_label,
+        );
+
+        for mut case in nested_cases {
+            cases.push(IRGeneratorCase {
+                label: case.label,
+                statements: Self::wrap_statements_in_with(
+                    &temp,
+                    std::mem::take(&mut case.statements),
+                ),
+            });
+        }
+
+        *current_label = nested_label;
+        if nested_current.is_empty() {
+            return;
+        }
+        current_statements.extend(Self::wrap_statements_in_with(&temp, nested_current));
+        let end_label = self.state.next_label();
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(end_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = end_label;
+    }
+
+    fn wrap_statements_in_with(temp: &str, mut statements: Vec<IRNode>) -> Vec<IRNode> {
+        let leading_var_count = statements
+            .iter()
+            .take_while(|statement| matches!(statement, IRNode::VarDecl { .. }))
+            .count();
+        let mut leading_vars = statements.drain(..leading_var_count).collect::<Vec<_>>();
+        let trailing_label_assignment = statements
+            .last()
+            .is_some_and(Self::is_generator_label_assignment)
+            .then(|| statements.pop().expect("checked last statement"));
+
+        let mut wrapped = Vec::new();
+        wrapped.append(&mut leading_vars);
+        if !statements.is_empty() {
+            wrapped.push(IRNode::WithStatement {
+                expression: Box::new(IRNode::id(temp.to_string())),
+                body: Box::new(IRNode::Block(statements)),
+            });
+        }
+        if let Some(label_assignment) = trailing_label_assignment {
+            wrapped.push(label_assignment);
+        }
+        wrapped
+    }
+
+    fn is_generator_label_assignment(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ExpressionStatement(expr)
+                if matches!(
+                    expr.as_ref(),
+                    IRNode::BinaryExpr {
+                        left,
+                        operator,
+                        ..
+                    } if matches!(left.as_ref(), IRNode::GeneratorLabel)
+                        && operator.as_ref() == "="
+                )
+        )
     }
 
     fn process_expression_in_async(

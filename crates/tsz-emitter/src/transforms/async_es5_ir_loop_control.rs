@@ -607,5 +607,8 @@ impl<'a> AsyncES5Transformer<'a> {
                 Self::patch_if_break_target_in_node(else_branch, placeholder_label, target_label);
             }
         }
+        if let IRNode::WithStatement { body, .. } = node {
+            Self::patch_if_break_target_in_node(body, placeholder_label, target_label);
+        }
     }
 }

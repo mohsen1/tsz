@@ -123,3 +123,71 @@ fn async_do_while_awaited_condition_uses_positive_sent_backedge() {
         "A labeled break in a do-while body should jump to the loop exit while preserving the condition case shape.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_conditional_true_await_reserves_false_label_after_resume() {
+    let output = emit_es5(
+        "declare var x, y, z, a: any;
+        async function f() {
+            a = x ? await y : z;
+        }",
+    );
+
+    assert!(
+        output.contains("if (!x) return [3 /*break*/, 2];\n                    return [4 /*yield*/, y];\n                case 1:\n                    _a = _b.sent();\n                    return [3 /*break*/, 3];\n                case 2:\n                    _a = z;\n                    _b.label = 3;\n                case 3:\n                    a = _a;"),
+        "A true-branch await in a conditional assignment should branch around the yield resume case before assigning the final target.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_conditional_false_await_reserves_end_label_after_resume() {
+    let output = emit_es5(
+        "declare var x, y, z, a: any;
+        async function f() {
+            a = x ? y : await z;
+        }",
+    );
+
+    assert!(
+        output.contains("if (!x) return [3 /*break*/, 1];\n                    _a = y;\n                    return [3 /*break*/, 3];\n                case 1: return [4 /*yield*/, z];\n                case 2:\n                    _a = _b.sent();\n                    _b.label = 3;\n                case 3:\n                    a = _a;"),
+        "A false-branch await in a conditional assignment should keep the non-await branch's end jump after the yield resume case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_with_statement_captures_awaited_expression_before_body_case() {
+    let output = emit_es5(
+        "declare var x, y: any;
+        async function f() {
+            with (await x) {
+                y;
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("case 0: return [4 /*yield*/, x];\n                case 1:\n                    _a = _b.sent();\n                    _b.label = 2;\n                case 2:\n                    with (_a) {\n                        y;\n                    }\n                    _b.label = 3;\n                case 3: return [2 /*return*/];"),
+        "Awaited with expressions should be captured before entering a dedicated with-body case.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_with_statement_wraps_suspended_body_segments() {
+    let output = emit_es5(
+        "declare var x, y, z, a, b: any;
+        async function f() {
+            with (x) {
+                with (z) {
+                    a;
+                    await y;
+                    b;
+                }
+            }
+        }",
+    );
+
+    assert!(
+        output.contains("case 1:\n                    with (_a) {\n                        _b = z;\n                    }\n                    _c.label = 2;\n                case 2:\n                    with (_a) {\n                        with (_b) {\n                            a;\n                            return [4 /*yield*/, y];\n                        }\n                    }\n                case 3:\n                    with (_a) {\n                        with (_b) {\n                            _c.sent();\n                            b;\n                        }\n                    }\n                    _c.label = 4;"),
+        "Suspended with bodies should wrap both the yield segment and resume segment in the captured with scopes.\nOutput:\n{output}"
+    );
+}

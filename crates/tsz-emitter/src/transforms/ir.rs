@@ -531,6 +531,12 @@ pub enum IRNode {
     /// Sequence of statements/nodes
     Sequence(Vec<Self>),
 
+    /// `with (expression) { ... }`
+    WithStatement {
+        expression: Box<Self>,
+        body: Box<Self>,
+    },
+
     /// Reference to an original AST node (for passthrough)
     ASTRef(NodeIndex),
 
@@ -1182,6 +1188,9 @@ impl IRNode {
                 namespace.as_ref() == name
                     || export_name.as_ref() == name
                     || value.contains_identifier(name)
+            }
+            Self::WithStatement { expression, body } => {
+                expression.contains_identifier(name) || body.contains_identifier(name)
             }
             Self::NumericLiteral(_)
             | Self::StringLiteral(_)

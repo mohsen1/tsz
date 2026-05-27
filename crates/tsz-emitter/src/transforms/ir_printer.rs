@@ -1586,6 +1586,12 @@ impl<'a> IRPrinter<'a> {
                     i += 1;
                 }
             }
+            IRNode::WithStatement { expression, body } => {
+                self.write("with (");
+                self.emit_node(expression);
+                self.write(") ");
+                self.emit_node(body);
+            }
             IRNode::ASTRef(_) => self.emit_ast_ref_node(node),
 
             IRNode::ASTRefWithGeneratorThis {
