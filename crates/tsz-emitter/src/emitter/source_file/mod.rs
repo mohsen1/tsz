@@ -468,6 +468,31 @@ mod tests {
     }
 
     #[test]
+    fn derived_constructor_pre_super_this_reference_materializes_this() {
+        // When a pre-super statement references `this`, `_this` must be materialized
+        // even if super() is the tail statement.
+        let source = "class A {}\nclass B extends A { constructor() { this.x = 1; super(); } }\n";
+
+        let (parser, root) = parse_test_source(source);
+        let options = PrinterOptions {
+            target: ScriptTarget::ES5,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+        let mut printer =
+            EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        let output = printer.get_output().to_string();
+
+        assert!(
+            output.contains("var _this") || output.contains("_this ="),
+            "Pre-super `this` reference requires _this materialization.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
     fn base_constructor_computed_object_temps_stay_in_constructor_scope() {
         let source = "class C { constructor() { this.value = { [this.key]: 1 }; } }\n";
 

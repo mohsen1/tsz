@@ -3653,11 +3653,21 @@ impl<'a> ES5ClassTransformer<'a> {
         block: &tsz_parser::parser::node::BlockData,
         super_stmt_position: usize,
     ) -> bool {
-        if block.statements.nodes.get(super_stmt_position).is_none() {
+        if super_stmt_position == 0 {
             return false;
         }
-
-        super_stmt_position > 0
+        // A pre-super this capture is only necessary when a statement that runs
+        // before super() actually references `this` or `super.prop` (which
+        // implicitly uses `this`). String literals, console.log() calls, and
+        // other statements that don't touch `this` don't need the capture.
+        for &stmt_idx in block.statements.nodes.iter().take(super_stmt_position) {
+            if contains_this_reference(self.arena, stmt_idx)
+                || contains_super_reference(self.arena, stmt_idx)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Emit super(args) as return _super.call(this, args) || this;

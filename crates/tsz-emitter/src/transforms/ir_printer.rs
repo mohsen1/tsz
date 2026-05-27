@@ -2905,10 +2905,20 @@ impl<'a> IRPrinter<'a> {
             } else if context.is_exported && context.attach_to_exports {
                 self.write(current_name);
                 self.write(" || (");
-                self.emit_commonjs_export_folded_namespace_assignment(
-                    context.commonjs_export_names,
-                    current_name,
-                );
+                if context.commonjs_export_names.is_empty() {
+                    // No explicit export alias: fold the namespace under its own name.
+                    // `export namespace Foo {}` in CJS → `Foo || (exports.Foo = Foo = {})`
+                    self.write("exports.");
+                    self.write(current_name);
+                    self.write(" = ");
+                    self.write(current_name);
+                    self.write(" = {}");
+                } else {
+                    self.emit_commonjs_export_folded_namespace_assignment(
+                        context.commonjs_export_names,
+                        current_name,
+                    );
+                }
                 self.write(")");
             } else if !context.system_export_names.is_empty() {
                 self.write(current_name);
