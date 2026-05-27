@@ -25,6 +25,21 @@ assert.doesNotMatch(
   "successful Cloud Build prep with a stale manifest artifact must not wait until the 150 minute deadline",
 );
 
+const unusableManifestMessages = workflow.match(
+  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but its artifact manifest did not expose bench-prep env\/tar for/g,
+) ?? [];
+assert.equal(
+  unusableManifestMessages.length,
+  2,
+  "both Cloud Build prep artifact paths should fail fast when a successful build exposes no usable prep artifacts",
+);
+
+assert.match(
+  workflow,
+  /"\/bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.env"[\s\S]+"bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.tar"/,
+  "Cloud Build manifest parsing should accept literal unsubstituted target path entries from the exact build manifest",
+);
+
 assert.match(
   workflow,
   /expected \$\{target_sha\} \/ PGO=1\."\s*\n\s+exit 1/,
