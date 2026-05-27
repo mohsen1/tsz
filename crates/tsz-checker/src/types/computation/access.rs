@@ -1501,7 +1501,8 @@ impl<'a> CheckerState<'a> {
                         .index_access(pre_resolution_object_type, index_type);
                 }
 
-                if self.generic_index_filters_current_type_param_keys(
+                if crate::query_boundaries::checkers::generic::generic_index_filters_current_type_param_keys(
+                    self,
                     index_type,
                     pre_resolution_object_type,
                 ) {

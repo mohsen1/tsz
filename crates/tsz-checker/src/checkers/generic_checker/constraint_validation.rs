@@ -366,7 +366,9 @@ impl<'a> CheckerState<'a> {
                             inst_constraint,
                         ) || self
                             .diagnostic_relation_boolean_guard(evaluated_arg, inst_constraint)
-                            || self.homomorphic_mapped_application_should_defer_constraint(type_arg)
+                            || query::homomorphic_mapped_application_should_defer_constraint(
+                                self, type_arg,
+                            )
                         {
                             continue;
                         }

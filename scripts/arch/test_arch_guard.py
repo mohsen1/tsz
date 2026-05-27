@@ -269,6 +269,7 @@ class ArchGuardCheckerSemanticProofBoundaryTests(unittest.TestCase):
         text = "\n".join(
             [
                 "fn mapped_key_constraint_filters_current_object_keys(&mut self) -> bool {",
+                "fn generic_index_filters_current_type_param_keys(&mut self) -> bool {",
                 "let candidates = generic::conditional_key_filter_candidates(db, ty);",
                 "let next = generic::instantiate_alias_application_body(db, body, params, args);",
             ]
@@ -279,7 +280,7 @@ class ArchGuardCheckerSemanticProofBoundaryTests(unittest.TestCase):
             "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
             excludes,
         )
-        self.assertEqual(hits, [1, 2, 3])
+        self.assertEqual(hits, [1, 2, 3, 4])
 
     def test_rule_ignores_query_boundaries_tests_and_comments(self):
         pattern, excludes = self._semantic_proof_check()
