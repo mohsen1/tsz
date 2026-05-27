@@ -5,5 +5,6 @@
 //! - `names` — name collection utilities, identifier extraction, modifier helpers
 
 mod binding;
+mod binding_scope;
 mod flow_statements;
 mod names;

@@ -56,6 +56,15 @@ pub struct ScopeWalker<'a> {
     scope_stack: Vec<SymbolTable>,
     /// Indices of function-scoped entries within `scope_stack`
     function_scope_indices: Vec<usize>,
+    /// Amortized stack-probe counter for `collect_references`.
+    /// Incremented on every recursive call; stack headroom is only checked when
+    /// the low 6 bits wrap to zero (every 64th call) to avoid paying
+    /// `stacker::remaining_stack()` on every node.
+    ref_walk_call_count: u16,
+    /// Set to `true` when `collect_references` detects critically low stack
+    /// headroom. All subsequent recursive calls return immediately until the
+    /// walker is dropped (it is ephemeral — one per `find_references` call).
+    ref_walk_stack_tripped: bool,
 }
 
 impl<'a> ScopeWalker<'a> {
@@ -119,6 +128,8 @@ impl<'a> ScopeWalker<'a> {
             // Start with file-level scope
             scope_stack: vec![binder.file_locals.clone()],
             function_scope_indices: vec![0],
+            ref_walk_call_count: 0,
+            ref_walk_stack_tripped: false,
         }
     }
 
@@ -804,6 +815,16 @@ impl<'a> ScopeWalker<'a> {
         target_symbol: SymbolId,
         refs: &mut Vec<NodeIndex>,
     ) {
+        if self.ref_walk_stack_tripped {
+            return;
+        }
+        self.ref_walk_call_count = self.ref_walk_call_count.wrapping_add(1);
+        if self.ref_walk_call_count & 63 == 0
+            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+        {
+            self.ref_walk_stack_tripped = true;
+            return;
+        }
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             self.collect_references_guarded(current, target_name, target_symbol, refs);
         });
