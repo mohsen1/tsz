@@ -1,7 +1,7 @@
 //! Correlated union and generic call substitution helpers for DTS emit.
 
 use super::super::DeclarationEmitter;
-use tsz_parser::parser::node::NodeArena;
+use tsz_parser::parser::node::{MappedTypeData, NodeArena, TypeAliasData};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
@@ -14,6 +14,11 @@ struct CorrelatedAliasShape {
     callback_map_type_name: String,
     callback_return_type_text: String,
     member_indices: Vec<NodeIndex>,
+}
+
+enum MappedArgumentInference {
+    PartialRequired,
+    IsomorphicWrapper(String),
 }
 
 impl<'a> DeclarationEmitter<'a> {
@@ -656,47 +661,38 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(param) = source_arena.get_parameter(param_node) else {
                 continue;
             };
-            let Some(param_type_text) = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
-            else {
-                continue;
-            };
-            let Some((alias_name, param_inner)) =
-                Self::single_generic_type_argument_text(param_type_text.trim())
+            let Some((param_inner, inference)) =
+                self.mapped_argument_inference_from_param_type(source_arena, param.type_annotation)
             else {
                 continue;
             };
             if !type_param_names
                 .iter()
-                .any(|name| name.as_str() == param_inner)
+                .any(|name| name.as_str() == param_inner.as_str())
                 || substitutions
                     .iter()
-                    .any(|(name, _)| name.as_str() == param_inner)
+                    .any(|(name, _)| name.as_str() == param_inner.as_str())
             {
                 continue;
             }
             let Some(arg_type_text) = self.call_argument_type_text_for_substitution(
                 arg_idx,
-                Self::type_param_constraint_text(type_param_constraints, param_inner),
+                Self::type_param_constraint_text(type_param_constraints, &param_inner),
             ) else {
                 continue;
             };
 
-            let inferred = if alias_name == "Partial" {
-                Self::infer_required_from_partial_argument_text(&arg_type_text)
-            } else {
-                self.isomorphic_mapped_alias_value_wrapper(source_arena, alias_name)
-                    .and_then(|wrapper| {
-                        Self::infer_unwrapped_isomorphic_mapped_argument_text(
-                            &arg_type_text,
-                            &wrapper,
-                        )
-                    })
+            let inferred = match inference {
+                MappedArgumentInference::PartialRequired => {
+                    Self::infer_required_from_partial_argument_text(&arg_type_text)
+                }
+                MappedArgumentInference::IsomorphicWrapper(wrapper) => {
+                    Self::infer_unwrapped_isomorphic_mapped_argument_text(&arg_type_text, &wrapper)
+                }
             };
             if let Some(value_text) = inferred {
                 substitutions.push((
-                    param_inner.to_string(),
+                    param_inner,
                     Self::parenthesize_generic_function_type_argument(&value_text),
                 ));
             }
@@ -782,63 +778,170 @@ impl<'a> DeclarationEmitter<'a> {
         substitutions
     }
 
-    fn isomorphic_mapped_alias_value_wrapper(
+    fn mapped_argument_inference_from_param_type(
         &self,
         source_arena: &NodeArena,
-        alias_name: &str,
-    ) -> Option<String> {
-        let source_file = self.arena_source_file(source_arena)?;
-        for &stmt_idx in &source_file.statements.nodes {
-            let stmt_node = source_arena.get(stmt_idx)?;
-            let Some(alias) = source_arena.get_type_alias(stmt_node) else {
-                continue;
-            };
-            if self
-                .identifier_text_from_arena(source_arena, alias.name)
-                .as_deref()
-                != Some(alias_name)
-            {
-                continue;
-            }
-            let type_params = alias.type_parameters.as_ref()?;
-            if type_params.nodes.len() != 1 {
+        param_type_idx: NodeIndex,
+    ) -> Option<(String, MappedArgumentInference)> {
+        let param_type_idx = source_arena.skip_parenthesized(param_type_idx);
+        let param_type_node = source_arena.get(param_type_idx)?;
+        if param_type_node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return None;
+        }
+        let param_type = source_arena.get_type_ref(param_type_node)?;
+        let type_args = param_type.type_arguments.as_ref()?;
+        let [type_arg_idx] = type_args.nodes.as_slice() else {
+            return None;
+        };
+        let param_inner = self.simple_type_node_name_from_arena(source_arena, *type_arg_idx)?;
+        let sym_id = self
+            .declaration_type_symbol_from_type_node(source_arena, param_type_idx)
+            .or_else(|| {
+                let name = self.simple_type_node_name_from_arena(source_arena, param_type_idx)?;
+                self.binder?.get_global_type(&name)
+            })?;
+        let inference = self.with_symbol_declarations(sym_id, |alias_arena, decl_idx| {
+            let alias_node = alias_arena.get(decl_idx)?;
+            let alias = alias_arena.get_type_alias(alias_node)?;
+            self.mapped_argument_inference_from_alias(alias_arena, alias)
+        })?;
+        Some((param_inner, inference))
+    }
+
+    fn mapped_argument_inference_from_alias(
+        &self,
+        alias_arena: &NodeArena,
+        alias: &TypeAliasData,
+    ) -> Option<MappedArgumentInference> {
+        let type_params = alias.type_parameters.as_ref()?;
+        let [type_param_idx] = type_params.nodes.as_slice() else {
+            return None;
+        };
+        let type_param = alias_arena
+            .get(*type_param_idx)
+            .and_then(|node| alias_arena.get_type_parameter(node))?;
+        let type_param_name = self.identifier_text_from_arena(alias_arena, type_param.name)?;
+        let mapped = Self::mapped_type_from_type_node(alias_arena, alias.type_node)?;
+        let (mapped_param_name, source_type_name) =
+            self.mapped_keyof_source_type_name(alias_arena, mapped)?;
+        if source_type_name != type_param_name {
+            return None;
+        }
+        if mapped.name_type.is_some()
+            || mapped.members.as_ref().is_some_and(|m| !m.nodes.is_empty())
+        {
+            return None;
+        }
+        if mapped.question_token.is_some()
+            && self.mapped_value_is_indexed_access(
+                alias_arena,
+                mapped.type_node,
+                &type_param_name,
+                &mapped_param_name,
+            )
+        {
+            return Some(MappedArgumentInference::PartialRequired);
+        }
+        self.mapped_value_isomorphic_wrapper(
+            alias_arena,
+            mapped.type_node,
+            &type_param_name,
+            &mapped_param_name,
+        )
+        .map(MappedArgumentInference::IsomorphicWrapper)
+    }
+
+    fn mapped_type_from_type_node(
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<&MappedTypeData> {
+        let type_idx = arena.skip_parenthesized(type_idx);
+        let type_node = arena.get(type_idx)?;
+        if type_node.kind == syntax_kind_ext::MAPPED_TYPE {
+            return arena.get_mapped_type(type_node);
+        }
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let literal = arena.get_type_literal(type_node)?;
+            let [member_idx] = literal.members.nodes.as_slice() else {
                 return None;
+            };
+            let member_node = arena.get(*member_idx)?;
+            if member_node.kind == syntax_kind_ext::MAPPED_TYPE {
+                return arena.get_mapped_type(member_node);
             }
-            let type_param_node = source_arena.get(type_params.nodes[0])?;
-            let type_param = source_arena.get_type_parameter(type_param_node)?;
-            let type_param_name = self.identifier_text_from_arena(source_arena, type_param.name)?;
-            let alias_text = self
-                .source_slice_from_arena(source_arena, alias.type_node)
-                .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias.type_node))?;
-            return Self::isomorphic_mapped_alias_value_wrapper_text(&alias_text, &type_param_name);
         }
         None
     }
 
-    fn isomorphic_mapped_alias_value_wrapper_text(
-        alias_text: &str,
-        type_param_name: &str,
+    fn mapped_keyof_source_type_name(
+        &self,
+        arena: &NodeArena,
+        mapped: &MappedTypeData,
+    ) -> Option<(String, String)> {
+        let mapped_param = arena
+            .get(mapped.type_parameter)
+            .and_then(|node| arena.get_type_parameter(node))?;
+        let mapped_param_name = self.identifier_text_from_arena(arena, mapped_param.name)?;
+        let constraint_idx = arena.skip_parenthesized(mapped_param.constraint.into_option()?);
+        let constraint_node = arena.get(constraint_idx)?;
+        let type_op = arena.get_type_operator(constraint_node)?;
+        if type_op.operator != SyntaxKind::KeyOfKeyword as u16 {
+            return None;
+        }
+        let source_type_name = self.simple_type_node_name_from_arena(arena, type_op.type_node)?;
+        Some((mapped_param_name, source_type_name))
+    }
+
+    fn mapped_value_is_indexed_access(
+        &self,
+        arena: &NodeArena,
+        value_idx: NodeIndex,
+        object_name: &str,
+        index_name: &str,
+    ) -> bool {
+        self.indexed_access_names(arena, value_idx)
+            .is_some_and(|(object, index)| object == object_name && index == index_name)
+    }
+
+    fn mapped_value_isomorphic_wrapper(
+        &self,
+        arena: &NodeArena,
+        value_idx: NodeIndex,
+        object_name: &str,
+        index_name: &str,
     ) -> Option<String> {
-        let trimmed = alias_text.trim().trim_end_matches(';').trim();
-        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
-        let mapped = inner.strip_prefix('[')?;
-        let in_marker = format!(" in keyof {type_param_name}");
-        if !mapped.contains(&in_marker) {
+        let value_idx = arena.skip_parenthesized(value_idx);
+        let value_node = arena.get(value_idx)?;
+        if value_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;
         }
-        let value_text = mapped
-            .split_once("]:")?
-            .1
-            .trim()
-            .trim_end_matches(';')
-            .trim();
-        let lookup = format!("{type_param_name}[");
-        let open = value_text.find('<')?;
-        let wrapper = value_text[..open].trim();
-        if !Self::is_simple_identifier_text(wrapper) || !value_text[open + 1..].contains(&lookup) {
+        let value_type = arena.get_type_ref(value_node)?;
+        let wrapper = self.simple_type_node_name_from_arena(arena, value_idx)?;
+        if !Self::is_simple_identifier_text(&wrapper) {
             return None;
         }
-        Some(wrapper.to_string())
+        let type_args = value_type.type_arguments.as_ref()?;
+        let [inner_idx] = type_args.nodes.as_slice() else {
+            return None;
+        };
+        self.mapped_value_is_indexed_access(arena, *inner_idx, object_name, index_name)
+            .then_some(wrapper)
+    }
+
+    fn indexed_access_names(
+        &self,
+        arena: &NodeArena,
+        type_idx: NodeIndex,
+    ) -> Option<(String, String)> {
+        let type_idx = arena.skip_parenthesized(type_idx);
+        let type_node = arena.get(type_idx)?;
+        if type_node.kind != syntax_kind_ext::INDEXED_ACCESS_TYPE {
+            return None;
+        }
+        let indexed = arena.get_indexed_access_type(type_node)?;
+        let object_name = self.simple_type_node_name_from_arena(arena, indexed.object_type)?;
+        let index_name = self.simple_type_node_name_from_arena(arena, indexed.index_type)?;
+        Some((object_name, index_name))
     }
 
     pub(in crate::declaration_emitter) fn infer_unwrapped_isomorphic_mapped_argument_text(

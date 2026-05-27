@@ -650,3 +650,65 @@ let y10 = unboxify(x10);
         Some("[number, string, ...boolean[]]".to_string())
     );
 }
+
+#[test]
+fn declared_call_return_inverts_structural_partial_like_mapped_alias() {
+    let source = r#"
+type OptionalShape<T> = { [Key in keyof T]?: T[Key] };
+declare function complete<T>(x: OptionalShape<T>): T;
+declare let value: { a?: number; b: string | undefined };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("{\n    a: number;\n    b: string;\n}".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_does_not_treat_shadowed_partial_name_as_builtin() {
+    let source = r#"
+type Partial<T> = T;
+declare function complete<T>(x: Partial<T>): T;
+declare let value: { a?: number };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        None
+    );
+}
