@@ -674,6 +674,48 @@ fn direct_source_file_type_alias_lowers_type_literal_property_local_alias_applic
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_index_signature_type_literal_access() {
+    with_two_file_state(
+        "type Box<Value> = { value: Value };\nexport type DictionaryValue<Item> = { [key: string]: Box<Item> }[string];",
+        "import { DictionaryValue } from './target';",
+        |state, target_binder| {
+            let dictionary_value_sym = target_binder
+                .file_locals
+                .get("DictionaryValue")
+                .expect("DictionaryValue");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(dictionary_value_sym, Some(1), true)
+                .expect(
+                    "index-signature type literals with lowerable values should lower directly",
+                );
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "DictionaryValue should expose Item");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_numeric_index_signature_type_literal_access() {
+    with_two_file_state(
+        "type Cell<Data> = { item: Data };\nexport type TableEntry<Row> = { [slot: number]: Cell<Row> }[number];",
+        "import { TableEntry } from './target';",
+        |state, target_binder| {
+            let table_entry_sym = target_binder
+                .file_locals
+                .get("TableEntry")
+                .expect("TableEntry");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(table_entry_sym, Some(1), true)
+                .expect("renamed numeric index-signature type literals should lower directly");
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "TableEntry should expose Row");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_type_literal_with_computed_name() {
     with_two_file_state(
         "declare const key: unique symbol;\nexport type Box<T> = { [key]: T };",
@@ -702,6 +744,26 @@ fn direct_source_file_type_alias_rejects_type_literal_property_typeof_alias_appl
                     .direct_source_file_type_alias_result(select_sym, Some(1), true)
                     .is_none(),
                 "flow-sensitive local alias applications in type-literal properties must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_index_signature_typeof_alias_application() {
+    with_two_file_state(
+        "const value = 1;\ntype Box<X> = X | typeof value;\nexport type DictionaryValue<Item> = { [key: string]: Box<Item> }[string];",
+        "import { DictionaryValue } from './target';",
+        |state, target_binder| {
+            let dictionary_value_sym = target_binder
+                .file_locals
+                .get("DictionaryValue")
+                .expect("DictionaryValue");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(dictionary_value_sym, Some(1), true)
+                    .is_none(),
+                "flow-sensitive local alias applications in index-signature values must stay on the child-checker path",
             );
         },
     );
