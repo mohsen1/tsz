@@ -72,3 +72,28 @@ fn call_elaboration_return_probes_use_relation_outcome_boundary() {
         "callback return elaboration should not use raw relation guards"
     );
 }
+
+#[test]
+fn call_elaboration_polymorphic_this_properties_use_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/error_reporter/call_errors/elaboration.rs")
+        .expect("failed to read elaboration.rs");
+
+    let helper_start = source
+        .find("pub(crate) fn try_emit_polymorphic_this_object_literal_arg_errors")
+        .expect("missing polymorphic this object literal helper");
+    let helper_end = helper_start
+        + source[helper_start..]
+            .find("pub fn try_elaborate_object_literal_arg_error_with_source")
+            .expect("missing next object literal elaboration helper");
+    let helper = &source[helper_start..helper_end];
+
+    assert!(
+        helper.contains("assign_relation_outcome(source_prop_type, target_prop_type)")
+            && helper.contains(".related"),
+        "polymorphic this object literal property probes should route relation truth through RelationOutcome"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)"),
+        "polymorphic this object literal property probes should not use the raw relation guard"
+    );
+}

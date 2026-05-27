@@ -754,7 +754,9 @@ impl<'a> CheckerState<'a> {
                 if target_prop_type == TypeId::ERROR || target_prop_type == TypeId::ANY {
                     continue;
                 }
-                if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
+                if self
+                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .related
                     && self.emit_polymorphic_this_property_assignment_error(
                         source_prop_type,
                         target_prop_type,
