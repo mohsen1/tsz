@@ -14,8 +14,8 @@ use crate::construction::TypeDatabase;
 use crate::types::*;
 use crate::types::{
     CallSignature, CallableShape, ConditionalType, FunctionShape, IndexSignature, IntrinsicKind,
-    LiteralValue, MappedType, ObjectShape, ParamInfo, PropertyInfo, TemplateSpan, TupleElement,
-    TypeData, TypeId, TypeParamInfo, TypePredicate,
+    LiteralValue, MappedType, ObjectShape, ParamInfo, TemplateSpan, TupleElement, TypeData, TypeId,
+    TypeParamInfo, TypePredicate,
 };
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -405,33 +405,6 @@ impl<'a> TypeInstantiator<'a> {
                     _ => false,
                 }
             })
-    }
-
-    /// Instantiate a slice of properties by substituting type IDs.
-    fn instantiate_properties_if_changed(
-        &mut self,
-        properties: &[PropertyInfo],
-    ) -> Option<Vec<PropertyInfo>> {
-        let mut instantiated: Option<Vec<PropertyInfo>> = None;
-        for (index, property) in properties.iter().enumerate() {
-            let type_id = self.instantiate(property.type_id);
-            let write_type = self.instantiate(property.write_type);
-            if let Some(instantiated) = &mut instantiated {
-                let mut property = property.clone();
-                property.type_id = type_id;
-                property.write_type = write_type;
-                instantiated.push(property);
-            } else if type_id != property.type_id || write_type != property.write_type {
-                let mut changed = Vec::with_capacity(properties.len());
-                changed.extend_from_slice(&properties[..index]);
-                let mut property = property.clone();
-                property.type_id = type_id;
-                property.write_type = write_type;
-                changed.push(property);
-                instantiated = Some(changed);
-            }
-        }
-        instantiated
     }
 
     /// Instantiate an optional index signature.
@@ -952,8 +925,13 @@ impl<'a> TypeInstantiator<'a> {
                 if let Some(instantiated) =
                     self.instantiate_properties_if_changed(&shape.properties)
                 {
-                    self.interner
-                        .object_with_flags_and_symbol(instantiated, shape.flags, shape.symbol)
+                    let result = self.interner.object_with_flags_and_symbol(
+                        instantiated,
+                        shape.flags,
+                        shape.symbol,
+                    );
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }
@@ -979,13 +957,15 @@ impl<'a> TypeInstantiator<'a> {
                     || instantiated_string_idx.is_some()
                     || instantiated_number_idx.is_some()
                 {
-                    self.interner.object_with_index(ObjectShape {
+                    let result = self.interner.object_with_index(ObjectShape {
                         flags: shape.flags,
                         properties: instantiated_props.unwrap_or_else(|| shape.properties.clone()),
                         string_index: instantiated_string_idx.or(shape.string_index),
                         number_index: instantiated_number_idx.or(shape.number_index),
                         symbol: shape.symbol,
-                    })
+                    });
+                    self.propagate_instantiated_display_properties(self.interner.intern(*key), result);
+                    result
                 } else {
                     self.interner.intern(*key)
                 }

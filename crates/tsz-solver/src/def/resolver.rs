@@ -873,6 +873,11 @@ impl TypeEnvironment {
         self.boxed_def_ids.clone()
     }
 
+    /// Snapshot canonical well-known symbol key names for downstream declaration emit.
+    pub fn snapshot_well_known_symbol_names(&self) -> FxHashMap<String, SymbolRef> {
+        self.well_known_symbol_name_to_ref.clone()
+    }
+
     // =========================================================================
     // DefKind Storage (Task #32: Graph Isomorphism)
     // =========================================================================

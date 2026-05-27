@@ -120,6 +120,15 @@ impl<'a> CheckerState<'a> {
         let object_type = self.resolve_lib_type_by_name("Object");
         let function_type = self.resolve_lib_type_by_name("Function");
 
+        // Declaration emit snapshots Array's public mapped surface through the
+        // registered display base. Resolve the late iterator dependency first
+        // so lowering Array's late declarations can keep `ArrayIterator<T>`
+        // named without also eagerly resolving unrelated Array helper aliases or
+        // paying this cost during ordinary type-checking startup.
+        if self.ctx.emit_declarations() {
+            let _ = self.resolve_lib_type_by_name("ArrayIterator");
+        }
+
         // For Array<T>, resolve the merged lib type once, then reuse the type
         // parameters registered for its canonical symbol. Re-running the
         // per-lib parameter resolver in every project checker repeatedly lowers
@@ -164,18 +173,6 @@ impl<'a> CheckerState<'a> {
             array_type_params = TypeResolver::get_array_base_type_params(&self.ctx.types).to_vec();
         }
         let array_type_params_for_flow = array_type_params.clone();
-
-        // Eagerly resolve ConcatArray and FlatArray, which are referenced by Array's
-        // method signatures. Without registering these types' bodies in TypeEnvironment,
-        // the solver's resolve_lazy falls through to a SymbolId-based fallback that can
-        // produce wrong types due to DefId/SymbolId value collisions.
-        // NOTE: ArrayIterator is NOT eagerly resolved here — it costs ~55ms due to deep
-        // interface merging chains (ArrayIterator → IteratorObject → Iterator + Disposable
-        // + esnext.iterator). Since the TypeInterner (DashMap) is shared across parallel
-        // checkers, ArrayIterator is resolved lazily on first use and cached globally.
-        for array_dep in &["ConcatArray", "FlatArray"] {
-            let _ = self.resolve_lib_type_by_name(array_dep);
-        }
 
         // Pre-compute type parameters for commonly-used generic lib types.
         // To reduce startup overhead, only prewarm symbols referenced by this file.
@@ -276,6 +273,19 @@ impl<'a> CheckerState<'a> {
                 })
                 .unwrap_or_default();
                 if !display_props.is_empty() {
+                    for prop in &display_props {
+                        let name = self.ctx.types.resolve_atom_ref(prop.name);
+                        if name.starts_with("[Symbol.") {
+                            // Lib display props can carry canonical `[Symbol.*]`
+                            // names without a merged value symbol. Use the atom as
+                            // a stable fallback identity so declaration-surface
+                            // mapped evaluation can keep the symbol key distinct.
+                            self.register_well_known_symbol_name_from_canonical(
+                                name.as_ref(),
+                                Some(tsz_solver::SymbolRef(prop.name.0)),
+                            );
+                        }
+                    }
                     self.ctx.types.store_display_properties(ty, display_props);
                 }
             }

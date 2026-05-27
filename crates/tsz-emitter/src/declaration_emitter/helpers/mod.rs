@@ -219,6 +219,10 @@ impl tsz_solver::def::resolver::TypeResolver for DtsCacheResolver<'_> {
     ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
         self.cache.def_type_params.get(&def_id.0).cloned()
     }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<tsz_solver::types::SymbolRef> {
+        self.cache.well_known_symbol_names.get(name).copied()
+    }
 }
 
 impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
@@ -243,6 +247,10 @@ impl tsz_solver::def::resolver::TypeResolver for DtsStructuralResolver<'_> {
         def_id: tsz_solver::DefId,
     ) -> Option<Vec<tsz_solver::types::TypeParamInfo>> {
         self.cache.def_type_params.get(&def_id.0).cloned()
+    }
+
+    fn resolve_well_known_symbol_name(&self, name: &str) -> Option<tsz_solver::types::SymbolRef> {
+        self.cache.well_known_symbol_names.get(name).copied()
     }
 }
 
