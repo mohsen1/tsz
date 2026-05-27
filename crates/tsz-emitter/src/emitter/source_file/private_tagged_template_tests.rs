@@ -99,6 +99,42 @@ class Widget {
 }
 
 #[test]
+fn optional_private_field_call_uses_lowered_get_as_callee() {
+    let source = r#"
+class Widget {
+    static #run = function(a, ...b) {};
+    #tap = function() {};
+    static factory() { return Widget; }
+    test(items) {
+        Widget.#run?.(0, ...items, 3);
+        Widget.factory().#run?.();
+        this.#tap?.();
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "(_b = __classPrivateFieldGet(_a, _a, \"f\", _Widget_run)) === null || _b === void 0 ? void 0 : _b.call(_a, 0, ...items, 3)"
+        ),
+        "Static private field optional calls should null-check the lowered private get and call with the class alias receiver.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(_d = __classPrivateFieldGet((_c = _a.factory()), _a, \"f\", _Widget_run)) === null || _d === void 0 ? void 0 : _d.call(_c)"
+        ),
+        "Side-effecting private field optional call receivers should be captured once and reused for `.call()`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "(_e = __classPrivateFieldGet(this, _Widget_tap, \"f\")) === null || _e === void 0 ? void 0 : _e.call(this)"
+        ),
+        "Instance private field optional calls should call with the original receiver.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_async_generator_helpers_preserve_function_kind() {
     let source = r#"
 const Widget = class {
