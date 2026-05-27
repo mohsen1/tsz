@@ -234,6 +234,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 return self.interner().union2(true_eval, false_eval);
             }
 
+            // tsc propagates the error type through conditionals: when the check type
+            // is itself an error type (e.g. a failed indexed access `O[number]`), the
+            // whole conditional resolves to the error type so neither branch is
+            // selected and downstream diagnostics stay suppressed.
+            if crate::visitor::is_error_type(self.interner(), check_type) {
+                return TypeId::ERROR;
+            }
+
             // Step 1: Check for distributivity
             // Only distribute for naked type parameters (recorded at lowering time).
             if cond.is_distributive

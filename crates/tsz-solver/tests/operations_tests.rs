@@ -4574,10 +4574,13 @@ fn test_infer_generic_index_access_param_from_index_access_arg() {
     let index_access_arg = interner.intern(TypeData::IndexAccess(obj, key_literal));
 
     let result = infer_generic_function(&interner, &mut subtype, &func, &[index_access_arg]);
-    // IndexAccess is eagerly evaluated during instantiation (Task #46: O(1) equality)
-    // The expected result is the evaluated property type, not the IndexAccess structure
-    let expected = crate::evaluation::evaluate::evaluate_index_access(&interner, obj, key_literal);
-    assert_eq!(result, expected);
+    // `K` is unconstrained here (in tsc, `T[K]` with `K` not bounded by `keyof T` is
+    // itself a TS2536 error). Inference cannot pin `K` to the `"value"` literal, so the
+    // instantiated `T[K]` indexes the object by the bare key type, which matches no
+    // index signature and resolves to the error type (tsc parity; see #9709). The old
+    // result was the property type only because the single-property object made
+    // `obj[string]` collapse to that property.
+    assert_eq!(result, TypeId::ERROR);
 }
 
 #[test]
