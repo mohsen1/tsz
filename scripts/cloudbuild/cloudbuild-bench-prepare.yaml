@@ -89,8 +89,14 @@ steps:
         printf 'BENCH_BUILD_DATE=%s\n' "$(date -u +%F)"
         printf 'BENCH_PGO_OPTIMIZED=1\n'
       } > bench-prep.env
-      mkdir -p "bench-prep/${_BENCH_TARGET_SHA}" bench-prep/latest
+      # Cloud Build has historically been inconsistent about substituting
+      # custom variables inside artifact path globs. Keep the real SHA-scoped
+      # path for direct GCS consumers, and mirror it to the literal path that
+      # matches an unsubstituted artifact glob.
+      literal_scoped_dir='bench-prep/${_BENCH_TARGET_SHA}'
+      mkdir -p "bench-prep/${_BENCH_TARGET_SHA}" "${literal_scoped_dir}" bench-prep/latest
       cp bench-prep.tar bench-prep.env "bench-prep/${_BENCH_TARGET_SHA}/"
+      cp bench-prep.tar bench-prep.env "${literal_scoped_dir}/"
       cp bench-prep.tar bench-prep.env bench-prep/latest/
 
 artifacts:

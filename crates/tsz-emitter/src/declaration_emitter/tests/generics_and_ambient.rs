@@ -109,6 +109,55 @@ let machine = new Machine({
 }
 
 #[test]
+fn test_generic_call_this_type_descriptor_intersections_preserve_source_surfaces() {
+    let output = emit_dts_with_binding(
+        r#"
+type Point = {
+    x: number;
+    y: number;
+    moveBy(dx: number, dy: number): void;
+};
+
+type ObjectDescriptor<D, M> = {
+    data?: D;
+    methods?: M & ThisType<D & M>;
+};
+
+declare function makeObject<D, M>(desc: ObjectDescriptor<D, M>): D & M;
+
+let x = makeObject({
+    data: { x: 0, y: 0 },
+    methods: {
+        moveBy(dx: number, dy: number) {}
+    }
+});
+
+type PropDesc<T> = {
+    value?: T;
+    get?(): T;
+    set?(value: T): void;
+};
+
+declare function defineProp<T, K extends string, U>(obj: T, name: K, desc: PropDesc<U> & ThisType<T>): T & Record<K, U>;
+
+declare const point: Point;
+let p = defineProp(point, "foo", { value: 42 });
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare let x: {\n    x: number;\n    y: number;\n} & {\n    moveBy(dx: number, dy: number): void;\n};"
+        ),
+        "Expected source object descriptor call to preserve `D & M`: {output}"
+    );
+    assert!(
+        output.contains("declare let p: Point & Record<\"foo\", number>;"),
+        "Expected descriptor intersection call to preserve alias and `Record`: {output}"
+    );
+}
+
+#[test]
 fn test_multiple_type_parameters() {
     let output = emit_dts(
         "export function map<T, U>(arr: T[], fn: (x: T) => U): U[] { return arr.map(fn); }",
@@ -269,6 +318,72 @@ const o1 = getProps(myAny, ["foo", "bar"]);
     assert!(
         output.contains("declare const o1: Pick<any, \"foo\" | \"bar\">;"),
         "Expected K[] literal argument to preserve Pick<any, literal-key-union>: {output}"
+    );
+}
+
+#[test]
+fn generic_call_non_mapped_wrapper_argument_does_not_infer_object_value_map() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Wrapper<V> = { value: V };
+type Options<S> = { computed?: Wrapper<S> };
+declare function make<S>(options: Options<S>): S;
+
+const result = make({
+    computed: {
+        total(): number {
+            return 1;
+        },
+        label: {
+            get() {
+                return "ready";
+            }
+        }
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result:"),
+        "Expected the call result declaration to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("declare const result: {\n    total: number;\n    label: string;\n};"),
+        "Non-mapped wrapper aliases must not infer object value maps from argument shape: {output}"
+    );
+}
+
+#[test]
+fn construct_signature_non_mapped_wrapper_argument_does_not_infer_object_value_map() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Wrapper<V> = { value: V };
+type Options<S> = { computed?: Wrapper<S> };
+declare const Ctor: new <S>(options: Options<S>) => S;
+
+const result = new Ctor({
+    computed: {
+        total(): number {
+            return 1;
+        },
+        label: {
+            get() {
+                return "ready";
+            }
+        }
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result:"),
+        "Expected the construct result declaration to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("declare const result: {\n    total: number;\n    label: string;\n};"),
+        "Construct signatures must not infer object value maps through non-mapped wrapper aliases: {output}"
     );
 }
 
