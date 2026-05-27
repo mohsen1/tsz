@@ -1462,6 +1462,42 @@ fn direct_source_file_type_alias_lowers_subtractive_infer_recursion() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_subtractive_infer_recursion_through_local_helper() {
+    with_two_file_state_with_libs(
+        "type Without<All, Part> = Exclude<All, Part>;\nexport type Result<Whole, Accumulator extends string[] = []> = Whole extends infer Part ? Part extends string ? Result<Without<Whole, Part>, [...Accumulator, Part]> : never : never;",
+        "import { Result } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (result_ty, result_params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("local helper aliases over global Exclude should preserve the subtractive guard");
+            assert_ne!(result_ty, TypeId::UNKNOWN);
+            assert_ne!(result_ty, TypeId::ERROR);
+            assert_eq!(result_params.len(), 2, "Result should expose both params");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_swapped_subtractive_helper() {
+    with_two_file_state_with_libs(
+        "type Without<All, Part> = Exclude<Part, All>;\nexport type Loop<Input> = Input extends infer Part ? Loop<Without<Input, Part>> : Input;",
+        "import { Loop } from './target';",
+        &["es5.d.ts"],
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "transparent subtractive helpers must remove the second argument from the first",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_lowers_union_to_tuple_subtractive_recursion() {
     with_program_state_with_libs(
         &[

@@ -17,7 +17,7 @@ struct PrivateFieldAccess {
 struct PrivateDestructuringTarget {
     target: NodeIndex,
     access: PrivateFieldAccess,
-    receiver_temp: String,
+    receiver_temp: Option<String>,
     setter_value: String,
 }
 
@@ -118,6 +118,52 @@ impl<'a> Printer<'a> {
             || node.is_identifier()
     }
 
+    pub(in crate::emitter) fn private_destructuring_receiver_needs_temp(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        self.try_extract_private_field_access(idx)
+            .is_some_and(|access| {
+                !self.private_member_is_static(&access.clean_name)
+                    || !self.private_call_receiver_is_simple(access.expression)
+            })
+    }
+
+    fn private_member_is_static(&self, clean_name: &str) -> bool {
+        let Some((_, class_alias)) = self.private_static_class_alias.as_ref() else {
+            return false;
+        };
+        self.private_member_info
+            .get(clean_name)
+            .and_then(|info| info.state_var.as_deref())
+            == Some(class_alias.as_str())
+    }
+
+    fn peek_fresh_temp_name(&self) -> String {
+        let mut counter = self.ctx.destructuring_state.temp_var_counter;
+        loop {
+            let current = counter;
+            counter += 1;
+
+            if current < 26 && (current == 8 || current == 13) {
+                continue;
+            }
+
+            let name = if current < 26 {
+                format!("_{}", (b'a' + current as u8) as char)
+            } else {
+                format!("_{}", current - 26)
+            };
+
+            if !self.file_identifiers.contains(&name)
+                && !self.generated_temp_names.contains(&name)
+                && !self.reserved_nested_temp_names.contains(&name)
+            {
+                return name;
+            }
+        }
+    }
+
     fn emit_private_field_set_close(&mut self, clean_name: &str) {
         let info = self.private_member_info.get(clean_name).cloned();
         let kind = info.as_ref().map_or("f", |i| i.kind);
@@ -215,7 +261,11 @@ impl<'a> Printer<'a> {
         self.write(") { ");
         self.write_helper("__classPrivateFieldSet");
         self.write("(");
-        self.write(&target.receiver_temp);
+        if let Some(receiver_temp) = &target.receiver_temp {
+            self.write(receiver_temp);
+        } else {
+            self.emit_private_receiver(target.access.expression, &target.access.clean_name);
+        }
         self.write(", ");
         self.emit_private_state_var(&target.access.weakmap_name, &target.access.clean_name);
         self.write(", ");
@@ -340,21 +390,32 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let targets = raw_targets
+        let mut targets = raw_targets
             .into_iter()
-            .map(|(target, access)| PrivateDestructuringTarget {
-                target,
-                access,
-                receiver_temp: self.make_unique_name_hoisted_assignment(),
-                setter_value: self.make_unique_name_fresh(),
+            .map(|(target, access)| {
+                let receiver_temp = (!self.private_member_is_static(&access.clean_name)
+                    || !self.private_call_receiver_is_simple(access.expression))
+                .then(|| self.make_unique_name_hoisted_assignment());
+                PrivateDestructuringTarget {
+                    target,
+                    receiver_temp,
+                    setter_value: String::new(),
+                    access,
+                }
             })
             .collect::<Vec<_>>();
+        let setter_value = self.peek_fresh_temp_name();
+        for target in &mut targets {
+            target.setter_value.clone_from(&setter_value);
+        }
 
         for target in &targets {
-            self.write(&target.receiver_temp);
-            self.write(" = ");
-            self.emit_private_receiver(target.access.expression, &target.access.clean_name);
-            self.write(", ");
+            if let Some(receiver_temp) = &target.receiver_temp {
+                self.write(receiver_temp);
+                self.write(" = ");
+                self.emit_private_receiver(target.access.expression, &target.access.clean_name);
+                self.write(", ");
+            }
         }
         self.emit_private_destructuring_pattern(left, &targets);
         self.write(" = ");
@@ -373,7 +434,12 @@ impl<'a> Printer<'a> {
         is_prefix: bool,
         is_statement: bool,
     ) {
-        let needs_receiver_temp = !self.receiver_is_simple(pfa.expression);
+        let member_kind = self
+            .private_member_info
+            .get(&pfa.clean_name)
+            .map(|info| info.kind);
+        let needs_receiver_temp =
+            member_kind == Some("m") || !self.receiver_is_simple(pfa.expression);
         let op_text = get_operator_text(operator);
         let expression = pfa.expression;
         let weakmap_name = pfa.weakmap_name.clone();
@@ -516,9 +582,9 @@ impl<'a> Printer<'a> {
         if let Some(temp) = receiver_temp {
             self.write(temp);
             self.write(" = ");
-            self.emit(expression);
+            self.emit_private_receiver(expression, "");
         } else {
-            self.emit(expression);
+            self.emit_private_receiver(expression, "");
         }
     }
 
