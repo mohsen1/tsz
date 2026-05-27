@@ -142,6 +142,11 @@ pub trait TypeResolver {
         false
     }
 
+    /// Whether this `DefId` originates from an actual or checker-cloned standard lib declaration.
+    fn is_actual_or_cloned_lib_def(&self, _def_id: DefId) -> bool {
+        false
+    }
+
     /// Resolve an `UnresolvedTypeName(atom)` text to a `DefId`, when the
     /// resolver has access to a wider binder graph than the lowering pass
     /// did. Used by the type evaluator to recover from
@@ -363,6 +368,10 @@ impl<T: TypeResolver + ?Sized> TypeResolver for &T {
 
     fn is_builtin_readonly_array_def(&self, def_id: DefId) -> bool {
         (**self).is_builtin_readonly_array_def(def_id)
+    }
+
+    fn is_actual_or_cloned_lib_def(&self, def_id: DefId) -> bool {
+        (**self).is_actual_or_cloned_lib_def(def_id)
     }
 
     fn get_boxed_type(&self, kind: IntrinsicKind) -> Option<TypeId> {

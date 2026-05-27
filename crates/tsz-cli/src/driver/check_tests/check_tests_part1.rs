@@ -567,6 +567,35 @@ const instance: HTMLElement = new mod.HTML5Element();
     }
 
     #[test]
+    fn class_extends_identity_shortcut_preserves_member_relation_checks() {
+        let diagnostics = collect_test_diagnostics(&[(
+            "test.ts",
+            r#"
+class C {
+    foo(x: number) { }
+}
+
+class D extends C {
+    foo() { }
+}
+
+class E extends D {
+    foo(x?: string) { }
+}
+
+declare var c: C;
+declare var e: E;
+c = e;
+"#,
+        )]);
+
+        assert!(
+            diagnostics.iter().any(|diagnostic| diagnostic.code == 2322),
+            "class ancestry identity must not bypass structural member checks. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
     fn file_session_reuse_preserves_multifile_diagnostics() {
         let files = [
             (

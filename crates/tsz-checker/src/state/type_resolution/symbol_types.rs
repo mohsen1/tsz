@@ -89,10 +89,11 @@ impl<'a> CheckerState<'a> {
                     && lib_type != TypeId::UNKNOWN
                 {
                     let def_id = self.ctx.get_canonical_lib_def_id(escaped_name, sym_id);
-                    if !params.is_empty() {
-                        self.ctx.insert_def_type_params(def_id, params);
-                    }
-                    self.ctx.register_def_in_envs(def_id, lib_type);
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, lib_type, params);
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(lib_type, def_id);
                     self.ctx.leave_recursion();
                     return lib_type;
                 }
@@ -1211,10 +1212,11 @@ impl<'a> CheckerState<'a> {
                     && lib_type != TypeId::UNKNOWN
                 {
                     let def_id = self.ctx.get_canonical_lib_def_id(&name, sym_id);
-                    if !params.is_empty() {
-                        self.ctx.insert_def_type_params(def_id, params.clone());
-                    }
-                    self.ctx.register_def_in_envs(def_id, lib_type);
+                    self.ctx
+                        .register_def_auto_params_in_envs(def_id, lib_type, params.clone());
+                    self.ctx
+                        .definition_store
+                        .register_type_to_def(lib_type, def_id);
                     return (lib_type, params);
                 }
             }

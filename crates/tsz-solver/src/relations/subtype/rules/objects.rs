@@ -594,6 +594,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let Some(target_def) = target_def else {
             return false;
         };
+        if self.def_has_type_params(target_def) {
+            return false;
+        }
+        if !self.resolver.is_actual_or_cloned_lib_def(target_def) {
+            return false;
+        }
 
         if self.resolver.defs_are_equivalent(source_def, target_def) {
             return true;
@@ -610,6 +616,12 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             current = parent;
         }
         false
+    }
+
+    fn def_has_type_params(&self, def_id: crate::def::DefId) -> bool {
+        self.resolver
+            .get_lazy_type_params(def_id)
+            .is_some_and(|params| !params.is_empty())
     }
 
     fn class_relation_target_def(

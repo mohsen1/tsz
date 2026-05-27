@@ -1038,6 +1038,11 @@ impl<'a> TypeResolver for CheckerContext<'a> {
                 .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
     }
 
+    fn is_actual_or_cloned_lib_def(&self, def_id: tsz_solver::DefId) -> bool {
+        self.def_to_symbol_id(def_id)
+            .is_some_and(|sym_id| self.symbol_is_from_actual_or_cloned_lib(sym_id))
+    }
+
     /// Get the `SymbolId` for a `DefId`.
     ///
     /// Uses the `DefinitionStore` to look up the `symbol_id` stored in `DefinitionInfo`.
