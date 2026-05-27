@@ -73,6 +73,12 @@ impl<'a> Printer<'a> {
                 if stmt_node.kind == syntax_kind_ext::CLASS_DECLARATION
                     && let Some(class_decl) = self.arena.get_class(stmt_node)
                 {
+                    if self
+                        .arena
+                        .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        continue;
+                    }
                     let class_name = self.get_identifier_text_idx(class_decl.name);
                     if !class_name.is_empty() && seen.insert(class_name.clone()) {
                         names.push(class_name);
@@ -245,6 +251,16 @@ impl<'a> Printer<'a> {
                         continue;
                     }
                     if clause_node.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+                        if self
+                            .arena
+                            .get_variable(clause_node)
+                            .is_some_and(|var_stmt| {
+                                self.arena
+                                    .has_modifier(&var_stmt.modifiers, SyntaxKind::DeclareKeyword)
+                            })
+                        {
+                            continue;
+                        }
                         self.collect_system_empty_binding_temps_from_variable_statement(
                             clause_node,
                             true,
@@ -291,6 +307,12 @@ impl<'a> Printer<'a> {
                     if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
                         && let Some(class_decl) = self.arena.get_class(clause_node)
                     {
+                        if self
+                            .arena
+                            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            continue;
+                        }
                         let name = self.get_identifier_text_idx(class_decl.name);
                         if let Some(alias) = self.system_hoist_legacy_decorated_class_alias(
                             export_decl.export_clause,

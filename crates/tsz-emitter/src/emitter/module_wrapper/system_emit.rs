@@ -383,6 +383,9 @@ impl<'a> Printer<'a> {
             {
                 continue;
             }
+            if self.is_erased_statement(stmt_node) {
+                continue;
+            }
             let before_len = self.writer.len();
 
             if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
@@ -1256,6 +1259,12 @@ impl<'a> Printer<'a> {
         if clause_node.kind == syntax_kind_ext::CLASS_DECLARATION
             && let Some(class_decl) = self.arena.get_class(clause_node)
         {
+            if self
+                .arena
+                .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+            {
+                return true;
+            }
             let class_name = self.get_identifier_text_idx(class_decl.name);
             if class_name.is_empty() {
                 return false;
@@ -1315,6 +1324,34 @@ impl<'a> Printer<'a> {
                 );
                 if !deferred.is_empty() {
                     self.emit_static_block_iifes(deferred);
+                }
+                return true;
+            }
+
+            if !self.ctx.target_es5 {
+                let emitted = self.capture_system_class_assignment(
+                    clause_node,
+                    export_decl.export_clause,
+                    &class_name,
+                    None,
+                );
+                let (class_part, static_tail) = split_system_class_static_tail(&emitted);
+                self.write(class_part.trim_start().trim_end());
+                if !self.output_ends_with_semicolon() {
+                    self.write(";");
+                }
+                self.write_line();
+                self.write("exports_1(\"");
+                self.write(&class_name);
+                self.write("\", ");
+                self.write(&class_name);
+                self.write(");");
+                if !static_tail.trim().is_empty() {
+                    self.write_line();
+                    self.write(static_tail.trim());
+                    if !self.output_ends_with_semicolon() {
+                        self.write(";");
+                    }
                 }
                 return true;
             }
@@ -1481,6 +1518,12 @@ impl<'a> Printer<'a> {
             self.emit(idx);
             return;
         };
+        if self
+            .arena
+            .has_modifier(&class_decl.modifiers, SyntaxKind::DeclareKeyword)
+        {
+            return;
+        }
         let class_name = self.get_identifier_text_idx(class_decl.name);
         if class_name.is_empty() {
             self.emit(idx);

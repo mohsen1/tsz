@@ -588,6 +588,12 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 if let Some(func_decl) = self.arena.get_function(clause_node) {
+                    if self
+                        .arena
+                        .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        continue;
+                    }
                     let func_name = self.get_identifier_text_idx(func_decl.name);
                     if func_name.is_empty() {
                         if export_decl.is_default_export {
@@ -601,6 +607,12 @@ impl<'a> Printer<'a> {
             if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 && let Some(func_decl) = self.arena.get_function(stmt_node)
             {
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if !func_name.is_empty() {
                     names.insert(func_name);
@@ -712,6 +724,12 @@ impl<'a> Printer<'a> {
                 let Some(func_decl) = self.arena.get_function(clause_node) else {
                     continue;
                 };
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if func_name.is_empty() {
                     // `export default function() {}` — anonymous, needs a generated name
@@ -758,6 +776,12 @@ impl<'a> Printer<'a> {
                 let Some(func_decl) = self.arena.get_function(stmt_node) else {
                     continue;
                 };
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if func_name.is_empty() {
                     continue;

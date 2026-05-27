@@ -162,6 +162,72 @@ fn system_es5_named_and_local_classes_use_assignment_iifes() {
 }
 
 #[test]
+fn system_ambient_declarations_do_not_hoist_or_emit_runtime_bindings() {
+    let source = r#"declare class Promise { }
+declare function Foo(): void;
+declare class C {}
+declare enum E { X = 1 };
+export var promise = Promise;
+export var foo = Foo;
+export var c = C;
+export var e = E;
+export declare function erasedFunction(): void;
+export declare class ErasedClass {}
+export declare var erasedVar: number;
+export declare enum ErasedEnum { X = 1 }
+export declare namespace ErasedNamespace { var v: number; }
+"#;
+    let output = emit_system_es2015(source);
+
+    assert!(
+        output.contains("var promise, foo, c, e;\n    var __moduleName"),
+        "System wrapper should hoist only runtime export variables, not ambient declarations.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("exports_1(\"promise\", promise = Promise);")
+            && output.contains("exports_1(\"foo\", foo = Foo);")
+            && output.contains("exports_1(\"c\", c = C);")
+            && output.contains("exports_1(\"e\", e = E);"),
+        "Export initializers should still reference ambient runtime names.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("Promise = class")
+            && !output.contains("C = class")
+            && !output.contains("erasedFunction")
+            && !output.contains("ErasedClass")
+            && !output.contains("erasedVar")
+            && !output.contains("ErasedEnum")
+            && !output.contains("ErasedNamespace"),
+        "Ambient declarations must be erased from System wrapper runtime output.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn system_es2015_exported_class_registers_before_static_field_tail() {
+    let output = emit_system_es2015(
+        r#"export class C {
+    static value = 42;
+    static read() { return C.value; }
+}
+"#,
+    );
+    let class_pos = output
+        .find("C = class C")
+        .expect("class assignment should be emitted");
+    let export_pos = output
+        .find("exports_1(\"C\", C);")
+        .expect("System export registration should be emitted");
+    let static_pos = output
+        .find("C.value = 42;")
+        .expect("static field tail should be emitted");
+
+    assert!(
+        class_pos < export_pos && export_pos < static_pos,
+        "System ES2015 class export should register before static field assignments.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn umd_dynamic_import_only_file_gets_wrapper_and_loader_branch() {
     let source = r#"class C {
     _path = "./other";
