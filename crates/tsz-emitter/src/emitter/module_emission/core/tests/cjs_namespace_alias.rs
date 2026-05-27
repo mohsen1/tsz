@@ -140,3 +140,32 @@ export { a as a1 };
         "The renamed export should not read the erased local alias.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn commonjs_merged_namespace_declaration_does_not_duplicate_export() {
+    // Two `export namespace X` blocks with the same name both map to the
+    // same CJS identifier.  The IIFE tail must fold to a single
+    // `exports.X = X = {}` assignment, not `exports.X = exports.X = X = {}`.
+    let source = r#"export namespace X {
+    export namespace Y {
+        class A {}
+    }
+}
+export namespace X {
+    export namespace Y {
+        export class B {}
+    }
+}
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("(exports.X = X = {})"),
+        "Merged namespace should fold to a single exports.X assignment.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exports.X = exports.X"),
+        "Merged namespace must not produce a duplicate exports.X chain.\nOutput:\n{output}"
+    );
+}

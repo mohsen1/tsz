@@ -2788,7 +2788,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            if has_exported && has_non_exported {
+            // For non-ambient namespaces only: a mix of exported and
+            // non-exported members means a scope marker is needed so the
+            // DTS consumer can tell the two apart.  For ambient contexts
+            // (declare module / declare namespace) the only trigger is an
+            // *explicit* export statement (`export {}`, `export *`, etc.)
+            // which is already handled by the early-return paths above.
+            if non_ambient && has_exported && has_non_exported {
                 return true;
             }
         }

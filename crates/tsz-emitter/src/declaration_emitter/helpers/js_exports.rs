@@ -3587,9 +3587,13 @@ impl<'a> DeclarationEmitter<'a> {
     /// namespace body has a mix of exported and non-exported members (i.e., a
     /// "scope marker" is present). Outside a `declare namespace`, `export` is
     /// always emitted.
+    ///
+    /// String-named ambient modules (`declare module "foo"`) follow the same
+    /// rule: `export` on individual members is only preserved when the body
+    /// carries a scope marker (`export {}`); without one, all members are
+    /// implicitly accessible and the keyword is stripped.
     pub(crate) const fn should_emit_export_keyword(&self) -> bool {
-        self.current_ambient_module_specifier.is_none()
-            && (!self.inside_declare_namespace || self.ambient_module_has_scope_marker)
+        !self.inside_declare_namespace || self.ambient_module_has_scope_marker
     }
 
     pub(crate) fn is_js_export_equals_name(&self, name_idx: NodeIndex) -> bool {
