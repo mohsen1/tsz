@@ -660,6 +660,25 @@ jobs:
             [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
           }
+          validate_downloaded_prep_artifact() {
+            tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null || return 1
+            tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null || return 1
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            [[ "${manifest_target_sha}" == "${target_sha}" &&
+              "${manifest_pgo_optimized}" == "1" ]]
+          }
+          copy_from_latest_prep_artifact() {
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env || return 1
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+              bench-prep.tar || return 1
+            mv latest-bench-prep.env bench-prep.env
+            validate_downloaded_prep_artifact
+          }
           cloudbuild_status() {
             local build_id="$1"
             [[ -n "$build_id" ]] || return 0
@@ -679,12 +698,7 @@ jobs:
               storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
                 bench-prep.tar; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+              if validate_downloaded_prep_artifact; then
                 exit 0
               fi
               echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
@@ -692,19 +706,17 @@ jobs:
 
             status="$(cloudbuild_status "$cloudbuild_id")"
             if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_latest_prep_artifact; then
+                exit 0
+              fi
               if copy_from_cloudbuild_manifest "$target_sha"; then
-                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-                manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-                manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-                if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                      "${manifest_pgo_optimized}" == "1" ]]; then
+                if validate_downloaded_prep_artifact; then
                   exit 0
                 fi
                 echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
                 exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its artifact manifest did not expose bench-prep env/tar for ${target_sha}."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
@@ -820,6 +832,25 @@ jobs:
             [[ -n "${manifest_env:-}" && -n "${manifest_tar:-}" ]] || return 1
             storage_cp "$manifest_env" bench-prep.env && storage_cp "$manifest_tar" bench-prep.tar
           }
+          validate_downloaded_prep_artifact() {
+            tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null || return 1
+            tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null || return 1
+            manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
+            manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
+            [[ "${manifest_target_sha}" == "${target_sha}" &&
+              "${manifest_pgo_optimized}" == "1" ]]
+          }
+          copy_from_latest_prep_artifact() {
+            rm -f latest-bench-prep.env bench-prep.env bench-prep.tar
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.env" \
+              latest-bench-prep.env || return 1
+            storage_cp \
+              "gs://tsz-ci_cloudbuild/bench-prep/latest/bench-prep.tar" \
+              bench-prep.tar || return 1
+            mv latest-bench-prep.env bench-prep.env
+            validate_downloaded_prep_artifact
+          }
           cloudbuild_status() {
             local build_id="$1"
             [[ -n "$build_id" ]] || return 0
@@ -839,12 +870,7 @@ jobs:
               storage_cp \
                 "gs://tsz-ci_cloudbuild/bench-prep/${target_sha}/bench-prep.tar" \
                 bench-prep.tar; then
-              tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-              tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-              manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-              manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-              if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                    "${manifest_pgo_optimized}" == "1" ]]; then
+              if validate_downloaded_prep_artifact; then
                 exit 0
               fi
               echo "Cloud Build prep artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; waiting for ${target_sha}."
@@ -852,19 +878,17 @@ jobs:
 
             status="$(cloudbuild_status "$cloudbuild_id")"
             if [[ "$status" == "SUCCESS" ]]; then
+              if copy_from_latest_prep_artifact; then
+                exit 0
+              fi
               if copy_from_cloudbuild_manifest "${target_sha}"; then
-                tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
-                tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
-                manifest_target_sha="$(manifest_value BENCH_TARGET_SHA)"
-                manifest_pgo_optimized="$(manifest_value BENCH_PGO_OPTIMIZED)"
-                if [[ "${manifest_target_sha}" == "${target_sha}" &&
-                      "${manifest_pgo_optimized}" == "1" ]]; then
+                if validate_downloaded_prep_artifact; then
                   exit 0
                 fi
                 echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its manifest artifact is for ${manifest_target_sha:-unknown} / PGO=${manifest_pgo_optimized:-0}; expected ${target_sha} / PGO=1."
                 exit 1
               fi
-              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but its artifact manifest did not expose bench-prep env/tar for ${target_sha}."
+              echo "Cloud Build benchmark prep ${cloudbuild_id} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env/tar for ${target_sha}."
               exit 1
             fi
             case "$status" in
