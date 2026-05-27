@@ -152,4 +152,6 @@ pub use rename::linked_editing::{LinkedEditingProvider, LinkedEditingRanges};
 pub use rename::file_rename::{FileRenameProvider, ImportLocation};
 
 // Document Colors
-pub use editor_decorations::document_color::{Color, ColorInformation, DocumentColorProvider};
+pub use editor_decorations::document_color::{
+    Color, ColorInformation, ColorPresentation, DocumentColorProvider,
+};
