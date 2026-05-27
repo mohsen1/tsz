@@ -299,6 +299,7 @@ mod fix_verification;
 mod fix_verification_returned;
 mod generics_and_ambient;
 mod js_define_property;
+mod js_expando_features;
 mod jsdoc_template_defaults;
 mod misc_features;
 mod misc_inference_features;
