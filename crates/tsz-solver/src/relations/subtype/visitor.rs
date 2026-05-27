@@ -362,9 +362,14 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         if object_shape_id(self.checker.interner, self.target).is_some()
             || object_with_index_shape_id(self.checker.interner, self.target).is_some()
         {
-            use crate::objects::{PropertyCollectionResult, collect_properties};
+            use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
-            match collect_properties(self.source, self.checker.interner, self.checker.resolver) {
+            match collect_properties_cached(
+                self.source,
+                self.checker.interner,
+                self.checker.resolver,
+                self.checker.query_db,
+            ) {
                 PropertyCollectionResult::Any => {
                     // any & T = any, so check if any is subtype of target
                     return self.checker.check_subtype(TypeId::ANY, self.target);
@@ -406,7 +411,7 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
         // members. This handles values built with Object.assign:
         //   ((...) => ...) & { method(): void } <: { (...): R; method(): void }
         if let Some(t_callable_id) = callable_shape_id(self.checker.interner, self.target) {
-            use crate::objects::{PropertyCollectionResult, collect_properties};
+            use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
             let mut call_signatures = Vec::new();
             let mut construct_signatures = Vec::new();
@@ -434,10 +439,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for SubtypeVisitor<'a, 'b, R> {
             }
 
             if !call_signatures.is_empty() || !construct_signatures.is_empty() {
-                let (properties, string_index, number_index) = match collect_properties(
+                let (properties, string_index, number_index) = match collect_properties_cached(
                     self.source,
                     self.checker.interner,
                     self.checker.resolver,
+                    self.checker.query_db,
                 ) {
                     PropertyCollectionResult::Any => return SubtypeResult::True,
                     PropertyCollectionResult::Properties {

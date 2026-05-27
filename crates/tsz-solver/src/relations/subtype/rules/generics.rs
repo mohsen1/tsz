@@ -1100,9 +1100,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         source: TypeId,
         target: TypeId,
     ) -> Option<SubtypeResult> {
-        use crate::objects::{PropertyCollectionResult, collect_properties};
+        use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
-        match collect_properties(target, self.interner, self.resolver) {
+        match collect_properties_cached(target, self.interner, self.resolver, self.query_db) {
             PropertyCollectionResult::Properties {
                 properties,
                 string_index,

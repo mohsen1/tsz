@@ -55,6 +55,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         let mut fallback = SubtypeChecker::with_resolver(self.interner, self.resolver);
+        if let Some(db) = self.query_db {
+            fallback = fallback.with_query_db(db);
+        }
         fallback.check_subtype(left_eval, right_eval).is_true()
             && fallback.check_subtype(right_eval, left_eval).is_true()
     }

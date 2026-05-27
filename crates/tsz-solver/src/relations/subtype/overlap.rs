@@ -409,11 +409,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ///
     /// Returns false if types have zero overlap, true otherwise.
     fn do_refined_object_overlap_check(&self, a: TypeId, b: TypeId) -> bool {
-        use crate::objects::{PropertyCollectionResult, collect_properties};
+        use crate::objects::{PropertyCollectionResult, collect_properties_cached};
 
         // Collect properties and index signatures from both types
-        let res_a = collect_properties(a, self.interner, self.resolver);
-        let res_b = collect_properties(b, self.interner, self.resolver);
+        let res_a = collect_properties_cached(a, self.interner, self.resolver, self.query_db);
+        let res_b = collect_properties_cached(b, self.interner, self.resolver, self.query_db);
 
         // Extract properties and index signatures from results
         let (props_a, s_idx_a, _n_idx_a) = match res_a {

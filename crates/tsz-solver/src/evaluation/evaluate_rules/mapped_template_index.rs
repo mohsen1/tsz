@@ -122,5 +122,8 @@ fn remapped_key_matches_index<R: TypeResolver>(
     }
 
     let mut checker = SubtypeChecker::with_resolver(evaluator.interner(), evaluator.resolver());
+    if let Some(db) = evaluator.query_db() {
+        checker = checker.with_query_db(db);
+    }
     checker.is_subtype_of(index_type, remapped_key)
 }

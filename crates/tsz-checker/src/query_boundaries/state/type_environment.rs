@@ -21,6 +21,9 @@ pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::relations::subtype::Typ
     type_id: TypeId,
 ) -> TypeId {
     let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
+    if let Some(query_db) = db.as_query_database() {
+        evaluator = evaluator.with_query_db(query_db);
+    }
     evaluator.evaluate(type_id)
 }
 

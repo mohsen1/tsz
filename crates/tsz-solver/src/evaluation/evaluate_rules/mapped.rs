@@ -10,7 +10,7 @@ use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving,
     instantiate_type_preserving_with_declared,
 };
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};
 use crate::types::Visibility;
 use crate::types::{
@@ -106,7 +106,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // NOTE: This helper is now only used for index signatures.
         // Direct property modifiers are handled via the memoized map in evaluate_mapped.
         let source_mods = if let Some(source_obj) = source_object {
-            match collect_properties(source_obj, self.interner(), self.resolver()) {
+            match crate::objects::collect_properties_cached(
+                source_obj,
+                self.interner(),
+                self.resolver(),
+                self.query_db(),
+            ) {
                 PropertyCollectionResult::Properties { properties, .. } => properties
                     .iter()
                     .find(|p| p.name == key_name)
@@ -369,7 +374,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if !ordered.is_empty() {
                     ordered
                 } else {
-                    match collect_properties(resolved_source, self.interner(), self.resolver()) {
+                    match crate::objects::collect_properties_cached(
+                        resolved_source,
+                        self.interner(),
+                        self.resolver(),
+                        self.query_db(),
+                    ) {
                         PropertyCollectionResult::Properties { properties, .. } => properties,
                         _ => Vec::new(),
                     }
@@ -1462,7 +1472,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 );
                 // NORTH STAR: Use collect_properties to extract keys from KeyOf operand.
                 // This handles interfaces, classes, intersections, and type parameters.
-                let prop_result = collect_properties(operand, self.interner(), self.resolver());
+                let prop_result = crate::objects::collect_properties_cached(
+                    operand,
+                    self.interner(),
+                    self.resolver(),
+                    self.query_db(),
+                );
                 tracing::trace!(
                     operand = operand.0,
                     prop_result = ?std::mem::discriminant(&prop_result),
@@ -1498,8 +1513,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         // Application). Evaluate it first, then retry collect_properties.
                         let evaluated = self.evaluate(operand);
                         if evaluated != operand {
-                            let retry_result =
-                                collect_properties(evaluated, self.interner(), self.resolver());
+                            let retry_result = crate::objects::collect_properties_cached(
+                                evaluated,
+                                self.interner(),
+                                self.resolver(),
+                                self.query_db(),
+                            );
                             match retry_result {
                                 PropertyCollectionResult::Properties {
                                     properties,
@@ -1565,8 +1584,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 }
 
                 let mut checker = SubtypeChecker::with_resolver(self.interner(), self.resolver());
+                if let Some(db) = self.query_db() {
+                    checker = checker.with_query_db(db);
+                }
 
-                match collect_properties(object_type, self.interner(), self.resolver()) {
+                match crate::objects::collect_properties_cached(
+                    object_type,
+                    self.interner(),
+                    self.resolver(),
+                    self.query_db(),
+                ) {
                     PropertyCollectionResult::Properties {
                         properties,
                         string_index,
