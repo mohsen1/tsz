@@ -773,6 +773,7 @@ impl<'a> CheckerState<'a> {
 
         if name == "Array"
             && self.ctx.share_owner_symbol_type_results
+            && !self.ctx.emit_declarations()
             && !self.lib_name_has_local_augmentation(name)
             && let Some(ty) = self
                 .ctx

@@ -527,7 +527,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
         ..Default::default()
     };
 
-    // Create an empty TypeCache.
+    // Create an empty `TypeCache`.
     let cache = crate::TypeCache::default();
 
     // Create checker with cache + shared def store.

@@ -228,7 +228,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let keys = self.evaluate_keyof_or_constraint(constraint);
 
         // If we can't determine concrete keys, keep it as a mapped type (deferred)
-        let key_set = if constraint == TypeId::ANY
+        let mut key_set = if constraint == TypeId::ANY
             && mapped.name_type.is_none()
             && mapped.template == TypeId::NEVER
         {
@@ -348,6 +348,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // This avoids repeated O(N) collect_properties calls inside the loop.
         // Also capture resolved_source once to avoid double evaluate(source) calls.
         let mut source_prop_map = FxHashMap::default();
+        let mut source_symbol_prop_names = FxHashMap::default();
         let mut source_decl_order = Vec::new();
         let mut resolved_source_id = None;
         if let Some(source) = source_object {
@@ -383,6 +384,30 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 resolved_source,
                 &mut source_props,
             );
+            if mapped.name_type.is_some() {
+                let mut seen_string_keys: FxHashSet<Atom> =
+                    key_set.keys.iter().map(|key| key.name).collect();
+                let mut seen_symbol_keys: FxHashSet<TypeId> =
+                    key_set.symbol_keys.iter().copied().collect();
+                for prop in &source_props {
+                    if prop.is_symbol_named {
+                        if let Some(sym_ref) =
+                            self.unique_symbol_ref_from_symbol_named_atom(prop.name)
+                        {
+                            source_symbol_prop_names.insert(sym_ref, prop.name);
+                            let symbol_key = self.interner().unique_symbol(sym_ref);
+                            if seen_symbol_keys.insert(symbol_key) {
+                                key_set.symbol_keys.push(symbol_key);
+                            }
+                        }
+                    } else {
+                        let mapped_key = self.mapped_key_from_property(prop);
+                        if seen_string_keys.insert(mapped_key.name) {
+                            key_set.keys.push(mapped_key);
+                        }
+                    }
+                }
+            }
             source_prop_map.reserve(source_props.len());
             source_decl_order.reserve(source_props.len());
             for prop in source_props {
@@ -673,9 +698,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             else {
                 continue;
             };
-            let source_atom = self
-                .interner()
-                .intern_string(&format!("__unique_{}", source_sym_ref.0));
+            let source_atom = source_symbol_prop_names
+                .get(&source_sym_ref)
+                .copied()
+                .unwrap_or_else(|| {
+                    self.interner()
+                        .intern_string(&format!("__unique_{}", source_sym_ref.0))
+                });
             let source_info = source_prop_map.get(&source_atom);
             let (source_optional, source_readonly) =
                 source_info.map_or((false, false), |(opt, ro, _, _, _, _)| (*opt, *ro));

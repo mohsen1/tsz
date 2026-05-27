@@ -1850,6 +1850,28 @@ fn test_type_environment_get_lazy_type_params_definition_store_fallback() {
     assert_eq!(params[0].name, t_param.name);
 }
 
+#[test]
+fn test_all_definition_names_qualifies_namespace_exports() {
+    let interner = create_test_interner();
+    let store = DefinitionStore::new();
+
+    let namespace_name = interner.intern_string("Intl");
+    let export_name = interner.intern_string("NumberFormatOptions");
+    let namespace = store.register(DefinitionInfo::namespace(namespace_name, Vec::new()));
+    let exported = store.register(DefinitionInfo::interface(
+        export_name,
+        Vec::new(),
+        Vec::new(),
+    ));
+    store.add_export(namespace, export_name, exported);
+
+    let names: rustc_hash::FxHashMap<_, _> = store.all_definition_names().into_iter().collect();
+    assert_eq!(
+        names.get(&exported),
+        Some(&vec![namespace_name, export_name])
+    );
+}
+
 /// Intrinsic `TypeIds` (number, string, boolean, etc.) must never carry a
 /// `type_to_def` mapping.  Their canonical display is the keyword
 /// (`number`, `string`, ...) provided by the `TypeFormatter`'s intrinsic
