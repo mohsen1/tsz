@@ -103,6 +103,7 @@ steps:
           ca-certificates \
           curl \
           git \
+          hyperfine \
           jq \
           pkg-config \
           xz-utils

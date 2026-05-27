@@ -621,26 +621,29 @@ impl RelationRequest {
 // Existing boundary helpers
 // ---------------------------------------------------------------------------
 
-/// Boundary-safe flag constants for relation cache keys.
+/// Boundary-safe flag constants for relation policy.
 ///
-/// Wraps the flag constants from `tsz_solver::RelationCacheKey` without exposing
-/// the internal `RelationCacheKey` struct itself. Checker code should use these
-/// constants when constructing relation policy flags (e.g., in `pack_relation_flags`).
+/// Mirrors the solver's typed `RelationFlags` bit surface while keeping the
+/// checker-facing packed `u16` protocol quarantined to this boundary. Checker
+/// code should use these constants when constructing relation policy flags
+/// (e.g., in `pack_relation_flags`).
 pub(crate) struct RelationFlags;
 
 impl RelationFlags {
-    pub const STRICT_NULL_CHECKS: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
-    pub const STRICT_FUNCTION_TYPES: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    pub const STRICT_NULL_CHECKS: u16 = tsz_solver::RelationFlags::STRICT_NULL_CHECKS.bits() as u16;
+    pub const STRICT_FUNCTION_TYPES: u16 =
+        tsz_solver::RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16;
     pub const EXACT_OPTIONAL_PROPERTY_TYPES: u16 =
-        tsz_solver::RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+        tsz_solver::RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES.bits() as u16;
     pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
-        tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
-    pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationCacheKey::FLAG_NO_ERASE_GENERICS;
-    pub const ALLOW_BIVARIANT_REST: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
+        tsz_solver::RelationFlags::NO_UNCHECKED_INDEXED_ACCESS.bits() as u16;
+    pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationFlags::NO_ERASE_GENERICS.bits() as u16;
+    pub const ALLOW_BIVARIANT_REST: u16 =
+        tsz_solver::RelationFlags::ALLOW_BIVARIANT_REST.bits() as u16;
     pub const ALLOW_ERASED_GENERIC_SIGNATURE_RETRY: u16 =
-        tsz_solver::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
+        tsz_solver::RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY.bits() as u16;
     pub const DISABLE_METHOD_BIVARIANCE: u16 =
-        tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
+        tsz_solver::RelationFlags::DISABLE_METHOD_BIVARIANCE.bits() as u16;
 }
 
 /// Re-export of the solver's relation cache key type.
