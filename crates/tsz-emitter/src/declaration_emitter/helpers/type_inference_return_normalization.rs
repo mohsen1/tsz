@@ -307,12 +307,22 @@ impl<'a> DeclarationEmitter<'a> {
         source_type_text: &str,
     ) -> (String, bool) {
         let (text, substituted_parameter_type_query) =
-            self.substitute_function_parameter_type_queries(func, source_type_text);
+            self.function_source_return_type_text_for_declaration_scope(func, source_type_text);
         let text = self.rewrite_returned_auto_accessor_parameter_unknowns(func, &text);
         let text = self.rewrite_returned_call_conditional_unknown_subject(func, &text);
         let text = self
             .expand_mapped_alias_index_conditional_text(self.arena, &text)
             .unwrap_or(text);
+        (text, substituted_parameter_type_query)
+    }
+
+    pub(in crate::declaration_emitter) fn function_source_return_type_text_for_declaration_scope(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        source_type_text: &str,
+    ) -> (String, bool) {
+        let (text, substituted_parameter_type_query) =
+            self.substitute_function_parameter_type_queries(func, source_type_text);
         let Some(ref type_params) = func.type_parameters else {
             return (text, substituted_parameter_type_query);
         };
@@ -333,6 +343,12 @@ impl<'a> DeclarationEmitter<'a> {
         func: &tsz_parser::parser::node::FunctionData,
         return_type_id: tsz_solver::types::TypeId,
     ) -> String {
+        if let Some(text) = self.function_body_declared_return_identifier_type_text(func) {
+            return self
+                .rewrite_current_source_named_import_type_text(&text)
+                .unwrap_or(text);
+        }
+
         let text = if let Some(ref type_params) = func.type_parameters
             && !type_params.nodes.is_empty()
         {
