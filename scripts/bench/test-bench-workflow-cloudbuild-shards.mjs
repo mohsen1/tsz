@@ -46,8 +46,8 @@ assert.match(
 
 assert.match(
   shardCloudbuild,
-  /\} > bench-prep-fetch\.log 2>&1[\s\S]+BENCH_PREP_FETCH_STATUS=%s[\s\S]+exit 0/,
-  "Cloud Build prep-fetch step should record status and never fail the build before shard status artifacts can be written",
+  /#!\/bin\/sh[\s\S]+\) > bench-prep-fetch\.log 2>&1[\s\S]+BENCH_PREP_FETCH_STATUS=%s[\s\S]+exit 0/,
+  "Cloud Build prep-fetch step should use the shell available in cloud-sdk:slim, record status, and never fail the build before shard status artifacts can be written",
 );
 
 assert.match(
