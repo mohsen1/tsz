@@ -397,6 +397,157 @@ fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
 }
 
 #[test]
+fn typed_strict_any_flag_configures_behavior_and_cache_key() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_ANY_PROPAGATION);
+    let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
+
+    assert!(
+        policy
+            .cache_config()
+            .flags
+            .contains(RelationFlags::STRICT_ANY_PROPAGATION),
+        "typed strict-any flag must be visible in the cache config",
+    );
+
+    let uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let cached = db.is_assignable_to_with_policy(source, target, policy);
+
+    assert_eq!(
+        cached, uncached,
+        "typed strict-any flag must drive the same behavior with and without cache",
+    );
+    assert!(
+        !cached,
+        "typed strict-any flag must not only partition the cache; it must also enable strict-any behavior",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(key),
+        Some(cached),
+        "typed strict-any result must be stored under the strict-any cache key",
+    );
+}
+
+#[test]
+fn typed_skip_weak_flag_configures_behavior_and_cache_key() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let optional = interner.intern_string("optional");
+    let unrelated = interner.intern_string("unrelated");
+    let source = interner.object(vec![PropertyInfo::new(unrelated, TypeId::BOOLEAN)]);
+    let target = interner.object(vec![PropertyInfo::opt(optional, TypeId::NUMBER)]);
+    let policy = RelationPolicy::from_relation_flags(RelationFlags::SKIP_WEAK_TYPE_CHECKS);
+    let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
+
+    assert!(
+        policy
+            .cache_config()
+            .flags
+            .contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS),
+        "typed skip-weak flag must be visible in the cache config",
+    );
+
+    let uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let cached = db.is_assignable_to_with_policy(source, target, policy);
+
+    assert_eq!(
+        cached, uncached,
+        "typed skip-weak flag must drive the same behavior with and without cache",
+    );
+    assert!(
+        cached,
+        "typed skip-weak flag must not only partition the cache; it must also suppress weak-type rejection",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(key),
+        Some(cached),
+        "typed skip-weak result must be stored under the skip-weak cache key",
+    );
+}
+
+#[test]
+fn typed_strict_subtype_flag_configures_behavior_and_cache_key() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let run = interner.intern_string("run");
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+    let dog_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(dog)],
+        TypeId::VOID,
+    ));
+    let animal_method = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(animal)],
+        TypeId::VOID,
+    ));
+    let source = interner.object(vec![PropertyInfo::method(run, dog_method)]);
+    let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
+    let policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::STRICT_SUBTYPE_CHECKING,
+    );
+    let key = RelationCacheKey::for_assignability(source, target, policy.cache_config());
+
+    assert!(
+        policy
+            .cache_config()
+            .flags
+            .contains(RelationFlags::STRICT_SUBTYPE_CHECKING),
+        "typed strict-subtype flag must be visible in the cache config",
+    );
+
+    let uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let cached = db.is_assignable_to_with_policy(source, target, policy);
+
+    assert_eq!(
+        cached, uncached,
+        "typed strict-subtype flag must drive the same behavior with and without cache",
+    );
+    assert!(
+        !cached,
+        "typed strict-subtype flag must not only partition the cache; it must also disable method bivariance",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(key),
+        Some(cached),
+        "typed strict-subtype result must be stored under the strict-subtype cache key",
+    );
+}
+
+#[test]
 fn subtype_cache_top_level_only_any_mode_matches_uncached_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
