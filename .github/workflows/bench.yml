@@ -100,7 +100,9 @@ jobs:
             fi
           fi
 
-          if [[ "$should_run" == "true" && "$release_only" != "true" ]]; then
+          if [[ "$should_run" == "true" &&
+                "$release_only" != "true" &&
+                "${{ github.event_name }}" == "workflow_run" ]]; then
             active_runs_raw="$(
               {
                 gh run list --repo "${{ github.repository }}" --workflow bench.yml --branch main --status in_progress --limit 20 \
