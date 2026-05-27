@@ -116,6 +116,27 @@ pub(crate) fn is_type_parameter_like(db: &dyn TypeDatabase, type_id: TypeId) -> 
     tsz_solver::type_queries::is_type_parameter_like(db, type_id)
 }
 
+pub(crate) fn is_generic_type_with_union_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_generic_type_with_union_constraint(db, type_id)
+}
+
+pub(crate) fn is_generic_type_without_nullable_constraint(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> bool {
+    tsz_solver::type_queries::is_generic_type_without_nullable_constraint(db, type_id)
+}
+
+pub(crate) fn substitute_reference_base_constraints(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> TypeId {
+    tsz_solver::type_queries::substitute_reference_base_constraints(db, type_id)
+}
+
 pub(crate) fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_unique_symbol_type(db, type_id)
 }

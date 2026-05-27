@@ -284,6 +284,19 @@ fn non_nullish_constraint_reduction_for_assignment(
 
     let non_nullish_initial = tsz_solver::narrowing::remove_nullish(db, initial_type);
     let assigned_type = resolve_assignment_reduction_type(db, env, assigned_type);
+    // A value that is itself possibly nullish does not prove the binding is
+    // non-nullish, so it must not collapse the binding to the non-nullish
+    // constraint. This covers a bare generic `T extends X | undefined` (and
+    // `null! as T`, whose type is `T`), whose constraint still includes
+    // `undefined`. Only a definitely-non-nullish value (e.g. `x!`, typed
+    // `NonNullable<T>`) may drive this reduction. Without this guard, a
+    // `let v = null! as T` access loses the possibly-undefined diagnostic.
+    if tsz_solver::narrowing::split_nullish_type(db, assigned_type)
+        .1
+        .is_some()
+    {
+        return None;
+    }
     let assigned_matches_non_nullish_initial = if let Some(environment) = env {
         non_nullish_initial != initial_type
             && is_assignable_with_env(db, environment, assigned_type, non_nullish_initial, true)

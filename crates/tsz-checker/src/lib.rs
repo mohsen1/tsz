@@ -517,6 +517,9 @@ mod conditional_never_param_inference_tests;
 #[path = "tests/const_asserted_return_type_tests.rs"]
 mod const_asserted_return_type_tests;
 #[cfg(test)]
+#[path = "tests/constraint_position_nullable_access_tests.rs"]
+mod constraint_position_nullable_access_tests;
+#[cfg(test)]
 #[path = "tests/contextual_return_wrapper_tests.rs"]
 mod contextual_return_wrapper_tests;
 #[cfg(test)]
