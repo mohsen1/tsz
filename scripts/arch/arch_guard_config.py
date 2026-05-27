@@ -207,7 +207,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down to the live merged count after #10311 and #10359
         # narrowed checker-side direct common references; removal condition
         # remains #8225 narrowing this quarantine.
-        3338,
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        3266,
     ),
 ]
 
@@ -349,6 +351,12 @@ REGEX_LINE_COUNT_CHECKS = [
             r"subtype_cache_config_from_legacy_flags|"
             r"assignability_cache_config_from_legacy_flags)\b"
         ),
+        0,
+    ),
+    (
+        "Solver relation boundary: RelationPolicy must not expose packed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bfn\s+legacy_packed_flags\s*\([^)]*\)\s*->\s*u16\b"),
         0,
     ),
     (
