@@ -36,11 +36,10 @@ fn test_distributive_with_infer_in_true_branch() {
     );
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
-    let result = evaluate_type(&interner, instantiated);
 
     // Expected: string | number
     let expected = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
-    assert_eq!(result, expected);
+    assert_evaluates_to(&interner, instantiated, expected);
 }
 
 #[test]
@@ -69,11 +68,10 @@ fn test_distributive_exclude_utility() {
     subst.insert(t_name, interner.union(vec![lit_a, lit_b, lit_c]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
-    let result = evaluate_type(&interner, instantiated);
 
     // Expected: "b" | "c"
     let expected = interner.union(vec![lit_b, lit_c]);
-    assert_eq!(result, expected);
+    assert_evaluates_to(&interner, instantiated, expected);
 }
 
 #[test]
@@ -103,11 +101,10 @@ fn test_distributive_extract_utility() {
     subst.insert(t_name, interner.union(vec![lit_a, lit_1, lit_b, lit_2]));
 
     let instantiated = instantiate_type(&interner, cond_type, &subst);
-    let result = evaluate_type(&interner, instantiated);
 
     // Expected: "a" | "b"
     let expected = interner.union(vec![lit_a, lit_b]);
-    assert_eq!(result, expected);
+    assert_evaluates_to(&interner, instantiated, expected);
 }
 
 #[test]
