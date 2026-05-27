@@ -70,6 +70,11 @@ assert.match(
   /literal_scoped_dir='bench-prep\/\$\{_BENCH_TARGET_SHA\}'[\s\S]+cp bench-prep\.tar bench-prep\.env "\$\{literal_scoped_dir\}\/"/,
   "benchmark prep should mirror artifacts to the literal target path for Cloud Build artifact glob compatibility",
 );
+assert.match(
+  benchPrepareConfig,
+  /metadata\.google\.internal\/computeMetadata\/v1\/instance\/service-accounts\/default\/token[\s\S]+upload_gcs_object bench-prep\.tar "bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.tar"[\s\S]+upload_gcs_object bench-prep\.env "bench-prep\/latest\/bench-prep\.env"/,
+  "benchmark prep should explicitly upload verified env/tar artifacts to SHA-scoped and latest GCS paths",
+);
 
 for (const workflow of workflowFiles) {
   const configs = workflowConfigs.get(workflow) ?? [];
