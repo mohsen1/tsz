@@ -111,6 +111,12 @@ assert.match(
 );
 
 assert.match(
+  prepArtifactJob,
+  /name: bench-prep-ready[\s\S]+path:\s+\|[\s\S]+bench-prep\.env[\s\S]+bench-prep\.tar/,
+  "bench-prep-ready artifact should include both the prep manifest and tarball consumed by shard jobs",
+);
+
+assert.match(
   workflow,
   /TARGET_SHA="\$\{BENCH_TARGET_SHA:-\$\{GITHUB_SHA\}\}"[\s\S]+if \[\[ -n "\$\{MAIN_SHA\}" && "\$\{TARGET_SHA\}" != "\$\{MAIN_SHA\}" \]\]; then[\s\S]+echo "catchup_main_sha=\$\{MAIN_SHA\}" >> "\$GITHUB_OUTPUT"/,
   "benchmark publish should expose the current main SHA when a finished run publishes an older target",
