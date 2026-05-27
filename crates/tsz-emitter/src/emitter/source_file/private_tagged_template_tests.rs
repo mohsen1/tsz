@@ -193,6 +193,43 @@ class A3 {
 }
 
 #[test]
+fn static_private_field_destructuring_uses_simple_receivers_directly() {
+    let source = r#"
+class A {
+    static #field = 1;
+    otherClass = A;
+    constructor() {
+        ({ x: A.#field } = { x: 1 });
+        [this.otherClass.#field = 2] = [];
+    }
+    static test(other) {
+        [other.#field] = [2];
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "({ x: ({ set value(_c) { __classPrivateFieldSet(_a, _a, _c, \"f\", _A_field); } }).value } = { x: 1 });"
+        ),
+        "Static class private field destructuring should write through the class alias and keep setter params after reserved receiver temps.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_b = this.otherClass, [({ set value(_c) { __classPrivateFieldSet(_b, _a, _c, \"f\", _A_field); } }).value = 2] = [];"
+        ),
+        "Complex private destructuring receivers should still be captured once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "static test(other) {\n        [({ set value(_b) { __classPrivateFieldSet(other, _a, _b, \"f\", _A_field); } }).value] = [2];\n    }"
+        ),
+        "Simple identifier private destructuring receivers should not allocate an extra receiver temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_async_generator_helpers_preserve_function_kind() {
     let source = r#"
 const Widget = class {

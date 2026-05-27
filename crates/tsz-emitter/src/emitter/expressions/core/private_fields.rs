@@ -118,11 +118,25 @@ impl<'a> Printer<'a> {
             || node.is_identifier()
     }
 
-    fn receiver_is_static_class_alias(&self, idx: NodeIndex) -> bool {
-        self.arena
-            .get(idx)
-            .and_then(|node| self.static_class_alias_for_node(node))
-            .is_some()
+    pub(in crate::emitter) fn private_destructuring_receiver_needs_temp(
+        &self,
+        idx: NodeIndex,
+    ) -> bool {
+        self.try_extract_private_field_access(idx)
+            .is_some_and(|access| {
+                !self.private_member_is_static(&access.clean_name)
+                    || !self.private_call_receiver_is_simple(access.expression)
+            })
+    }
+
+    fn private_member_is_static(&self, clean_name: &str) -> bool {
+        let Some((_, class_alias)) = self.private_static_class_alias.as_ref() else {
+            return false;
+        };
+        self.private_member_info
+            .get(clean_name)
+            .and_then(|info| info.state_var.as_deref())
+            == Some(class_alias.as_str())
     }
 
     fn peek_fresh_temp_name(&self) -> String {
@@ -376,16 +390,24 @@ impl<'a> Printer<'a> {
             return false;
         }
 
-        let targets = raw_targets
+        let mut targets = raw_targets
             .into_iter()
-            .map(|(target, access)| PrivateDestructuringTarget {
-                target,
-                receiver_temp: (!self.receiver_is_static_class_alias(access.expression))
-                    .then(|| self.make_unique_name_hoisted_assignment()),
-                setter_value: self.peek_fresh_temp_name(),
-                access,
+            .map(|(target, access)| {
+                let receiver_temp = (!self.private_member_is_static(&access.clean_name)
+                    || !self.private_call_receiver_is_simple(access.expression))
+                .then(|| self.make_unique_name_hoisted_assignment());
+                PrivateDestructuringTarget {
+                    target,
+                    receiver_temp,
+                    setter_value: String::new(),
+                    access,
+                }
             })
             .collect::<Vec<_>>();
+        let setter_value = self.peek_fresh_temp_name();
+        for target in &mut targets {
+            target.setter_value.clone_from(&setter_value);
+        }
 
         for target in &targets {
             if let Some(receiver_temp) = &target.receiver_temp {
