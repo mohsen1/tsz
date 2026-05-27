@@ -1,5 +1,6 @@
 "use strict";
 
+const path = require("path");
 const importFixParityOverrides = require("./import-fix-parity-overrides.cjs");
 
 // Patch `getCodeFixesAtPosition` and all remaining SessionClient methods.
