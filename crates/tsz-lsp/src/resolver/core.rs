@@ -780,6 +780,18 @@ impl<'a> ScopeWalker<'a> {
         target_symbol: SymbolId,
         refs: &mut Vec<NodeIndex>,
     ) {
+        stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
+            self.collect_references_guarded(current, target_name, target_symbol, refs);
+        });
+    }
+
+    fn collect_references_guarded(
+        &mut self,
+        current: NodeIndex,
+        target_name: &str,
+        target_symbol: SymbolId,
+        refs: &mut Vec<NodeIndex>,
+    ) {
         let Some(node) = self.arena.get(current) else {
             return;
         };
