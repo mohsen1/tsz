@@ -694,6 +694,9 @@ mod module_resolution_guard_tests;
 #[path = "tests/mutable_binding_widening_from_const_literal_tests.rs"]
 mod mutable_binding_widening_from_const_literal_tests;
 #[cfg(test)]
+#[path = "tests/namespace_property_mismatch_boundary_arch_tests.rs"]
+mod namespace_property_mismatch_boundary_arch_tests;
+#[cfg(test)]
 #[path = "../tests/never_initializer_falls_through_tests.rs"]
 mod never_initializer_falls_through_tests;
 #[cfg(test)]
