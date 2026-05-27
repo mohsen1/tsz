@@ -228,9 +228,12 @@ fn test_symbol_index_signature_accepts_symbol_keys_only() {
         TypeId::BOOLEAN,
         "symbol index signatures should accept the broad symbol key type"
     );
+    // Indexing an object whose only index signature is symbol-keyed by the bare
+    // `string` type matches no applicable signature: tsc reports TS2536 and resolves
+    // the access to the error type (still not the symbol index's value). See #9709.
     assert_eq!(
         evaluate_type(&interner, interner.index_access(obj, TypeId::STRING)),
-        TypeId::UNDEFINED,
+        TypeId::ERROR,
         "symbol index signatures must not behave like string index signatures"
     );
 }

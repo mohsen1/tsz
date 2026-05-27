@@ -409,6 +409,9 @@ mod function_optional_param_relation_tests;
 #[path = "../tests/index_access_comprehensive_tests.rs"]
 mod index_access_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/indexed_access_error_type_tests.rs"]
+mod indexed_access_error_type_tests;
+#[cfg(test)]
 #[path = "../tests/inferred_declaration_mapped_surface_tests.rs"]
 mod inferred_declaration_mapped_surface_tests;
 #[cfg(test)]
