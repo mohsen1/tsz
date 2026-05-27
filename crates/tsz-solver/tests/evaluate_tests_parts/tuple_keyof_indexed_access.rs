@@ -42,13 +42,7 @@ fn test_template_literal_nested_union_interpolation() {
 fn test_template_literal_matches_template_literal() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: `foo${infer R}`
     let pattern = interner.template_literal(vec![
@@ -1312,18 +1306,8 @@ fn test_tuple_spread_generic_union_is_not_distributed() {
     let l0 = interner.literal_number(0.0);
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
+    let u_param = test_type_param_from_name(&interner, u_name);
     let union = interner.union(vec![t_param, u_param]);
 
     let src = interner.tuple(vec![fixed_elem(l0), rest_elem(union)]);

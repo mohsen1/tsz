@@ -300,13 +300,7 @@ fn test_conditional_infer_extract_state_pattern() {
     // Simulates: type ExtractState<R> = R extends Reducer<infer S, AnyAction> ? S : never;
     // Where Reducer<S, A> is represented as a function type: (state: S | undefined, action: A) => S
 
-    let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_s_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_s_name, infer_s) = test_infer_param(&interner, "S");
 
     // AnyAction = { type: string }
     let any_action = interner.object(vec![PropertyInfo::new(
@@ -389,13 +383,7 @@ fn test_conditional_infer_extract_action_pattern() {
 
     // Simulates: type ExtractAction<R> = R extends Reducer<any, infer A> ? A : never;
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
     // Pattern: Reducer<any, infer A> - function (state: any | undefined, action: A) => any
     let state_param = interner.union(vec![TypeId::ANY, TypeId::UNDEFINED]);
@@ -481,13 +469,7 @@ fn test_conditional_infer_extract_state_non_matching() {
 
     // Test that ExtractState returns never when given a non-Reducer type
 
-    let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_s_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_s_name, infer_s) = test_infer_param(&interner, "S");
 
     // AnyAction = { type: string }
     let any_action = interner.object(vec![PropertyInfo::new(
@@ -545,21 +527,9 @@ fn test_conditional_infer_extract_state_union_distributive() {
     // Test distributive ExtractState over a union of reducers:
     // ExtractState<Reducer<number, A> | Reducer<string, A>> should give number | string
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_s_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_s_name, infer_s) = test_infer_param(&interner, "S");
 
     // Simple function pattern for testing: (x: infer S) => S
     let extends_fn = interner.function(FunctionShape {
