@@ -1797,7 +1797,10 @@ impl<'a> CheckerState<'a> {
             .types
             .factory()
             .union2(TypeId::VOID, class_constructor_type);
-        if !self.diagnostic_relation_boolean_guard(return_type, expected_return) {
+        if !self
+            .return_relation_outcome(return_type, expected_return)
+            .related
+        {
             let return_str = self.format_type_diagnostic(return_type);
             let expected_str = self.format_type_diagnostic(expected_return);
             let message = format_message(
