@@ -182,6 +182,9 @@ pub struct ES5ClassTransformer<'a> {
     current_static_class_alias: Option<String>,
     /// Alias used for class-name self references when class decorators can replace the binding.
     class_self_reference_alias: Option<String>,
+    /// Whether a nested class heritage expression is evaluated in a pre-super
+    /// constructor receiver capture context.
+    extends_this_captured: bool,
     /// Whether static field initializer assignments are emitted by the surrounding expression emitter.
     skip_static_field_initializers: bool,
     use_define_for_class_fields: bool,
@@ -234,6 +237,7 @@ impl<'a> ES5ClassTransformer<'a> {
             computed_prop_temp_map: std::collections::HashMap::new(),
             current_static_class_alias: None,
             class_self_reference_alias: None,
+            extends_this_captured: false,
             skip_static_field_initializers: false,
             use_define_for_class_fields: false,
             tslib_prefix: false,
@@ -275,6 +279,10 @@ impl<'a> ES5ClassTransformer<'a> {
 
     pub fn set_class_self_reference_alias(&mut self, alias: String) {
         self.class_self_reference_alias = Some(alias);
+    }
+
+    pub const fn set_extends_this_captured(&mut self, captured: bool) {
+        self.extends_this_captured = captured;
     }
 
     pub fn set_commonjs_import_substitutions(&mut self, subs: FxHashMap<String, String>) {

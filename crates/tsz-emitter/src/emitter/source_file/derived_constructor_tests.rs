@@ -69,3 +69,35 @@ fn derived_constructor_fields_follow_parenthesized_super_call() {
         "ES5 derived constructor lowering should route `this` in super-call arguments through the constructor result temp.\nOutput:\n{es5_output}"
     );
 }
+
+#[test]
+fn pre_super_this_capture_stops_at_ordinary_functions() {
+    let source = "class Base {}\nclass FnDecl extends Base {\n    prop = true;\n    constructor() {\n        function declaration(param = this) {\n            return this;\n        }\n        super();\n    }\n}\nclass FnExpr extends Base {\n    prop = true;\n    constructor() {\n        (function () {\n            return this;\n        })();\n        super();\n    }\n}\nclass Arrow extends Base {\n    prop = true;\n    constructor() {\n        (() => this)();\n        super();\n    }\n}\nclass ClassDecl extends Base {\n    memberClass = class {};\n    constructor() {\n        class Inner extends this.memberClass {\n            method() {\n                return this;\n            }\n        }\n        super();\n    }\n}\n";
+
+    let output = emit(source, ScriptTarget::ES5);
+
+    assert!(
+        output.contains(
+            "function declaration(param) {\n            if (param === void 0) { param = this; }\n            return this;\n        }"
+        ),
+        "Ordinary nested function declarations should keep their own `this`, including default parameters.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function () {\n            return this;\n        })();"),
+        "Ordinary nested function expressions should keep their own `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("(function () { return _this; })();"),
+        "Nested arrows should still capture the pre-super constructor receiver.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}(_this.memberClass));"),
+        "Nested class declarations should evaluate their heritage expression with the pre-super receiver capture.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "Inner.prototype.method = function () {\n                return this;\n            };"
+        ),
+        "Nested class method bodies should still keep their own `this`.\nOutput:\n{output}"
+    );
+}

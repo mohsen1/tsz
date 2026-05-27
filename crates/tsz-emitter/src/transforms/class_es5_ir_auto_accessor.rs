@@ -683,7 +683,11 @@ impl<'a> ES5ClassTransformer<'a> {
             self.arena,
             heritage_clauses,
         )?;
-        Some(self.convert_expression(expr_idx))
+        if self.extends_this_captured {
+            Some(self.convert_expression_this_captured(expr_idx))
+        } else {
+            Some(self.convert_expression(expr_idx))
+        }
     }
 
     /// Collect all arrow function node indices in a block

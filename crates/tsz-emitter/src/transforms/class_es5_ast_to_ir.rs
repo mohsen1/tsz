@@ -222,6 +222,42 @@ impl<'a> AstToIr<'a> {
         }
     }
 
+    fn enter_ordinary_function_this_scope(
+        &self,
+    ) -> (
+        bool,
+        Option<ThisSubstitution>,
+        Option<ThisSubstitution>,
+        bool,
+    ) {
+        let prev_captured = self.this_captured.replace(false);
+        let prev_substitution = self.current_this_substitution.take();
+        let prev_lexical_alias = self.lexical_this_capture_alias.take();
+        let prev_static = self.is_static.replace(true);
+        (
+            prev_captured,
+            prev_substitution,
+            prev_lexical_alias,
+            prev_static,
+        )
+    }
+
+    fn restore_ordinary_function_this_scope(
+        &self,
+        previous: (
+            bool,
+            Option<ThisSubstitution>,
+            Option<ThisSubstitution>,
+            bool,
+        ),
+    ) {
+        let (prev_captured, prev_substitution, prev_lexical_alias, prev_static) = previous;
+        self.this_captured.set(prev_captured);
+        self.current_this_substitution.set(prev_substitution);
+        self.lexical_this_capture_alias.set(prev_lexical_alias);
+        self.is_static.set(prev_static);
+    }
+
     fn can_delegate_es5_for_of_to_ast_printer(&self, idx: NodeIndex) -> bool {
         let has_es5_for_of_directive = self.transforms.as_ref().is_some_and(|transforms| {
             matches!(
@@ -856,6 +892,9 @@ impl<'a> AstToIr<'a> {
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        if self.this_captured.get() {
+            transformer.set_extends_this_captured(true);
+        }
 
         if let Some(ir) = transformer.transform_class_to_ir(idx) {
             return ir;
@@ -889,6 +928,7 @@ impl<'a> AstToIr<'a> {
         self.temp_var_counter.set(0);
 
         let name = get_identifier_text(self.arena, func.name).unwrap_or_default();
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&func.parameters);
         let body_source_range = if func.body.is_some() {
             self.arena
@@ -898,10 +938,6 @@ impl<'a> AstToIr<'a> {
             None
         };
 
-        // Function declarations have their own `this`; class/static-block
-        // substitutions must not leak into their bodies.
-        let prev_substitution = self.current_this_substitution.take();
-        let prev_static = self.is_static.replace(true);
         let body = if func.body.is_none() {
             vec![]
         } else if let Some(body_node) = self.arena.get(func.body)
@@ -916,8 +952,7 @@ impl<'a> AstToIr<'a> {
         } else {
             vec![]
         };
-        self.is_static.set(prev_static);
-        self.current_this_substitution.set(prev_substitution);
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         self.temp_var_counter.set(saved_temp_counter);
 
         let mut body = body;
@@ -2198,12 +2233,14 @@ impl<'a> AstToIr<'a> {
     /// Convert a method declaration to a function expression IR node
     fn convert_method_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let method = self.arena.get_method_decl(node)?;
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&method.parameters);
         let mut body = if method.body.is_some() {
             self.convert_block_to_stmts(method.body)
         } else {
             Vec::new()
         };
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         if self.method_body_contains_new_target(method.body, &method.parameters) {
             Self::prepend_new_target_capture(&mut body, IRNode::void_0());
         }
@@ -2220,12 +2257,14 @@ impl<'a> AstToIr<'a> {
     /// Convert a getter/setter to a function expression IR node
     fn convert_accessor_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let accessor = self.arena.get_accessor(node)?;
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&accessor.parameters);
         let mut body = if accessor.body.is_some() {
             self.convert_block_to_stmts(accessor.body)
         } else {
             Vec::new()
         };
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         if self.method_body_contains_new_target(accessor.body, &accessor.parameters) {
             Self::prepend_new_target_capture(&mut body, IRNode::void_0());
         }
@@ -2287,6 +2326,7 @@ impl<'a> AstToIr<'a> {
             let saved_temp_counter = self.temp_var_counter.get();
             self.temp_var_counter.set(0);
 
+            let previous_this_scope = self.enter_ordinary_function_this_scope();
             let needs_new_target_capture = self.function_body_contains_new_target(func);
             let name = if func.name.is_none() {
                 needs_new_target_capture.then_some("_a".to_string())
@@ -2303,11 +2343,6 @@ impl<'a> AstToIr<'a> {
                 None
             };
 
-            // Regular function expressions have their own `this`, so we must
-            // clear the class alias (it should NOT substitute `this` inside).
-            let prev_substitution = self.current_this_substitution.take();
-            let prev_static = self.is_static.replace(true);
-
             let body = if func.body.is_none() {
                 vec![]
             } else if let Some(body_node) = self.arena.get(func.body)
@@ -2318,9 +2353,7 @@ impl<'a> AstToIr<'a> {
                 vec![]
             };
 
-            // Restore previous alias
-            self.is_static.set(prev_static);
-            self.current_this_substitution.set(prev_substitution);
+            self.restore_ordinary_function_this_scope(previous_this_scope);
             self.temp_var_counter.set(saved_temp_counter);
             let mut body = body;
             self.prepend_function_hoisted_temps(&mut body, hoisted_before);
