@@ -931,7 +931,14 @@ impl<'a> AsyncES5Transformer<'a> {
                 },
             ))));
         } else if self.contains_await_recursive(idx) {
-            let value = if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+            let value = if let Some(lowered_object) = self.lower_object_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_object
+            } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
                 idx,
                 cases,
                 current_statements,
@@ -2660,6 +2667,15 @@ impl<'a> AsyncES5Transformer<'a> {
                                 current_label,
                             ) {
                             lowered_comma
+                        } else if let Some(lowered_object) = self
+                            .lower_object_literal_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_object
                         } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
                             ret.expression,
                             cases,
@@ -3051,6 +3067,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             ) {
                 current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_array)));
+                return;
+            }
+            if let Some(lowered_object) = self.lower_object_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_object)));
                 return;
             }
             if let Some(lowered_access) = self.lower_element_access_object_before_suspension(

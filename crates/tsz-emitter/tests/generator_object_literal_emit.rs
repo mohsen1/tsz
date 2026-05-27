@@ -35,3 +35,53 @@ fn generator_object_literal_prefix_before_yield_omits_source_trailing_comma() {
         "The synthesized prefix object is not the full source literal, so it must not keep the source trailing comma.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn async_object_literal_computed_suffix_reuses_materialized_object() {
+    let output = emit_es5(
+        "declare var x, y, z, b;
+        async function f() {
+            x = {
+                a: await y,
+                [b]: z
+            };
+        }",
+    );
+
+    assert!(
+        output.contains(
+            "_a.a = _b.sent(),\n                        _a[b] = z,\n                        _a)"
+        ),
+        "Async object literals should assign computed suffix properties on the materialized object without a result temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_object_literal_multiple_awaited_properties_resume_sequentially() {
+    let output = emit_es5(
+        "async function f() {
+            return {
+                a: await Promise.resolve(0),
+                b: await Promise.resolve(1),
+                c: await Promise.resolve(2),
+            };
+        }",
+    );
+
+    assert!(
+        output.contains(
+            "_a.a = _b.sent();\n                    return [4 /*yield*/, Promise.resolve(1)];"
+        ),
+        "The first awaited property should resume into an assignment before yielding for the next property.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "_a.b = _b.sent();\n                    return [4 /*yield*/, Promise.resolve(2)];"
+        ),
+        "The second awaited property should also get its own resume case.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("_a.a = _b.sent(),\n                        _a.b = _b.sent()"),
+        "Later awaited properties must not collapse into one comma expression after the first yield.\nOutput:\n{output}"
+    );
+}
