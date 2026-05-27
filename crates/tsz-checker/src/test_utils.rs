@@ -1533,6 +1533,124 @@ class C {}
         );
     }
 
+    /// Synthetic `lib.*.d.ts` exercising namespaced lib interfaces whose
+    /// `extends` clause names a base interface declared in the same namespace.
+    /// Mirrors the shape of `Temporal.RoundingOptionsWithLargestUnit` /
+    /// `Temporal.DurationRoundingOptions` without depending on the full lib.
+    /// `param_name` varies the bound type-parameter spelling so the fix cannot
+    /// be hardcoded to a particular identifier.
+    fn namespaced_heritage_lib(param_name: &str) -> Vec<Arc<LibFile>> {
+        let source = format!(
+            "declare namespace NS {{\n\
+                 type Unit = \"x\" | \"y\";\n\
+                 type Plural<{P} extends Unit> = {P} | {{ x: \"xs\"; y: \"ys\" }}[{P}];\n\
+                 interface RoundOpts<{P} extends Unit> {{\n\
+                     small?: Plural<{P}> | undefined;\n\
+                     mode?: \"a\" | \"b\" | undefined;\n\
+                 }}\n\
+                 interface RoundOptsLargest<{P} extends Unit> extends RoundOpts<{P}> {{\n\
+                     large?: \"auto\" | Plural<{P}> | undefined;\n\
+                 }}\n\
+                 interface RelativeOpts {{ relative?: string | undefined; }}\n\
+                 interface DurationOpts extends RelativeOpts, RoundOptsLargest<Unit> {{}}\n\
+             }}\n",
+            P = param_name
+        );
+        vec![Arc::new(LibFile::from_source(
+            "lib.es2099.synthetic.d.ts".to_string(),
+            source,
+        ))]
+    }
+
+    #[test]
+    fn namespaced_lib_interface_inherits_base_members() {
+        // A namespaced interface that `extends` another namespaced interface
+        // must expose the base's members (single inheritance level).
+        for param in ["U", "T", "K"] {
+            let libs = namespaced_heritage_lib(param);
+            let codes: Vec<u32> = check_source_with_libs(
+                "declare const o: NS.RoundOptsLargest<NS.Unit>;\n\
+                 const a = o.small;\n\
+                 const b = o.large;\n\
+                 const c = o.mode;\n",
+                "test.ts",
+                CheckerOptions::default(),
+                &libs,
+            )
+            .iter()
+            .map(|d| d.code)
+            .collect();
+            assert!(
+                !codes.contains(&2339),
+                "inherited member access on NS.RoundOptsLargest (param {param}) must not emit TS2339, got: {codes:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn namespaced_lib_interface_excess_property_uses_inherited_members() {
+        // Inherited optional members must count as known properties so the
+        // object literal is not flagged with a spurious TS2353, while a truly
+        // unknown property still is.
+        let libs = namespaced_heritage_lib("U");
+        let ok_codes: Vec<u32> = check_source_with_libs(
+            "declare function f(o?: NS.RoundOptsLargest<NS.Unit>): void;\n\
+             f({ large: \"x\", small: \"x\" });\n",
+            "test.ts",
+            CheckerOptions::default(),
+            &libs,
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect();
+        assert!(
+            !ok_codes.contains(&2353),
+            "object literal using inherited `small` must not emit TS2353, got: {ok_codes:?}"
+        );
+
+        let bad_codes: Vec<u32> = check_source_with_libs(
+            "declare function f(o?: NS.RoundOptsLargest<NS.Unit>): void;\n\
+             f({ large: \"x\", bogus: 1 });\n",
+            "test.ts",
+            CheckerOptions::default(),
+            &libs,
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect();
+        assert!(
+            bad_codes.contains(&2353),
+            "a genuinely unknown property must still emit TS2353, got: {bad_codes:?}"
+        );
+    }
+
+    #[test]
+    fn namespaced_lib_interface_inherits_transitive_members_after_base_resolved() {
+        // `DurationOpts extends RelativeOpts, RoundOptsLargest<Unit>` inherits
+        // `small` transitively (RoundOptsLargest -> RoundOpts). Resolving the
+        // intermediate `RoundOptsLargest` first must not poison the cache and
+        // strip the transitive member from `DurationOpts`.
+        let libs = namespaced_heritage_lib("U");
+        let codes: Vec<u32> = check_source_with_libs(
+            "declare const m: NS.RoundOptsLargest<NS.Unit>;\n\
+             const pre = m.small;\n\
+             declare const d: NS.DurationOpts;\n\
+             const a = d.small;\n\
+             const b = d.large;\n\
+             const c = d.relative;\n",
+            "test.ts",
+            CheckerOptions::default(),
+            &libs,
+        )
+        .iter()
+        .map(|d| d.code)
+        .collect();
+        assert!(
+            !codes.contains(&2339),
+            "transitively inherited members on NS.DurationOpts must resolve even after the intermediate base is resolved first, got: {codes:?}"
+        );
+    }
+
     #[test]
     fn check_source_with_libs_code_messages_projects_diagnostics() {
         let pairs = check_source_with_libs_code_messages(
