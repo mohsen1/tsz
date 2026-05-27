@@ -465,8 +465,10 @@ impl<'a> CheckerState<'a> {
                     // don't overwrite a parameter type that was already cached by
                     // get_type_of_function (which computes types from initializer
                     // expressions in JS files). Only overwrite if the existing
-                    // cached type is absent or is a placeholder (ERROR).
+                    // cached type is absent or is a placeholder (ERROR). Explicit
+                    // parameter annotations remain authoritative.
                     if param_types.is_none()
+                        && param.type_annotation.is_none()
                         && let Some(&existing) = self.ctx.symbol_types.get(&sym_id)
                         && existing != TypeId::ERROR
                     {

@@ -212,7 +212,7 @@ pub struct ObjectLiteralTracking {
 
 /// Persistent cache for type checking results across LSP queries.
 /// This cache survives between LSP requests but is invalidated when the file changes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct TypeCache {
     /// Cached types for symbols (dense flat-vec, O(1) lookup by symbol index).
     pub symbol_types: SymbolTypeCache,
@@ -232,9 +232,6 @@ pub struct TypeCache {
     pub def_to_symbol: FxHashMap<tsz_solver::DefId, SymbolId>,
 
     /// Maps `DefIds` to symbol name strings for declaration emit.
-    /// Built from `DefinitionStore` at `extract_cache` time; used as a fallback
-    /// in `TypePrinter::print_lazy_type` when the symbol lives in a lib binder
-    /// that is not present in the current file's `symbol_arena`.
     pub def_to_name: FxHashMap<tsz_solver::DefId, String>,
 
     /// Snapshot of resolved `DefId -> TypeId` bodies for declaration emit evaluation.
@@ -242,6 +239,9 @@ pub struct TypeCache {
 
     /// Snapshot of resolved `DefId -> type params` for declaration emit evaluation.
     pub def_type_params: FxHashMap<u32, Vec<tsz_solver::TypeParamInfo>>,
+
+    pub boxed_types: FxHashMap<tsz_solver::IntrinsicKind, TypeId>,
+    pub boxed_def_ids: FxHashMap<tsz_solver::IntrinsicKind, Vec<tsz_solver::DefId>>,
 
     /// Cache for control flow analysis results.
     /// Key: (`FlowNodeId`, `SymbolId`, `InitialTypeId`) -> `NarrowedTypeId`

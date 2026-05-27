@@ -508,6 +508,16 @@ impl<'a> DeclarationEmitter<'a> {
                     .get(initializer)
                     .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
                 && let Some(type_text) =
+                    self.generic_call_constrained_mapped_return_type_text(initializer)
+            {
+                self.write(": ");
+                self.write(&type_text);
+            } else if has_initializer
+                && self
+                    .arena
+                    .get(initializer)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) =
                     self.call_expression_reused_type_text(initializer)
                         .filter(|text| {
                             text.contains("=>")

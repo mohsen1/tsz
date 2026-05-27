@@ -792,6 +792,9 @@ impl<'a> DeclarationEmitter<'a> {
     ) -> String {
         let elided_alias_names = self.function_local_type_alias_application_names(type_id);
         let type_id = if let Some(interner) = self.type_interner {
+            let type_id = self
+                .inferred_declaration_mapped_constraint_surface(type_id)
+                .unwrap_or(type_id);
             self.display_alias_for_policy(
                 type_id,
                 interner,
@@ -822,6 +825,28 @@ impl<'a> DeclarationEmitter<'a> {
             expanded
         } else {
             printed
+        }
+    }
+
+    pub(crate) fn inferred_declaration_mapped_constraint_surface(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> Option<tsz_solver::types::TypeId> {
+        let interner = self.type_interner?;
+        if let Some(cache) = &self.type_cache {
+            let resolver = DtsStructuralResolver { cache };
+            let mut evaluator =
+                tsz_solver::computation::TypeEvaluator::with_resolver(interner, &resolver);
+            evaluator.set_max_mapped_keys(1_024);
+            tsz_solver::type_queries::inferred_declaration_mapped_constraint_surface_with(
+                interner,
+                type_id,
+                |ty| evaluator.evaluate(ty),
+            )
+        } else {
+            tsz_solver::type_queries::inferred_declaration_mapped_constraint_surface(
+                interner, type_id,
+            )
         }
     }
 

@@ -1,8 +1,8 @@
 //! Mapped type evaluation.
-//!
 //! Handles TypeScript's mapped types: `{ [K in keyof T]: T[K] }`
 //! Including homomorphic mapped types that preserve modifiers.
 
+mod display_order;
 mod key_types;
 
 use crate::construction::TypeDatabase;
@@ -25,7 +25,6 @@ use super::super::evaluate::TypeEvaluator;
 
 #[cfg(test)]
 mod mapped_tests;
-
 #[cfg(test)]
 mod tests;
 pub(crate) use key_types::{MappedKey, MappedKeys};
@@ -353,15 +352,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             let resolved_source = self.evaluate(source);
             resolved_source_id = Some(resolved_source);
 
-            // When a homomorphic mapped type has `any` as its source, the normal
-            // key expansion path handles it correctly: `keyof any` = `string | number | symbol`,
-            // which produces an object with string+number index signatures.
-            // This matches tsc's behavior for both `Objectish<any>` and non-identity
-            // homomorphic types like `{ [K in keyof T]: string }` with T=any.
-            //
-            // Previously this returned TypeId::ANY, which was incorrect for the
-            // `Objectish<any>` case and required a checker-local workaround.
-            let source_props = {
+            // Homomorphic `any` sources still expand through the normal key path.
+            let mut source_props = {
                 let ordered = crate::type_queries::collect_homomorphic_source_property_infos(
                     self.interner(),
                     source,
@@ -375,6 +367,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                     }
                 }
             };
+            self.sort_homomorphic_source_properties_for_display(
+                source,
+                resolved_source,
+                &mut source_props,
+            );
             source_prop_map.reserve(source_props.len());
             source_decl_order.reserve(source_props.len());
             for prop in source_props {
@@ -393,13 +390,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
-        // For homomorphic mapped types, capture the source object's property declaration
-        // order. tsc preserves declaration order in mapped type results (e.g., Required<Foo>
-        // lists properties in the same order as Foo). Our key extraction sorts by Atom ID
-        // which can differ from declaration order. We fix this by re-sorting the output
-        // properties to match the source's declaration order. For array sources, the
-        // helper above instantiates the registered `Array<T>` base type so remapped
-        // object displays preserve lib.d.ts member order.
+        // Non-homomorphic mapped types do not inherit source declaration order.
         if !is_homomorphic {
             source_decl_order.clear();
         }
@@ -755,16 +746,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
 
-        // For homomorphic mapped types, restore source declaration order.
-        // The key extraction and dedup may have reordered properties.
-        if !source_decl_order.is_empty() {
-            let order_map: FxHashMap<Atom, usize> = source_decl_order
-                .iter()
-                .enumerate()
-                .map(|(i, &name)| (name, i))
-                .collect();
-            properties.sort_by_key(|p| order_map.get(&p.name).copied().unwrap_or(usize::MAX));
-        }
+        self.sort_mapped_properties_for_display(
+            source_object,
+            resolved_source_id,
+            &source_decl_order,
+            &mut properties,
+        );
 
         let empty_atom = self.interner().intern_string("");
 

@@ -7,10 +7,6 @@ impl<'a> CheckerState<'a> {
         sym_id: SymbolId,
         file_idx: usize,
     ) -> bool {
-        if file_idx == self.ctx.current_file_idx {
-            return false;
-        }
-
         let Some(target_symbol) = self
             .ctx
             .get_binder_for_file(file_idx)
@@ -18,6 +14,18 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
+        if file_idx == self.ctx.current_file_idx
+            && self
+                .ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|local_symbol| {
+                    local_symbol.escaped_name == target_symbol.escaped_name
+                        && local_symbol.flags == target_symbol.flags
+                })
+        {
+            return false;
+        }
         if !target_symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
             return false;
         }

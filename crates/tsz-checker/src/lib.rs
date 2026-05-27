@@ -442,6 +442,9 @@ mod architecture_contract_tests_src;
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/array_like_constraint_relation_routing_arch_tests.rs"]
+mod array_like_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/array_literal_spread_inference_widening_tests.rs"]
 mod array_literal_spread_inference_widening_tests;
 #[cfg(test)]
@@ -502,6 +505,9 @@ mod conditional_alias_unreduced_keeps_alias_display_tests;
 #[path = "tests/conditional_break_narrowing_tests.rs"]
 mod conditional_break_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/conditional_constraint_relation_routing_arch_tests.rs"]
+mod conditional_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
@@ -559,6 +565,9 @@ mod enum_residual_narrowing_tests;
 #[path = "tests/excess_prop_object_union_display_tests.rs"]
 mod excess_prop_object_union_display_tests;
 #[cfg(test)]
+#[path = "tests/explicit_alias_constraint_relation_routing_arch_tests.rs"]
+mod explicit_alias_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/file_session_switch_to_file_tests.rs"]
 mod file_session_switch_to_file_tests;
 #[cfg(test)]
@@ -601,6 +610,9 @@ mod generic_unknown_type_arg_tests;
 #[path = "tests/import_attributes_relation_routing_arch_tests.rs"]
 mod import_attributes_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/imported_predicate_false_branch_tests.rs"]
+mod imported_predicate_false_branch_tests;
+#[cfg(test)]
 #[path = "tests/in_narrow_bare_type_param_chained_tests.rs"]
 mod in_narrow_bare_type_param_chained_tests;
 #[cfg(test)]
@@ -609,6 +621,12 @@ mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
 mod index_signature_value_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/indexed_access_constraint_relation_routing_arch_tests.rs"]
+mod indexed_access_constraint_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/infer_conditional_relation_routing_arch_tests.rs"]
+mod infer_conditional_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
@@ -685,6 +703,9 @@ mod jsx_excess_attr_with_spread_display_tests;
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
 #[cfg(test)]
+#[path = "tests/jsx_single_child_precise_relation_routing_arch_tests.rs"]
+mod jsx_single_child_precise_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/jsx_type_arg_arity_suppresses_ts2604_tests.rs"]
 mod jsx_type_arg_arity_suppresses_ts2604_tests;
 #[cfg(test)]
@@ -705,6 +726,9 @@ mod mapped_indexed_access_diagnostic_tests;
 #[cfg(test)]
 #[path = "tests/mapped_infer_with_substitution_tests.rs"]
 mod mapped_infer_with_substitution_tests;
+#[cfg(test)]
+#[path = "tests/mapped_true_base_constraint_relation_routing_arch_tests.rs"]
+mod mapped_true_base_constraint_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
@@ -819,6 +843,9 @@ mod string_literal_union_display_order_tests;
 #[cfg(test)]
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
+#[cfg(test)]
+#[path = "tests/syntax_constraint_relation_routing_arch_tests.rs"]
+mod syntax_constraint_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/synthetic_unique_atom_union_display_tests.rs"]
 mod synthetic_unique_atom_union_display_tests;
