@@ -963,3 +963,99 @@ export { t };
         "Expected export specifier to remain: {output}"
     );
 }
+
+#[test]
+fn nullish_guarded_generic_parameter_returns_preserve_flow_summary() {
+    let source = r#"
+function rejectNull<T>(value: T) {
+    if (value === null) throw Error();
+    return value;
+}
+
+function rejectUndefined<K>(input: K) {
+    if (undefined === input) {
+        throw Error();
+    }
+    return input;
+}
+
+function rejectNullish<U>(item: U) {
+    if (item == null) throw Error();
+    return item;
+}
+
+function keepPlain<V>(value: V) {
+    return value;
+}
+"#;
+
+    for (name, expected) in [
+        ("rejectNull", Some("T & ({} | undefined)")),
+        ("rejectUndefined", Some("K & ({} | null)")),
+        ("rejectNullish", Some("U & {}")),
+        ("keepPlain", None),
+    ] {
+        let actual = nullish_return_summary_for_function(source, name);
+        assert!(
+            actual.as_deref() == expected,
+            "expected nullish-guarded return summary for `{name}` to be {expected:?}, got {actual:?}"
+        );
+    }
+}
+
+#[test]
+fn nested_nullish_guard_helpers_compose_return_summary() {
+    let source = r#"
+function rejectNull<T>(value: T) {
+    if (value === null) throw Error();
+    return value;
+}
+
+function rejectUndefined<K>(input: K) {
+    if (input === undefined) throw Error();
+    return input;
+}
+
+function rejectBoth<Item>(item: Item) {
+    return rejectUndefined(rejectNull(item));
+}
+"#;
+
+    let actual = nullish_return_summary_for_function(source, "rejectBoth");
+    assert_eq!(
+        actual.as_deref(),
+        Some("Item & {}"),
+        "expected composed nullish guard helpers to preserve the narrowed return"
+    );
+}
+
+fn nullish_return_summary_for_function(source: &str, name: &str) -> Option<String> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    let root_node = parser.arena.get(root)?;
+    let source_file = parser.arena.get_source_file(root_node)?;
+    for stmt_idx in source_file.statements.nodes.iter().copied() {
+        let stmt_node = parser.arena.get(stmt_idx)?;
+        let Some(func) = parser.arena.get_function(stmt_node) else {
+            continue;
+        };
+        let func_name = parser
+            .arena
+            .get(func.name)
+            .and_then(|node| parser.arena.get_identifier(node))
+            .map(|ident| ident.escaped_text.as_str());
+        if func_name == Some(name) {
+            return emitter
+                .function_body_nullish_guarded_parameter_return_type_text(func, func.body);
+        }
+    }
+
+    None
+}

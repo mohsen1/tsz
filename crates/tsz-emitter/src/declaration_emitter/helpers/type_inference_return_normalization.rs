@@ -10,6 +10,23 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
 use tsz_scanner::SyntaxKind;
 
+#[derive(Clone, Copy, Default)]
+struct NullishReturnExclusions {
+    null: bool,
+    undefined: bool,
+}
+
+impl NullishReturnExclusions {
+    const fn any(self) -> bool {
+        self.null || self.undefined
+    }
+
+    const fn add(&mut self, other: Self) {
+        self.null |= other.null;
+        self.undefined |= other.undefined;
+    }
+}
+
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn function_body_preferred_return_type_text(
         &self,
@@ -46,6 +63,306 @@ impl<'a> DeclarationEmitter<'a> {
             .single_line_mapped_type_annotation_text(type_annotation)
             .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
         (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn function_body_nullish_guarded_parameter_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let (param_idx, exclusions) =
+            self.function_body_nullish_guarded_return_source(func, body_idx, 0)?;
+        if !exclusions.any() {
+            return None;
+        }
+        let type_text = self.function_parameter_type_text(func, param_idx)?;
+        if !self.function_parameter_type_is_own_type_param(func, param_idx) {
+            return None;
+        }
+        Some(Self::format_nullish_guarded_parameter_type(
+            &type_text, exclusions,
+        ))
+    }
+
+    fn function_body_nullish_guarded_return_source(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        body_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<(NodeIndex, NullishReturnExclusions)> {
+        if depth > 8 {
+            return None;
+        }
+        let body_node = self.arena.get(body_idx)?;
+        let block = self.arena.get_block(body_node)?;
+        let mut exclusions = NullishReturnExclusions::default();
+        let mut returned_expr = None;
+
+        for stmt_idx in block.statements.nodes.iter().copied() {
+            if returned_expr.is_some() {
+                return None;
+            }
+
+            if let Some(param_idx) = self.nullish_guarded_return_parameter(func, stmt_idx)
+                && let Some(guard_exclusions) =
+                    self.nullish_terminal_guard_exclusions(stmt_idx, param_idx)
+            {
+                exclusions.add(guard_exclusions);
+                continue;
+            }
+
+            let stmt_node = self.arena.get(stmt_idx)?;
+            if stmt_node.kind == syntax_kind_ext::RETURN_STATEMENT {
+                let ret = self.arena.get_return_statement(stmt_node)?;
+                if ret.expression.is_none() {
+                    return None;
+                }
+                returned_expr = Some(ret.expression);
+                continue;
+            }
+
+            return None;
+        }
+
+        let returned_expr = returned_expr?;
+        let (param_idx, returned_exclusions) =
+            self.nullish_return_expression_source(func, returned_expr, depth + 1)?;
+        exclusions.add(returned_exclusions);
+        Some((param_idx, exclusions))
+    }
+
+    fn nullish_return_expression_source(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<(NodeIndex, NullishReturnExclusions)> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        if self.function_parameter_type_is_own_type_param(func, expr_idx) {
+            return Some((expr_idx, NullishReturnExclusions::default()));
+        }
+
+        if depth > 8 {
+            return None;
+        }
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let args = call.arguments.as_ref()?;
+        if args.nodes.len() != 1 {
+            return None;
+        }
+        let (param_idx, mut exclusions) =
+            self.nullish_return_expression_source(func, args.nodes[0], depth + 1)?;
+        let callee_exclusions =
+            self.nullish_guard_function_exclusions(call.expression, depth + 1)?;
+        exclusions.add(callee_exclusions);
+        Some((param_idx, exclusions))
+    }
+
+    fn nullish_guard_function_exclusions(
+        &self,
+        callee_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<NullishReturnExclusions> {
+        if depth > 8 {
+            return None;
+        }
+        let callee_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(callee_idx);
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(callee_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_node = self.arena.get(decl_idx)?;
+            let Some(func) = self.arena.get_function(decl_node) else {
+                continue;
+            };
+            if func.parameters.nodes.len() != 1 {
+                continue;
+            }
+            let (param_idx, exclusions) =
+                self.function_body_nullish_guarded_return_source(func, func.body, depth + 1)?;
+            let only_param = func.parameters.nodes[0];
+            let param_node = self.arena.get(only_param)?;
+            let param = self.arena.get_parameter(param_node)?;
+            if self
+                .get_identifier_text(param.name)
+                .zip(self.get_identifier_text(param_idx))
+                .is_some_and(|(expected, actual)| expected == actual)
+                && exclusions.any()
+            {
+                return Some(exclusions);
+            }
+        }
+
+        None
+    }
+
+    fn nullish_guarded_return_parameter(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        stmt_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let if_data = self.arena.get_if_statement(stmt_node)?;
+        if if_data.else_statement.is_some()
+            || !self.statement_is_terminal_exit(if_data.then_statement)
+        {
+            return None;
+        }
+        let condition = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(if_data.expression);
+        let condition_node = self.arena.get(condition)?;
+        let binary = self.arena.get_binary_expr(condition_node)?;
+        let left = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let right = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+
+        if self.function_parameter_type_is_own_type_param(func, left)
+            && Self::nullish_literal_exclusion(self.arena, right, binary.operator_token).is_some()
+        {
+            return Some(left);
+        }
+        if self.function_parameter_type_is_own_type_param(func, right)
+            && Self::nullish_literal_exclusion(self.arena, left, binary.operator_token).is_some()
+        {
+            return Some(right);
+        }
+        None
+    }
+
+    fn nullish_terminal_guard_exclusions(
+        &self,
+        stmt_idx: NodeIndex,
+        param_idx: NodeIndex,
+    ) -> Option<NullishReturnExclusions> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+        let if_data = self.arena.get_if_statement(stmt_node)?;
+        if if_data.else_statement.is_some()
+            || !self.statement_is_terminal_exit(if_data.then_statement)
+        {
+            return None;
+        }
+        let condition = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(if_data.expression);
+        let condition_node = self.arena.get(condition)?;
+        let binary = self.arena.get_binary_expr(condition_node)?;
+        let left = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let right = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.right);
+
+        if self.same_identifier_text(left, param_idx) {
+            return Self::nullish_literal_exclusion(self.arena, right, binary.operator_token);
+        }
+        if self.same_identifier_text(right, param_idx) {
+            return Self::nullish_literal_exclusion(self.arena, left, binary.operator_token);
+        }
+        None
+    }
+
+    fn function_parameter_type_is_own_type_param(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        identifier_idx: NodeIndex,
+    ) -> bool {
+        let Some(type_text) = self.function_parameter_type_text(func, identifier_idx) else {
+            return false;
+        };
+        let Some(type_params) = func.type_parameters.as_ref() else {
+            return false;
+        };
+        let trimmed = type_text.trim();
+        self.collect_type_param_names(type_params)
+            .iter()
+            .any(|name| name == trimmed)
+    }
+
+    fn same_identifier_text(&self, left: NodeIndex, right: NodeIndex) -> bool {
+        self.get_identifier_text(left)
+            .zip(self.get_identifier_text(right))
+            .is_some_and(|(left, right)| left == right)
+    }
+
+    fn statement_is_terminal_exit(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::RETURN_STATEMENT
+                || k == syntax_kind_ext::THROW_STATEMENT =>
+            {
+                true
+            }
+            k if k == syntax_kind_ext::BLOCK => {
+                self.arena.get_block(stmt_node).is_some_and(|block| {
+                    block
+                        .statements
+                        .nodes
+                        .iter()
+                        .copied()
+                        .any(|stmt| self.statement_is_terminal_exit(stmt))
+                })
+            }
+            _ => false,
+        }
+    }
+
+    fn nullish_literal_exclusion(
+        arena: &NodeArena,
+        expr_idx: NodeIndex,
+        operator_token: u16,
+    ) -> Option<NullishReturnExclusions> {
+        let expr_node = arena.get(expr_idx)?;
+        let is_null = expr_node.kind == SyntaxKind::NullKeyword as u16;
+        let is_undefined = expr_node.kind == SyntaxKind::UndefinedKeyword as u16
+            || arena
+                .get_identifier(expr_node)
+                .is_some_and(|ident| ident.escaped_text == "undefined");
+        if !is_null && !is_undefined {
+            return None;
+        }
+
+        match operator_token {
+            op if op == SyntaxKind::EqualsEqualsEqualsToken as u16 => {
+                Some(NullishReturnExclusions {
+                    null: is_null,
+                    undefined: is_undefined,
+                })
+            }
+            op if op == SyntaxKind::EqualsEqualsToken as u16 => Some(NullishReturnExclusions {
+                null: true,
+                undefined: true,
+            }),
+            _ => None,
+        }
+    }
+
+    fn format_nullish_guarded_parameter_type(
+        type_text: &str,
+        exclusions: NullishReturnExclusions,
+    ) -> String {
+        match (exclusions.null, exclusions.undefined) {
+            (true, true) => format!("{type_text} & {{}}"),
+            (true, false) => format!("{type_text} & ({{}} | undefined)"),
+            (false, true) => format!("{type_text} & ({{}} | null)"),
+            (false, false) => type_text.to_string(),
+        }
     }
 
     fn function_parameter_type_annotation(
