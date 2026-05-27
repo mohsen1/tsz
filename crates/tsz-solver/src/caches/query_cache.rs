@@ -1134,10 +1134,6 @@ impl TypeCompilerOptions for QueryCache<'_> {
 }
 
 impl TypeDatabase for QueryCache<'_> {
-    fn as_query_database(&self) -> Option<&dyn QueryDatabase> {
-        Some(self)
-    }
-
     fn intern(&self, key: TypeData) -> TypeId {
         self.interner.intern(key)
     }

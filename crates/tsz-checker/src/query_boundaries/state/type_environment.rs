@@ -16,14 +16,13 @@ pub(crate) use tsz_solver::type_queries::{
 /// the provided `TypeResolver` to resolve lazy references. This delegates to
 /// `TypeEvaluator::with_resolver` + `evaluate` in a single call.
 pub(crate) fn evaluate_type_with_resolver<R: tsz_solver::relations::subtype::TypeResolver>(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
-    if let Some(query_db) = db.as_query_database() {
-        evaluator = evaluator.with_query_db(query_db);
-    }
+    let mut evaluator =
+        tsz_solver::computation::TypeEvaluator::with_resolver(db.as_type_database(), resolver)
+            .with_query_db(db);
     evaluator.evaluate(type_id)
 }
 

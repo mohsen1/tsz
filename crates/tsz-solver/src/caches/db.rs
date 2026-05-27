@@ -213,20 +213,6 @@ pub trait TypeDatabase:
     fn lookup_alloc_order(&self, _id: TypeId) -> Option<u32> {
         None
     }
-
-    /// Recover the cross-call [`QueryDatabase`] view when this database backs a
-    /// persistent query cache.
-    ///
-    /// Checker boundary helpers receive a `&dyn TypeDatabase` even though the
-    /// concrete value is a query-cache-backed database. Without this accessor
-    /// they would construct `TypeEvaluator`s with no persistent cache, so the
-    /// same `(DefId, args)` application is re-evaluated across every
-    /// short-lived evaluator/subtype-checker instance. Implementors that own a
-    /// cross-call cache return `Some(self)` so evaluation can share it; plain
-    /// interners without a cache return `None`.
-    fn as_query_database(&self) -> Option<&dyn QueryDatabase> {
-        None
-    }
     fn intern_string(&self, s: &str) -> Atom;
     fn resolve_atom(&self, atom: Atom) -> String;
     fn resolve_atom_ref(&self, atom: Atom) -> Arc<str>;

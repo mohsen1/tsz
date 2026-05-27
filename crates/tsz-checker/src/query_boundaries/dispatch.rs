@@ -1,5 +1,5 @@
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::relations::subtype::TypeResolver;
 
 pub(crate) use super::common::{intersection_members, is_type_parameter_like, union_members};
@@ -16,13 +16,12 @@ pub(crate) fn get_index_access_types(
 }
 
 pub(crate) fn evaluate_type_with_resolver<R: TypeResolver>(
-    db: &dyn TypeDatabase,
+    db: &dyn QueryDatabase,
     resolver: &R,
     type_id: TypeId,
 ) -> TypeId {
-    let mut evaluator = tsz_solver::computation::TypeEvaluator::with_resolver(db, resolver);
-    if let Some(query_db) = db.as_query_database() {
-        evaluator = evaluator.with_query_db(query_db);
-    }
+    let mut evaluator =
+        tsz_solver::computation::TypeEvaluator::with_resolver(db.as_type_database(), resolver)
+            .with_query_db(db);
     evaluator.evaluate(type_id)
 }
