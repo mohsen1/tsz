@@ -787,6 +787,9 @@ mod nullish_target_relation_routing_arch_tests;
 #[path = "tests/object_define_property_identity_tests.rs"]
 mod object_define_property_identity_tests;
 #[cfg(test)]
+#[path = "tests/object_global_identity_helper_tests.rs"]
+mod object_global_identity_helper_tests;
+#[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
