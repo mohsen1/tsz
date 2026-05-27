@@ -518,6 +518,81 @@ fn subtype_cache_allow_void_return_matches_uncached_policy() {
 }
 
 #[test]
+fn subtype_cache_strict_readonly_identity_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let property = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::readonly(property, TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::new(property, TypeId::STRING)]);
+
+    let ordinary_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let readonly_identity_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+    );
+    let ordinary_key =
+        RelationCacheKey::for_subtype(source, target, ordinary_policy.cache_config());
+    let readonly_identity_key =
+        RelationCacheKey::for_subtype(source, target, readonly_identity_policy.cache_config());
+
+    assert_ne!(
+        ordinary_key, readonly_identity_key,
+        "strict readonly identity policy must partition subtype cache entries",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        ordinary_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let readonly_identity_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        readonly_identity_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary relation mode should allow readonly source properties to satisfy mutable targets",
+    );
+    assert!(
+        !readonly_identity_uncached,
+        "strict readonly identity mode must treat readonly mismatch as relation-significant",
+    );
+
+    let ordinary_cached = db.is_subtype_of_with_policy(source, target, ordinary_policy);
+    let readonly_identity_cached =
+        db.is_subtype_of_with_policy(source, target, readonly_identity_policy);
+
+    assert_eq!(
+        ordinary_cached, ordinary_uncached,
+        "cached ordinary readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        readonly_identity_cached, readonly_identity_uncached,
+        "cached strict-readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_cached),
+        "ordinary readonly policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(readonly_identity_key),
+        Some(readonly_identity_cached),
+        "strict readonly identity policy result must use its own cache slot",
+    );
+}
+
+#[test]
 fn strict_subtype_checking_partitions_cache_entries() {
     assert_assignability_partitions(
         "strict_subtype_checking",
