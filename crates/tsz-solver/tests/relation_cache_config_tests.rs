@@ -383,10 +383,9 @@ fn assignability_cache_no_unchecked_indexed_access_matches_uncached_policy() {
     let array = interner.array(TypeId::STRING);
     let indexed_read = interner.intern(TypeData::IndexAccess(array, TypeId::NUMBER));
 
-    let checked_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let unchecked_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS,
+    let checked_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let unchecked_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::NO_UNCHECKED_INDEXED_ACCESS,
     );
     let checked_key = RelationCacheKey::for_assignability(
         indexed_read,
@@ -465,10 +464,9 @@ fn assignability_cache_exact_optional_property_types_matches_uncached_policy() {
     let source = interner.object(vec![PropertyInfo::new(property, TypeId::UNDEFINED)]);
     let target = interner.object(vec![PropertyInfo::opt(property, TypeId::NUMBER)]);
 
-    let loose_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let exact_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+    let loose_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let exact_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES,
     );
     let loose_key =
         RelationCacheKey::for_assignability(source, target, loose_policy.cache_config());
@@ -538,9 +536,9 @@ fn subtype_cache_allow_void_return_matches_uncached_policy() {
     let source = interner.function(FunctionShape::new(vec![], TypeId::STRING));
     let target = interner.function(FunctionShape::new(vec![], TypeId::VOID));
 
-    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let void_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_ALLOW_VOID_RETURN,
+    let strict_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let void_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::ALLOW_VOID_RETURN,
     );
     let strict_key = RelationCacheKey::for_subtype(source, target, strict_policy.cache_config());
     let void_key = RelationCacheKey::for_subtype(source, target, void_policy.cache_config());
@@ -973,8 +971,8 @@ fn strict_any_propagation_slot_does_not_collide_with_non_sound_slot() {
     let lit = interner.literal_string("hello");
 
     let non_sound_config =
-        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS).cache_config();
-    let sound_config = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS)
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS).cache_config();
+    let sound_config = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS)
         .with_strict_any_propagation(true)
         .cache_config();
 
@@ -1010,8 +1008,8 @@ fn strict_subtype_checking_slot_does_not_collide_with_non_sound_slot() {
 
     let lit = interner.literal_string("sound-checker-isolation");
 
-    let non_sound_config = RelationPolicy::from_flags(0).cache_config();
-    let sound_config = RelationPolicy::from_flags(0)
+    let non_sound_config = RelationPolicy::unflagged_compatibility().cache_config();
+    let sound_config = RelationPolicy::unflagged_compatibility()
         .with_strict_subtype_checking(true)
         .cache_config();
 
@@ -1047,9 +1045,10 @@ fn disable_method_bivariance_slot_does_not_collide_with_bivariant_slot() {
 
     let lit = interner.literal_string("bivariance-isolation");
 
-    let bivariant_config = RelationPolicy::from_flags(0).cache_config();
+    let bivariant_config = RelationPolicy::unflagged_compatibility().cache_config();
     let strict_config =
-        RelationPolicy::from_flags(RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE).cache_config();
+        RelationPolicy::from_relation_flags(RelationFlags::DISABLE_METHOD_BIVARIANCE)
+            .cache_config();
 
     let bivariant_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, bivariant_config);
     let strict_key = RelationCacheKey::for_subtype(lit, TypeId::STRING, strict_config);
