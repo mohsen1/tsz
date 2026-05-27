@@ -9,6 +9,16 @@ use tsz_parser::parser::ParserState;
 use tsz_solver::TypeId;
 
 #[test]
+fn direct_actual_lib_value_interface_admission_uses_provenance_not_names() {
+    let source = include_str!("cross_file_direct_actual_lib.rs");
+
+    assert!(
+        !source.contains("fn is_direct_actual_lib_value_interface_name"),
+        "actual-lib value-interface admission should use symbol/declaration provenance, not a hardcoded name allowlist",
+    );
+}
+
+#[test]
 fn direct_cross_file_interface_lowering_handles_simple_builtin_dom_interfaces() {
     let lib_files = load_lib_files(&["es5.d.ts", "dom.d.ts"]);
     let mut parser = ParserState::new("fixture.ts".to_string(), "let value;".to_string());

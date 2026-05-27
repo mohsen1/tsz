@@ -473,9 +473,7 @@ impl<'a> CheckerState<'a> {
             self.symbol_is_proven_direct_actual_lib_value_interface(sym_id, &symbol, &name);
         let protocol_method_interface =
             self.symbol_declares_direct_actual_lib_protocol_method(sym_id, &symbol, delegate_arena);
-        let admitted_value_interface = proven_value_interface
-            || protocol_method_interface
-            || is_direct_actual_lib_value_interface_name(&name);
+        let admitted_value_interface = proven_value_interface || protocol_method_interface;
         if symbol.has_any_flags(symbol_flags::VALUE)
             && !admitted_value_interface
             && !allow_actual_lib_declaration_proof_bypass(&name)

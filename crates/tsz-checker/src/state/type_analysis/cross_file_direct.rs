@@ -5,7 +5,7 @@ mod paths;
 
 use super::cross_file_direct_actual_lib::{
     allow_actual_lib_declaration_proof_bypass, allow_generic_actual_lib_direct_fallback,
-    is_direct_actual_lib_value_interface_name, iterator_object_has_global_augmentations,
+    iterator_object_has_global_augmentations,
 };
 use crate::query_boundaries::common;
 use crate::state::CheckerState;
