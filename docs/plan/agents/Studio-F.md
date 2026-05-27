@@ -34,22 +34,24 @@ python3 scripts/emit/audit-output-surgery.py --json-report /tmp/tsz-output-surge
 - Architecture cleanup metric: every cleanup PR must ratchet a named guard
   down, remove an allowlist entry, split a file over a documented ceiling, or
   make a release-gate artifact harder to misread.
-- Current active PR: #10396 follows up after #10373 merged. It keeps
-  `scripts/agents/show-goal.sh` stdout stable while warning on stderr when a
-  branch-local lane goal differs from the printed `origin/main` goal, and it
-  documents that warning in `docs/plan/agents/README.md`.
+- Current active PR: none. #10511 merged the test-only Clippy suppression
+  cleanup and ratcheted the workspace Clippy suppression cap to the current
+  remaining count.
 - First live command: run the start-cycle commands and inspect guard failures
   before choosing cleanup work.
-- Next concrete step: keep #10396 current now that it is retargeted to `main`;
-  once refreshed draft CI is green, decide whether to mark it ready or pick the
-  next measurable guardrail or launch-script gap.
+- Next concrete step: with owned PR runway clear, pick the next small
+  launch-infra or guardrail slice that ratchets a measured counter, removes a
+  stale allowlist entry, clarifies lane coordination, or makes cheap evidence
+  harder to misread.
 
 ## Existing Work To Inspect First
 
 - `scripts/emit/audit-output-surgery.py` and
   `scripts/emit/output-surgery-allowlist.txt`.
 - `scripts/arch/arch_guard_shared.py` and `scripts/arch/arch_guard_policy.toml`.
-- Tech-debt issues `#8276`, `#8278`, `#9403`, `#9447`, `#10068`, and `#10079`.
+- Open tech-debt issues `#8276` and `#8278`, plus live GitHub issues labelled
+  `tech-debt` that overlap launch infra, guardrails, output surgery,
+  disk/worktree hygiene, or cheap evidence plumbing.
 - Disk/worktree guidance in `AGENTS.md` and this directory.
 
 ## Non-Overlap Rules
