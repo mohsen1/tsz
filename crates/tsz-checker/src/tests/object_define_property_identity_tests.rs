@@ -71,17 +71,23 @@ new C();
 #[test]
 fn object_define_property_descriptor_gate_uses_global_identity() {
     let source = include_str!("../types/computation/object_literal/mod.rs");
+    let known_globals_source = include_str!("../types/property_access_type/known_globals.rs");
     assert!(
         source.contains("object_define_property_base_is_global_object"),
         "Object.defineProperty descriptor detection must prove the base is the global/lib Object value"
     );
     assert!(
-        !source.contains("object_ident.escaped_text != \"Object\""),
-        "Object.defineProperty descriptor detection must not rely on the raw Object spelling"
+        source.contains("identifier_resolves_to_proven_lib_global"),
+        "Object.defineProperty descriptor detection must route global Object proof through the shared helper"
     );
     assert!(
-        source.contains("symbol_is_from_actual_or_cloned_lib(sym_id)"),
-        "Object.defineProperty descriptor detection must admit only proven actual/cloned lib identity"
+        !source.contains("symbol_is_from_actual_or_cloned_lib(sym_id)"),
+        "Object.defineProperty descriptor detection must not duplicate proven-lib identity checks"
+    );
+    assert!(
+        known_globals_source.contains("symbol_is_from_actual_or_cloned_lib(sym_id)")
+            && known_globals_source.contains("symbol_is_from_lib(sym_id)"),
+        "the shared proven-lib global identity helper must admit only proven actual/cloned lib identity"
     );
 }
 

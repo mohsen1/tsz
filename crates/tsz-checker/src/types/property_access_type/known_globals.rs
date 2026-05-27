@@ -42,6 +42,41 @@ impl<'a> CheckerState<'a> {
         self.known_global_identifier_resolves_to_lib_value(idx, name)
     }
 
+    /// Returns `true` if the node at `idx` is an identifier spelled `name` and
+    /// the binder resolves it to a proven lib/global value.
+    ///
+    /// Unlike `identifier_resolves_to_unshadowed_global`, this intentionally
+    /// does not fall back to "unresolved but unshadowed" when symbol resolution
+    /// misses. Use it for paths whose existing behavior requires concrete lib
+    /// identity evidence.
+    pub(crate) fn identifier_resolves_to_proven_lib_global(
+        &self,
+        idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(node) else {
+            return false;
+        };
+        if ident.escaped_text.as_str() != name {
+            return false;
+        }
+        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
+            return false;
+        };
+        if self.known_global_value_has_local_shadow(idx, name) {
+            return false;
+        }
+        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+            return false;
+        };
+        symbol.escaped_name == name
+            && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                || self.ctx.symbol_is_from_lib(sym_id))
+    }
+
     pub(crate) fn known_global_value_has_local_shadow(&self, idx: NodeIndex, name: &str) -> bool {
         if let Some(mut scope_id) = self.ctx.binder.find_enclosing_scope(self.ctx.arena, idx) {
             let mut iterations = 0;
