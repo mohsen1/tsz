@@ -123,3 +123,25 @@ fn call_elaboration_object_literal_properties_use_relation_outcome_boundary() {
         "object literal property elaboration should not use raw relation guards"
     );
 }
+
+#[test]
+fn call_elaboration_object_array_helpers_use_relation_outcome_boundary() {
+    let source =
+        fs::read_to_string("src/error_reporter/call_errors/elaboration_object_properties.rs")
+            .expect("failed to read elaboration_object_properties.rs");
+
+    let helper_start = source
+        .find("fn object_literal_numeric_members_assign_to_mapped_target")
+        .expect("missing numeric mapped object helper");
+    let helpers = &source[helper_start..];
+
+    assert_eq!(
+        helpers.matches("assign_relation_outcome(").count(),
+        6,
+        "object/array elaboration helper relation probes should route through RelationOutcome"
+    );
+    assert!(
+        !helpers.contains("diagnostic_relation_boolean_guard("),
+        "object/array elaboration helpers should not use raw relation guards"
+    );
+}
