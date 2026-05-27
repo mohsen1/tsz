@@ -1147,6 +1147,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self
+            .get_cross_file_symbol(sym_id)?
+            .has_any_flags(symbol_flags::CLASS)
+        {
+            return None;
+        }
+
         // Find the symbol's home arena
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx
