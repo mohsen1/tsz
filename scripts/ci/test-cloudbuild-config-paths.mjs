@@ -85,13 +85,13 @@ for (const [name, config] of [
 ]) {
   assert.match(
     config,
-    /logging:\s+GCS_ONLY/,
-    `${name} Cloud Build config should write logs to GCS for GitHub artifact capture`,
+    /logging:\s+CLOUD_LOGGING_ONLY/,
+    `${name} Cloud Build config should keep submit-compatible Cloud Logging mode`,
   );
-  assert.match(
+  assert.doesNotMatch(
     config,
-    /logsBucket:\s+gs:\/\/tsz-ci_cloudbuild\/cloudbuild-logs/,
-    `${name} Cloud Build config should use the benchmark bucket for readable logs`,
+    /logsBucket:/,
+    `${name} Cloud Build config should not set a logs bucket the runtime service account cannot access`,
   );
 }
 
