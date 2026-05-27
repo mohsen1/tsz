@@ -41,7 +41,9 @@ impl<'a> CheckerState<'a> {
             && derived_ctor_type != TypeId::ERROR
             && base_ctor_type != TypeId::UNKNOWN
             && base_ctor_type != TypeId::ERROR
-            && !self.diagnostic_relation_boolean_guard(derived_ctor_type, base_ctor_type)
+            && !self
+                .assign_relation_outcome(derived_ctor_type, base_ctor_type)
+                .related
         {
             self.error_at_node(
                 class_name,

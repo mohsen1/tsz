@@ -20,6 +20,7 @@ use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::{
     check_source, check_source_diagnostics, check_source_strict_messages,
 };
+use tsz_common::common::ScriptTarget;
 
 fn codes(source: &str) -> Vec<u32> {
     check_source_diagnostics(source)
@@ -33,6 +34,23 @@ fn codes_with_opts(source: &str, opts: CheckerOptions) -> Vec<u32> {
         .into_iter()
         .map(|d| d.code)
         .collect()
+}
+
+fn strict_es2015_messages(source: &str) -> Vec<(u32, String)> {
+    check_source(
+        source,
+        "test.ts",
+        CheckerOptions {
+            strict: true,
+            strict_null_checks: true,
+            no_implicit_any: true,
+            target: ScriptTarget::ES2015,
+            ..CheckerOptions::default()
+        },
+    )
+    .into_iter()
+    .map(|diag| (diag.code, diag.message_text))
+    .collect()
 }
 
 fn has_code(source: &str, code: u32) -> bool {
@@ -118,7 +136,7 @@ const c: MarkedChain = { data: "a", marker: 1, rest: { data: "b", marker: 2 } };
 }
 
 #[test]
-fn conditional_mapped_recursive_intersection_no_false_ts2353() {
+fn conditional_mapped_recursive_intersection_reports_nested_excess_properties() {
     let src = r#"
 type Request = { l1: { l2: boolean } };
 type Example<T> = { ex?: T | null };
@@ -175,13 +193,20 @@ export const schemaObj4: Schema4<Request> = {
   },
 }
 "#;
-    let ts2353: Vec<_> = check_source_strict_messages(src)
+    let ts2353 = strict_es2015_messages(src)
         .into_iter()
         .filter(|(code, _)| *code == 2353)
-        .collect();
+        .collect::<Vec<_>>();
+    assert_eq!(
+        ts2353.len(),
+        4,
+        "expected nested TS2353 for conditional mapped schema variants, got: {ts2353:?}"
+    );
     assert!(
-        ts2353.is_empty(),
-        "expected no TS2353 for conditional mapped recursive intersection, got: {ts2353:?}"
+        ts2353
+            .iter()
+            .all(|(_, message)| message.contains("'invalid'")),
+        "expected every TS2353 to report the nested invalid property, got: {ts2353:?}"
     );
 }
 
@@ -197,14 +222,13 @@ const schemaObj: Schema<Request> = {
     l1: {
       props: {
         l2: { type: 'boolean' },
-        invalid: false,
       },
     },
   },
   extra: false,
 }
 "#;
-    let ts2353: Vec<_> = check_source_strict_messages(src)
+    let ts2353: Vec<_> = strict_es2015_messages(src)
         .into_iter()
         .filter(|(code, _)| *code == 2353)
         .collect();

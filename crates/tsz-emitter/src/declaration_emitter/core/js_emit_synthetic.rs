@@ -575,7 +575,9 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        if let Some(export_name) = type_text.strip_prefix("typeof module.exports.") {
+        const MODULE_EXPORTS_TYPEOF_PREFIX: &str = "typeof module.exports.";
+
+        if let Some(export_name) = type_text.strip_prefix(MODULE_EXPORTS_TYPEOF_PREFIX) {
             if self
                 .js_define_property_function_initializer_for_export_name(export_name)
                 .is_some()
@@ -583,22 +585,37 @@ impl<'a> DeclarationEmitter<'a> {
                 return "() => void".to_string();
             }
         }
-        if let Some(start) = type_text.find("typeof module.exports.") {
-            let export_start = start + "typeof module.exports.".len();
-            let export_name: String = type_text[export_start..]
-                .chars()
-                .take_while(|ch| *ch == '_' || *ch == '$' || ch.is_ascii_alphanumeric())
-                .collect();
-            if !export_name.is_empty()
-                && self
-                    .js_define_property_function_initializer_for_export_name(&export_name)
-                    .is_some()
-            {
-                return type_text.replace(
-                    &format!("typeof module.exports.{export_name}"),
-                    "() => void",
-                );
+
+        let mut normalized = String::new();
+        let mut last_emitted = 0;
+        let mut search_start = 0;
+        let mut changed = false;
+        while let Some(relative_start) =
+            type_text[search_start..].find(MODULE_EXPORTS_TYPEOF_PREFIX)
+        {
+            let start = search_start + relative_start;
+            let export_start = start + MODULE_EXPORTS_TYPEOF_PREFIX.len();
+            let export_end = commonjs_export_name_end(type_text, export_start);
+            if export_end == export_start {
+                search_start = export_start;
+                continue;
             }
+            let export_name = &type_text[export_start..export_end];
+            if self
+                .js_define_property_function_initializer_for_export_name(export_name)
+                .is_some()
+            {
+                normalized.push_str(&type_text[last_emitted..start]);
+                normalized.push_str("() => void");
+                last_emitted = export_end;
+                changed = true;
+            }
+            search_start = export_end;
+        }
+
+        if changed {
+            normalized.push_str(&type_text[last_emitted..]);
+            return normalized;
         }
         type_text.to_string()
     }
@@ -1296,4 +1313,16 @@ impl<'a> DeclarationEmitter<'a> {
             let _ = self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
         }
     }
+}
+
+fn commonjs_export_name_end(text: &str, start: usize) -> usize {
+    let mut end = start;
+    for (offset, ch) in text[start..].char_indices() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            end = start + offset + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end
 }

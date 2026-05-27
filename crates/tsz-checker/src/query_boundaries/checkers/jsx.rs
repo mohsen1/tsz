@@ -234,6 +234,92 @@ pub(crate) fn class_props_is_readonly_wrapper_intersection(
     })
 }
 
+/// Return true when a JSX spread source carries a target props type parameter
+/// through a readonly wrapper such as `Readonly<P & Extra>`.
+///
+/// `React` class `.props` surfaces commonly look like
+/// `Readonly<{ children?: ReactNode }> & Readonly<P>`. When such a value is
+/// spread into a component whose props target is the bare `P`, the synthesized
+/// JSX attrs object can lose the `P` identity and collapse to only enumerable
+/// wrapper props such as `children`. This query keeps the type-parameter
+/// containment decision structural instead of deriving it from rendered text.
+pub(crate) fn spread_source_covers_readonly_wrapped_type_parameter(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    spread_source: TypeId,
+    target: TypeId,
+) -> bool {
+    if !crate::query_boundaries::common::is_type_parameter_like(db, target) {
+        return false;
+    }
+    spread_source_covers_readonly_wrapped_type_parameter_inner(
+        db,
+        def_store,
+        spread_source,
+        target,
+        &mut Vec::new(),
+    )
+}
+
+fn spread_source_covers_readonly_wrapped_type_parameter_inner(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    spread_source: TypeId,
+    target: TypeId,
+    visited: &mut Vec<TypeId>,
+) -> bool {
+    if spread_source.is_intrinsic() || visited.contains(&spread_source) {
+        return false;
+    }
+    visited.push(spread_source);
+
+    if let Some(members) = crate::query_boundaries::common::intersection_members(db, spread_source)
+    {
+        return members.iter().any(|&member| {
+            spread_source_covers_readonly_wrapped_type_parameter_inner(
+                db, def_store, member, target, visited,
+            )
+        });
+    }
+
+    let Some(app) = crate::query_boundaries::common::type_application(db, spread_source) else {
+        return false;
+    };
+    if app.args.len() != 1 || !type_has_declaration_name(db, def_store, spread_source, "Readonly") {
+        return false;
+    }
+
+    type_is_target_or_direct_intersection_member(db, def_store, app.args[0], target)
+}
+
+fn type_is_target_or_direct_intersection_member(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+    target: TypeId,
+) -> bool {
+    type_parameter_identity_matches(def_store, type_id, target)
+        || crate::query_boundaries::common::intersection_members(db, type_id).is_some_and(
+            |members| {
+                members
+                    .iter()
+                    .any(|&member| type_parameter_identity_matches(def_store, member, target))
+            },
+        )
+}
+
+fn type_parameter_identity_matches(
+    def_store: &DefinitionStore,
+    candidate: TypeId,
+    target: TypeId,
+) -> bool {
+    candidate == target
+        || def_store
+            .find_def_for_type(candidate)
+            .zip(def_store.find_def_for_type(target))
+            .is_some_and(|(candidate_def, target_def)| candidate_def == target_def)
+}
+
 fn contains_anonymous_object_surface_inner(
     db: &dyn TypeDatabase,
     def_store: &DefinitionStore,

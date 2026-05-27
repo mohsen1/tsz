@@ -23,6 +23,12 @@ SOURCE_ROOT = ROOT / "crates" / "tsz-emitter" / "src"
 ALLOWLIST_PATH = ROOT / "scripts" / "emit" / "output-surgery-allowlist.txt"
 
 REPLACE_CALL_RE = re.compile(r"(?:\.\s*)?(replace|replacen|replace_range)\s*\(")
+UNALLOWLISTED_FAILURE_RE = re.compile(
+    r": (?P<count>\d+) unallowlisted output-surgery call\(s\)"
+)
+OVER_ALLOWLIST_FAILURE_RE = re.compile(
+    r": (?P<count>\d+) output-surgery call\(s\), allowlist max is (?P<max_count>\d+)"
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,9 +48,16 @@ class AllowEntry:
 
 @dataclasses.dataclass(frozen=True)
 class FailureSummary:
+    # Backward-compatible top-level counters:
+    # - unallowlisted counts calls, matching the guardrail debt metric.
+    # - over_allowlist and stale_allowlist count affected allowlist rows.
     unallowlisted: int = 0
     over_allowlist: int = 0
     stale_allowlist: int = 0
+    unallowlisted_files: int = 0
+    over_allowlist_files: int = 0
+    over_allowlist_excess_calls: int = 0
+    stale_allowlist_files: int = 0
 
 
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
@@ -158,12 +171,29 @@ def audit(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> list[str
 def summarize_failures(failures: list[str]) -> FailureSummary:
     summary = FailureSummary()
     for failure in failures:
-        if "unallowlisted output-surgery call(s)" in failure:
-            summary = dataclasses.replace(summary, unallowlisted=summary.unallowlisted + 1)
+        if unallowlisted_match := UNALLOWLISTED_FAILURE_RE.search(failure):
+            summary = dataclasses.replace(
+                summary,
+                unallowlisted=summary.unallowlisted
+                + int(unallowlisted_match.group("count")),
+                unallowlisted_files=summary.unallowlisted_files + 1,
+            )
         elif "allowlist entry is stale" in failure:
-            summary = dataclasses.replace(summary, stale_allowlist=summary.stale_allowlist + 1)
-        elif "allowlist max is" in failure:
-            summary = dataclasses.replace(summary, over_allowlist=summary.over_allowlist + 1)
+            summary = dataclasses.replace(
+                summary,
+                stale_allowlist=summary.stale_allowlist + 1,
+                stale_allowlist_files=summary.stale_allowlist_files + 1,
+            )
+        elif over_allowlist_match := OVER_ALLOWLIST_FAILURE_RE.search(failure):
+            count = int(over_allowlist_match.group("count"))
+            max_count = int(over_allowlist_match.group("max_count"))
+            summary = dataclasses.replace(
+                summary,
+                over_allowlist=summary.over_allowlist + 1,
+                over_allowlist_files=summary.over_allowlist_files + 1,
+                over_allowlist_excess_calls=summary.over_allowlist_excess_calls
+                + max(0, count - max_count),
+            )
     return summary
 
 
@@ -199,6 +229,43 @@ def build_file_summaries(
     return summaries
 
 
+def build_category_summaries(file_summaries: list[dict[str, object]]) -> list[dict[str, object]]:
+    categories: dict[str, dict[str, object]] = {}
+    for summary in file_summaries:
+        category = str(summary["category"])
+        entry = categories.setdefault(
+            category,
+            {
+                "category": category,
+                "count": 0,
+                "max_count": 0,
+                "files": 0,
+                "statuses": Counter(),
+            },
+        )
+        entry["count"] = int(entry["count"]) + int(summary["count"])
+        max_count = summary["max_count"]
+        if max_count is None:
+            entry["max_count"] = None
+        elif entry["max_count"] is not None:
+            entry["max_count"] = int(entry["max_count"]) + int(max_count)
+        entry["files"] = int(entry["files"]) + 1
+        entry["statuses"][str(summary["status"])] += 1
+
+    result: list[dict[str, object]] = []
+    for entry in sorted(categories.values(), key=lambda item: str(item["category"])):
+        result.append(
+            {
+                "category": entry["category"],
+                "count": entry["count"],
+                "max_count": entry["max_count"],
+                "files": entry["files"],
+                "statuses": dict(sorted(entry["statuses"].items())),
+            }
+        )
+    return result
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -206,13 +273,15 @@ def build_json_report(
 ) -> dict[str, object]:
     counts = grouped_counts(findings)
     summary = summarize_failures(failures)
+    file_summaries = build_file_summaries(counts, allowlist)
     return {
         "ok": not failures,
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "failure_summary": dataclasses.asdict(summary),
         "failures": failures,
-        "files": build_file_summaries(counts, allowlist),
+        "categories": build_category_summaries(file_summaries),
+        "files": file_summaries,
         "findings": [
             {
                 "path": finding.path,
@@ -272,9 +341,11 @@ def main(argv: list[str] | None = None) -> int:
         summary = summarize_failures(failures)
         print(
             "\nOutput-surgery audit summary: "
-            f"unallowlisted={summary.unallowlisted}, "
-            f"over_allowlist={summary.over_allowlist}, "
-            f"stale_allowlist={summary.stale_allowlist}",
+            f"unallowlisted_calls={summary.unallowlisted}, "
+            f"unallowlisted_files={summary.unallowlisted_files}, "
+            f"over_allowlist_files={summary.over_allowlist_files}, "
+            f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
+            f"stale_allowlist_files={summary.stale_allowlist_files}",
             file=sys.stderr,
         )
         print("\nOutput-surgery audit failed:", file=sys.stderr)

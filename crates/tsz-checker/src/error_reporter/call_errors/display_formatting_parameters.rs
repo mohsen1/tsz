@@ -387,6 +387,7 @@ impl<'a> CheckerState<'a> {
         param_type: TypeId,
         arg_type: TypeId,
         arg_idx: NodeIndex,
+        strip_noinfer_for_mismatch: bool,
     ) -> String {
         let direct_param_display = self.format_type_diagnostic(param_type);
 
@@ -408,6 +409,13 @@ impl<'a> CheckerState<'a> {
 
         if let Some(display) =
             self.expanded_rest_tuple_parameter_display_for_call(param_type, arg_idx)
+        {
+            return display;
+        }
+
+        if strip_noinfer_for_mismatch
+            && let Some(display) =
+                self.noinfer_call_parameter_mismatch_display(param_type, arg_type)
         {
             return display;
         }
