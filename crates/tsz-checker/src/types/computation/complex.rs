@@ -399,8 +399,8 @@ impl<'a> CheckerState<'a> {
                     .get_identifier(expr_node)
                     .map(|ident| ident.escaped_text.as_str())
                     .unwrap_or_default();
-                if let Some(module_name) = self
-                    .source_file_default_import_module_named(new_expr.expression, identifier_text)
+                if let Some(module_name) =
+                    self.default_import_module_for_new_target(new_expr.expression, identifier_text)
                     && let Some(ty) =
                         self.module_exports_interop_new_type(&module_name, new_expr.expression)
                 {
