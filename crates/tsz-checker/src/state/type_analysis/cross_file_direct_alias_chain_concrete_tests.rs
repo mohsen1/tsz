@@ -199,3 +199,67 @@ fn direct_source_file_type_alias_rejects_recursive_mapped_projection_guard() {
         },
     );
 }
+
+#[test]
+fn direct_source_file_type_alias_lowers_template_prefix_infer_recursion() {
+    with_two_file_state(
+        "export type TrimSpaces<Input> = Input extends ` ${infer Rest}` ? TrimSpaces<Rest> : Input;",
+        "import { TrimSpaces } from './target';",
+        |state, target_binder| {
+            let trim_sym = target_binder
+                .file_locals
+                .get("TrimSpaces")
+                .expect("TrimSpaces");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(trim_sym, Some(1), true)
+                .expect(
+                    "template literal prefixes should guard recursion through inferred suffixes",
+                );
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "TrimSpaces should expose Input");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_template_suffix_infer_recursion() {
+    with_two_file_state(
+        "export type StripExtension<Path> = Path extends `${infer Stem}.ts` ? StripExtension<Stem> : Path;",
+        "import { StripExtension } from './target';",
+        |state, target_binder| {
+            let strip_sym = target_binder
+                .file_locals
+                .get("StripExtension")
+                .expect("StripExtension");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(strip_sym, Some(1), true)
+                .expect(
+                    "template literal suffixes should guard recursion through inferred prefixes",
+                );
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "StripExtension should expose Path");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_bare_template_infer_recursion() {
+    with_two_file_state(
+        "export type Loop<Input> = Input extends `${infer Same}` ? Loop<Same> : Input;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "bare template literal inference does not prove recursive progress",
+            );
+        },
+    );
+}
