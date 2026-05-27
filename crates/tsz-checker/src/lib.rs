@@ -247,6 +247,9 @@ mod jsx_component_props_relation_routing_arch_tests;
 #[path = "tests/jsx_overload_relation_routing_arch_tests.rs"]
 mod jsx_overload_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/jsx_props_resolution_relation_routing_arch_tests.rs"]
+mod jsx_props_resolution_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/lib_abstract_member_ts2515_tests.rs"]
 mod lib_abstract_member_ts2515_tests;
 #[cfg(test)]

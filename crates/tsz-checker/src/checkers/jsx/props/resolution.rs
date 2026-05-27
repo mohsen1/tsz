@@ -152,7 +152,8 @@ impl<'a> CheckerState<'a> {
                                     *attr_type == TypeId::ANY
                                         || *attr_type == TypeId::ERROR
                                         || self
-                                            .diagnostic_relation_boolean_guard(*attr_type, expected)
+                                            .assign_relation_outcome(*attr_type, expected)
+                                            .related
                                 }
                                 None => expected != TypeId::NEVER && expected != TypeId::ERROR,
                             }
@@ -506,10 +507,10 @@ impl<'a> CheckerState<'a> {
                     }
                     if let Some(expected_type) = expected_special_type {
                         if attr_data.initializer.is_none() {
-                            if !self.diagnostic_relation_boolean_guard(
-                                TypeId::BOOLEAN_TRUE,
-                                expected_type,
-                            ) {
+                            if !self
+                                .assign_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
+                                .related
+                            {
                                 use crate::diagnostics::{
                                     diagnostic_codes, diagnostic_messages, format_message,
                                 };
@@ -790,7 +791,9 @@ impl<'a> CheckerState<'a> {
                     if let Some(entry) = provided_attrs.last_mut() {
                         entry.1 = TypeId::BOOLEAN_TRUE;
                     }
-                    if !self.diagnostic_relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type)
+                    if !self
+                        .assign_relation_outcome(TypeId::BOOLEAN_TRUE, expected_type)
+                        .related
                     {
                         use crate::diagnostics::{
                             diagnostic_codes, diagnostic_messages, format_message,
@@ -959,7 +962,9 @@ impl<'a> CheckerState<'a> {
                     if is_special_named_attr {
                         if actual_type != TypeId::ANY
                             && actual_type != TypeId::ERROR
-                            && !self.diagnostic_relation_boolean_guard(actual_type, expected_type)
+                            && !self
+                                .assign_relation_outcome(actual_type, expected_type)
+                                .related
                         {
                             needs_special_attr_object_assignability = true;
                         }
@@ -1152,7 +1157,9 @@ impl<'a> CheckerState<'a> {
                 ) {
                     spread_covers_all = true;
                 } else if !skip_prop_checks
-                    && self.diagnostic_relation_boolean_guard(spread_type, props_type)
+                    && self
+                        .assign_relation_outcome(spread_type, props_type)
+                        .related
                 {
                     // The solver reports the spread is structurally assignable to the
                     // whole props type, so all required members are satisfied — including
@@ -1464,7 +1471,7 @@ impl<'a> CheckerState<'a> {
             && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
+            if !self.assign_relation_outcome(attrs_type, props_type).related {
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
                     &display_target,
@@ -1541,7 +1548,7 @@ impl<'a> CheckerState<'a> {
             && spread_entries
                 .iter()
                 .any(|&(spread_type, display_spread_type, _, _)| {
-                    self.diagnostic_relation_boolean_guard(spread_type, props_type)
+                    self.assign_relation_outcome(spread_type, props_type).related
                         || crate::query_boundaries::checkers::jsx::spread_source_covers_readonly_wrapped_type_parameter(
                             self.ctx.types,
                             &self.ctx.definition_store,
@@ -1579,7 +1586,7 @@ impl<'a> CheckerState<'a> {
             && !react_alias_spread_only_contributes_children
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&provided_attrs);
-            if !self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
+            if !self.assign_relation_outcome(attrs_type, props_type).related {
                 // tsc uses just the type parameter name here (e.g. "P"), not the
                 // full "IntrinsicAttributes & P" display target. The IntrinsicAttributes
                 // intersection check for spread attributes is handled separately by
