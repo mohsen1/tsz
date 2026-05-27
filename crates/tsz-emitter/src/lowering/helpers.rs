@@ -943,6 +943,13 @@ impl<'a> LoweringPass<'a> {
                         .get_identifier_text_ref(param.name)
                         .filter(|name| !name.is_empty());
                 }
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let property = self.arena.get_property_decl(parent_node)?;
+                    if property.initializer != current {
+                        return None;
+                    }
+                    return self.property_declaration_binding_name_ref(property.name);
+                }
                 syntax_kind_ext::BINARY_EXPRESSION => {
                     let binary = self.arena.get_binary_expr(parent_node)?;
                     if binary.right != current
@@ -958,6 +965,38 @@ impl<'a> LoweringPass<'a> {
             }
         }
 
+        None
+    }
+
+    fn property_declaration_binding_name_ref(&self, name_idx: NodeIndex) -> Option<&str> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::Identifier as u16
+            || name_node.kind == SyntaxKind::PrivateIdentifier as u16
+        {
+            return self
+                .arena
+                .get_identifier(name_node)
+                .map(|ident| ident.escaped_text.as_str())
+                .filter(|name| !name.is_empty());
+        }
+        if name_node.kind == SyntaxKind::StringLiteral as u16
+            || name_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            return self
+                .arena
+                .get_literal(name_node)
+                .map(|literal| literal.text.as_str())
+                .filter(|name| !name.is_empty());
+        }
+        if name_node.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            let computed = self.arena.get_computed_property(name_node)?;
+            let expr_node = self.arena.get(computed.expression)?;
+            return self
+                .arena
+                .get_literal(expr_node)
+                .map(|literal| literal.text.as_str())
+                .filter(|name| !name.is_empty());
+        }
         None
     }
 
