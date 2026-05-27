@@ -7,7 +7,7 @@ use crate::construction::TypeDatabase;
 use crate::instantiation::instantiate::{
     TypeSubstitution, instantiate_type, instantiate_type_preserving_meta_cached,
 };
-use crate::objects::{PropertyCollectionResult, collect_properties};
+use crate::objects::PropertyCollectionResult;
 use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, CallableShapeId, IntrinsicKind, LiteralValue, MappedModifier, MappedType,
@@ -655,10 +655,11 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             }
 
             let intersection_type = self.object_type;
-            match collect_properties(
+            match crate::objects::collect_properties_cached(
                 intersection_type,
                 self.evaluator.interner(),
                 self.evaluator.resolver(),
+                self.evaluator.query_db(),
             ) {
                 PropertyCollectionResult::Properties {
                     properties,
