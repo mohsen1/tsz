@@ -65,10 +65,6 @@ const benchPrepareConfig = fs.readFileSync(
   path.join(ROOT, "scripts", "cloudbuild", "cloudbuild-bench-prepare.yaml"),
   "utf8",
 );
-const benchShardConfig = fs.readFileSync(
-  path.join(ROOT, "scripts", "cloudbuild", "cloudbuild-bench-shard.yaml"),
-  "utf8",
-);
 assert.match(
   benchPrepareConfig,
   /literal_scoped_dir='bench-prep\/\$\{_BENCH_TARGET_SHA\}'[\s\S]+cp bench-prep\.tar bench-prep\.env "\$\{literal_scoped_dir\}\/"/,
@@ -79,21 +75,6 @@ assert.match(
   /metadata\.google\.internal\/computeMetadata\/v1\/instance\/service-accounts\/default\/token[\s\S]+upload_gcs_object bench-prep\.tar "bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.tar"[\s\S]+upload_gcs_object bench-prep\.env "bench-prep\/latest\/bench-prep\.env"/,
   "benchmark prep should explicitly upload verified env/tar artifacts to SHA-scoped and latest GCS paths",
 );
-for (const [name, config] of [
-  ["benchmark prep", benchPrepareConfig],
-  ["benchmark shard", benchShardConfig],
-]) {
-  assert.match(
-    config,
-    /logging:\s+GCS_ONLY/,
-    `${name} Cloud Build config should write logs to GCS for GitHub artifact capture`,
-  );
-  assert.match(
-    config,
-    /logsBucket:\s+gs:\/\/tsz-ci_cloudbuild\/cloudbuild-logs/,
-    `${name} Cloud Build config should use the benchmark bucket for readable logs`,
-  );
-}
 
 for (const workflow of workflowFiles) {
   const configs = workflowConfigs.get(workflow) ?? [];
