@@ -832,6 +832,9 @@ mod type_param_default_relation_routing_arch_tests;
 #[path = "tests/union_call_resolution_tests.rs"]
 mod union_call_resolution_tests;
 #[cfg(test)]
+#[path = "tests/union_constraint_relation_routing_arch_tests.rs"]
+mod union_constraint_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/union_multi_overload_unified_sig_tests.rs"]
 mod union_multi_overload_unified_sig_tests;
 #[cfg(test)]
