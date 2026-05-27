@@ -109,6 +109,55 @@ let machine = new Machine({
 }
 
 #[test]
+fn test_generic_call_this_type_descriptor_intersections_preserve_source_surfaces() {
+    let output = emit_dts_with_binding(
+        r#"
+type Point = {
+    x: number;
+    y: number;
+    moveBy(dx: number, dy: number): void;
+};
+
+type ObjectDescriptor<D, M> = {
+    data?: D;
+    methods?: M & ThisType<D & M>;
+};
+
+declare function makeObject<D, M>(desc: ObjectDescriptor<D, M>): D & M;
+
+let x = makeObject({
+    data: { x: 0, y: 0 },
+    methods: {
+        moveBy(dx: number, dy: number) {}
+    }
+});
+
+type PropDesc<T> = {
+    value?: T;
+    get?(): T;
+    set?(value: T): void;
+};
+
+declare function defineProp<T, K extends string, U>(obj: T, name: K, desc: PropDesc<U> & ThisType<T>): T & Record<K, U>;
+
+declare const point: Point;
+let p = defineProp(point, "foo", { value: 42 });
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "declare let x: {\n    x: number;\n    y: number;\n} & {\n    moveBy(dx: number, dy: number): void;\n};"
+        ),
+        "Expected source object descriptor call to preserve `D & M`: {output}"
+    );
+    assert!(
+        output.contains("declare let p: Point & Record<\"foo\", number>;"),
+        "Expected descriptor intersection call to preserve alias and `Record`: {output}"
+    );
+}
+
+#[test]
 fn test_multiple_type_parameters() {
     let output = emit_dts(
         "export function map<T, U>(arr: T[], fn: (x: T) => U): U[] { return arr.map(fn); }",

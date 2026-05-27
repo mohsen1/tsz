@@ -726,6 +726,45 @@ impl<'a> DeclarationEmitter<'a> {
             );
         }
 
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            if !param.type_annotation.is_some() {
+                continue;
+            }
+            let param_type_text = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation));
+            self.infer_object_argument_substitutions_from_type_node(
+                source_arena,
+                param.type_annotation,
+                arg_idx,
+                type_param_names,
+                &[],
+                &mut substitutions,
+                0,
+            );
+            if let Some(param_type_text) = param_type_text
+                && let Some((type_param_name, value_text)) = self
+                    .infer_object_map_substitution_from_annotation_text(
+                        &param_type_text,
+                        arg_idx,
+                        type_param_names,
+                        &[],
+                        &substitutions,
+                    )
+                && !substitutions
+                    .iter()
+                    .any(|(existing, _)| existing == &type_param_name)
+            {
+                substitutions.push((type_param_name, value_text));
+            }
+        }
+
         substitutions
     }
 
@@ -886,6 +925,9 @@ impl<'a> DeclarationEmitter<'a> {
         type_param_constraint: Option<&str>,
     ) -> Option<String> {
         if let Some(type_text) = self.referenced_parameter_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
+        if let Some(type_text) = self.reference_declared_source_type_annotation_text(arg_idx) {
             return Some(type_text);
         }
         if let Some(type_text) = self.reference_declared_type_annotation_text(arg_idx) {
