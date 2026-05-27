@@ -941,6 +941,7 @@ impl<'a> Printer<'a> {
                 self.write_export_binding_start(&export_name);
                 self.write(&local_name);
                 self.write_export_binding_end();
+                self.system_folded_export_names.insert(local_name);
             }
             return;
         }

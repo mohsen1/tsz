@@ -148,7 +148,8 @@ fn test_pack_relation_flags_tracks_checker_strict_options() {
 
     let expected = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
         | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
-        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
+        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
 
     assert_eq!(ctx.pack_relation_flags(), expected);
 }
@@ -3610,6 +3611,7 @@ fn test_relation_flags_surface_covers_checker_policy_bits() {
         "EXACT_OPTIONAL_PROPERTY_TYPES",
         "NO_UNCHECKED_INDEXED_ACCESS",
         "NO_ERASE_GENERICS",
+        "ALLOW_BIVARIANT_REST",
     ] {
         assert!(
             source.contains(flag),
@@ -3635,6 +3637,7 @@ fn test_pack_relation_flags_uses_boundary_relation_flags_surface() {
         "RelationFlags::STRICT_FUNCTION_TYPES",
         "RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES",
         "RelationFlags::NO_UNCHECKED_INDEXED_ACCESS",
+        "RelationFlags::ALLOW_BIVARIANT_REST",
     ] {
         assert!(
             source.contains(flag),
@@ -4207,22 +4210,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
     };
 
     // Create an empty TypeCache.
-    let cache = crate::TypeCache {
-        symbol_types: Default::default(),
-        symbol_instance_types: Default::default(),
-        node_types: Default::default(),
-        symbol_dependencies: Default::default(),
-        def_to_symbol: Default::default(),
-        def_to_name: Default::default(),
-        def_types: Default::default(),
-        def_type_params: Default::default(),
-        flow_analysis_cache: Default::default(),
-        class_instance_type_to_decl: Default::default(),
-        class_instance_type_cache: Default::default(),
-        class_constructor_type_cache: Default::default(),
-        type_only_nodes: Default::default(),
-        namespace_module_names: Default::default(),
-    };
+    let cache = crate::TypeCache::default();
 
     // Create checker with cache + shared def store.
     let checker = crate::state::CheckerState::with_cache_and_shared_def_store(

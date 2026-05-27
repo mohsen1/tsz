@@ -1,5 +1,7 @@
 use crate::state::CheckerState;
-use crate::types_domain::queries::core::get_literal_or_well_known_property_name;
+use crate::types_domain::queries::core::{
+    get_literal_or_well_known_property_name, get_literal_property_name,
+};
 use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_parser::parser::node::{NodeAccess, NodeArena};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
@@ -232,16 +234,29 @@ impl<'a> CheckerState<'a> {
     }
 
     fn resolve_local_computed_property_name(&mut self, name_idx: NodeIndex) -> Option<String> {
-        if let Some(name) = get_literal_or_well_known_property_name(self.ctx.arena, name_idx) {
+        if let Some(name) = get_literal_property_name(self.ctx.arena, name_idx) {
             return Some(name);
         }
 
         let name_node = self.ctx.arena.get(name_idx)?;
         let computed = self.ctx.arena.get_computed_property(name_node)?;
+        if let Some(name) = self.local_well_known_symbol_property_name(computed.expression) {
+            return Some(name);
+        }
+
         if let Some(name) =
             self.computed_expression_literal_name_in_arena(self.ctx.arena, computed.expression)
         {
             return Some(name);
+        }
+        if let Some(literal_type) = self.const_object_member_literal_type_query(computed.expression)
+            && let Some(name) =
+                crate::query_boundaries::type_computation::access::literal_property_name(
+                    self.ctx.types,
+                    literal_type,
+                )
+        {
+            return Some(self.ctx.types.resolve_atom_ref(name).to_string());
         }
         let prev = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
@@ -263,6 +278,41 @@ impl<'a> CheckerState<'a> {
             crate::query_boundaries::common::unique_symbol_ref(self.ctx.types, expr_type)
                 .map(|sym_ref| format!("__unique_{}", sym_ref.0))
         }
+    }
+
+    fn local_well_known_symbol_property_name(&self, expr_idx: NodeIndex) -> Option<String> {
+        let mut current = expr_idx;
+        while let Some(node) = self.ctx.arena.get(current)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            current = self.ctx.arena.get_parenthesized(node)?.expression;
+        }
+
+        let node = self.ctx.arena.get(current)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        if !self.identifier_resolves_to_unshadowed_global(access.expression, "Symbol") {
+            return None;
+        }
+
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some(format!("[Symbol.{}]", ident.escaped_text));
+        }
+        if matches!(
+            name_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some(format!("[Symbol.{}]", lit.text));
+        }
+        None
     }
 
     fn computed_expression_literal_name_in_arena(

@@ -88,7 +88,9 @@ impl<'a> CheckerState<'a> {
 
         let source_elem = self.get_element_access_type(source, TypeId::NUMBER, Some(0));
         source_elem != TypeId::ERROR
-            && (self.diagnostic_relation_boolean_guard(source_elem, target_elem)
+            && (self
+                .assign_relation_outcome(source_elem, target_elem)
+                .related
                 || ((source_elem != source || target_elem != target)
                     && self.satisfies_array_like_constraint(source_elem, target_elem)))
     }

@@ -2,7 +2,8 @@
 //!
 //! Extracted from `constraint_validation.rs` to keep that file under the
 //! checker per-file size guard. Behavior is unchanged except that the
-//! key-space relation guard now goes through the shared diagnostic boundary.
+//! key-space relation guard now goes through the shared relation outcome
+//! boundary.
 
 use crate::query_boundaries::checkers::generic as query;
 use crate::state::CheckerState;
@@ -109,7 +110,10 @@ impl<'a> CheckerState<'a> {
                 } else {
                     keyed_object_type
                 };
-            if !self.diagnostic_relation_boolean_guard(keyed_object_type, object_keys) {
+            if !self
+                .assign_relation_outcome(keyed_object_type, object_keys)
+                .related
+            {
                 return None;
             }
             let mut property_types: Vec<TypeId> =

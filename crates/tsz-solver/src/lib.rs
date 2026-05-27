@@ -409,6 +409,12 @@ mod function_optional_param_relation_tests;
 #[path = "../tests/index_access_comprehensive_tests.rs"]
 mod index_access_comprehensive_tests;
 #[cfg(test)]
+#[path = "../tests/indexed_access_error_type_tests.rs"]
+mod indexed_access_error_type_tests;
+#[cfg(test)]
+#[path = "../tests/inferred_declaration_mapped_surface_tests.rs"]
+mod inferred_declaration_mapped_surface_tests;
+#[cfg(test)]
 #[path = "caches/instantiation_cache_test.rs"]
 mod instantiation_cache_wiring_tests;
 #[cfg(test)]
@@ -445,8 +451,14 @@ mod property_helpers_tests;
 #[path = "caches/query_cache_statistics_test.rs"]
 mod query_cache_statistics_tests;
 #[cfg(test)]
+#[path = "../tests/relation_bivariant_rest_cache_tests.rs"]
+mod relation_bivariant_rest_cache_tests;
+#[cfg(test)]
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;
+#[cfg(test)]
+#[path = "../tests/relation_no_unchecked_indexed_cache_tests.rs"]
+mod relation_no_unchecked_indexed_cache_tests;
 #[cfg(test)]
 #[path = "../tests/relation_policy_cache_agreement_tests.rs"]
 mod relation_policy_cache_agreement_tests;

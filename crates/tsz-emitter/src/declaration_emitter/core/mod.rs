@@ -17,6 +17,7 @@ mod js_emit_namespace_exports;
 mod js_emit_synthetic;
 mod js_return_type_fallback;
 mod js_synthetic_members;
+mod jsdoc_statement_facts;
 mod preamble;
 mod setup;
 

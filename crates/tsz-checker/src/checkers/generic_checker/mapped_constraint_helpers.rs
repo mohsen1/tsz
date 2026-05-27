@@ -123,8 +123,12 @@ impl<'a> CheckerState<'a> {
         let true_base_evaluated = self.evaluate_type_for_assignability(true_base_resolved);
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
         true_base_evaluated == constraint_evaluated
-            || self.diagnostic_relation_boolean_guard(true_base_evaluated, constraint_evaluated)
-            || self.diagnostic_relation_boolean_guard(true_base_resolved, constraint_resolved)
+            || self
+                .assign_relation_outcome(true_base_evaluated, constraint_evaluated)
+                .related
+            || self
+                .assign_relation_outcome(true_base_resolved, constraint_resolved)
+                .related
     }
 
     pub(super) fn constraint_check_base_type(&mut self, type_id: TypeId) -> TypeId {

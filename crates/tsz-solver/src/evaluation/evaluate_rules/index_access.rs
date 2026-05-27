@@ -1544,10 +1544,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().union(results);
         }
 
-        // If index is string, return union of all property types (index signature behavior)
-        if index_type == TypeId::STRING {
-            let union = self.union_property_types(props);
-            return self.add_undefined_if_unchecked(union);
+        // A plain object type has no index signatures, so indexing it by the bare
+        // `string`, `number`, or `symbol` primitive matches no key and no applicable
+        // index signature. tsc reports TS2536/TS2537 and resolves the access to the
+        // error type (which relations treat as bidirectionally assignable like `any`),
+        // suppressing downstream `TS2322`/`TS2344` cascades. Non-primitive indices
+        // (e.g. an unresolved generic type parameter) must still fall through to
+        // `undefined` so `visit_object` can defer their evaluation.
+        if matches!(index_type, TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL) {
+            return TypeId::ERROR;
         }
 
         TypeId::UNDEFINED
@@ -1629,32 +1634,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::UNDEFINED;
         }
 
+        // Bare `string`/`number`/`symbol` indices that match no applicable index
+        // signature are a TS2536/TS2537 failure: tsc resolves the access to the error
+        // type rather than the union of all member value types, so downstream checks
+        // are suppressed. A numeric index still falls back to a string index signature
+        // (numeric keys are string keys).
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index
+            if let Some(string_index) = string_index
                 && string_index_signature_applies(self, string_index, index_type)
             {
-                string_index.value_type
-            } else {
-                self.union_property_types(&shape.properties)
-            };
-            return self.add_undefined_if_unchecked(result);
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
         if index_type == TypeId::NUMBER {
-            let result = if let Some(number_index) = shape.number_index.as_ref() {
-                number_index.value_type
-            } else if let Some(string_index) = string_index {
-                string_index.value_type
-            } else {
-                self.union_property_types(&shape.properties)
-            };
-            return self.add_undefined_if_unchecked(result);
+            if let Some(number_index) = shape.number_index.as_ref() {
+                return self.add_undefined_if_unchecked(number_index.value_type);
+            }
+            if let Some(string_index) = string_index {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
-        if index_type == TypeId::SYMBOL
-            && let Some(symbol_index) = symbol_index
-        {
-            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        if index_type == TypeId::SYMBOL {
+            if let Some(symbol_index) = symbol_index {
+                return self.add_undefined_if_unchecked(symbol_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
         // Template literal types (e.g., `foo${string}`), string intrinsic types
@@ -1751,32 +1759,35 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return TypeId::UNDEFINED;
         }
 
+        // Bare `string`/`number`/`symbol` indices that match no applicable index
+        // signature are a TS2536/TS2537 failure: tsc resolves the access to the error
+        // type rather than the union of all member value types, so downstream checks
+        // are suppressed. A numeric index still falls back to a string index signature
+        // (numeric keys are string keys).
         if index_type == TypeId::STRING {
-            let result = if let Some(string_index) = string_index
+            if let Some(string_index) = string_index
                 && string_index_signature_applies(self, string_index, index_type)
             {
-                string_index.value_type
-            } else {
-                self.union_property_types(&shape.properties)
-            };
-            return self.add_undefined_if_unchecked(result);
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
         if index_type == TypeId::NUMBER {
-            let result = if let Some(number_index) = shape.number_index.as_ref() {
-                number_index.value_type
-            } else if let Some(string_index) = string_index {
-                string_index.value_type
-            } else {
-                self.union_property_types(&shape.properties)
-            };
-            return self.add_undefined_if_unchecked(result);
+            if let Some(number_index) = shape.number_index.as_ref() {
+                return self.add_undefined_if_unchecked(number_index.value_type);
+            }
+            if let Some(string_index) = string_index {
+                return self.add_undefined_if_unchecked(string_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
-        if index_type == TypeId::SYMBOL
-            && let Some(symbol_index) = symbol_index
-        {
-            return self.add_undefined_if_unchecked(symbol_index.value_type);
+        if index_type == TypeId::SYMBOL {
+            if let Some(symbol_index) = symbol_index {
+                return self.add_undefined_if_unchecked(symbol_index.value_type);
+            }
+            return TypeId::ERROR;
         }
 
         // String-like index types (template literals, string intrinsics, branded strings)
@@ -1788,18 +1799,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
 
         TypeId::UNDEFINED
-    }
-
-    pub(crate) fn union_property_types(&self, props: &[PropertyInfo]) -> TypeId {
-        let all_types: Vec<TypeId> = props
-            .iter()
-            .map(|prop| self.optional_property_type(prop))
-            .collect();
-        if all_types.is_empty() {
-            TypeId::UNDEFINED
-        } else {
-            self.interner().union(all_types)
-        }
     }
 
     pub(crate) fn optional_property_type(&self, prop: &PropertyInfo) -> TypeId {

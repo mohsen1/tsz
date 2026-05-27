@@ -290,10 +290,31 @@ impl<'a> DeclarationEmitter<'a> {
                     reused_type_text.as_deref().is_some_and(|type_text| {
                         self.type_text_starts_with_function_local_type_alias(type_text)
                     });
+                let call_type_id = self.get_node_type_or_names(&[expr_idx]).filter(|type_id| {
+                    *type_id != tsz_solver::types::TypeId::ANY
+                        && *type_id != tsz_solver::types::TypeId::ERROR
+                });
+                if let Some(type_id) = call_type_id
+                    && self
+                        .inferred_declaration_mapped_constraint_surface(type_id)
+                        .is_some()
+                {
+                    let printed = self.print_type_id_for_inferred_declaration(type_id);
+                    if let Some(call) = self.arena.get_call_expr(expr_node) {
+                        if let Some((alias_name, module_specifier)) =
+                            self.call_receiver_default_import_alias(call.expression)
+                        {
+                            return Some(Self::rewrite_import_type_export_to_default_alias(
+                                &printed,
+                                &alias_name,
+                                &module_specifier,
+                            ));
+                        }
+                    }
+                    return Some(printed);
+                }
                 if reused_type_text.is_some()
-                    && let Some(type_id) = self.get_node_type_or_names(&[expr_idx])
-                    && type_id != tsz_solver::types::TypeId::ANY
-                    && type_id != tsz_solver::types::TypeId::ERROR
+                    && let Some(type_id) = call_type_id
                     && (reused_type_uses_function_local_alias
                         || self.should_expand_named_application_for_inferred_declaration(type_id)
                         || self.type_contains_conditional_alias_application_for_inferred_emit(

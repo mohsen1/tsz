@@ -1169,6 +1169,32 @@ function f2(item: A | B | undefined) {
 }
 
 #[test]
+fn function_returning_mapped_parameter_preserves_source_surface() {
+    let output = emit_dts(
+        r#"
+export function makeRecord<Value, Key extends string>(obj: { [Field in Key]: Value }) {
+    return obj;
+}
+
+export function makeDictionary<Value>(obj: { [name: string]: Value }) {
+    return obj;
+}
+"#,
+    );
+
+    assert!(
+        output.contains(
+            "export declare function makeRecord<Value, Key extends string>(obj: {\n    [Field in Key]: Value;\n}): { [Field in Key]: Value; };"
+        ),
+        "Expected returned mapped parameter to keep its public source surface: {output}"
+    );
+    assert!(
+        !output.contains("makeDictionary<Value>(obj: {\n    [name: string]: Value;\n}): { [name: string]: Value })"),
+        "Non-mapped index signatures should not use the mapped-parameter source fast path: {output}"
+    );
+}
+
+#[test]
 fn test_nested_mapped_type_as_clause_formats_multiline() {
     let output = emit_dts(
         r#"

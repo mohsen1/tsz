@@ -33,35 +33,6 @@ pub(super) fn allow_actual_lib_declaration_proof_bypass(name: &str) -> bool {
     matches!(name, "Iterator")
 }
 
-pub(super) fn is_direct_actual_lib_value_interface_name(name: &str) -> bool {
-    matches!(
-        name,
-        "Array"
-            | "Date"
-            | "DateTimeFormatOptions"
-            | "Error"
-            | "Function"
-            | "Iterator"
-            | "IteratorObject"
-            | "Locale"
-            | "Map"
-            | "NumberFormatOptions"
-            | "NumberFormatOptionsCurrencyDisplayRegistry"
-            | "NumberFormatOptionsSignDisplayRegistry"
-            | "NumberFormatOptionsStyleRegistry"
-            | "NumberFormatOptionsUseGroupingRegistry"
-            | "NumberFormatPartTypeRegistry"
-            | "NumberFormatRangePartTypeRegistry"
-            | "Object"
-            | "Promise"
-            | "RegExp"
-            | "Set"
-            | "Symbol"
-            | "WeakMap"
-            | "WeakSet"
-    )
-}
-
 pub(super) fn iterator_object_has_global_augmentations(
     ctx: &crate::context::CheckerContext<'_>,
 ) -> bool {

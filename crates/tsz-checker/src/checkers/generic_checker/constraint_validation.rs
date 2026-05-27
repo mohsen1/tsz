@@ -145,6 +145,39 @@ impl<'a> CheckerState<'a> {
                         ) {
                             continue;
                         }
+                        let evaluated_original = self.evaluate_type_for_assignability(type_arg);
+                        if evaluated_original != type_arg
+                            && !matches!(
+                                evaluated_original,
+                                TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                            )
+                            && !query::contains_type_parameters(self.ctx.types, evaluated_original)
+                        {
+                            if self.diagnostic_relation_boolean_guard(
+                                evaluated_original,
+                                constraint_resolved,
+                            ) {
+                                if self.generic_boolean_literal_probe_should_remain_indeterminate(
+                                    type_arg,
+                                    evaluated_original,
+                                    constraint_resolved,
+                                ) {
+                                    self.error_type_constraint_not_satisfied(
+                                        TypeId::BOOLEAN,
+                                        constraint_resolved,
+                                        arg_idx,
+                                    );
+                                    continue;
+                                }
+                                continue;
+                            }
+                            self.error_type_constraint_not_satisfied(
+                                evaluated_original,
+                                constraint_resolved,
+                                arg_idx,
+                            );
+                            continue;
+                        }
                         let concrete_arg = self.scoped_type_param_substituted_form(type_arg);
                         if self.type_arg_evaluates_to_infer_result_conditional(concrete_arg) {
                             continue;
@@ -153,6 +186,18 @@ impl<'a> CheckerState<'a> {
                         let concrete_arg = self.evaluate_type_for_assignability(concrete_arg);
                         if self.diagnostic_relation_boolean_guard(concrete_arg, constraint_resolved)
                         {
+                            if self.generic_boolean_literal_probe_should_remain_indeterminate(
+                                type_arg,
+                                concrete_arg,
+                                constraint_resolved,
+                            ) {
+                                self.error_type_constraint_not_satisfied(
+                                    TypeId::BOOLEAN,
+                                    constraint_resolved,
+                                    arg_idx,
+                                );
+                                continue;
+                            }
                             continue;
                         }
                         self.error_type_constraint_not_satisfied(
@@ -299,6 +344,49 @@ impl<'a> CheckerState<'a> {
                 // assignable to `string`.
                 let type_arg_contains_type_parameters =
                     query::contains_type_parameters(self.ctx.types, type_arg);
+                if type_arg_contains_type_parameters
+                    && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
+                {
+                    let evaluated_arg = self.evaluate_type_for_assignability(type_arg);
+                    if evaluated_arg != type_arg
+                        && !matches!(
+                            evaluated_arg,
+                            TypeId::UNKNOWN | TypeId::ERROR | TypeId::NEVER
+                        )
+                        && !query::contains_type_parameters(self.ctx.types, evaluated_arg)
+                    {
+                        let constraint_resolved = self.resolve_lazy_type(constraint);
+                        let inst_constraint = self.instantiate_constraint_with_type_args(
+                            constraint_resolved,
+                            type_params,
+                            &type_args,
+                        );
+                        if self.conditional_result_branches_satisfy_constraint(
+                            type_arg,
+                            inst_constraint,
+                        ) || self
+                            .diagnostic_relation_boolean_guard(evaluated_arg, inst_constraint)
+                            || query::homomorphic_mapped_application_should_defer_constraint(
+                                self, type_arg,
+                            )
+                        {
+                            continue;
+                        }
+                        if let Some(&arg_idx) = type_args_list.nodes.get(i)
+                            && !self.type_argument_is_narrowed_by_conditional_true_branch(
+                                arg_idx,
+                                inst_constraint,
+                            )
+                        {
+                            self.error_type_constraint_not_satisfied(
+                                evaluated_arg,
+                                inst_constraint,
+                                arg_idx,
+                            );
+                        }
+                        continue;
+                    }
+                }
                 if type_arg_contains_type_parameters
                     && !query::is_bare_type_parameter(self.ctx.types.as_type_database(), type_arg)
                     && query::is_application_type(self.ctx.types.as_type_database(), type_arg)
@@ -1384,28 +1472,11 @@ impl<'a> CheckerState<'a> {
                             }
                             // Fall through to perform the constraint check
                         }
-                        let base_allows_primitive_key = |this: &Self, candidate: TypeId| {
-                            let display = this.format_type_diagnostic(candidate);
-                            candidate == TypeId::STRING
-                                || candidate == TypeId::NUMBER
-                                || candidate == TypeId::SYMBOL
-                                || display == "string | number"
-                                || display == "string | number | symbol"
-                                || crate::query_boundaries::common::union_members(
-                                    this.ctx.types,
-                                    candidate,
-                                )
-                                .is_some_and(|members| {
-                                    members.into_iter().any(|member| {
-                                        matches!(
-                                            member,
-                                            TypeId::STRING | TypeId::NUMBER | TypeId::SYMBOL
-                                        )
-                                    })
-                                })
-                        };
                         if query::contains_free_type_parameters(self.ctx.types, base)
-                            && !base_allows_primitive_key(self, base)
+                            && !crate::query_boundaries::type_predicates::base_admits_any_primitive_index_key(
+                                self.ctx.types.as_type_database(),
+                                &[base],
+                            )
                         {
                             // Base constraint itself contains free type parameters
                             // (e.g., from outer generic scope). Defer check.
@@ -1465,42 +1536,22 @@ impl<'a> CheckerState<'a> {
                         .is_some()
                             && {
                                 // Decide membership *structurally* per primitive_key.
-                                // A display-string match ("string | number" /
-                                // "string | number | symbol") is per-base, not
-                                // per-key, so it would falsely admit SYMBOL
-                                // when base is `string | number` and emit a
-                                // spurious TS2344. Use TypeId equality and
-                                // union_members on both the unevaluated and
-                                // evaluated base — the latter recovers cases
-                                // where keyof/indexed-access bases only
-                                // decompose into a Union after evaluation.
+                                // Both the unevaluated and evaluated base are
+                                // checked so keyof/indexed-access bases that only
+                                // decompose into a Union after evaluation are
+                                // still recognized.
                                 let base_evaluated = self.evaluate_type_for_assignability(base);
-                                let base_members = crate::query_boundaries::common::union_members(
-                                    self.ctx.types,
-                                    base,
-                                );
-                                let base_evaluated_members =
-                                    crate::query_boundaries::common::union_members(
-                                        self.ctx.types,
-                                        base_evaluated,
+                                let present =
+                                    crate::query_boundaries::type_predicates::present_primitive_index_keys(
+                                        self.ctx.types.as_type_database(),
+                                        &[base, base_evaluated],
                                     );
-                                [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL]
-                                    .into_iter()
-                                    .any(|primitive_key| {
-                                        let in_base = base == primitive_key
-                                            || base_evaluated == primitive_key
-                                            || base_members
-                                                .as_ref()
-                                                .is_some_and(|m| m.contains(&primitive_key))
-                                            || base_evaluated_members
-                                                .as_ref()
-                                                .is_some_and(|m| m.contains(&primitive_key));
-                                        in_base
-                                            && !self.diagnostic_relation_boolean_guard(
-                                                primitive_key,
-                                                inst_constraint,
-                                            )
-                                    })
+                                present.into_iter().any(|primitive_key| {
+                                    !self.diagnostic_relation_boolean_guard(
+                                        primitive_key,
+                                        inst_constraint,
+                                    )
+                                })
                             }
                             && let Some(&arg_idx) = type_args_list.nodes.get(i)
                         {

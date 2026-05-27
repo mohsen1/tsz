@@ -1461,6 +1461,35 @@ pub fn collect_homomorphic_source_property_infos(
     }
 }
 
+pub fn sort_homomorphic_source_properties_for_display(
+    db: &dyn TypeDatabase,
+    source: TypeId,
+    resolved_source: TypeId,
+    props: &mut [PropertyInfo],
+) {
+    if super::sort_number_wrapper_properties_for_display(db, source, resolved_source, props) {
+        return;
+    }
+
+    let display_props = db
+        .get_display_properties(source)
+        .or_else(|| db.get_display_properties(resolved_source));
+    if let Some(display_props) = display_props {
+        let mut display_props = display_props.as_ref().clone();
+        if display_props.iter().any(|prop| prop.declaration_order != 0) {
+            display_props.sort_by_key(|prop| prop.declaration_order);
+        }
+        let order_map: FxHashMap<Atom, usize> = display_props
+            .iter()
+            .enumerate()
+            .map(|(idx, prop)| (prop.name, idx))
+            .collect();
+        props.sort_by_key(|prop| order_map.get(&prop.name).copied().unwrap_or(usize::MAX));
+    } else if props.iter().any(|prop| prop.declaration_order != 0) {
+        props.sort_by_key(|prop| prop.declaration_order);
+    }
+}
+
 pub fn collect_homomorphic_source_properties(
     db: &dyn TypeDatabase,
     source: TypeId,

@@ -1319,6 +1319,7 @@ impl<'a> CheckerState<'a> {
 }
 
 mod array_like_constraint_helpers;
+mod boolean_probe_constraints;
 mod callable_constraint_helpers;
 mod conditional_constraint_helpers;
 mod constraint_display_helpers;

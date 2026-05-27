@@ -9,7 +9,7 @@
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::iterators::get_iterator_info;
-use crate::types::{TupleElement, TupleListId, TypeData, TypeId};
+use crate::types::{PropertyInfo, TupleElement, TupleListId, TypeData, TypeId};
 use crate::utils::{self, TupleRestExpansion};
 use crate::visitor::{
     array_element_type, is_type_parameter, object_shape_id, object_with_index_shape_id,
@@ -493,6 +493,108 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         }
 
         Some(direct)
+    }
+
+    /// Check a fixed tuple against an indexed target whose array surface is
+    /// otherwise satisfiable, but which also declares required numeric members.
+    ///
+    /// Plain arrays cannot prove that an arbitrary numeric property is present.
+    /// Fixed tuples can prove that for in-bounds fixed slots, so
+    /// `[number, number, number]` satisfies `interface I extends Array<Number>
+    /// { 2: number }` while `number[]` and `[number, number]` do not.
+    pub(crate) fn check_tuple_numeric_props_array_interface_subtype(
+        &mut self,
+        source: TypeId,
+        target: TypeId,
+    ) -> Option<SubtypeResult> {
+        let tuple_id = tuple_list_id(self.interner, source)?;
+        let elements = self.interner.tuple_list(tuple_id).to_vec();
+        let element_type =
+            crate::type_queries::get_tuple_element_type_union(self.interner, source)?;
+
+        let target_shape_id = object_with_index_shape_id(self.interner, target)?;
+        let target_shape = self.interner.object_shape(target_shape_id);
+        let target_props = target_shape.properties.clone();
+        let target_number_index = target_shape.number_index;
+        let target_string_index = target_shape.string_index;
+
+        let array_base = self.resolver.get_array_base_type()?;
+        let params = self.resolver.get_array_base_type_params();
+        let instantiated_array = if params.is_empty() {
+            array_base
+        } else {
+            let subst = TypeSubstitution::from_args(self.interner, params, &[element_type]);
+            instantiate_type(self.interner, array_base, &subst)
+        };
+        let source_array_eval = self.evaluate_type(instantiated_array);
+        let source_shape_id = object_shape_id(self.interner, source_array_eval)
+            .or_else(|| object_with_index_shape_id(self.interner, source_array_eval))?;
+        let source_props = self
+            .interner
+            .object_shape(source_shape_id)
+            .properties
+            .clone();
+
+        let mut used_tuple_numeric_property = false;
+        for target_prop in target_props.iter().filter(|prop| !prop.optional) {
+            if self.array_property_satisfies(&source_props, target_prop) {
+                continue;
+            }
+
+            match self.tuple_numeric_property_satisfies(&elements, target_prop) {
+                Some(true) => used_tuple_numeric_property = true,
+                Some(false) => return Some(SubtypeResult::False),
+                None => return None,
+            }
+        }
+
+        if !used_tuple_numeric_property {
+            return None;
+        }
+
+        if target_string_index.is_some() {
+            return Some(SubtypeResult::False);
+        }
+
+        if let Some(number_index) = target_number_index
+            && !self
+                .check_subtype(element_type, number_index.value_type)
+                .is_true()
+        {
+            return Some(SubtypeResult::False);
+        }
+
+        Some(SubtypeResult::True)
+    }
+
+    fn array_property_satisfies(
+        &mut self,
+        source_props: &[PropertyInfo],
+        target_prop: &PropertyInfo,
+    ) -> bool {
+        let Ok(index) = source_props.binary_search_by_key(&target_prop.name, |prop| prop.name)
+        else {
+            return false;
+        };
+        self.check_subtype(source_props[index].type_id, target_prop.type_id)
+            .is_true()
+    }
+
+    fn tuple_numeric_property_satisfies(
+        &mut self,
+        elements: &[TupleElement],
+        target_prop: &PropertyInfo,
+    ) -> Option<bool> {
+        let name = self.interner.resolve_atom(target_prop.name);
+        let index = name.parse::<usize>().ok()?;
+        let element = elements.get(index)?;
+        if element.rest {
+            return Some(false);
+        }
+        Some(
+            self.check_subtype(element.type_id, target_prop.type_id)
+                .is_true(),
+        )
     }
 
     pub(crate) fn recursive_array_alias_element_matches_array_interface(

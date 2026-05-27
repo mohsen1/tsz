@@ -63,8 +63,11 @@ impl<'a> CheckerState<'a> {
         );
         let restricted = self.resolve_lazy_type(restricted);
         let restricted_evaluated = self.evaluate_type_for_assignability(restricted);
-        self.diagnostic_relation_boolean_guard(restricted_evaluated, inst_constraint)
-            || self.diagnostic_relation_boolean_guard(restricted, inst_constraint)
+        self.assign_relation_outcome(restricted_evaluated, inst_constraint)
+            .related
+            || self
+                .assign_relation_outcome(restricted, inst_constraint)
+                .related
     }
 
     fn infer_result_satisfies_via_mapped_key_subset(
@@ -314,7 +317,7 @@ impl<'a> CheckerState<'a> {
         Some(candidates)
     }
 
-    fn direct_source_alias_body_for_def(
+    pub(super) fn direct_source_alias_body_for_def(
         &mut self,
         def_id: tsz_solver::def::DefId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {

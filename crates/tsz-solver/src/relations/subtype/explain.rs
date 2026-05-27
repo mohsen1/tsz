@@ -1503,10 +1503,15 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         } else {
             target.params.len()
         };
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(source.is_method);
         // When the target has a rest parameter (e.g., ...args: number[]),
         // it can absorb unlimited arguments — skip the too-many check entirely
         // so we fall through to per-parameter type checking.
-        if !rest_is_top && !target_has_rest && source_required > target_fixed_count {
+        if !rest_is_top
+            && !target_has_rest
+            && !allow_bivariant_param_count
+            && source_required > target_fixed_count
+        {
             return Some(SubtypeFailureReason::TooManyParameters {
                 source_count: source_required,
                 target_count: target_fixed_count,
@@ -1547,20 +1552,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return None; // Invalid rest parameter
             };
-            if rest_is_top {
-                if let Some((param_index, source_param)) =
+            if rest_elem_type.is_any_or_unknown()
+                && let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
-                {
-                    let inner_reason = self
-                        .explain_failure(rest_elem_type, source_param)
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                        param_index,
-                        source_param,
-                        target_param: rest_elem_type,
-                        inner_reason,
-                    });
-                }
+            {
+                let inner_reason = self
+                    .explain_failure(rest_elem_type, source_param)
+                    .map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index,
+                    source_param,
+                    target_param: rest_elem_type,
+                    inner_reason,
+                });
+            }
+            if rest_is_top {
                 return None;
             }
 

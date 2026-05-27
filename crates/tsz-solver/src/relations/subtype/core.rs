@@ -2523,6 +2523,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     return SubtypeResult::True;
                 }
                 // Target has non-empty properties + index signature.
+                if let Some(result) =
+                    self.check_tuple_numeric_props_array_interface_subtype(source, target)
+                {
+                    return result;
+                }
                 // Try the Array<T> interface for full structural comparison.
                 if let Some(elem) = array_element_type(self.interner, source).or_else(|| {
                     crate::type_queries::get_tuple_element_type_union(self.interner, source)
