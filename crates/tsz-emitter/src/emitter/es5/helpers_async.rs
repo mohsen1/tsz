@@ -1360,6 +1360,9 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        if self.es5_class_expression_extends_this_captured {
+            es5_emitter.set_extends_this_captured(true);
+        }
         if self.ctx.target_es5
             && !self.ctx.options.legacy_decorators
             && self.can_render_simple_tc39_decorated_class_es5(node)

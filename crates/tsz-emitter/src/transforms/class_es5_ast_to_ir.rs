@@ -670,6 +670,9 @@ impl<'a> AstToIr<'a> {
                 self.convert_object_literal(idx)
             }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
+            k if k == syntax_kind_ext::CLASS_EXPRESSION && self.this_captured.get() => {
+                IRNode::ASTRefWithCapturedClassHeritageThis(idx)
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
             k if k == syntax_kind_ext::SPREAD_ELEMENT => self.convert_spread_element(idx),
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION

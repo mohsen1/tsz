@@ -541,6 +541,10 @@ pub enum IRNode {
         generator_this: Cow<'static, str>,
     },
 
+    /// Reference to an original ES5 class expression whose heritage expression
+    /// should be evaluated in a captured constructor receiver context.
+    ASTRefWithCapturedClassHeritageThis(NodeIndex),
+
     /// Reference to an original AST node with constrained source range.
     /// Used when the parser's node.end extends into a parent block's closing brace.
     ASTRefRange(NodeIndex, u32),
@@ -1202,6 +1206,7 @@ impl IRNode {
             | Self::TrailingComment(_)
             | Self::ASTRef(_)
             | Self::ASTRefWithGeneratorThis { .. }
+            | Self::ASTRefWithCapturedClassHeritageThis(_)
             | Self::ASTRefRange(..)
             | Self::UseStrict
             | Self::EsesModuleMarker => false,

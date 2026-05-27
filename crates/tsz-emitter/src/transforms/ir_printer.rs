@@ -1610,6 +1610,21 @@ impl<'a> IRPrinter<'a> {
                 self.write("undefined");
             }
 
+            IRNode::ASTRefWithCapturedClassHeritageThis(idx) => {
+                if let Some(arena) = self.arena {
+                    let mut printer = self.build_nested_ast_printer(arena);
+                    printer.set_es5_class_expression_extends_this_captured(true);
+                    printer.emit_expression(*idx);
+                    self.merge_ast_printer_block_scope_reserved_names(&printer);
+                    let output = printer.get_output();
+                    if !output.trim().is_empty() {
+                        self.write_embedded_output(output.trim());
+                        return;
+                    }
+                }
+                self.write("undefined");
+            }
+
             IRNode::ASTRefRange(idx, max_end) => {
                 // Like ASTRef but with a constrained end position.
                 // Used when a statement's node.end extends into a parent block's closing brace.

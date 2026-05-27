@@ -895,6 +895,11 @@ pub struct Printer<'a> {
     /// such as a computed property temp, not a string literal.
     pub(crate) pending_tc39_class_expression_name: Option<(String, bool)>,
 
+    /// Whether ES5 class-expression heritage clauses emitted by this nested
+    /// printer should evaluate top-level `this` as the captured constructor
+    /// receiver.
+    pub(crate) es5_class_expression_extends_this_captured: bool,
+
     pub(crate) tagged_template_var_map: FxHashMap<NodeIndex, String>,
 }
 
@@ -1281,6 +1286,7 @@ impl<'a> Printer<'a> {
             scoped_static_super_assignment_target: false,
             scoped_class_expression_self_alias: None,
             pending_tc39_class_expression_name: None,
+            es5_class_expression_extends_this_captured: false,
             tagged_template_var_map: FxHashMap::default(),
         }
     }
@@ -1293,6 +1299,10 @@ impl<'a> Printer<'a> {
     /// Whether an accessor node is currently being emitted from object-literal syntax.
     pub(crate) const fn is_emitting_object_literal_accessor(&self) -> bool {
         self.object_literal_accessor_depth > 0
+    }
+
+    pub(crate) const fn set_es5_class_expression_extends_this_captured(&mut self, captured: bool) {
+        self.es5_class_expression_extends_this_captured = captured;
     }
 
     /// Emit an object-literal property node, marking accessor members to enable

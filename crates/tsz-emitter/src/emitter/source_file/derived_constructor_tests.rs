@@ -72,7 +72,7 @@ fn derived_constructor_fields_follow_parenthesized_super_call() {
 
 #[test]
 fn pre_super_this_capture_stops_at_ordinary_functions() {
-    let source = "class Base {}\nclass FnDecl extends Base {\n    prop = true;\n    constructor() {\n        function declaration(param = this) {\n            return this;\n        }\n        super();\n    }\n}\nclass FnExpr extends Base {\n    prop = true;\n    constructor() {\n        (function () {\n            return this;\n        })();\n        super();\n    }\n}\nclass Arrow extends Base {\n    prop = true;\n    constructor() {\n        (() => this)();\n        super();\n    }\n}\nclass ClassDecl extends Base {\n    memberClass = class {};\n    constructor() {\n        class Inner extends this.memberClass {\n            method() {\n                return this;\n            }\n        }\n        super();\n    }\n}\n";
+    let source = "class Base {}\nclass FnDecl extends Base {\n    prop = true;\n    constructor() {\n        function declaration(param = this) {\n            return this;\n        }\n        super();\n    }\n}\nclass FnExpr extends Base {\n    prop = true;\n    constructor() {\n        (function () {\n            return this;\n        })();\n        super();\n    }\n}\nclass Arrow extends Base {\n    prop = true;\n    constructor() {\n        (() => this)();\n        super();\n    }\n}\nclass ClassDecl extends Base {\n    memberClass = class {};\n    constructor() {\n        class Inner extends this.memberClass {\n            method() {\n                return this;\n            }\n        }\n        super();\n    }\n}\nclass ClassExpr extends Base {\n    memberClass = class {};\n    constructor() {\n        console.log(class extends this.memberClass {});\n        super();\n    }\n}\n";
 
     let output = emit(source, ScriptTarget::ES5);
 
@@ -99,5 +99,9 @@ fn pre_super_this_capture_stops_at_ordinary_functions() {
             "Inner.prototype.method = function () {\n                return this;\n            };"
         ),
         "Nested class method bodies should still keep their own `this`.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("}(_this.memberClass)))"),
+        "Nested class expressions should also evaluate their heritage expression with the pre-super receiver capture.\nOutput:\n{output}"
     );
 }

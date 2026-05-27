@@ -190,6 +190,10 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_use_define_for_class_fields(enable);
     }
 
+    pub const fn set_extends_this_captured(&mut self, captured: bool) {
+        self.transformer.set_extends_this_captured(captured);
+    }
+
     pub const fn set_tc39_decorators(&mut self, enabled: bool) {
         self.tc39_decorators = enabled;
         self.transformer.set_tc39_decorators(enabled);
