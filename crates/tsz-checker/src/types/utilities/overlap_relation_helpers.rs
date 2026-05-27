@@ -10,12 +10,12 @@ impl<'a> CheckerState<'a> {
         right: TypeId,
         skip_signature_only_assignability: bool,
     ) -> (bool, bool) {
-        let left_to_right = !skip_signature_only_assignability
-            && self.diagnostic_relation_boolean_guard(left, right);
+        let left_to_right =
+            !skip_signature_only_assignability && self.assign_relation_outcome(left, right).related;
         let right_to_left = if left_to_right || skip_signature_only_assignability {
             false
         } else {
-            self.diagnostic_relation_boolean_guard(right, left)
+            self.assign_relation_outcome(right, left).related
         };
 
         if tracing::enabled!(tracing::Level::TRACE) {
@@ -83,14 +83,14 @@ impl<'a> CheckerState<'a> {
                     } else {
                         rp.type_id
                     };
-                    left_to_right &= self.diagnostic_relation_boolean_guard(lt, rt);
-                    right_to_left &= self.diagnostic_relation_boolean_guard(rt, lt);
+                    left_to_right &= self.assign_relation_outcome(lt, rt).related;
+                    right_to_left &= self.assign_relation_outcome(rt, lt).related;
                     if !left_to_right && !right_to_left {
                         break;
                     }
                 }
-                if (left_to_right && self.diagnostic_relation_boolean_guard(lret, rret))
-                    || (right_to_left && self.diagnostic_relation_boolean_guard(rret, lret))
+                if (left_to_right && self.assign_relation_outcome(lret, rret).related)
+                    || (right_to_left && self.assign_relation_outcome(rret, lret).related)
                 {
                     return true;
                 }

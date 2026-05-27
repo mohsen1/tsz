@@ -754,6 +754,9 @@ mod object_spread_optional_merge_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]
+#[path = "tests/overlap_relation_helper_routing_arch_tests.rs"]
+mod overlap_relation_helper_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
