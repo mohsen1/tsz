@@ -967,6 +967,26 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("relation_queries.rs:2", hits[0])
         self.assertIn("total matching lines: 1", hits[1])
 
+    def test_flags_relation_policy_packed_flag_accessor(self):
+        pattern, _max_lines = self._check_by_name(
+            "RelationPolicy must not expose packed flags"
+        )
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/relations/relation_queries.rs": (
+                    "impl RelationPolicy {\n"
+                    "    pub const fn legacy_packed_flags(self) -> u16 {\n"
+                    "        self.flags.bits() as u16\n"
+                    "    }\n"
+                    "}\n"
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("relation_queries.rs:2", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_scan_regex_line_count_accepts_file_roots(self):
         pattern, _max_lines = self._check_by_name(
             "raw diagnostic assignability predicates"
