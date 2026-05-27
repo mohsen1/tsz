@@ -662,6 +662,59 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
+            let Some((alias_name, param_inner)) =
+                Self::single_generic_type_argument_text(param_type_text.trim())
+            else {
+                continue;
+            };
+            if !type_param_names
+                .iter()
+                .any(|name| name.as_str() == param_inner)
+                || substitutions
+                    .iter()
+                    .any(|(name, _)| name.as_str() == param_inner)
+            {
+                continue;
+            }
+            let Some(arg_type_text) = self.call_argument_type_text_for_substitution(
+                arg_idx,
+                Self::type_param_constraint_text(type_param_constraints, param_inner),
+            ) else {
+                continue;
+            };
+
+            let inferred = if alias_name == "Partial" {
+                Self::infer_required_from_partial_argument_text(&arg_type_text)
+            } else {
+                self.isomorphic_mapped_alias_value_wrapper(source_arena, alias_name)
+                    .and_then(|wrapper| {
+                        Self::infer_unwrapped_isomorphic_mapped_argument_text(
+                            &arg_type_text,
+                            &wrapper,
+                        )
+                    })
+            };
+            if let Some(value_text) = inferred {
+                substitutions.push((
+                    param_inner.to_string(),
+                    Self::parenthesize_generic_function_type_argument(&value_text),
+                ));
+            }
+        }
+
+        for (&param_idx, &arg_idx) in parameters.nodes.iter().zip(args.nodes.iter()) {
+            let Some(param_node) = source_arena.get(param_idx) else {
+                continue;
+            };
+            let Some(param) = source_arena.get_parameter(param_node) else {
+                continue;
+            };
+            let Some(param_type_text) = self
+                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
+                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation))
+            else {
+                continue;
+            };
             if let Some((param_name, value_text)) = self
                 .infer_single_alias_discriminant_substitution(
                     source_arena,
@@ -727,6 +780,263 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         substitutions
+    }
+
+    fn isomorphic_mapped_alias_value_wrapper(
+        &self,
+        source_arena: &NodeArena,
+        alias_name: &str,
+    ) -> Option<String> {
+        let source_file = self.arena_source_file(source_arena)?;
+        for &stmt_idx in &source_file.statements.nodes {
+            let stmt_node = source_arena.get(stmt_idx)?;
+            let Some(alias) = source_arena.get_type_alias(stmt_node) else {
+                continue;
+            };
+            if self
+                .identifier_text_from_arena(source_arena, alias.name)
+                .as_deref()
+                != Some(alias_name)
+            {
+                continue;
+            }
+            let type_params = alias.type_parameters.as_ref()?;
+            if type_params.nodes.len() != 1 {
+                return None;
+            }
+            let type_param_node = source_arena.get(type_params.nodes[0])?;
+            let type_param = source_arena.get_type_parameter(type_param_node)?;
+            let type_param_name = self.identifier_text_from_arena(source_arena, type_param.name)?;
+            let alias_text = self
+                .source_slice_from_arena(source_arena, alias.type_node)
+                .or_else(|| self.emit_type_node_text_from_arena(source_arena, alias.type_node))?;
+            return Self::isomorphic_mapped_alias_value_wrapper_text(&alias_text, &type_param_name);
+        }
+        None
+    }
+
+    fn isomorphic_mapped_alias_value_wrapper_text(
+        alias_text: &str,
+        type_param_name: &str,
+    ) -> Option<String> {
+        let trimmed = alias_text.trim().trim_end_matches(';').trim();
+        let inner = trimmed.strip_prefix('{')?.strip_suffix('}')?.trim();
+        let mapped = inner.strip_prefix('[')?;
+        let in_marker = format!(" in keyof {type_param_name}");
+        if !mapped.contains(&in_marker) {
+            return None;
+        }
+        let value_text = mapped
+            .split_once("]:")?
+            .1
+            .trim()
+            .trim_end_matches(';')
+            .trim();
+        let lookup = format!("{type_param_name}[");
+        let open = value_text.find('<')?;
+        let wrapper = value_text[..open].trim();
+        if !Self::is_simple_identifier_text(wrapper) || !value_text[open + 1..].contains(&lookup) {
+            return None;
+        }
+        Some(wrapper.to_string())
+    }
+
+    pub(in crate::declaration_emitter) fn infer_unwrapped_isomorphic_mapped_argument_text(
+        arg_type_text: &str,
+        wrapper: &str,
+    ) -> Option<String> {
+        let trimmed = arg_type_text.trim();
+        if let Some(elements) = Self::tuple_type_text_elements_preserving_rest(trimmed) {
+            let mut inferred = Vec::new();
+            for element in elements {
+                inferred.push(Self::unwrap_mapped_tuple_element(&element, wrapper)?);
+            }
+            return Some(format!("[{}]", inferred.join(", ")));
+        }
+
+        if let Some(inner) = Self::strip_array_suffix(trimmed)
+            && let Some(unwrapped) = Self::unwrap_single_wrapper_type(inner, wrapper)
+        {
+            return Some(format!("{unwrapped}[]"));
+        }
+
+        Self::object_type_members(trimmed).and_then(|members| {
+            let mut lines = Vec::new();
+            for member in members {
+                let (name, optional, type_text) = Self::object_member_parts(&member)?;
+                let unwrapped = Self::unwrap_single_wrapper_type(type_text, wrapper)?;
+                let optional = if optional { "?" } else { "" };
+                lines.push(format!("    {name}{optional}: {unwrapped};"));
+            }
+            (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn infer_required_from_partial_argument_text(
+        arg_type_text: &str,
+    ) -> Option<String> {
+        let trimmed = arg_type_text.trim();
+        if let Some(elements) = Self::tuple_type_text_elements_preserving_rest(trimmed) {
+            let mut inferred = Vec::new();
+            for element in elements {
+                inferred.push(Self::required_tuple_element_text(&element));
+            }
+            return Some(format!("[{}]", inferred.join(", ")));
+        }
+
+        if let Some(inner) = Self::strip_array_suffix(trimmed) {
+            let inner = Self::remove_undefined_union_member(inner);
+            return Some(format!("{inner}[]"));
+        }
+
+        Self::object_type_members(trimmed).and_then(|members| {
+            let mut lines = Vec::new();
+            for member in members {
+                let (name, _, type_text) = Self::object_member_parts(&member)?;
+                let required = Self::remove_undefined_union_member(type_text);
+                lines.push(format!("    {name}: {required};"));
+            }
+            (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
+        })
+    }
+
+    fn tuple_type_text_elements_preserving_rest(type_text: &str) -> Option<Vec<String>> {
+        let mut text = type_text.trim();
+        if let Some(rest) = text.strip_prefix("readonly ") {
+            text = rest.trim();
+        }
+        if !text.starts_with('[') || !text.ends_with(']') {
+            return None;
+        }
+        let inner = text[1..text.len() - 1].trim();
+        if inner.is_empty() {
+            return Some(Vec::new());
+        }
+        Some(
+            Self::split_top_level_commas(inner)
+                .into_iter()
+                .map(|part| part.trim().to_string())
+                .collect(),
+        )
+    }
+
+    fn unwrap_mapped_tuple_element(element: &str, wrapper: &str) -> Option<String> {
+        let trimmed = element.trim();
+        if let Some(rest) = trimmed.strip_prefix("...") {
+            let rest = rest.trim();
+            let array_inner = Self::strip_array_suffix(rest).unwrap_or(rest);
+            let unwrapped = Self::unwrap_single_wrapper_type(array_inner, wrapper)?;
+            return Some(format!("...{unwrapped}[]"));
+        }
+        Self::unwrap_single_wrapper_type(trimmed.trim_end_matches('?').trim(), wrapper)
+            .map(str::to_string)
+    }
+
+    fn required_tuple_element_text(element: &str) -> String {
+        let trimmed = element.trim();
+        if let Some(rest) = trimmed.strip_prefix("...") {
+            let rest = rest.trim();
+            let array_inner = Self::strip_array_suffix(rest).unwrap_or(rest);
+            let required = Self::remove_undefined_union_member(array_inner);
+            return format!("...{required}[]");
+        }
+        Self::remove_undefined_union_member(trimmed.trim_end_matches('?').trim())
+    }
+
+    fn strip_array_suffix(type_text: &str) -> Option<&str> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_suffix("[]")?.trim();
+        Some(
+            inner
+                .strip_prefix('(')
+                .and_then(|text| text.strip_suffix(')'))
+                .unwrap_or(inner)
+                .trim(),
+        )
+    }
+
+    fn unwrap_single_wrapper_type<'b>(type_text: &'b str, wrapper: &str) -> Option<&'b str> {
+        let trimmed = type_text.trim();
+        let inner = trimmed.strip_prefix(wrapper)?.trim_start();
+        let inner = inner.strip_prefix('<')?.strip_suffix('>')?.trim();
+        (!inner.is_empty()).then_some(inner)
+    }
+
+    fn object_type_members(type_text: &str) -> Option<Vec<String>> {
+        let inner = type_text
+            .trim()
+            .strip_prefix('{')?
+            .strip_suffix('}')?
+            .trim();
+        if inner.is_empty() {
+            return Some(Vec::new());
+        }
+        Some(
+            Self::split_top_level_semicolon_members(inner)
+                .into_iter()
+                .map(|member| member.trim().to_string())
+                .filter(|member| !member.is_empty())
+                .collect(),
+        )
+    }
+
+    fn split_top_level_semicolon_members(text: &str) -> Vec<&str> {
+        let mut parts = Vec::new();
+        let mut start = 0usize;
+        let mut angle_depth = 0usize;
+        let mut brace_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut paren_depth = 0usize;
+        for (idx, ch) in text.char_indices() {
+            match ch {
+                '<' => angle_depth += 1,
+                '>' => angle_depth = angle_depth.saturating_sub(1),
+                '{' => brace_depth += 1,
+                '}' => brace_depth = brace_depth.saturating_sub(1),
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth = bracket_depth.saturating_sub(1),
+                '(' => paren_depth += 1,
+                ')' => paren_depth = paren_depth.saturating_sub(1),
+                ';' if angle_depth == 0
+                    && brace_depth == 0
+                    && bracket_depth == 0
+                    && paren_depth == 0 =>
+                {
+                    parts.push(&text[start..idx]);
+                    start = idx + 1;
+                }
+                _ => {}
+            }
+        }
+        parts.push(&text[start..]);
+        parts
+    }
+
+    fn object_member_parts(member: &str) -> Option<(&str, bool, &str)> {
+        let colon = Self::find_top_level_byte(member, b':')?;
+        let name = member[..colon].trim();
+        let type_text = member[colon + 1..].trim();
+        if name.is_empty() || type_text.is_empty() {
+            return None;
+        }
+        let (name, optional) = name
+            .strip_suffix('?')
+            .map(|name| (name.trim_end(), true))
+            .unwrap_or((name, false));
+        Some((name, optional, type_text))
+    }
+
+    fn remove_undefined_union_member(type_text: &str) -> String {
+        let parts = Self::split_top_level_union_type_parts(type_text)
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .filter(|part| part != "undefined")
+            .collect::<Vec<_>>();
+        if parts.is_empty() {
+            "undefined".to_string()
+        } else {
+            parts.join(" | ")
+        }
     }
 
     pub(super) fn infer_constrained_identity_callback_substitution(
