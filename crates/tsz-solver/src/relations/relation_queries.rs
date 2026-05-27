@@ -171,15 +171,6 @@ impl RelationPolicy {
         self
     }
 
-    /// Return the packed legacy flags represented by this policy.
-    ///
-    /// This accessor is for compatibility edges and trace payloads that still
-    /// need the historical bit layout. Relation engines and cache keys should
-    /// prefer the typed accessors and [`RelationPolicy::cache_config`].
-    pub const fn legacy_packed_flags(self) -> u16 {
-        self.flags.bits() as u16
-    }
-
     /// Whether `null` and `undefined` are distinct types.
     pub const fn strict_null_checks(self) -> bool {
         self.flags.contains(RelationFlags::STRICT_NULL_CHECKS)

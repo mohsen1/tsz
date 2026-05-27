@@ -189,11 +189,6 @@ fn relation_policy_from_relation_flags_preserves_typed_bits() {
             .contains(RelationFlags::IN_CALLBACK_PARAM_CHECK),
         "typed constructor should preserve transient callback relation mode",
     );
-    assert_eq!(
-        typed.legacy_packed_flags(),
-        typed_flags.bits() as u16,
-        "compatibility edges should still be able to observe the packed bit layout",
-    );
 }
 
 #[test]
@@ -233,20 +228,6 @@ fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
     assert!(!disabled.allow_bivariant_param_count());
     assert!(!disabled.allow_erased_generic_signature_retry());
     assert!(!disabled.strict_readonly_identity());
-}
-
-#[test]
-fn relation_policy_legacy_packed_flags_accessor_preserves_input_bits() {
-    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
-        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
-    let policy = RelationPolicy::from_flags(packed);
-
-    assert_eq!(
-        policy.legacy_packed_flags(),
-        packed,
-        "compatibility edges should observe the exact legacy bit layout",
-    );
 }
 
 #[test]
