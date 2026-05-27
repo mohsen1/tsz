@@ -97,6 +97,66 @@ const table: { [k: symbol]: string } = {
 }
 
 #[test]
+fn renamed_unique_symbol_property_access_reports_computed_property_value_mismatch() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Sym: { readonly foo: unique symbol };
+
+const table: { [k: symbol]: string } = {
+    [Sym.foo]: 123,
+};
+"#,
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "expected TS2418 for renamed unique-symbol property access, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "did not expect the object-level TS2322 fallback, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "did not expect TS2353 excess property fallback, got {codes:?}",
+    );
+}
+
+#[test]
+fn plain_symbol_property_access_reports_computed_property_value_mismatch() {
+    let codes = diagnostic_codes_for_ts(
+        r#"
+declare const Sym: { readonly foo: symbol };
+
+const table: { [k: symbol]: string } = {
+    [Sym.foo]: 123,
+};
+"#,
+    );
+
+    assert!(
+        codes.contains(
+            &diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE
+        ),
+        "expected TS2418 for plain-symbol property access, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(&diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE),
+        "did not expect the object-level TS2322 fallback, got {codes:?}",
+    );
+    assert!(
+        !codes.contains(
+            &diagnostic_codes::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE
+        ),
+        "did not expect TS2353 excess property fallback, got {codes:?}",
+    );
+}
+
+#[test]
 fn keyof_well_known_symbol_property_preserves_symbol_key_type() {
     let codes = diagnostic_codes_for_ts(
         r#"
@@ -871,11 +931,10 @@ const _v: number = ({} as V);
 
 #[test]
 fn object_literal_well_known_symbol_property_access_key_still_resolves_named_member() {
-    // `Symbol.iterator`-style property-access keys must continue to produce
-    // canonical `[Symbol.xxx]` named members. The wide-symbol bypass is
-    // gated on bare-identifier expressions, so a property access never
-    // triggers it. The target's symbol index signature still rejects the
-    // mismatched value via TS2418 — proving the named-member path is intact.
+    // Unique-symbol property-access keys must continue to produce canonical
+    // named members. Plain-symbol property-access keys can use the symbol-index
+    // path, but a structurally declared `unique symbol` member must keep the
+    // named-member path intact.
     let codes = diagnostic_codes_for_ts(
         r#"
 declare const Symbol: { readonly iterator: unique symbol };
