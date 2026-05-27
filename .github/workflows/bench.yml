@@ -1069,6 +1069,7 @@ jobs:
             storage_cp "${prefix}/bench-results-${{ matrix.label }}.json" "bench-results-${{ matrix.label }}.json" || true
             storage_cp "${prefix}/bench-run-${{ matrix.label }}.log" "bench-run-${{ matrix.label }}.log" || true
             storage_cp "${prefix}/bench-postmortem-${{ matrix.label }}.log" "bench-postmortem-${{ matrix.label }}.log" || true
+            storage_cp "${prefix}/bench-prep-fetch-${{ matrix.label }}.log" "bench-prep-fetch-${{ matrix.label }}.log" || true
           }
 
           deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
@@ -1119,6 +1120,7 @@ jobs:
             bench-results-${{ matrix.label }}.json
             bench-run-${{ matrix.label }}.log
             bench-postmortem-${{ matrix.label }}.log
+            bench-prep-fetch-${{ matrix.label }}.log
             bench-cloudbuild-${{ matrix.label }}.log
           retention-days: 7
           if-no-files-found: warn
