@@ -1,3 +1,4 @@
+use super::cross_file_direct_alias_chain::SourceFileAliasProofContext;
 use crate::context::{CheckerContext, CheckerOptions};
 use crate::query_boundaries::common::TypeInterner;
 use crate::state::CheckerState;
@@ -100,6 +101,100 @@ fn direct_source_file_type_alias_rejects_concrete_conditional_flow_type_query() 
                     .direct_source_file_type_alias_result(result_sym, Some(1), true)
                     .is_none(),
                 "flow-sensitive typeof branches must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_local_alias_projection_conditional_recursion() {
+    with_two_file_state(
+        "type Box<Item> = { value: Item };\nexport type UnboxDeep<Input> = Input extends Box<infer Item> ? UnboxDeep<Item> : Input;",
+        "import { UnboxDeep } from './target';",
+        |state, target_binder| {
+            let unbox_sym = target_binder
+                .file_locals
+                .get("UnboxDeep")
+                .expect("UnboxDeep");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(unbox_sym, Some(1), true)
+                .expect(
+                    "local alias projections should guard recursion through inferred components",
+                );
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "UnboxDeep should expose Input");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_pair_alias_projection_recursion() {
+    with_two_file_state(
+        "type PairBox<First, Rest> = { first: First; rest: Rest };\nexport type LastTail<Subject> = Subject extends PairBox<infer Head, infer Tail> ? LastTail<Tail> : Subject;",
+        "import { LastTail } from './target';",
+        |state, target_binder| {
+            let last_tail_sym = target_binder.file_locals.get("LastTail").expect("LastTail");
+            let (ty, params) = state
+                .direct_source_file_type_alias_result(last_tail_sym, Some(1), true)
+                .expect("renamed multi-argument alias projections should guard consumed recursion");
+
+            assert_ne!(ty, TypeId::UNKNOWN);
+            assert_ne!(ty, TypeId::ERROR);
+            assert_eq!(params.len(), 1, "LastTail should expose Subject");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_local_alias_projection_original_arg_recursion() {
+    with_two_file_state(
+        "type Box<Item> = { value: Item };\nexport type Loop<Input> = Input extends Box<infer Item> ? Loop<Input> : Input;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "local alias projections only guard recursive calls that consume inferred components",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_recursive_mapped_projection_guard() {
+    with_two_file_state(
+        "type Primitive = string | number | boolean | bigint | symbol | undefined | null;\nexport type DeepReadonly<T> = T extends ((...args: any[]) => any) | Primitive ? T : T extends _DeepReadonlyArray<infer Item> ? _DeepReadonlyArray<Item> : T extends _DeepReadonlyObject<infer Shape> ? _DeepReadonlyObject<Shape> : T;\nexport interface _DeepReadonlyArray<Item> extends ReadonlyArray<DeepReadonly<Item>> {}\nexport type _DeepReadonlyObject<Shape> = { readonly [Key in keyof Shape]: DeepReadonly<Shape[Key]> };\nexport type ReadOnly<Input extends object> = DeepReadonly<Input>;",
+        "import { ReadOnly } from './target';",
+        |state, target_binder| {
+            let object_sym = target_binder
+                .file_locals
+                .get("_DeepReadonlyObject")
+                .expect("_DeepReadonlyObject");
+            let object_symbol = target_binder
+                .get_symbol(object_sym)
+                .expect("_DeepReadonlyObject symbol");
+            let target_arena = state.ctx.get_arena_for_file(1);
+            let global_type_is_lowerable = |_: &BinderState, _: &str| true;
+            let proof = SourceFileAliasProofContext {
+                current_file_idx: Some(1),
+                global_type_is_lowerable: &global_type_is_lowerable,
+                import_alias_target: None,
+            };
+
+            assert!(
+                !CheckerState::source_file_local_type_alias_application_is_projection_lowerable(
+                    target_arena,
+                    target_binder,
+                    object_symbol,
+                    1,
+                    &proof,
+                ),
+                "recursive mapped aliases are not transparent projection guards",
             );
         },
     );
