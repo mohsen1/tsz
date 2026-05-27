@@ -1180,8 +1180,12 @@ impl<'a> CheckerState<'a> {
                 // Different `TypeId`s can still represent the same type
                 // (alias unfoldings, interner aliasing, etc.). Treat as equal
                 // when each side is mutually assignable to the other.
-                let mutually_assignable = self.is_assignable_to_with_env(probed, params[i].type_id)
-                    && self.is_assignable_to_with_env(params[i].type_id, probed);
+                let mutually_assignable = self
+                    .assign_relation_outcome_with_env(probed, params[i].type_id)
+                    .related
+                    && self
+                        .assign_relation_outcome_with_env(params[i].type_id, probed)
+                        .related;
                 if !mutually_assignable {
                     all_match = false;
                     break;
@@ -1230,7 +1234,10 @@ impl<'a> CheckerState<'a> {
             // Final guard: only adopt when the checker's instantiation is a
             // fresh subtype of the solver's. This rejects any widening the
             // filtered substitution might still introduce.
-            if self.is_assignable_to_with_env(new_type, params[i].type_id) {
+            if self
+                .assign_relation_outcome_with_env(new_type, params[i].type_id)
+                .related
+            {
                 params[i].type_id = new_type;
             }
         }
@@ -1268,7 +1275,10 @@ impl<'a> CheckerState<'a> {
             if current == literal_type {
                 continue;
             }
-            if self.is_assignable_to_with_env(literal_type, current) {
+            if self
+                .assign_relation_outcome_with_env(literal_type, current)
+                .related
+            {
                 params[i].type_id = literal_type;
             }
         }
