@@ -2220,6 +2220,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .resolve_symbol_file_index(sym_id)
             .filter(|&file_idx| file_idx != self.ctx.current_file_idx);
+        let use_local_symbol_state = cross_file_owner_idx.is_none();
         if let Some(file_idx) = cross_file_owner_idx
             && let Some((cached, _params)) = self
                 .ctx
@@ -2286,12 +2287,14 @@ impl<'a> CheckerState<'a> {
         // Check fuel - return ERROR if exhausted to prevent timeout
         if !self.ctx.consume_fuel() {
             // Cache ERROR so we don't keep trying to resolve this symbol
-            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            if use_local_symbol_state {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            }
             return TypeId::ERROR;
         }
 
         // Check for circular reference
-        if self.ctx.symbol_resolution_set.contains(&sym_id) {
+        if use_local_symbol_state && self.ctx.symbol_resolution_set.contains(&sym_id) {
             // CRITICAL: For named entities (Interface, Class, TypeAlias, Enum), return Lazy placeholder
             // instead of ERROR. This allows circular dependencies to work correctly.
             //
@@ -2338,14 +2341,18 @@ impl<'a> CheckerState<'a> {
         let depth = self.ctx.symbol_resolution_depth.get();
         if depth >= self.ctx.max_symbol_resolution_depth {
             // CRITICAL: Cache ERROR immediately to prevent repeated deep recursion
-            self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            if use_local_symbol_state {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+            }
             return TypeId::ERROR; // Depth exceeded - prevent stack overflow
         }
         self.ctx.symbol_resolution_depth.set(depth + 1);
 
         // Push onto resolution stack
-        self.ctx.symbol_resolution_stack.push(sym_id);
-        self.ctx.symbol_resolution_set.insert(sym_id);
+        if use_local_symbol_state {
+            self.ctx.symbol_resolution_stack.push(sym_id);
+            self.ctx.symbol_resolution_set.insert(sym_id);
+        }
 
         // CRITICAL: Pre-cache a placeholder to break deep recursion chains
         // This prevents stack overflow in circular class inheritance by ensuring
@@ -2357,50 +2364,56 @@ impl<'a> CheckerState<'a> {
         // as the placeholder instead of ERROR. This allows circular dependencies
         // like `interface User { filtered: Filtered } type Filtered = { [K in keyof User]: ... }`
         // to work correctly, since keyof Lazy(User) can defer evaluation instead of failing.
-        let symbol = self.ctx.binder.get_symbol(sym_id);
-        let placeholder = if let Some(symbol) = symbol {
-            let flags = symbol.flags;
-            if flags
-                & (symbol_flags::INTERFACE
-                    | symbol_flags::CLASS
-                    | symbol_flags::TYPE_ALIAS
-                    | symbol_flags::ENUM
-                    | symbol_flags::NAMESPACE_MODULE
-                    | symbol_flags::VALUE_MODULE)
-                != 0
-            {
-                let def_id = self.ctx.get_or_create_def_id(sym_id);
-                factory.lazy(def_id)
-            } else if flags & symbol_flags::FUNCTION != 0 && flags & symbol_flags::INTERFACE == 0 {
-                // Pre-cache ANY sentinel to break re-entrancy during provisional computation.
-                // Without this, processing `typeof foo<T>` in foo's return type calls
-                // get_type_of_symbol(foo) which finds nothing cached → enters circular
-                // detection → calls provisional again → stack overflow.
-                self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
-                self.provisional_circular_function_symbol_type(sym_id)
-                    .unwrap_or(TypeId::ERROR)
+        if use_local_symbol_state {
+            let symbol = self.ctx.binder.get_symbol(sym_id);
+            let placeholder = if let Some(symbol) = symbol {
+                let flags = symbol.flags;
+                if flags
+                    & (symbol_flags::INTERFACE
+                        | symbol_flags::CLASS
+                        | symbol_flags::TYPE_ALIAS
+                        | symbol_flags::ENUM
+                        | symbol_flags::NAMESPACE_MODULE
+                        | symbol_flags::VALUE_MODULE)
+                    != 0
+                {
+                    let def_id = self.ctx.get_or_create_def_id(sym_id);
+                    factory.lazy(def_id)
+                } else if flags & symbol_flags::FUNCTION != 0
+                    && flags & symbol_flags::INTERFACE == 0
+                {
+                    // Pre-cache ANY sentinel to break re-entrancy during provisional computation.
+                    // Without this, processing `typeof foo<T>` in foo's return type calls
+                    // get_type_of_symbol(foo) which finds nothing cached → enters circular
+                    // detection → calls provisional again → stack overflow.
+                    self.ctx.symbol_types.insert(sym_id, TypeId::ANY);
+                    self.provisional_circular_function_symbol_type(sym_id)
+                        .unwrap_or(TypeId::ERROR)
+                } else {
+                    TypeId::ERROR
+                }
             } else {
                 TypeId::ERROR
-            }
-        } else {
-            TypeId::ERROR
-        };
-        trace!(
-            sym_id = sym_id.0,
-            placeholder = placeholder.0,
-            is_lazy = lazy_def_id(self.ctx.types, placeholder).is_some(),
-            file = self.ctx.file_name.as_str(),
-            "get_type_of_symbol: inserted placeholder"
-        );
-        self.ctx.symbol_types.insert(sym_id, placeholder);
+            };
+            trace!(
+                sym_id = sym_id.0,
+                placeholder = placeholder.0,
+                is_lazy = lazy_def_id(self.ctx.types, placeholder).is_some(),
+                file = self.ctx.file_name.as_str(),
+                "get_type_of_symbol: inserted placeholder"
+            );
+            self.ctx.symbol_types.insert(sym_id, placeholder);
+        }
 
         self.push_symbol_dependency(sym_id, true);
         let (result, type_params) = self.compute_type_of_symbol(sym_id);
         self.pop_symbol_dependency();
 
         // Pop from resolution stack
-        self.ctx.symbol_resolution_stack.pop();
-        self.ctx.symbol_resolution_set.remove(&sym_id);
+        if use_local_symbol_state {
+            self.ctx.symbol_resolution_stack.pop();
+            self.ctx.symbol_resolution_set.remove(&sym_id);
+        }
 
         // Decrement recursion depth
         self.ctx
@@ -2426,21 +2439,30 @@ impl<'a> CheckerState<'a> {
                 .zip(self.ctx.get_existing_def_id(sym_id))
                 .is_some_and(|(ld, od)| ld == od)
         };
-        let result_cached_locally = if result_is_lazy_to_self
-            && self
-                .ctx
-                .binder
-                .get_symbol(sym_id)
-                .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
-        {
-            self.ctx.symbol_types.remove(&sym_id);
-            false
+        if let Some(file_idx) = cross_file_owner_idx {
+            self.ctx.cache_cross_file_symbol_type(
+                sym_id,
+                file_idx as u32,
+                result,
+                type_params.clone(),
+            );
         } else {
-            self.ctx.symbol_types.insert(sym_id, result);
-            true
-        };
-        if result_cached_locally {
-            self.cache_resolved_symbol_type_for_owner(sym_id, result);
+            let result_cached_locally = if result_is_lazy_to_self
+                && self
+                    .ctx
+                    .binder
+                    .get_symbol(sym_id)
+                    .is_some_and(|s| s.has_any_flags(symbol_flags::CLASS))
+            {
+                self.ctx.symbol_types.remove(&sym_id);
+                false
+            } else {
+                self.ctx.symbol_types.insert(sym_id, result);
+                true
+            };
+            if result_cached_locally {
+                self.cache_resolved_symbol_type_for_owner(sym_id, result);
+            }
         }
         trace!(
             sym_id = sym_id.0,
@@ -2453,7 +2475,7 @@ impl<'a> CheckerState<'a> {
         // IMPORTANT: We use the type_params returned by compute_type_of_symbol
         // because those are the same TypeIds used when lowering the type body.
         // Calling get_type_params_for_symbol would create fresh TypeIds that don't match.
-        if result != TypeId::ANY && result != TypeId::ERROR {
+        if use_local_symbol_state && result != TypeId::ANY && result != TypeId::ERROR {
             // For class symbols, we need to cache BOTH the constructor type (for value position)
             // and the instance type (for type position with typeof/TypeQuery resolution).
             let class_env_entry = self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
