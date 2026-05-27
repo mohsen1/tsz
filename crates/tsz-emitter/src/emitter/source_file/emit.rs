@@ -1015,6 +1015,12 @@ impl<'a> Printer<'a> {
             helpers.create_binding = false;
             helpers.import_star = false;
             helpers.import_default = false;
+            if matches!(
+                self.ctx.original_module_kind,
+                Some(ModuleKind::AMD | ModuleKind::UMD)
+            ) {
+                helpers = crate::transforms::helpers::HelpersNeeded::default();
+            }
         }
 
         // Emit all needed helpers (unless no_emit_helpers is set)
