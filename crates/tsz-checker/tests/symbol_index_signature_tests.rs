@@ -1128,6 +1128,80 @@ const o: { foo: string } = { ["foo"]: 42 };
     );
 }
 
+// TS2418 message widens literal value types (issue #9685).
+// tsc always reports the widened type (`string`, `number`) in the TS2418
+// message, not the literal (`"str"`, `42`).
+
+#[test]
+fn ts2418_message_widens_string_literal_value() {
+    let messages = check_source_code_messages(
+        r#"
+interface I { [k: symbol]: number; }
+const s = Symbol();
+const i: I = { [s]: "str" };
+"#,
+    );
+    let ts2418 = messages
+        .iter()
+        .find(|(code, _)| *code == diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(ts2418.is_some(), "expected TS2418, got {messages:?}");
+    let msg = &ts2418.unwrap().1;
+    assert!(
+        msg.contains("'string'"),
+        "expected widened 'string' in TS2418 message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("\"str\""),
+        "should not contain string literal in TS2418 message, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2418_message_widens_number_literal_value() {
+    let messages = check_source_code_messages(
+        r#"
+interface I { [k: symbol]: string; }
+const s = Symbol();
+const i: I = { [s]: 42 };
+"#,
+    );
+    let ts2418 = messages
+        .iter()
+        .find(|(code, _)| *code == diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(ts2418.is_some(), "expected TS2418, got {messages:?}");
+    let msg = &ts2418.unwrap().1;
+    assert!(
+        msg.contains("'number'"),
+        "expected widened 'number' in TS2418 message, got: {msg}"
+    );
+    assert!(
+        !msg.contains("'42'"),
+        "should not contain numeric literal in TS2418 message, got: {msg}"
+    );
+}
+
+#[test]
+fn ts2418_message_widens_string_literal_with_renamed_symbol() {
+    // Same structural rule with a different symbol variable name — confirms
+    // the fix is not name-bound.
+    let messages = check_source_code_messages(
+        r#"
+interface J { [k: symbol]: boolean; }
+const myKey = Symbol();
+const j: J = { [myKey]: "hello" };
+"#,
+    );
+    let ts2418 = messages
+        .iter()
+        .find(|(code, _)| *code == diagnostic_codes::TYPE_OF_COMPUTED_PROPERTYS_VALUE_IS_WHICH_IS_NOT_ASSIGNABLE_TO_TYPE);
+    assert!(ts2418.is_some(), "expected TS2418, got {messages:?}");
+    let msg = &ts2418.unwrap().1;
+    assert!(
+        msg.contains("'string'"),
+        "expected widened 'string' in TS2418 message with renamed key, got: {msg}"
+    );
+}
+
 // Negative: a computed key against a real index signature must still use TS2418.
 #[test]
 fn computed_key_against_real_number_index_signature_keeps_ts2418() {
