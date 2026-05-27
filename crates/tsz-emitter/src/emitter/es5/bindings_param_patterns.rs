@@ -400,10 +400,9 @@ impl<'a> Printer<'a> {
                     value_name
                 };
 
-                // For an empty array pattern with downlevel_iteration, trigger the
-                // iterator protocol (__read(source, 0)) so the iterable is consumed.
-                // For an empty object pattern or an empty array without downlevel
-                // iteration, the source read above is sufficient.
+                // For defaulted empty nested patterns, tsc still materializes
+                // a final pattern temp after applying the default. Empty arrays
+                // under downlevelIteration read the iterable with limit 0.
                 if self
                     .arena
                     .get(elem.name)
@@ -418,6 +417,12 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&source_name);
                     self.write(", 0)");
+                } else if elem.initializer.is_some() {
+                    let empty_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&empty_name);
+                    self.write(" = ");
+                    self.write(&source_name);
                 }
                 return Some(rest_prop);
             }
