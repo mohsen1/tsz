@@ -401,6 +401,32 @@ impl<'a> CheckerState<'a> {
                                                         args,
                                                     );
                                             }
+                                            // When expected_param resolved to a concrete constraint
+                                            // (not a bare type param), check excess properties
+                                            // against it. tsc reports TS2353 for a fresh object
+                                            // literal passed to `T extends C` when it has
+                                            // properties not in C, rather than TS2345 at the arg.
+                                            if !is_type_parameter_type(
+                                                self.ctx.types,
+                                                expected_param,
+                                            ) && !self
+                                                .contextual_type_is_unresolved_for_argument_refresh(
+                                                    expected_param,
+                                                )
+                                            {
+                                                let excess_snap = self.ctx.snapshot_diagnostics();
+                                                self.check_object_literal_excess_properties(
+                                                    arg_type,
+                                                    expected_param,
+                                                    arg_idx,
+                                                );
+                                                if self
+                                                    .ctx
+                                                    .has_speculative_diagnostics(&excess_snap)
+                                                {
+                                                    return true;
+                                                }
+                                            }
                                             return false;
                                         }
                                         if is_type_parameter_type(self.ctx.types, expected_param) {
