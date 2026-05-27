@@ -41,3 +41,31 @@ fn call_result_recovery_uses_relation_outcome_boundary() {
         "polymorphic-this argument diagnostics should not regress to the raw boolean relation guard"
     );
 }
+
+#[test]
+fn call_tail_polymorphic_this_rest_target_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call/tail_helpers.rs")
+        .expect("failed to read call tail helpers source");
+    let helper_start = source
+        .find("pub(crate) fn this_argument_satisfies_polymorphic_this_rest_target")
+        .expect("missing polymorphic-this rest-target helper");
+    let helper_end = helper_start
+        + source[helper_start..]
+            .find("pub(super) fn report_checked_js_nullable_this_property_method_call")
+            .expect("missing next call tail helper");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        2,
+        "polymorphic-this rest-target compatibility should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.matches(".related").count() >= 2,
+        "polymorphic-this rest-target compatibility should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard_with_env("),
+        "polymorphic-this rest-target compatibility should not regress to raw env boolean guards"
+    );
+}
