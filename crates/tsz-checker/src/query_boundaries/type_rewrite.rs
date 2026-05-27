@@ -4,6 +4,8 @@
 use tsz_solver::construction::QueryDatabase;
 use tsz_solver::{SymbolRef, TypeData, TypeId};
 
+pub(crate) use super::common::{TypeSubstitution, instantiate_type};
+
 pub(crate) fn replace_type_queries_and_lazies_with(
     db: &dyn QueryDatabase,
     type_id: TypeId,

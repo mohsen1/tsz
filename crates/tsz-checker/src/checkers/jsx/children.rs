@@ -121,7 +121,8 @@ impl<'a> CheckerState<'a> {
             && !children_type_is_originally_compound
             && !self.type_requires_multiple_children(children_type)
             && !self
-                .diagnostic_relation_boolean_guard(synthesized_children_type, precise_children_type)
+                .assign_relation_outcome(synthesized_children_type, precise_children_type)
+                .related
         {
             children_type = precise_children_type;
         }

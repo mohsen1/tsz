@@ -786,14 +786,21 @@ fn delegate_source_file_type_alias_caches_generic_params() {
         "Leaf<T> should preserve one type parameter"
     );
     assert_eq!(
+        state
+            .ctx
+            .cached_stable_source_file_symbol_arena_type(leaf_sym, target_file_idx, scope),
+        Some((ty, params)),
+        "stable source-file symbol-arena cache hits must preserve generic params",
+    );
+    assert_eq!(
         state.ctx.cached_source_file_symbol_arena_type(
             leaf_sym,
             target_file_idx,
             scope,
             state.ctx.current_file_idx as u32,
         ),
-        Some((ty, params)),
-        "requester-scoped source-file symbol-arena cache hits must preserve generic params",
+        None,
+        "source-file symbols that passed the stability gate should not write requester-scoped entries",
     );
 }
 
@@ -865,7 +872,7 @@ fn delegate_explicit_cross_file_source_alias_lowers_generic_conditionals() {
 }
 
 #[test]
-fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_references() {
+fn direct_source_file_type_alias_lowers_generic_local_alias_applications() {
     let (generic_arena, generic_binder, types) = parse_bound_source(
         r#"
                 type Maybe<X> = X | null;
@@ -892,11 +899,15 @@ fn direct_source_file_type_alias_rejects_complex_generic_typeof_and_self_referen
         Arc::clone(&generic_binder),
     ]));
     let box_sym = generic_binder.file_locals.get("Box").expect("Box symbol");
-    assert!(
-        state
-            .direct_source_file_type_alias_result(box_sym, Some(1), true)
-            .is_none(),
-        "generic/alias-dependent source aliases stay on the child-checker path",
+    let (box_type, box_params) = state
+        .direct_source_file_type_alias_result(box_sym, Some(1), true)
+        .expect("generic source aliases may apply lowerable local aliases");
+    assert_ne!(box_type, TypeId::UNKNOWN);
+    assert_ne!(box_type, TypeId::ERROR);
+    assert_eq!(
+        box_params.len(),
+        1,
+        "Box should preserve its type parameter"
     );
     let wrapped_sym = generic_binder
         .file_locals
@@ -1087,6 +1098,40 @@ fn direct_interface_member_simple_type_lowers_builtin_property() {
         .expect("builtin interface member should lower directly");
 
     assert_eq!(results.get(&length_member).copied(), Some(TypeId::NUMBER));
+}
+
+#[test]
+fn direct_interface_member_simple_type_does_not_require_interface_symbol() {
+    let (target_arena, _target_binder, types) = parse_bound_source_with_name(
+        "node_modules/pkg/index.d.ts",
+        "interface Remote { value: number; }",
+    );
+    let (requester_arena, requester_binder, _) =
+        parse_bound_source("import { Remote } from 'pkg';");
+    let ctx = CheckerContext::new(
+        requester_arena.as_ref(),
+        requester_binder.as_ref(),
+        &types,
+        "requester.ts".to_string(),
+        CheckerOptions::default(),
+    );
+    let mut state = CheckerState { ctx };
+    let empty_binder = BinderState::new();
+    let remote_decl = interface_declarations_in_arena(target_arena.as_ref())[0];
+    let value_member = interface_member_by_name(target_arena.as_ref(), remote_decl, "value");
+
+    let results = state
+        .direct_cross_file_interface_member_simple_types(
+            remote_decl,
+            &[value_member],
+            target_arena.as_ref(),
+            &empty_binder,
+            None,
+            false,
+        )
+        .expect("member-only direct lowering should not need the interface symbol");
+
+    assert_eq!(results.get(&value_member).copied(), Some(TypeId::NUMBER));
 }
 
 #[test]

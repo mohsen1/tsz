@@ -364,7 +364,6 @@ const checked_ = checkType_<{x: number, y: string}>()({
 }
 
 #[test]
-#[ignore = "const-generic TS2353 display requires literal TConfig inference, not upper-bound substitution — tracked as known gap"]
 fn reverse_mapped_const_generic_ts2353_omits_outer_readonly_in_target_display() {
     // `const` type-parameter inference records readonly flags on the captured
     // object literal, but tsc's TS2353 target display omits those flags at the
