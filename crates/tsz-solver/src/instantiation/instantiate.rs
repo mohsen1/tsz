@@ -1645,7 +1645,25 @@ impl<'a> TypeInstantiator<'a> {
                 let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
                 self.preserve_unsubstituted_type_params = true;
 
-                let new_constraint = self.instantiate(mapped.constraint);
+                // Preserve the `keyof <source>` structure of a homomorphic mapped
+                // type's constraint instead of collapsing it to the concrete key
+                // set. A mapped type is homomorphic when its constraint is
+                // `keyof T`; the evaluator relies on that `KeyOf(source)` shape to
+                // recover the source object and inherit its `readonly`/optional
+                // property modifiers (tsc's `getHomomorphicTypeVariable` +
+                // `getModifiersTypeFromMappedType`). Instantiating the constraint
+                // through the generic path eagerly evaluates `keyof SQ` down to a
+                // literal key (e.g. `"items"`) once the source resolves to a
+                // concrete object shape, which erases the homomorphic structure and
+                // silently drops modifiers. Re-wrapping the instantiated source in
+                // `keyof` keeps the mapped homomorphic so modifiers survive.
+                let new_constraint =
+                    if let Some(TypeData::KeyOf(source)) = self.interner.lookup(mapped.constraint) {
+                        let inst_source = self.instantiate(source);
+                        self.interner.keyof(inst_source)
+                    } else {
+                        self.instantiate(mapped.constraint)
+                    };
                 let new_template = self.instantiate(mapped.template);
                 let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
                 let new_param_constraint =
