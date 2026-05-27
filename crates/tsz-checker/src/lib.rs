@@ -445,6 +445,9 @@ mod builtin_iterator_implements_tests;
 #[path = "tests/call_architecture_tests.rs"]
 mod call_architecture_tests;
 #[cfg(test)]
+#[path = "tests/call_context_relation_routing_arch_tests.rs"]
+mod call_context_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]
@@ -678,6 +681,9 @@ mod mapped_infer_with_substitution_tests;
 #[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
+#[cfg(test)]
+#[path = "tests/merged_interface_constraint_relation_routing_arch_tests.rs"]
+mod merged_interface_constraint_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/module_resolution_guard_tests.rs"]
 mod module_resolution_guard_tests;
