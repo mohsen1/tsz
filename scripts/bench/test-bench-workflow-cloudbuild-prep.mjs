@@ -25,11 +25,11 @@ assert.doesNotMatch(
   "successful Cloud Build prep with a stale manifest artifact must not wait until the 150 minute deadline",
 );
 
-const unusableManifestMessages = workflow.match(
-  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but its artifact manifest did not expose bench-prep env\/tar for/g,
+const unusableArtifactMessages = workflow.match(
+  /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but neither SHA-scoped, latest, nor manifest artifacts exposed valid bench-prep env\/tar for/g,
 ) ?? [];
 assert.equal(
-  unusableManifestMessages.length,
+  unusableArtifactMessages.length,
   2,
   "both Cloud Build prep artifact paths should fail fast when a successful build exposes no usable prep artifacts",
 );
@@ -84,8 +84,23 @@ const prepArtifactJob = workflow.match(
 )?.[0] ?? "";
 assert.doesNotMatch(
   prepArtifactJob,
-  /bench-prep\/latest\/bench-prep\.(?:env|tar)|^\s*["']\/?bench-prep\.(?:env|tar)["'],?$/m,
-  "bench-prep-artifact must only trust SHA-scoped manifest paths; latest/root fallbacks can publish stale artifacts",
+  /^\s*["']\/?bench-prep\.(?:env|tar)["'],?$/m,
+  "bench-prep-artifact must not trust root-level Cloud Build artifact paths",
+);
+
+const latestFallbacks = prepArtifactJob.match(
+  /copy_from_latest_prep_artifact\(\) \{[\s\S]+?bench-prep\/latest\/bench-prep\.env[\s\S]+?bench-prep\/latest\/bench-prep\.tar[\s\S]+?validate_downloaded_prep_artifact[\s\S]+?\}/g,
+) ?? [];
+assert.equal(
+  latestFallbacks.length,
+  2,
+  "both Cloud Build prep artifact paths should recover validated latest prep artifacts",
+);
+
+assert.match(
+  prepArtifactJob,
+  /validate_downloaded_prep_artifact\(\) \{[\s\S]+manifest_target_sha="\$\(manifest_value BENCH_TARGET_SHA\)"[\s\S]+manifest_pgo_optimized="\$\(manifest_value BENCH_PGO_OPTIMIZED\)"[\s\S]+\$\{manifest_target_sha\}" == "\$\{target_sha\}" &&[\s\S]+\$\{manifest_pgo_optimized\}" == "1"/,
+  "latest prep artifact fallback must validate the downloaded artifact target SHA and PGO marker",
 );
 
 console.log("bench workflow Cloud Build prep artifact tests passed");
