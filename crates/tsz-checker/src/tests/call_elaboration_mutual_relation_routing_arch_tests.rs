@@ -97,3 +97,29 @@ fn call_elaboration_polymorphic_this_properties_use_relation_outcome_boundary() 
         "polymorphic this object literal property probes should not use the raw relation guard"
     );
 }
+
+#[test]
+fn call_elaboration_object_literal_properties_use_relation_outcome_boundary() {
+    let source =
+        fs::read_to_string("src/error_reporter/call_errors/elaboration_object_properties.rs")
+            .expect("failed to read elaboration_object_properties.rs");
+
+    let helper_start = source
+        .find("pub(super) fn try_elaborate_object_literal_properties_with_source")
+        .expect("missing object literal properties helper");
+    let helper_end = helper_start
+        + source[helper_start..]
+            .find("fn object_literal_numeric_members_assign_to_mapped_target")
+            .expect("missing next object literal helper");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome(").count(),
+        8,
+        "object literal property elaboration should route local relation probes through RelationOutcome"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard("),
+        "object literal property elaboration should not use raw relation guards"
+    );
+}
