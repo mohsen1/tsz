@@ -1,4 +1,4 @@
-//! DTS emit for `ParenthesizedType` nodes (issue #10556 / `declFileTypeAnnotationParenType`).
+//! DTS emit for `ParenthesizedType` nodes (`declFileTypeAnnotationParenType`).
 //!
 //! When a `ParenthesizedType` appears in an annotation position (variable
 //! type, parameter type, return type, property type), tsc strips the outer
