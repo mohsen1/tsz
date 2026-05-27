@@ -450,52 +450,52 @@ fn conditional_empty_then_object_literal_union_preserves_branch_order() {
 
 #[test]
 fn nested_object_union_member_properties_cross_normalize_from_source_arms() {
-    let mut types = vec![
-        "{\n    kind: string;\n    pos: {\n        x: number;\n        y: number;\n    };\n}"
-            .to_string(),
-        "{\n    kind: string;\n    pos: {\n        a: string;\n        b?: undefined;\n    } | {\n        b: number;\n        a?: undefined;\n    };\n}"
-            .to_string(),
-    ];
-    let nested_arms = vec![(
-        "pos".to_string(),
-        vec![
-            (
-                0,
-                vec!["{\n        x: number;\n        y: number;\n    }".to_string()],
-            ),
-            (
-                1,
-                vec![
-                    "{\n        a: string;\n        b?: undefined;\n    }".to_string(),
-                    "{\n        b: number;\n        a?: undefined;\n    }".to_string(),
-                ],
-            ),
-        ],
-    )];
+    let source = r#"
+declare const flag: boolean;
+let result = [
+    { kind: "first", pos: { x: 1, y: 2 } },
+    { kind: "second", pos: flag ? { a: "value" } : { b: 3 } },
+];
+"#;
 
-    DeclarationEmitter::expand_nested_object_union_member_properties_from_source(
-        &mut types,
-        nested_arms,
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("x: number;")
+            && output.contains("y: number;")
+            && output.contains("a?: undefined;")
+            && output.contains("b?: undefined;"),
+        "expected first nested source arm to gain sibling optional members: {output}"
     );
-
-    assert_eq!(
-        types,
-        vec![
-            "{\n    kind: string;\n    pos: {\n        x: number;\n        y: number;\n        a?: undefined;\n        b?: undefined;\n    };\n}".to_string(),
-            "{\n    kind: string;\n    pos: {\n        a: string;\n        x?: undefined;\n        y?: undefined;\n        b?: undefined;\n    } | {\n        b: number;\n        x?: undefined;\n        y?: undefined;\n        a?: undefined;\n    };\n}".to_string(),
-        ]
+    assert!(
+        output.contains("a: string;")
+            && output.contains("b: number;")
+            && output.contains("x?: undefined;")
+            && output.contains("y?: undefined;"),
+        "expected conditional nested source arms to stay structured through normalization: {output}"
     );
 }
 
 #[test]
 fn conditional_object_literal_union_widens_member_literals() {
-    let widened = DeclarationEmitter::widen_object_literal_member_primitive_literal_types(
-        "{\n    a: \"x\";\n    b: 0;\n    c: true;\n}",
-    );
+    let source = r#"
+declare const flag: boolean;
+let result = flag ? { a: "x", b: 0, c: true } : {};
+"#;
 
-    assert_eq!(
-        widened,
-        "{\n    a: string;\n    b: number;\n    c: boolean;\n}"
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("a: string;"),
+        "expected string literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("b: number;"),
+        "expected numeric literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("c: boolean;"),
+        "expected boolean literal member to widen through source arm summary: {output}"
     );
 }
 

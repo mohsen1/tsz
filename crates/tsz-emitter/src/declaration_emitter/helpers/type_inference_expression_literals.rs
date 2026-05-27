@@ -1,12 +1,14 @@
 //! Expression literal helpers for declaration type inference.
 
 use super::super::DeclarationEmitter;
+use super::type_inference_object_unions::{
+    NestedObjectMemberArmsByProperty, ObjectTypeLiteralArm, ObjectTypeLiteralEntry,
+    ObjectTypeLiteralMember,
+};
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-
-type NestedObjectMemberArmsByProperty = Vec<(String, Vec<(usize, Vec<String>)>)>;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn conditional_object_literal_union_type_text(
@@ -26,12 +28,16 @@ impl<'a> DeclarationEmitter<'a> {
             if branch_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 return None;
             }
-            let arm = self.infer_object_literal_type_text_at(branch_idx, depth)?;
-            arms.push(Self::widen_object_literal_member_primitive_literal_types(
-                &arm,
-            ));
+            let mut branch_arms = self.object_literal_type_literal_arms_at(branch_idx, depth)?;
+            for arm in &mut branch_arms {
+                arm.widen_primitive_literal_members();
+            }
+            arms.extend(branch_arms);
         }
-        Self::normalized_object_literal_union_text(arms)
+        Self::normalized_object_literal_union_arm_text(
+            arms,
+            NestedObjectMemberArmsByProperty::new(),
+        )
     }
 
     pub(in crate::declaration_emitter) fn normalized_object_literal_union_text(
@@ -44,7 +50,6 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
-        Self::expand_nested_object_union_member_properties(&mut distinct);
         (!distinct.is_empty()).then(|| distinct.join(" | "))
     }
 
@@ -144,13 +149,12 @@ impl<'a> DeclarationEmitter<'a> {
                 distinct_sources.push(source_idx);
             }
         }
+        if let Some(source_union_text) =
+            self.source_object_literal_union_text(&distinct_sources, self.indent_level + 1)
+        {
+            return Some(source_union_text);
+        }
         Self::expand_object_union_arms_from_sibling_properties(&mut distinct);
-        let nested_member_arms =
-            self.source_nested_object_union_member_arms(&distinct_sources, self.indent_level + 1);
-        Self::expand_nested_object_union_member_properties_from_source(
-            &mut distinct,
-            nested_member_arms,
-        );
         Self::drop_optional_param_function_subtypes(&mut distinct);
 
         // tsc orders union members by `TypeFlags` when printing: for the
@@ -279,6 +283,28 @@ impl<'a> DeclarationEmitter<'a> {
         self.object_literal_type_literal_arm_texts_at(initializer, depth)
     }
 
+    fn source_object_literal_union_text(
+        &self,
+        object_exprs: &[NodeIndex],
+        depth: u32,
+    ) -> Option<String> {
+        if object_exprs.is_empty() {
+            return None;
+        }
+
+        let mut arms = Vec::<ObjectTypeLiteralArm>::new();
+        for expr_idx in object_exprs.iter().copied() {
+            let mut source_arms = self.object_literal_type_literal_arms_at(expr_idx, depth)?;
+            for arm in &mut source_arms {
+                arm.widen_primitive_literal_members();
+            }
+            arms.extend(source_arms);
+        }
+
+        let nested_member_arms = self.source_nested_object_union_member_arms(object_exprs, depth);
+        Self::normalized_object_literal_union_arm_text(arms, nested_member_arms)
+    }
+
     fn source_nested_object_union_member_arms(
         &self,
         object_exprs: &[NodeIndex],
@@ -306,7 +332,7 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         object_expr_idx: NodeIndex,
         depth: u32,
-    ) -> Vec<(String, Vec<String>)> {
+    ) -> Vec<(String, Vec<ObjectTypeLiteralArm>)> {
         let Some(object_expr_idx) = self.skip_parenthesized_expression(object_expr_idx) else {
             return Vec::new();
         };
@@ -334,8 +360,7 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(value_idx) = self.object_literal_member_value_idx(member_node) else {
                 continue;
             };
-            if let Some(arms) = self.expression_object_type_literal_arm_texts(value_idx, depth + 1)
-            {
+            if let Some(arms) = self.expression_object_type_literal_arms(value_idx, depth + 1) {
                 nested.push((name, arms));
             }
         }
@@ -354,15 +379,15 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|data| data.initializer)
     }
 
-    fn expression_object_type_literal_arm_texts(
+    fn expression_object_type_literal_arms(
         &self,
         expr_idx: NodeIndex,
         depth: u32,
-    ) -> Option<Vec<String>> {
+    ) -> Option<Vec<ObjectTypeLiteralArm>> {
         let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
         let expr_node = self.arena.get(expr_idx)?;
         if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
-            return self.object_literal_type_literal_arm_texts_at(expr_idx, depth);
+            return self.object_literal_type_literal_arms_at(expr_idx, depth);
         }
         if expr_node.kind != syntax_kind_ext::CONDITIONAL_EXPRESSION {
             return None;
@@ -375,15 +400,17 @@ impl<'a> DeclarationEmitter<'a> {
             if branch_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                 return None;
             }
-            let mut branch_arms =
-                self.object_literal_type_literal_arm_texts_at(branch_idx, depth)?;
+            let mut branch_arms = self.object_literal_type_literal_arms_at(branch_idx, depth)?;
             for arm in &mut branch_arms {
-                *arm = Self::widen_object_literal_member_primitive_literal_types(arm);
+                arm.widen_primitive_literal_members();
             }
             arms.extend(branch_arms);
         }
-        Self::expand_object_union_arms_from_sibling_properties(&mut arms);
-        (!arms.is_empty()).then_some(arms)
+        let normalized = Self::normalized_object_literal_union_arms(
+            arms,
+            NestedObjectMemberArmsByProperty::new(),
+        );
+        (!normalized.is_empty()).then_some(normalized)
     }
 
     pub(in crate::declaration_emitter) fn local_variable_function_expando_type_text(
@@ -618,6 +645,25 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(vec![type_text]);
         }
 
+        self.object_literal_type_literal_arms_at(object_expr_idx, depth)
+            .map(|arms| arms.into_iter().map(|arm| arm.render()).collect::<Vec<_>>())
+    }
+
+    fn object_literal_type_literal_arms_at(
+        &self,
+        object_expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<Vec<ObjectTypeLiteralArm>> {
+        let object_node = self.arena.get(object_expr_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        if object.elements.nodes.iter().any(|member_idx| {
+            self.arena
+                .get(*member_idx)
+                .is_some_and(|member| member.kind == syntax_kind_ext::SPREAD_ASSIGNMENT)
+        }) {
+            return None;
+        }
+
         // Pre-scan: collect setter and getter names for accessor pair handling
         let mut setter_names = rustc_hash::FxHashSet::<String>::default();
         let mut getter_names = rustc_hash::FxHashSet::<String>::default();
@@ -653,7 +699,7 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            if let Some(member_text) = self.infer_object_member_type_text_named_at(
+            if let Some(member) = self.infer_object_member_surface_named_at(
                 member_idx,
                 &name,
                 depth + 1,
@@ -661,32 +707,24 @@ impl<'a> DeclarationEmitter<'a> {
                 setter_names.contains(&name),
                 Some(object_expr_idx),
             ) {
-                if member_text.trim_start().starts_with(':') {
+                if member.render().trim_start().starts_with(':') {
                     continue;
                 }
                 if !self.remove_comments {
                     for jsdoc in self.leading_jsdoc_comment_chain_for_pos(member_node.pos) {
-                        members.push(Self::format_object_member_jsdoc_text(&jsdoc));
+                        members.push(ObjectTypeLiteralEntry::Raw(
+                            Self::format_object_member_jsdoc_text(&jsdoc),
+                        ));
                     }
                 }
-                members.push(member_text);
+                members.push(ObjectTypeLiteralEntry::Member(member));
             }
         }
 
         if members.is_empty() {
-            Some(vec!["{}".to_string()])
+            Some(vec![ObjectTypeLiteralArm::empty(depth)])
         } else {
-            // Format as multi-line to match tsc's .d.ts output
-            let member_indent = "    ".repeat((depth + 1) as usize);
-            let closing_indent = "    ".repeat(depth as usize);
-            let formatted_members: Vec<String> = members
-                .iter()
-                .map(|m| Self::format_object_member_entry(&member_indent, m))
-                .collect();
-            Some(vec![format!(
-                "{{\n{}\n{closing_indent}}}",
-                formatted_members.join("\n")
-            )])
+            Some(vec![ObjectTypeLiteralArm::from_entries(members, depth)])
         }
     }
 
@@ -1024,6 +1062,26 @@ impl<'a> DeclarationEmitter<'a> {
         setter_exists: bool,
         object_context_idx: Option<NodeIndex>,
     ) -> Option<String> {
+        self.infer_object_member_surface_named_at(
+            member_idx,
+            name,
+            depth,
+            getter_exists,
+            setter_exists,
+            object_context_idx,
+        )
+        .map(|member| member.render())
+    }
+
+    fn infer_object_member_surface_named_at(
+        &self,
+        member_idx: NodeIndex,
+        name: &str,
+        depth: u32,
+        getter_exists: bool,
+        setter_exists: bool,
+        object_context_idx: Option<NodeIndex>,
+    ) -> Option<ObjectTypeLiteralMember> {
         let member_node = self.arena.get(member_idx)?;
 
         match member_node.kind {
@@ -1032,8 +1090,10 @@ impl<'a> DeclarationEmitter<'a> {
                 let type_text = self
                     .preferred_object_member_initializer_type_text(data.initializer, depth)
                     .unwrap_or_else(|| "any".to_string());
-                Some(Self::format_object_member_type_text(
-                    name, &type_text, depth,
+                Some(ObjectTypeLiteralMember::typed(
+                    name.to_string(),
+                    name.to_string(),
+                    type_text,
                 ))
             }
             k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
@@ -1055,8 +1115,10 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 .or_else(|| self.preferred_object_member_initializer_type_text(initializer, depth))
                 .unwrap_or_else(|| "any".to_string());
-                Some(Self::format_object_member_type_text(
-                    name, &type_text, depth,
+                Some(ObjectTypeLiteralMember::typed(
+                    name.to_string(),
+                    name.to_string(),
+                    type_text,
                 ))
             }
             k if k == syntax_kind_ext::GET_ACCESSOR => {
@@ -1075,7 +1137,11 @@ impl<'a> DeclarationEmitter<'a> {
                     .or_else(|| self.function_body_preferred_return_type_text(data.body))
                     .unwrap_or_else(|| "any".to_string());
                 let readonly = if setter_exists { "" } else { "readonly " };
-                Some(format!("{readonly}{name}: {type_text}"))
+                Some(ObjectTypeLiteralMember::typed(
+                    name.to_string(),
+                    format!("{readonly}{name}"),
+                    type_text,
+                ))
             }
             k if k == syntax_kind_ext::SET_ACCESSOR => {
                 if getter_exists {
@@ -1093,13 +1159,23 @@ impl<'a> DeclarationEmitter<'a> {
                         self.infer_fallback_type_text_at(param.type_annotation, depth)
                     })
                     .unwrap_or_else(|| "any".to_string());
-                Some(format!("{name}: {type_text}"))
+                Some(ObjectTypeLiteralMember::typed(
+                    name.to_string(),
+                    name.to_string(),
+                    type_text,
+                ))
             }
             k if k == syntax_kind_ext::METHOD_DECLARATION => {
                 let data = self.arena.get_method_decl(member_node)?;
                 if self.object_literal_method_uses_property_syntax(data) {
                     self.method_function_type_text(member_idx, data, depth)
-                        .map(|type_text| format!("{name}: {type_text}"))
+                        .map(|type_text| {
+                            ObjectTypeLiteralMember::typed(
+                                name.to_string(),
+                                name.to_string(),
+                                type_text,
+                            )
+                        })
                 } else {
                     let return_type_override = self.object_literal_this_property_return_type_text(
                         data.body,
@@ -1114,6 +1190,7 @@ impl<'a> DeclarationEmitter<'a> {
                         depth,
                         return_type_override.as_deref(),
                     )
+                    .map(|member_text| ObjectTypeLiteralMember::raw(name.to_string(), member_text))
                 }
             }
             _ => None,
