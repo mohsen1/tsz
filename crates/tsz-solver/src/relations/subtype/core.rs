@@ -16,7 +16,7 @@ use crate::caches::db::QueryDatabase;
 use crate::construction::TypeDatabase;
 use crate::def::DefId;
 use crate::diagnostics::{DynSubtypeTracer, SubtypeFailureReason};
-use crate::objects::{PropertyCollectionResult, collect_properties_cached};
+use crate::objects::{PropertyCollectionResult, collect_properties};
 use crate::operations::AssignabilityChecker;
 #[cfg(test)]
 use crate::types::*;
@@ -475,12 +475,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         let PropertyCollectionResult::Properties {
             properties: source_props,
             ..
-        } = collect_properties_cached(
-            source_intersection,
-            self.interner,
-            self.resolver,
-            self.query_db,
-        )
+        } = collect_properties(source_intersection, self.interner, self.resolver)
         else {
             return false;
         };
