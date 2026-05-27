@@ -1317,15 +1317,17 @@ impl<'a> CheckerState<'a> {
                 // cross-file delegation so the local arena's collision with
                 // the target's NodeIndex (different node, same numeric id)
                 // doesn't return the wrong type.
-                let lib_constructor_companion = if self.is_known_global_value_name(name)
-                    || tsz_binder::lib_loader::is_es2015_plus_type(name)
-                {
-                    let constructor_name = format!("{name}Constructor");
-                    self.resolve_lib_type_by_name(&constructor_name)
-                        .filter(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
-                } else {
-                    None
-                };
+                let lib_constructor_companion =
+                    if self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                        && (self.is_known_global_value_name(name)
+                            || tsz_binder::lib_loader::is_es2015_plus_type(name))
+                    {
+                        let constructor_name = format!("{name}Constructor");
+                        self.resolve_lib_type_by_name(&constructor_name)
+                            .filter(|&ty| ty != TypeId::UNKNOWN && ty != TypeId::ERROR)
+                    } else {
+                        None
+                    };
                 let mut value_type = if let Some(constructor_type) = lib_constructor_companion {
                     constructor_type
                 } else if let Some((target_sym_id, target_value_decl, target_file_idx)) =
