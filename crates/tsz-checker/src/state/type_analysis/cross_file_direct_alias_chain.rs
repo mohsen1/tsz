@@ -1024,6 +1024,71 @@ impl<'a> CheckerState<'a> {
                 Self::source_file_alias_proof_seen_pop(seen, key);
                 result
             }
+            k if k == syntax_kind_ext::CONDITIONAL_TYPE => {
+                arena.get_conditional_type(node).is_some_and(|conditional| {
+                    let mut true_branch_names = Vec::new();
+                    Self::collect_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_branch_names,
+                    );
+                    let mut true_inferred_guard_names = inferred_guard_names.to_vec();
+                    Self::collect_tuple_rest_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
+                    );
+                    Self::collect_array_element_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
+                    );
+                    Self::collect_generic_projection_infer_type_param_names(
+                        arena,
+                        binder,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
+                        proof,
+                    );
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+                        arena,
+                        binder,
+                        conditional.check_type,
+                        &[],
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        inferred_guard_names,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+                        arena,
+                        binder,
+                        conditional.extends_type,
+                        &[],
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        inferred_guard_names,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+                        arena,
+                        binder,
+                        conditional.true_type,
+                        &true_branch_names,
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        &true_inferred_guard_names,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+                        arena,
+                        binder,
+                        conditional.false_type,
+                        &[],
+                        seen,
+                        proof,
+                        recursion_guarded,
+                        inferred_guard_names,
+                    )
+                })
+            }
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 arena.get_composite_type(node).is_some_and(|composite| {
                     composite.types.nodes.iter().copied().all(|member| {
