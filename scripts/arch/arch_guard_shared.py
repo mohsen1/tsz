@@ -239,7 +239,6 @@ LINE_LIMIT_CHECKS = [
             # `test_excluded_files_actually_exceed_limit` test will catch
             # any regression.
             "crates/tsz-checker/src/assignability/assignability_diagnostics.rs",
-            "crates/tsz-checker/src/checkers/jsx/tests.rs",
             "crates/tsz-checker/src/declarations/import/declaration.rs",
             "crates/tsz-checker/src/error_reporter/properties.rs",
             "crates/tsz-checker/src/flow/control_flow/core.rs",
@@ -252,7 +251,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/state/type_resolution/module.rs",
             "crates/tsz-checker/src/state/variable_checking/core.rs",
             "crates/tsz-checker/src/state/variable_checking/destructuring.rs",
-            "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
@@ -524,7 +522,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         #
         # Ratcheted down after current-main guard tests caught slack in the
         # live direct-reference count.
-        3269,
+        #
+        # Ratcheted down after arch-smoke caught current stacked-branch slack.
+        3266,
     ),
 ]
 
@@ -672,6 +672,12 @@ REGEX_LINE_COUNT_CHECKS = [
         "Solver relation boundary: RelationPolicy must store typed flags (#8207)",
         [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
         re.compile(r"^\s*(?:pub\s+)?flags\s*:\s*u16\s*,"),
+        0,
+    ),
+    (
+        "Solver relation boundary: RelationPolicy must not expose packed flags (#8207)",
+        [ROOT / "crates" / "tsz-solver" / "src" / "relations" / "relation_queries.rs"],
+        re.compile(r"\bfn\s+legacy_packed_flags\s*\([^)]*\)\s*->\s*u16\b"),
         0,
     ),
     (
