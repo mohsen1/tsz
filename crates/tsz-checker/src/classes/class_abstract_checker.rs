@@ -587,6 +587,10 @@ impl<'a> CheckerState<'a> {
                             return Some(params);
                         }
                     } else {
+                        if !Self::arena_decl_is_named_class(arena.as_ref(), decl_idx, &symbol_name)
+                        {
+                            continue;
+                        }
                         if !Self::enter_cross_arena_delegation() {
                             continue;
                         }

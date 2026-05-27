@@ -351,14 +351,6 @@ impl<'a> CheckerState<'a> {
 
         self.ctx
             .cached_stable_source_file_symbol_arena_type(sym_id, file_idx, source_cache_scope)
-            .or_else(|| {
-                self.ctx.cached_source_file_symbol_arena_type(
-                    sym_id,
-                    file_idx,
-                    source_cache_scope,
-                    self.ctx.current_file_idx as u32,
-                )
-            })
     }
 
     pub(super) fn cache_symbol_arena_or_cross_file_symbol_type(
@@ -781,11 +773,13 @@ impl<'a> CheckerState<'a> {
                 return Some((direct_type, direct_params));
             }
 
-            if let Some(direct_type) = self.direct_source_file_variable_annotation_result(
-                sym_id,
-                direct_target,
-                symbol_type_cache_from_symbol_arena,
-            ) {
+            if let Some(direct_type) = self
+                .direct_source_file_variable_or_function_annotation_result(
+                    sym_id,
+                    direct_target,
+                    true,
+                )
+            {
                 self.ctx.symbol_types.insert(sym_id, direct_type);
                 if let Some(file_idx) = symbol_type_cache_file_idx {
                     self.ctx.cache_stable_source_file_symbol_arena_type(
@@ -1153,6 +1147,13 @@ impl<'a> CheckerState<'a> {
         &mut self,
         sym_id: SymbolId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {
+        if !self
+            .get_cross_file_symbol(sym_id)?
+            .has_any_flags(symbol_flags::CLASS)
+        {
+            return None;
+        }
+
         // Find the symbol's home arena
         let mut delegate_arena: Option<&tsz_parser::NodeArena> = self
             .ctx

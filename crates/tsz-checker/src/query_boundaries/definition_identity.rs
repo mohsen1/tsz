@@ -3,6 +3,7 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
+pub(crate) use super::common::lazy_def_id;
 pub(crate) type DefId = tsz_solver::def::DefId;
 
 pub(crate) fn is_lazy_def_identity(db: &dyn TypeDatabase, type_id: TypeId, def_id: DefId) -> bool {

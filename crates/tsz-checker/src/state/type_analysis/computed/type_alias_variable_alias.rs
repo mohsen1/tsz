@@ -13,6 +13,8 @@ use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::{TypeId, Visibility};
 
+include!("type_alias_variable_alias_helpers.rs");
+
 impl<'a> CheckerState<'a> {
     pub(super) fn compute_type_of_symbol_type_alias_variable_alias(
         &mut self,
@@ -1980,21 +1982,5 @@ impl<'a> CheckerState<'a> {
         // Fallback: return ANY for unresolved symbols to prevent cascading errors
         // The actual "cannot find" error should already be emitted elsewhere
         (TypeId::ANY, Vec::new())
-    }
-
-    fn type_node_contains_kind(&self, root: NodeIndex, kind: u16) -> bool {
-        let mut stack = vec![root];
-        while let Some(idx) = stack.pop() {
-            if self
-                .ctx
-                .arena
-                .get(idx)
-                .is_some_and(|node| node.kind == kind)
-            {
-                return true;
-            }
-            stack.extend(self.ctx.arena.get_children(idx));
-        }
-        false
     }
 }
