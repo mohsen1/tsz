@@ -1050,7 +1050,7 @@ impl<'a> CheckerState<'a> {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             };
-            if self.diagnostic_relation_boolean_guard(type_arg, constraint) {
+            if self.assign_relation_outcome(type_arg, constraint).related {
                 arg_search_offset += arg_str.len() + 1;
                 continue;
             }
