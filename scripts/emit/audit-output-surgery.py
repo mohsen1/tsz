@@ -229,6 +229,43 @@ def build_file_summaries(
     return summaries
 
 
+def build_category_summaries(file_summaries: list[dict[str, object]]) -> list[dict[str, object]]:
+    categories: dict[str, dict[str, object]] = {}
+    for summary in file_summaries:
+        category = str(summary["category"])
+        entry = categories.setdefault(
+            category,
+            {
+                "category": category,
+                "count": 0,
+                "max_count": 0,
+                "files": 0,
+                "statuses": Counter(),
+            },
+        )
+        entry["count"] = int(entry["count"]) + int(summary["count"])
+        max_count = summary["max_count"]
+        if max_count is None:
+            entry["max_count"] = None
+        elif entry["max_count"] is not None:
+            entry["max_count"] = int(entry["max_count"]) + int(max_count)
+        entry["files"] = int(entry["files"]) + 1
+        entry["statuses"][str(summary["status"])] += 1
+
+    result: list[dict[str, object]] = []
+    for entry in sorted(categories.values(), key=lambda item: str(item["category"])):
+        result.append(
+            {
+                "category": entry["category"],
+                "count": entry["count"],
+                "max_count": entry["max_count"],
+                "files": entry["files"],
+                "statuses": dict(sorted(entry["statuses"].items())),
+            }
+        )
+    return result
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -236,13 +273,15 @@ def build_json_report(
 ) -> dict[str, object]:
     counts = grouped_counts(findings)
     summary = summarize_failures(failures)
+    file_summaries = build_file_summaries(counts, allowlist)
     return {
         "ok": not failures,
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "failure_summary": dataclasses.asdict(summary),
         "failures": failures,
-        "files": build_file_summaries(counts, allowlist),
+        "categories": build_category_summaries(file_summaries),
+        "files": file_summaries,
         "findings": [
             {
                 "path": finding.path,
