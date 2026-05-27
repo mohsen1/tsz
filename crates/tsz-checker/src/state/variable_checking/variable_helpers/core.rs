@@ -1534,28 +1534,14 @@ impl<'a> CheckerState<'a> {
                         .get(call.expression)
                         .and_then(|callee| self.ctx.arena.get_access_expr(callee))
                         .is_some_and(|access| {
-                            self.object_assign_receiver_is_lib_object(access.expression)
-                                && self.ctx.arena.get_identifier_text(access.name_or_argument)
-                                    == Some("assign")
+                            self.identifier_resolves_to_proven_lib_global(
+                                access.expression,
+                                "Object",
+                            ) && self.ctx.arena.get_identifier_text(access.name_or_argument)
+                                == Some("assign")
                         })
                 })
         })
-    }
-
-    fn object_assign_receiver_is_lib_object(&self, idx: NodeIndex) -> bool {
-        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
-            return false;
-        };
-        if base_ident.escaped_text != "Object" {
-            return false;
-        }
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
-            return false;
-        };
-        if self.known_global_value_has_local_shadow(idx, "Object") {
-            return false;
-        }
-        self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
     }
 
     pub(crate) fn first_non_portable_object_assign_object_literal_reference(
