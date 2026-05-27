@@ -14,7 +14,9 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
+#[allow(unused_imports)]
 use super::js_exports::JsLocalNamedExportPlan;
+#[allow(unused_imports)]
 use super::{
     JsClassDefinePropertyAccessor, JsClassDefinePropertySetter, JsClassLikePrototypeMembers,
     JsClassStaticMembers, JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations,

@@ -30,6 +30,7 @@ use tsz_parser::parser::{NodeIndex, NodeList};
 #[allow(unused_imports)]
 use tsz_scanner::SyntaxKind;
 
+#[allow(unused_imports)]
 use super::{
     JsClassDefinePropertyAccessor, JsClassDefinePropertySetter, JsClassLikePrototypeMembers,
     JsCommonjsExpandoDeclKind, JsCommonjsExpandoDeclarations, JsCommonjsNamedExports,
