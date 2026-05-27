@@ -149,7 +149,7 @@ assert.match(
 
 assert.match(
   shardCloudbuild,
-  /if \[\[ -f bench-prep\.env && -f bench-prep\.tar \]\]; then[\s\S]+Using benchmark prep artifact from the Cloud Build source archive\.[\s\S]+else[\s\S]+gcloud storage cp[\s\S]+bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.env/,
+  /if \[ -f bench-prep\.env \] && \[ -f bench-prep\.tar \]; then[\s\S]+Using benchmark prep artifact from the Cloud Build source archive\.[\s\S]+else[\s\S]+gcloud storage cp[\s\S]+bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.env/,
   "Cloud Build shard prep should prefer source-provided prep artifacts before falling back to GCS",
 );
 
