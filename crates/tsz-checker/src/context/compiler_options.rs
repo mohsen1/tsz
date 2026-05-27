@@ -206,7 +206,7 @@ impl<'a> CheckerContext<'a> {
     /// flag packing — call this instead of manually constructing the bitmask.
     pub const fn pack_relation_flags(&self) -> u16 {
         use crate::query_boundaries::assignability::RelationFlags;
-        let mut flags: u16 = 0;
+        let mut flags: u16 = RelationFlags::ALLOW_BIVARIANT_REST;
         if self.strict_null_checks() {
             flags |= RelationFlags::STRICT_NULL_CHECKS;
         }

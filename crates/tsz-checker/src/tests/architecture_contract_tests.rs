@@ -148,7 +148,8 @@ fn test_pack_relation_flags_tracks_checker_strict_options() {
 
     let expected = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
         | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
-        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
+        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
+        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
 
     assert_eq!(ctx.pack_relation_flags(), expected);
 }
@@ -3610,6 +3611,7 @@ fn test_relation_flags_surface_covers_checker_policy_bits() {
         "EXACT_OPTIONAL_PROPERTY_TYPES",
         "NO_UNCHECKED_INDEXED_ACCESS",
         "NO_ERASE_GENERICS",
+        "ALLOW_BIVARIANT_REST",
     ] {
         assert!(
             source.contains(flag),
@@ -3635,6 +3637,7 @@ fn test_pack_relation_flags_uses_boundary_relation_flags_surface() {
         "RelationFlags::STRICT_FUNCTION_TYPES",
         "RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES",
         "RelationFlags::NO_UNCHECKED_INDEXED_ACCESS",
+        "RelationFlags::ALLOW_BIVARIANT_REST",
     ] {
         assert!(
             source.contains(flag),

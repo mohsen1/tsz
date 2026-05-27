@@ -823,6 +823,69 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
 }
 
 #[test]
+fn assignability_cache_top_rest_any_rejects_never_source_param() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let rest_any = interner.array(TypeId::ANY);
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: None,
+            type_id: rest_any,
+            optional: false,
+            rest: true,
+        }],
+        TypeId::VOID,
+    ));
+    let zero_arg_source = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+    let never_source = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(TypeId::NEVER)],
+        TypeId::VOID,
+    ));
+    let compiler_like_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+    );
+
+    let zero_arg_uncached = query_relation(
+        &interner,
+        zero_arg_source,
+        target,
+        RelationKind::Assignable,
+        compiler_like_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let zero_arg_cached =
+        db.is_assignable_to_with_policy(zero_arg_source, target, compiler_like_policy);
+    assert_eq!(
+        zero_arg_cached, zero_arg_uncached,
+        "cached zero-arg function assignability must match the uncached relation facade",
+    );
+    assert!(
+        zero_arg_cached,
+        "zero-arg functions remain assignable to top rest-`any` targets",
+    );
+
+    let never_uncached = query_relation(
+        &interner,
+        never_source,
+        target,
+        RelationKind::Assignable,
+        compiler_like_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let never_cached = db.is_assignable_to_with_policy(never_source, target, compiler_like_policy);
+    assert_eq!(
+        never_cached, never_uncached,
+        "cached `never`-parameter assignability must match the uncached relation facade",
+    );
+    assert!(
+        !never_cached,
+        "`(a: never) => void` is not assignable to `(...args: any[]) => void`",
+    );
+}
+
+#[test]
 fn assignability_cache_allow_bivariant_param_count_matches_uncached_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);

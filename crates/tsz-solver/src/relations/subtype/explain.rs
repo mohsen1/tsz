@@ -1552,20 +1552,21 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return None; // Invalid rest parameter
             };
-            if rest_is_top {
-                if let Some((param_index, source_param)) =
+            if rest_elem_type.is_any_or_unknown()
+                && let Some((param_index, source_param)) =
                     self.first_top_rest_unassignable_source_param(&source.params)
-                {
-                    let inner_reason = self
-                        .explain_failure(rest_elem_type, source_param)
-                        .map(Box::new);
-                    return Some(SubtypeFailureReason::ParameterTypeMismatch {
-                        param_index,
-                        source_param,
-                        target_param: rest_elem_type,
-                        inner_reason,
-                    });
-                }
+            {
+                let inner_reason = self
+                    .explain_failure(rest_elem_type, source_param)
+                    .map(Box::new);
+                return Some(SubtypeFailureReason::ParameterTypeMismatch {
+                    param_index,
+                    source_param,
+                    target_param: rest_elem_type,
+                    inner_reason,
+                });
+            }
+            if rest_is_top {
                 return None;
             }
 

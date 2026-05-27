@@ -83,6 +83,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return SubtypeResult::False;
             };
+            if rest_elem_type.is_any_or_unknown()
+                && self
+                    .first_top_rest_unassignable_source_param(source_params)
+                    .is_some()
+            {
+                return SubtypeResult::False;
+            }
             if rest_is_top {
                 return SubtypeResult::True;
             }
