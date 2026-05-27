@@ -426,6 +426,7 @@ impl<'a> DeclarationEmitter<'a> {
                 depth + 1,
                 getter_names.contains(&name),
                 setter_names.contains(&name),
+                Some(object_expr_idx),
             ) {
                 if member_text.trim_start().starts_with(':') {
                     continue;
@@ -595,6 +596,7 @@ impl<'a> DeclarationEmitter<'a> {
         depth: u32,
         getter_exists: bool,
         setter_exists: bool,
+        object_context_idx: Option<NodeIndex>,
     ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
 
@@ -636,6 +638,14 @@ impl<'a> DeclarationEmitter<'a> {
                 // Infer return type: explicit annotation > body inference > any
                 let type_text = self
                     .infer_fallback_type_text_at(data.type_annotation, depth)
+                    .or_else(|| {
+                        self.object_literal_this_property_return_type_text(
+                            data.body,
+                            object_context_idx,
+                            Some(member_idx),
+                            depth,
+                        )
+                    })
                     .or_else(|| self.function_body_preferred_return_type_text(data.body))
                     .unwrap_or_else(|| "any".to_string());
                 let readonly = if setter_exists { "" } else { "readonly " };
@@ -665,7 +675,19 @@ impl<'a> DeclarationEmitter<'a> {
                     self.method_function_type_text(member_idx, data, depth)
                         .map(|type_text| format!("{name}: {type_text}"))
                 } else {
-                    self.method_signature_type_text_named_at(member_idx, data, name, depth)
+                    let return_type_override = self.object_literal_this_property_return_type_text(
+                        data.body,
+                        object_context_idx,
+                        Some(member_idx),
+                        depth,
+                    );
+                    self.method_signature_type_text_named_at(
+                        member_idx,
+                        data,
+                        name,
+                        depth,
+                        return_type_override.as_deref(),
+                    )
                 }
             }
             _ => None,
@@ -678,6 +700,7 @@ impl<'a> DeclarationEmitter<'a> {
         method: &tsz_parser::parser::node::MethodDeclData,
         name: &str,
         depth: u32,
+        return_type_override: Option<&str>,
     ) -> Option<String> {
         let mut scratch = self.scratch_declaration_emitter();
         scratch.indent_level = depth;
@@ -708,9 +731,134 @@ impl<'a> DeclarationEmitter<'a> {
         scratch.write("(");
         scratch.emit_parameters_with_body(&method.parameters, method.body);
         scratch.write("): ");
-        scratch.emit_method_function_type_return(method_idx, method);
+        if let Some(return_type) = return_type_override {
+            scratch.write(return_type);
+        } else {
+            scratch.emit_method_function_type_return(method_idx, method);
+        }
         let type_text = scratch.writer.take_output();
         (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    fn object_literal_this_property_return_type_text(
+        &self,
+        body_idx: NodeIndex,
+        object_context_idx: Option<NodeIndex>,
+        current_member_idx: Option<NodeIndex>,
+        depth: u32,
+    ) -> Option<String> {
+        if body_idx.is_none() {
+            return None;
+        }
+        let return_expr = self.function_body_single_return_expression(body_idx)?;
+        let return_node = self.arena.get(return_expr)?;
+        if return_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(return_node)?;
+        if self
+            .arena
+            .get(access.expression)
+            .is_none_or(|node| node.kind != SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+
+        let object_idx = object_context_idx?;
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        let member_idx =
+            self.object_literal_member_by_name_for_inference(object_idx, &property_name)?;
+        if Some(member_idx) == current_member_idx {
+            return None;
+        }
+        self.object_literal_member_value_type_for_this_lookup(
+            member_idx,
+            object_context_idx,
+            current_member_idx,
+            depth + 1,
+        )
+    }
+
+    fn object_literal_member_value_type_for_this_lookup(
+        &self,
+        member_idx: NodeIndex,
+        object_context_idx: Option<NodeIndex>,
+        current_member_idx: Option<NodeIndex>,
+        depth: u32,
+    ) -> Option<String> {
+        let member_node = self.arena.get(member_idx)?;
+        match member_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let data = self.arena.get_property_assignment(member_node)?;
+                self.preferred_object_member_initializer_type_text(data.initializer, depth)
+            }
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
+                let data = self.arena.get_shorthand_property(member_node)?;
+                let initializer = if data.object_assignment_initializer == NodeIndex::NONE {
+                    data.name
+                } else {
+                    data.object_assignment_initializer
+                };
+                self.preferred_object_member_initializer_type_text(initializer, depth)
+            }
+            k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                let data = self.arena.get_method_decl(member_node)?;
+                self.infer_fallback_type_text_at(data.type_annotation, depth)
+                    .or_else(|| {
+                        self.object_literal_this_property_return_type_text(
+                            data.body,
+                            object_context_idx,
+                            current_member_idx,
+                            depth,
+                        )
+                    })
+                    .or_else(|| self.function_body_preferred_return_type_text(data.body))
+            }
+            k if k == syntax_kind_ext::GET_ACCESSOR => {
+                let data = self.arena.get_accessor(member_node)?;
+                self.infer_fallback_type_text_at(data.type_annotation, depth)
+                    .or_else(|| {
+                        self.object_literal_this_property_return_type_text(
+                            data.body,
+                            object_context_idx,
+                            current_member_idx,
+                            depth,
+                        )
+                    })
+                    .or_else(|| self.function_body_preferred_return_type_text(data.body))
+            }
+            k if k == syntax_kind_ext::SET_ACCESSOR => {
+                let data = self.arena.get_accessor(member_node)?;
+                data.parameters
+                    .nodes
+                    .first()
+                    .and_then(|&p_idx| self.arena.get(p_idx))
+                    .and_then(|p_node| self.arena.get_parameter(p_node))
+                    .and_then(|param| {
+                        self.infer_fallback_type_text_at(param.type_annotation, depth)
+                    })
+            }
+            _ => None,
+        }
+    }
+
+    fn object_literal_member_by_name_for_inference(
+        &self,
+        object_idx: NodeIndex,
+        property_name: &str,
+    ) -> Option<NodeIndex> {
+        let object_idx = self.skip_parenthesized_expression(object_idx)?;
+        let object_node = self.arena.get(object_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+        object.elements.nodes.iter().copied().find(|member_idx| {
+            let Some(member_node) = self.arena.get(*member_idx) else {
+                return false;
+            };
+            self.object_literal_member_name_idx(member_node)
+                .and_then(|name_idx| self.object_literal_member_name_text(name_idx))
+                .as_deref()
+                == Some(property_name)
+        })
     }
 
     fn object_literal_method_uses_property_syntax(
