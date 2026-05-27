@@ -265,6 +265,14 @@ function cancelLabel(result) {
   return `failed: ${result.detail}`;
 }
 
+function cancellationSkipReason(result) {
+  const detail = `${result.stdout || ""}\n${result.stderr || ""}`;
+  if (/Cannot cancel a workflow re-run that has not yet queued/i.test(detail)) {
+    return "workflow re-run has not yet queued";
+  }
+  return null;
+}
+
 export function cancelStaleRuns(findings, repository, runCommand = runGh) {
   if (!repository) {
     throw new Error("REPOSITORY or GITHUB_REPOSITORY is required to cancel stale runs");
@@ -286,6 +294,11 @@ export function cancelStaleRuns(findings, repository, runCommand = runGh) {
 
     if (result.status === 0) {
       return { id: finding.id, status: "requested", detail: "" };
+    }
+
+    const skipReason = cancellationSkipReason(result);
+    if (skipReason) {
+      return { id: finding.id, status: "skipped", detail: skipReason };
     }
 
     return {

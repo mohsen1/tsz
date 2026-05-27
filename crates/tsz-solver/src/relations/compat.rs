@@ -1643,11 +1643,11 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
-        // Propagate weak type enforcement into nested structural comparisons.
-        // This ensures TS2559 is detected not just at the top-level assignment,
-        // but also when comparing nested property types (e.g., { a: { y: string } }
-        // assigned to { a: { x?: number } }).
-        self.subtype.enforce_weak_types = true;
+        // Propagate weak type enforcement into nested structural comparisons
+        // only when this relation policy enables TS2559-style weak checks.
+        // `isTypeAssignableTo`-style callers set `skip_weak_type_checks`, and
+        // that policy must also suppress the structural fallback.
+        self.subtype.enforce_weak_types = !self.skip_weak_type_checks;
         // Any propagation is controlled by the Lawyer's allow_any_suppression flag
         // Standard TypeScript allows any to propagate through arrays/objects regardless
         // of strictFunctionTypes - it only affects function parameter variance

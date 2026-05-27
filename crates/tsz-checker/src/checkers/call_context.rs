@@ -476,7 +476,9 @@ impl<'a> CheckerState<'a> {
                         .expect("expected_params should not be empty")
                 });
                 // Parameter types conflict if the actual is NOT assignable to expected.
-                !self.diagnostic_relation_boolean_guard(actual_param_type, expected_param_type)
+                !self
+                    .assign_relation_outcome(actual_param_type, expected_param_type)
+                    .related
             })
     }
 
@@ -801,7 +803,7 @@ impl<'a> CheckerState<'a> {
         if let Some((base, args)) = common::application_info(self.ctx.types, source)
             && args.len() == 1
             && common::application_info(self.ctx.types, target).is_none()
-            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+            && self.return_context_application_base_is_lib_promise_like(base)
         {
             return self.contextual_return_type_specializes_wrapped_params(
                 args[0],
@@ -815,7 +817,7 @@ impl<'a> CheckerState<'a> {
             && let Some((base, args)) = common::application_info(self.ctx.types, source_evaluated)
             && args.len() == 1
             && common::application_info(self.ctx.types, target).is_none()
-            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+            && self.return_context_application_base_is_lib_promise_like(base)
         {
             return self.contextual_return_type_specializes_wrapped_params(
                 args[0],
@@ -948,6 +950,10 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    pub(crate) fn return_context_application_base_is_lib_promise_like(&self, base: TypeId) -> bool {
+        self.is_promise_type(base)
     }
 
     pub(crate) fn return_context_application_base_has_name(
