@@ -45,6 +45,12 @@ assert.match(
 );
 
 assert.match(
+  workflow,
+  /copy_from_cloudbuild_manifest\(\)[\s\S]+artifacts-\$\{\{ steps\.cloudbuild-submit\.outputs\.build_id \}\}\.json[\s\S]+manifest_status[\s\S]+download_shard_artifacts\(\)[\s\S]+copy_from_cloudbuild_manifest/,
+  "bench shard waits should fall back to the Cloud Build artifact manifest when object paths are flattened",
+);
+
+assert.match(
   shardCloudbuild,
   /#!\/bin\/sh[\s\S]+\) > bench-prep-fetch\.log 2>&1[\s\S]+BENCH_PREP_FETCH_STATUS=%s[\s\S]+exit 0/,
   "Cloud Build prep-fetch step should use the shell available in cloud-sdk:slim, record status, and never fail the build before shard status artifacts can be written",
