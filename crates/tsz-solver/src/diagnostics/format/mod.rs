@@ -172,6 +172,25 @@ impl<'a> TypeFormatter<'a> {
             && members.contains(&TypeId::SYMBOL)
     }
 
+    /// True when `key` is a `Union` whose members are all unit types: literal
+    /// values, enum members, or unique symbols. Such a union is exactly what a
+    /// user can spell directly as an annotation (`"a" | "b"`, `0 | 1`), so it
+    /// must be rendered by its members rather than redirected to a shared
+    /// `keyof X` display alias that would repaint unrelated annotations.
+    fn union_is_all_unit_literals(&self, key: &TypeData) -> bool {
+        let TypeData::Union(list_id) = key else {
+            return false;
+        };
+        let members = self.interner.type_list(*list_id);
+        !members.is_empty()
+            && members.iter().all(|&m| {
+                matches!(
+                    self.interner.lookup(m),
+                    Some(TypeData::Literal(_) | TypeData::Enum(_, _) | TypeData::UniqueSymbol(_))
+                )
+            })
+    }
+
     fn scalar_mapped_alias_application_display(
         &self,
         type_id: TypeId,
@@ -1294,27 +1313,38 @@ impl<'a> TypeFormatter<'a> {
             // operand has a named definition (interface/class/alias) so that
             // anonymous keyof (`keyof { a: string }`) still shows the expanded
             // union form, matching tsc behavior.
-            let use_keyof_alias =
-                if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin) {
-                    self.def_store.is_some_and(|ds| {
-                        ds.find_def_for_type(keyof_operand).is_some()
-                            || matches!(
-                                self.interner.lookup(keyof_operand),
-                                Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
-                            )
-                            || self.interner.get_display_alias(keyof_operand).is_some_and(
-                                |operand_alias| {
-                                    ds.find_def_for_type(operand_alias).is_some()
-                                        || matches!(
-                                            self.interner.lookup(operand_alias),
-                                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
-                                        )
-                                },
-                            )
-                    })
-                } else {
-                    false
-                };
+            let use_keyof_alias = if self.union_is_all_unit_literals(&key) {
+                // A bare union of unit literals (`"a" | "b"`, `0 | 1`, enum
+                // members, unique symbols) is indistinguishable from a
+                // user-written union annotation: the same structural type is
+                // interned once and shared. tsc only spells `keyof X` for an
+                // index type — which tsz preserves as a `KeyOf` node (handled
+                // by the `KeyOf` arm above) — and always renders a bare union
+                // by its members. Following a global `union -> keyof X`
+                // display alias here would repaint unrelated user-written
+                // literal-union annotations, so never do it for this shape.
+                false
+            } else if let Some(TypeData::KeyOf(keyof_operand)) = self.interner.lookup(alias_origin)
+            {
+                self.def_store.is_some_and(|ds| {
+                    ds.find_def_for_type(keyof_operand).is_some()
+                        || matches!(
+                            self.interner.lookup(keyof_operand),
+                            Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                        )
+                        || self.interner.get_display_alias(keyof_operand).is_some_and(
+                            |operand_alias| {
+                                ds.find_def_for_type(operand_alias).is_some()
+                                    || matches!(
+                                        self.interner.lookup(operand_alias),
+                                        Some(TypeData::Lazy(def_id)) if ds.get(def_id).is_some()
+                                    )
+                            },
+                        )
+                })
+            } else {
+                false
+            };
 
             // Application aliases: for Union types that expanded from a generic type alias
             // (e.g., `IteratorResult<T>` → `IteratorYieldResult<T> | IteratorReturnResult<TReturn>`),

@@ -803,6 +803,148 @@ function g<T>() {
     );
 }
 
+// Issue #9695: `keyof <named object>` display must not (a) widen the source
+// literal for a concrete (non-generic) key union, nor (b) repaint a structurally
+// identical user-written literal union as `keyof X`.
+
+#[test]
+fn test_concrete_keyof_alias_target_preserves_source_literal() {
+    // Facet 1: a concrete `keyof R` reached through an alias is a finite literal
+    // key union, which tsc treats as a literal context — the source `"z"` must
+    // NOT widen to `string`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type R = { a: number; b: string };
+type K = keyof R;
+const k: K = "z";
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '\"z\"' is not assignable to type 'keyof R'")
+        }),
+        "Expected concrete keyof alias target to preserve source literal '\"z\"'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        !diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'keyof R'")
+        }),
+        "Did not expect widened 'string' source for concrete keyof target.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_concrete_keyof_alias_target_preserves_source_literal_renamed() {
+    // Same rule with different alias/object/key spellings — proves the fix is
+    // structural, not keyed on the names `R`/`K`/`a`/`b`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type Shape = { foo: number; bar: string };
+type Keys = keyof Shape;
+const key: Keys = "nope";
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '\"nope\"' is not assignable to type 'keyof Shape'")
+        }),
+        "Expected renamed concrete keyof alias target to preserve source literal.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_concrete_keyof_numeric_keys_preserve_source_literal() {
+    // Number-literal key union variant: source `5` must stay `5`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type N = { 0: number; 1: string };
+type KN = keyof N;
+const n: KN = 5;
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '5' is not assignable to type 'keyof N'")
+        }),
+        "Expected concrete numeric keyof target to preserve source literal '5'.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_literal_union_annotation_not_repainted_as_keyof() {
+    // Facet 2: a user-written literal union `"a" | "b"` is structurally identical
+    // to the interned `keyof R` key set, but must render by its members — never as
+    // `keyof R` — even though both appear in the same program.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type R = { a: number; b: string };
+const k1: keyof R = "z";
+const k2: "a" | "b" = "z";
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '\"z\"' is not assignable to type 'keyof R'")
+        }),
+        "Expected the `keyof R` annotation to render as 'keyof R'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322
+                && message.contains("Type '\"z\"' is not assignable to type '\"a\" | \"b\"'")
+        }),
+        "Expected the literal-union annotation to render as '\"a\" | \"b\"', not 'keyof R'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics
+            .iter()
+            .filter(|(code, message)| *code == 2322
+                && message.contains("is not assignable to type 'keyof R'"))
+            .count()
+            == 1,
+        "Expected exactly one 'keyof R' target rendering (only the keyof annotation).\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_numeric_literal_union_annotation_not_repainted_as_keyof() {
+    // Facet 2, numeric variant with renamed object: `0 | 1` must not become
+    // `keyof N`.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type N = { 0: number; 1: string };
+const a: keyof N = 5;
+const b: 0 | 1 = 5;
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type '5' is not assignable to type '0 | 1'")
+        }),
+        "Expected the literal-union annotation to render as '0 | 1', not 'keyof N'.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
+fn test_generic_keyof_target_still_widens_source_literal() {
+    // Negative control: a generic/deferred `keyof T` provides no literal context,
+    // so tsc widens the source literal — this behavior must be preserved.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+function f<T extends { a: number }>(k: keyof T) {
+    k = "hello";
+}
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'string' is not assignable to type 'keyof T'")
+        }),
+        "Expected generic keyof target to widen source literal to 'string'.\nActual: {diagnostics:#?}"
+    );
+}
+
 #[test]
 fn test_generic_string_index_constraint_allows_read_but_rejects_write_via_dot_access() {
     let diagnostics = compile_and_get_diagnostics(
