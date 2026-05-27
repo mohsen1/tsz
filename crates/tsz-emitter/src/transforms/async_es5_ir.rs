@@ -154,6 +154,8 @@ pub struct AsyncES5Transformer<'a> {
     /// Active async-lowered loop labels and the generator label that implements
     /// `continue <label>` for that loop.
     pub(super) labeled_continue_targets: Vec<(String, u32)>,
+    /// Active catch binding substitutions used while lowering async try regions.
+    pub(super) catch_binding_renames: Vec<(String, String)>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -182,6 +184,7 @@ impl<'a> AsyncES5Transformer<'a> {
             module_kind: ModuleKind::None,
             dynamic_import_promise_counter: Cell::new(1),
             labeled_continue_targets: Vec::new(),
+            catch_binding_renames: Vec::new(),
         }
     }
 
@@ -294,6 +297,42 @@ impl<'a> AsyncES5Transformer<'a> {
             }
             suffix += 1;
         }
+    }
+
+    fn fresh_catch_binding_temp(&self, source_name: &str, catch_clause: NodeIndex) -> String {
+        let ordinal = self.async_catch_binding_ordinal(catch_clause);
+        self.fresh_reserved_name(format!("{source_name}_{ordinal}"))
+    }
+
+    fn async_catch_binding_ordinal(&self, catch_clause: NodeIndex) -> u32 {
+        let Some(current_catch) = self.arena.get(catch_clause) else {
+            return 1;
+        };
+        let mut ordinal = 1;
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::TRY_STATEMENT {
+                continue;
+            }
+            let Some(try_data) = self.arena.get_try(node) else {
+                continue;
+            };
+            if try_data.catch_clause.is_none() {
+                continue;
+            }
+            let Some(previous_catch) = self.arena.get(try_data.catch_clause) else {
+                continue;
+            };
+            if previous_catch.pos >= current_catch.pos {
+                continue;
+            }
+            if self.contains_await_recursive(try_data.try_block)
+                || self.contains_await_recursive(try_data.catch_clause)
+                || self.contains_await_recursive(try_data.finally_block)
+            {
+                ordinal += 1;
+            }
+        }
+        ordinal
     }
 
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
@@ -4863,14 +4902,23 @@ impl<'a> AsyncES5Transformer<'a> {
             if let Some(catch_node) = self.arena.get(try_data.catch_clause)
                 && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
             {
+                let catch_rename_depth = self.catch_binding_renames.len();
                 if catch_data.variable_declaration.is_some() {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
+                        let catch_temp =
+                            self.fresh_catch_binding_temp(&catch_var_name, try_data.catch_clause);
+                        current_statements.push(IRNode::VarDecl {
+                            name: catch_temp.clone().into(),
+                            initializer: None,
+                        });
                         // tsc binds the exception via `_a.sent()`, not `_a[1]`.
                         current_statements.push(IRNode::ExpressionStatement(Box::new(
-                            IRNode::assign(IRNode::id(catch_var_name), IRNode::GeneratorSent),
+                            IRNode::assign(IRNode::id(catch_temp.clone()), IRNode::GeneratorSent),
                         )));
+                        self.catch_binding_renames
+                            .push((catch_var_name, catch_temp));
                     }
                 }
                 self.process_block_or_statement_in_async(
@@ -4879,9 +4927,14 @@ impl<'a> AsyncES5Transformer<'a> {
                     current_statements,
                     current_label,
                 );
+                if self.catch_binding_renames.len() > catch_rename_depth {
+                    self.catch_binding_renames.pop();
+                }
             }
 
-            current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            if !Self::async_statements_end_control_flow(current_statements) {
+                current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            }
             Some(cl)
         } else {
             None
@@ -4948,6 +5001,15 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
+    }
+
+    fn async_statements_end_control_flow(statements: &[IRNode]) -> bool {
+        matches!(
+            statements.last(),
+            Some(
+                IRNode::ReturnStatement(_) | IRNode::ThrowStatement(_) | IRNode::BreakStatement(_)
+            )
+        )
     }
 
     /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them

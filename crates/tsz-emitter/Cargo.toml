@@ -203,6 +203,10 @@ name = "generator_object_literal_emit"
 path = "tests/generator_object_literal_emit.rs"
 
 [[test]]
+name = "async_try_emit"
+path = "tests/async_try_emit.rs"
+
+[[test]]
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
 

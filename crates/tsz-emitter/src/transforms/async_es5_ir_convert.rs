@@ -165,6 +165,14 @@ impl<'a> AsyncES5Transformer<'a> {
 
             k if k == SyntaxKind::Identifier as u16 => {
                 let text = crate::transforms::emit_utils::identifier_text_or_empty(self.arena, idx);
+                if let Some((_, replacement)) = self
+                    .catch_binding_renames
+                    .iter()
+                    .rev()
+                    .find(|(source, _)| source == &text)
+                {
+                    return IRNode::Identifier(replacement.clone().into());
+                }
                 // When capturing arguments, replace `arguments` with the generated capture name.
                 if self.state.captures_arguments && text == "arguments" {
                     IRNode::Identifier(self.state.arguments_capture_name.clone().into())
