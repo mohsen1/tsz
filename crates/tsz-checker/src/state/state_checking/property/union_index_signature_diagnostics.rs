@@ -161,6 +161,7 @@ impl<'a> CheckerState<'a> {
                 let source_type = self
                     .literal_type_from_initializer(prop_value_idx)
                     .unwrap_or(source_prop.type_id);
+                let source_type = self.widen_literal_type(source_type);
                 let source_str = self.format_type_for_assignability_message(source_type);
                 let target_str = self.format_type_for_assignability_message(target_value_type);
                 let message = format_message(
