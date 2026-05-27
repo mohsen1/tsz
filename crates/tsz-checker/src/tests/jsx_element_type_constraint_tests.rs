@@ -352,6 +352,29 @@ fn jsx_element_type_constraint_suppression_does_not_read_rendered_type_strings()
     );
 }
 
+#[test]
+fn uniform_indexed_access_constraint_uses_relation_outcome_boundary() {
+    let generics_src = include_str!("../error_reporter/generics.rs");
+    let function_start = generics_src
+        .find("pub(crate) fn indexed_access_into_object_uniformly_satisfies_constraint")
+        .expect("find indexed-access uniform constraint helper");
+    let rest = &generics_src[function_start..];
+    let function_end = rest
+        .find("\n    /// Report TS2635")
+        .expect("find next diagnostic helper");
+    let function = &rest[..function_end];
+
+    assert!(
+        !function.contains("diagnostic_relation_boolean_guard"),
+        "uniform indexed-access constraint checks must use the shared relation outcome boundary"
+    );
+    assert_eq!(
+        function.matches("assign_relation_outcome").count(),
+        4,
+        "property-value constraint checks should route through RelationOutcome"
+    );
+}
+
 /// Return compatibility alone is not enough: a source callable that requires
 /// more parameters than the `ElementType` callable arm is not a valid JSX
 /// component.
