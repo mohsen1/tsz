@@ -550,6 +550,9 @@ mod cross_file_interface_property_access_tests;
 #[path = "../tests/cross_file_type_params_cache_tests.rs"]
 mod cross_file_type_params_cache_tests;
 #[cfg(test)]
+#[path = "tests/cross_module_self_ref_override_ts2416_tests.rs"]
+mod cross_module_self_ref_override_ts2416_tests;
+#[cfg(test)]
 #[path = "tests/destructured_discriminant_source_narrowing_tests.rs"]
 mod destructured_discriminant_source_narrowing_tests;
 #[cfg(test)]
