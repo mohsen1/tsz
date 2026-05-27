@@ -45,6 +45,32 @@ impl<'a> Printer<'a> {
                 && base.kind == SyntaxKind::SuperKeyword as u16
             {
                 if self.scoped_static_super_direct_access {
+                    if self.has_optional_call_token(node, call.expression, call.arguments.as_ref())
+                    {
+                        let func_temp = self.make_unique_name_hoisted();
+                        self.write("(");
+                        self.write(&func_temp);
+                        self.write(" = ");
+                        self.write(&base_alias);
+                        self.write(".");
+                        self.emit_property_name_without_import_substitution(
+                            access.name_or_argument,
+                        );
+                        self.write(") === null || ");
+                        self.write(&func_temp);
+                        self.write(" === void 0 ? void 0 : ");
+                        self.write(&func_temp);
+                        self.write(".call(");
+                        self.emit_scoped_static_super_receiver();
+                        if let Some(ref args) = call.arguments {
+                            for &arg_idx in &args.nodes {
+                                self.write(", ");
+                                self.emit(arg_idx);
+                            }
+                        }
+                        self.write(")");
+                        return;
+                    }
                     self.write(&base_alias);
                     self.write(".");
                     self.emit_property_name_without_import_substitution(access.name_or_argument);
