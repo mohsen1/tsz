@@ -1372,7 +1372,7 @@ impl BinderState {
     pub fn bind_source_file(&mut self, arena: &NodeArena, root: NodeIndex) {
         // Reset per-file binder stack guard so a pathological earlier file on
         // this thread does not prevent subsequent files from being bound.
-        crate::binder_stack_guard::reset_stack_overflow_flag();
+        crate::binding::stack_guard::reset_stack_overflow_flag();
 
         if let Some(node) = arena.get(root)
             && let Some(sf) = arena.get_source_file(node)

@@ -552,13 +552,13 @@ impl BinderState {
         // Amortized stack guard: bail immediately if the breaker was already tripped,
         // probe every 64th call to avoid paying `remaining_stack()` on each node,
         // and trip the breaker + return if headroom is critically low.
-        if crate::binder_stack_guard::stack_overflow_tripped() {
+        if crate::binding::stack_guard::stack_overflow_tripped() {
             return;
         }
-        if crate::binder_stack_guard::should_probe_stack()
+        if crate::binding::stack_guard::should_probe_stack()
             && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
         {
-            crate::binder_stack_guard::trip_stack_overflow();
+            crate::binding::stack_guard::trip_stack_overflow();
             return;
         }
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
