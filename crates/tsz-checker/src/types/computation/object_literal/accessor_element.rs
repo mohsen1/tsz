@@ -474,6 +474,14 @@ impl<'a> CheckerState<'a> {
                     .unwrap_or(TypeId::ANY)
             };
 
+            if prop_name_type == TypeId::SYMBOL {
+                self.report_contextual_symbol_index_value_mismatch(
+                    accessor.name,
+                    None,
+                    accessor_type,
+                    contextual_type,
+                );
+            }
             self.route_computed_member_value_to_index_signature(
                 prop_name_type,
                 accessor_type,
