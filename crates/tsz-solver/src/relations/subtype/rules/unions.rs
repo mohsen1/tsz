@@ -293,7 +293,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         target: TypeId,
         allow_bivariant: bool,
     ) -> Option<SubtypeFailureReason> {
-        if allow_bivariant {
+        if allow_bivariant && !self.identity_cycle_check && !self.disable_method_bivariance {
             let prev = self.strict_function_types;
             self.strict_function_types = false;
             let result = self.explain_failure(source, target);
