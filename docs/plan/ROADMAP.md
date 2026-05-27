@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-05-26
+Date: 2026-05-27
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -45,19 +45,20 @@ as campaigns instead of isolated conformance picks.
 ## Current Public Metrics
 
 Sources: checked-in conformance and emit artifacts, live GitHub orientation on
-2026-05-26, `scripts/bench/project-row-summary.mjs`, and public README
-metrics. Public README numbers may lag checked-in artifacts; release planning
-uses exact artifact numerators and denominators.
+2026-05-27, `scripts/bench/project-row-summary.mjs`, and public README
+metrics. The public README emit block was refreshed from the checked-in emit
+artifact on 2026-05-26; release planning uses exact artifact numerators and
+denominators.
 
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| Accepted-regression strictness | `30` listed tests |
-| JavaScript emit | `13,094 / 13,530` in checked-in emit snapshot (`94.8%` / `12,820 / 13,530` still shown in README) |
-| Declaration emit | `1,606 / 1,669` in checked-in emit snapshot (`91.7%` / `1,531 / 1,669` still shown in README) |
+| Accepted-regression strictness | `26` listed tests |
+| JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
+| Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `56` open `bug` issues in live GitHub orientation |
-| Output-surgery audit | red: `4` unallowlisted calls, `1` stale allowlist entry |
+| Open bug issues | `32` open `bug` issues in live GitHub orientation |
+| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -76,11 +77,11 @@ cleanup as complete.
 This section is intentionally short and current. Replace it when a fresher audit
 changes the picture.
 
-1. Active PR state is no longer the launch bottleneck. A 2026-05-26 live
-   orientation found only `2` open PRs, `0` drafts, clean canonical
-   `agent:*` label state, and no stacked children. Future launches should still
-   inspect live PRs first, but the plan should not preserve static PR queue
-   inventories.
+1. Active PR state is intentionally a live query, not a copied roadmap metric.
+   Every launch should inspect open PRs, draft/WIP state, stacked children, and
+   canonical `agent:*` label hygiene with `gh pr list` plus
+   `scripts/agents/ensure-agent-labels.sh --audit`; this plan should not
+   preserve static PR queue inventories.
 2. Multi-computer coordination is now explicit. Fourteen implementation-session
    labels exist:
    `agent:M1-A` through `agent:M1-D`, `agent:M4-A` through `agent:M4-D`, and
@@ -113,14 +114,14 @@ changes the picture.
    parity, bug closure, green project rows, and `2x` timing wins over `tsgo`.
    Architecture cleanup is part of that goal only when it ratchets a measured
    boundary counter down or unblocks one of those gates.
-7. Emit remains the largest numeric parity gap and a real architecture risk,
-   but the latest local snapshot is materially ahead of the README numbers:
+7. Emit remains the largest numeric parity gap and a real architecture risk:
    JavaScript emit is `13,094 / 13,530` and declaration emit is
-   `1,606 / 1,669`. DTS still needs to move away from late semantic discovery
-   during printing toward a precomputed declaration/public-API summary.
-8. Output-surgery audit debt is visible rather than normalized: the current
-   audit reports `4` unallowlisted calls and `1` stale allowlist entry. Treat
-   that as Studio-F cleanup intake and as a guardrail for Studio-C/D emit work.
+   `1,606 / 1,669` in the checked-in snapshot and public README. DTS still
+   needs to move away from late semantic discovery during printing toward a
+   precomputed declaration/public-API summary.
+8. Output-surgery audit debt is now ratcheted behind the allowlist: the current
+   audit reports `0` unallowlisted calls and `0` stale allowlist entries. Treat
+   that as a guardrail for Studio-C/D/F emit work.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows
