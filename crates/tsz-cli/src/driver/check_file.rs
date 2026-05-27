@@ -255,6 +255,7 @@ fn run_check_on_existing_checker<'a>(
     // discarded so `--noCheck` still suppresses type errors.
     let run_checker_for_decl_emit = no_check && compiler_options.emit_declarations;
     if !no_check || run_checker_for_decl_emit {
+        let check_start = tsz_common::perf_counters::enabled_fast().then(std::time::Instant::now);
         tsz::checker::reset_stack_overflow_flag();
         checker.check_source_file(file.source_file);
         let mut checker_diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
@@ -271,6 +272,13 @@ fn run_check_on_existing_checker<'a>(
             program_has_unsupported_js_root,
             program_context.has_deprecation_diagnostics,
         );
+        if let Some(start) = check_start {
+            tsz_common::perf_counters::record_slow_check_file_timing(
+                &file.file_name,
+                start.elapsed().as_nanos() as u64,
+                checker_diagnostics.len() as u64,
+            );
+        }
 
         if !no_check {
             file_diagnostics.extend(checker_diagnostics);
