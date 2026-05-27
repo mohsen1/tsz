@@ -1409,6 +1409,7 @@ impl<'a> CheckerContext<'a> {
             || code == 18048
             || code == 18049
             || code == 2322
+            || code == 2339
             || code == 2374
             || code == 2411
             || code == 2413

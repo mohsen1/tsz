@@ -291,11 +291,12 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                 }
             }
 
-            // TS2339: Check if the property exists on the object type for string literal index access
-            // This handles cases like `Color["Red"]` where "Red" is not a property of the Color type
-            if let Some(key) =
-                get_string_literal_from_type_index(self.ctx.arena, indexed_access.index_type)
-            {
+            // TS2339: Check whether each string-literal index key exists on the
+            // object type. The index may be a single literal (`Color["Red"]`) or
+            // a union of literals (`I["x" | "y"]`); tsc reports one TS2339 per
+            // missing key, anchored at the index node, in any syntactic position.
+            let index_keys = self.literal_index_keys(index_type, indexed_access.index_type);
+            if !index_keys.is_empty() {
                 // Skip for type parameters, generic types, and deferred types - let the
                 // property access validation at the actual access site handle those cases
                 let resolved_object = self.resolve_object_for_tuple_check(object_type);
@@ -411,64 +412,14 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
                             object_is_type_query_node,
                         )
                         .unwrap_or_else(|| self.evaluate_type_for_property_check(resolved_object));
-                    let prop_result =
-                        crate::query_boundaries::property_access::resolve_property_access(
-                            self.ctx.types,
-                            property_object,
-                            &key,
-                        );
-
-                    // If property not found and no index signature exists, emit TS2339
-                    use crate::query_boundaries::common::PropertyAccessResult;
-                    if matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. }) {
-                        // Check if there's an index signature that allows this key
-                        let has_index_sig = crate::query_boundaries::common::object_shape_for_type(
-                            self.ctx.types,
+                    for key in &index_keys {
+                        self.report_missing_indexed_access_key(
+                            key,
+                            object_type,
                             resolved_object,
-                        )
-                        .is_some_and(|shape| {
-                            shape.string_index.is_some()
-                                || (shape.number_index.is_some() && key.parse::<f64>().is_ok())
-                        });
-
-                        if !has_index_sig
-                            && let Some(idx_node) = self.ctx.arena.get(indexed_access.index_type)
-                        {
-                            // When the receiver is a type alias whose body resolves
-                            // to an Enum (e.g. `type C1 = Color`), tsc displays the
-                            // underlying enum's nominal name in TS2339 messages.
-                            // The default formatter would follow the Lazy(DefId) to
-                            // the alias name, producing `'C1'` instead of `'Color'`.
-                            let alias_enum_name = crate::query_boundaries::common::lazy_def_id(
-                                self.ctx.types,
-                                object_type,
-                            )
-                            .and_then(|def_id| self.ctx.definition_store.get(def_id))
-                            .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
-                            .and_then(|_| {
-                                crate::query_boundaries::common::enum_def_id(
-                                    self.ctx.types,
-                                    resolved_object,
-                                )
-                            })
-                            .and_then(|enum_def_id| self.ctx.def_to_symbol_id(enum_def_id))
-                            .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
-                            .map(|symbol| symbol.escaped_name.to_string());
-                            let type_str = alias_enum_name.unwrap_or_else(|| {
-                                let mut formatter = self.ctx.create_type_formatter();
-                                formatter.format(object_type).into_owned()
-                            });
-                            let message = crate::diagnostics::format_message(
-                                crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                                &[&key, &type_str],
-                            );
-                            self.ctx.error(
-                                idx_node.pos,
-                                idx_node.end - idx_node.pos,
-                                message,
-                                crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
-                            );
-                        }
+                            property_object,
+                            indexed_access.index_type,
+                        );
                     }
                 }
             }
@@ -501,6 +452,94 @@ impl<'a, 'ctx> TypeNodeChecker<'a, 'ctx> {
         } else {
             TypeId::ERROR
         }
+    }
+
+    /// Collect the string-literal keys named by an indexed-access index type.
+    /// Returns one entry per string-literal union member (or the single literal),
+    /// so union-key access (`I["x" | "y"]`) is validated the same way as a single
+    /// literal regardless of where the indexed access appears syntactically.
+    fn literal_index_keys(&self, index_type: TypeId, index_node: NodeIndex) -> Vec<String> {
+        if let Some(members) =
+            crate::query_boundaries::common::union_members(self.ctx.types, index_type)
+        {
+            return members
+                .iter()
+                .filter_map(|&member| {
+                    crate::query_boundaries::common::string_literal_value(self.ctx.types, member)
+                })
+                .map(|atom| self.ctx.types.resolve_atom(atom))
+                .collect();
+        }
+        if let Some(atom) =
+            crate::query_boundaries::common::string_literal_value(self.ctx.types, index_type)
+        {
+            return vec![self.ctx.types.resolve_atom(atom)];
+        }
+        get_string_literal_from_type_index(self.ctx.arena, index_node)
+            .into_iter()
+            .collect()
+    }
+
+    /// Emit TS2339 when `key` is not a property of the indexed object and no
+    /// index signature accepts it. Anchored at the index node so every union
+    /// member reports at the same span, matching tsc.
+    fn report_missing_indexed_access_key(
+        &mut self,
+        key: &str,
+        object_type: TypeId,
+        resolved_object: TypeId,
+        property_object: TypeId,
+        index_node: NodeIndex,
+    ) {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let prop_result = crate::query_boundaries::property_access::resolve_property_access(
+            self.ctx.types,
+            property_object,
+            key,
+        );
+        if !matches!(prop_result, PropertyAccessResult::PropertyNotFound { .. }) {
+            return;
+        }
+        let has_index_sig =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved_object)
+                .is_some_and(|shape| {
+                    shape.string_index.is_some()
+                        || (shape.number_index.is_some() && key.parse::<f64>().is_ok())
+                });
+        if has_index_sig {
+            return;
+        }
+        // When the receiver is a type alias whose body resolves to an Enum
+        // (e.g. `type C1 = Color`), tsc displays the underlying enum's nominal
+        // name in TS2339 messages. The default formatter would follow the
+        // Lazy(DefId) to the alias name, producing `'C1'` instead of `'Color'`.
+        let alias_enum_name =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, object_type)
+                .and_then(|def_id| self.ctx.definition_store.get(def_id))
+                .filter(|def| def.kind == tsz_solver::def::DefKind::TypeAlias)
+                .and_then(|_| {
+                    crate::query_boundaries::common::enum_def_id(self.ctx.types, resolved_object)
+                })
+                .and_then(|enum_def_id| self.ctx.def_to_symbol_id(enum_def_id))
+                .and_then(|sym_id| self.ctx.binder.get_symbol(sym_id))
+                .map(|symbol| symbol.escaped_name.to_string());
+        let type_str = alias_enum_name.unwrap_or_else(|| {
+            let mut formatter = self.ctx.create_type_formatter();
+            formatter.format(object_type).into_owned()
+        });
+        let Some(idx_node) = self.ctx.arena.get(index_node) else {
+            return;
+        };
+        let message = crate::diagnostics::format_message(
+            crate::diagnostics::diagnostic_messages::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+            &[key, &type_str],
+        );
+        self.ctx.error(
+            idx_node.pos,
+            idx_node.end - idx_node.pos,
+            message,
+            crate::diagnostics::diagnostic_codes::PROPERTY_DOES_NOT_EXIST_ON_TYPE,
+        );
     }
 
     /// Check if a type is a union containing Application (generic instantiation) members.
