@@ -97,7 +97,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         idx: NodeIndex,
     ) {
-        if self.diagnostic_relation_boolean_guard(source, target)
+        if self.assign_relation_outcome(source, target).related
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || crate::query_boundaries::assignability::optional_mapped_type_adds_implicit_undefined(
@@ -119,7 +119,7 @@ impl<'a> CheckerState<'a> {
         target: TypeId,
         anchor_idx: NodeIndex,
     ) {
-        if self.diagnostic_relation_boolean_guard(source, target)
+        if self.assign_relation_outcome(source, target).related
             || self.is_nested_same_wrapper_application_assignment(source, target)
             || self.type_contains_invalid_mapped_key_type(target)
             || crate::query_boundaries::assignability::optional_mapped_type_adds_implicit_undefined(
