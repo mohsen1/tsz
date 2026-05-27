@@ -258,7 +258,9 @@ impl<'a> CheckerState<'a> {
             {
                 return false;
             }
-            !self.diagnostic_relation_boolean_guard(*attr_type, expected_type)
+            !self
+                .assign_relation_outcome(*attr_type, expected_type)
+                .related
         });
         // A spread whose source carries a deferred conditional over a type
         // parameter (e.g. `Omit`/`Overwrite` of an unresolved `T`) is an
@@ -288,7 +290,7 @@ impl<'a> CheckerState<'a> {
                     attrs_type,
                 );
             if !source_retains_explicit_object
-                && self.diagnostic_relation_boolean_guard(attrs_type, props_type)
+                && self.assign_relation_outcome(attrs_type, props_type).related
             {
                 return;
             }
