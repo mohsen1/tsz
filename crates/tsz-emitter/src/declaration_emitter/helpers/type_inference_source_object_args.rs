@@ -658,41 +658,6 @@ impl<'a> DeclarationEmitter<'a> {
         })
     }
 
-    pub(in crate::declaration_emitter) fn infer_object_map_substitution_from_annotation_text(
-        &self,
-        annotation_text: &str,
-        arg_idx: NodeIndex,
-        type_param_names: &[String],
-        aliases: &[(String, String)],
-        existing_substitutions: &[(String, String)],
-    ) -> Option<(String, String)> {
-        if !annotation_text.contains('<') {
-            return None;
-        }
-        let mentioned = type_param_names
-            .iter()
-            .filter(|name| {
-                !existing_substitutions
-                    .iter()
-                    .any(|(existing, _)| existing == *name)
-                    && (Self::contains_whole_word_in_text(annotation_text, name)
-                        || aliases.iter().any(|(alias, mapped)| {
-                            mapped == *name
-                                && Self::contains_whole_word_in_text(annotation_text, alias)
-                        }))
-            })
-            .cloned()
-            .collect::<Vec<_>>();
-        let [type_param_name] = mentioned.as_slice() else {
-            return None;
-        };
-        let object_text = self.object_literal_property_value_map_type_text_with_context(
-            arg_idx,
-            existing_substitutions,
-        )?;
-        Some((type_param_name.clone(), object_text))
-    }
-
     fn object_literal_property_value_map_type_text_with_context(
         &self,
         arg_idx: NodeIndex,

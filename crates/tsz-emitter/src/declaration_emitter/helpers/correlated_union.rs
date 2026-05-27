@@ -736,9 +736,6 @@ impl<'a> DeclarationEmitter<'a> {
             if !param.type_annotation.is_some() {
                 continue;
             }
-            let param_type_text = self
-                .emit_type_node_text_from_arena(source_arena, param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(source_arena, param.type_annotation));
             self.infer_object_argument_substitutions_from_type_node(
                 source_arena,
                 param.type_annotation,
@@ -748,21 +745,6 @@ impl<'a> DeclarationEmitter<'a> {
                 &mut substitutions,
                 0,
             );
-            if let Some(param_type_text) = param_type_text
-                && let Some((type_param_name, value_text)) = self
-                    .infer_object_map_substitution_from_annotation_text(
-                        &param_type_text,
-                        arg_idx,
-                        type_param_names,
-                        &[],
-                        &substitutions,
-                    )
-                && !substitutions
-                    .iter()
-                    .any(|(existing, _)| existing == &type_param_name)
-            {
-                substitutions.push((type_param_name, value_text));
-            }
         }
 
         substitutions

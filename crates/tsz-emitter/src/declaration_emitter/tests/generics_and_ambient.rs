@@ -322,6 +322,72 @@ const o1 = getProps(myAny, ["foo", "bar"]);
 }
 
 #[test]
+fn generic_call_non_mapped_wrapper_argument_does_not_infer_object_value_map() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Wrapper<V> = { value: V };
+type Options<S> = { computed?: Wrapper<S> };
+declare function make<S>(options: Options<S>): S;
+
+const result = make({
+    computed: {
+        total(): number {
+            return 1;
+        },
+        label: {
+            get() {
+                return "ready";
+            }
+        }
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result:"),
+        "Expected the call result declaration to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("declare const result: {\n    total: number;\n    label: string;\n};"),
+        "Non-mapped wrapper aliases must not infer object value maps from argument shape: {output}"
+    );
+}
+
+#[test]
+fn construct_signature_non_mapped_wrapper_argument_does_not_infer_object_value_map() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Wrapper<V> = { value: V };
+type Options<S> = { computed?: Wrapper<S> };
+declare const Ctor: new <S>(options: Options<S>) => S;
+
+const result = new Ctor({
+    computed: {
+        total(): number {
+            return 1;
+        },
+        label: {
+            get() {
+                return "ready";
+            }
+        }
+    }
+});
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result:"),
+        "Expected the construct result declaration to be emitted: {output}"
+    );
+    assert!(
+        !output.contains("declare const result: {\n    total: number;\n    label: string;\n};"),
+        "Construct signatures must not infer object value maps through non-mapped wrapper aliases: {output}"
+    );
+}
+
+#[test]
 fn generic_call_constrained_mapped_return_uses_concrete_constraint_surface() {
     let output = emit_dts_with_binding(
         r#"
