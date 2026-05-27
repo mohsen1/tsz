@@ -53,6 +53,29 @@ class Derived extends Base {
     );
 }
 
+#[test]
+fn async_method_super_optional_call_keeps_temp_inside_generator() {
+    let source = r#"class Base { value?() { return 1; } }
+class Derived extends Base {
+    async value() { return super.value?.(); }
+}"#;
+    let output = emit_es2016(source);
+    assert!(
+        output.contains("value: { get: () => super.value }"),
+        "async method should capture super.value before the generator.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(
+            "function* () {\n            var _a;\n            return (_a = _super.value) === null || _a === void 0 ? void 0 : _a.call(this);"
+        ),
+        "optional super call should guard the captured method inside the generator.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("var _a;\nclass Base"),
+        "optional-call temp must not be hoisted to the source-file preamble.\nOutput:\n{output}"
+    );
+}
+
 /// Hoisted var declarations should appear inline in single-line function bodies.
 #[test]
 fn hoisted_var_in_single_line_body() {
