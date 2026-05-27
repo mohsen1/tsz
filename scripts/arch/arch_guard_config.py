@@ -204,9 +204,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down to the live merged Application-source refresh count
         # after current main reduced the quarantine surface.
         #
-        # Corrected to the live merged count after #10314 landed with a stale
-        # lower cap; removal condition remains #8225 narrowing this quarantine.
-        3342,
+        # Ratcheted down to the live merged count after #10311 and #10359
+        # narrowed checker-side direct common references; removal condition
+        # remains #8225 narrowing this quarantine.
+        3338,
     ),
 ]
 

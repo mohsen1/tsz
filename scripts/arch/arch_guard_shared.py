@@ -257,7 +257,6 @@ LINE_LIMIT_CHECKS = [
             "crates/tsz-checker/src/tests/architecture_contract_tests.rs",
             "crates/tsz-checker/src/tests/dispatch_tests.rs",
             "crates/tsz-checker/src/types/class_type/constructor.rs",
-            "crates/tsz-checker/src/types/class_type/core.rs",
             "crates/tsz-checker/src/types/property_access_type/resolve.rs",
             "crates/tsz-checker/src/types/queries/core.rs",
             "crates/tsz-checker/src/types/queries/lib.rs",
@@ -522,9 +521,10 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Ratcheted down after current-main guard tests caught slack in the
         # live direct-reference count.
         #
-        # Corrected to the live merged count after #10314 landed with a stale
-        # lower cap; removal condition remains #8225 narrowing this quarantine.
-        3342,
+        # Ratcheted down to the live merged count after #10311 and #10359
+        # narrowed checker-side direct common references; removal condition
+        # remains #8225 narrowing this quarantine.
+        3338,
     ),
 ]
 
