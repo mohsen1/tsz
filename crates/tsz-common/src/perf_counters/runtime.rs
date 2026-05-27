@@ -1492,6 +1492,43 @@ pub fn record_slow_check_file_timing(file: &str, elapsed_ns: u64, diagnostics: u
     rows.truncate(SLOW_CHECK_FILE_TIMING_LIMIT);
 }
 
+/// Record one top-level statement duration inside semantic `check_source_file`.
+///
+/// This is attribution-only: callers gate `Instant::now()` behind
+/// [`enabled_fast`], so timing-mode runs do not pay for clock reads. The rows
+/// intentionally store syntax coordinates rather than source snippets so the
+/// counter stays structural and cheap.
+pub fn record_slow_check_statement_timing(
+    file: &str,
+    kind: u16,
+    pos: u32,
+    end: u32,
+    elapsed_ns: u64,
+) {
+    if !enabled_fast() {
+        return;
+    }
+    let mut rows = slow_check_statement_timings()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    rows.push(SlowCheckStatementTiming {
+        file: file.to_owned(),
+        kind,
+        pos,
+        end,
+        elapsed_ms: elapsed_ns as f64 / 1_000_000.0,
+    });
+    rows.sort_by(|a, b| {
+        b.elapsed_ms
+            .total_cmp(&a.elapsed_ms)
+            .then_with(|| a.file.cmp(&b.file))
+            .then_with(|| a.pos.cmp(&b.pos))
+            .then_with(|| a.end.cmp(&b.end))
+            .then_with(|| a.kind.cmp(&b.kind))
+    });
+    rows.truncate(SLOW_CHECK_STATEMENT_TIMING_LIMIT);
+}
+
 /// Record a raw `SymbolId`-shaped `DefId` redirect inside
 /// `TypeEnvironment::resolve_lazy`.
 ///

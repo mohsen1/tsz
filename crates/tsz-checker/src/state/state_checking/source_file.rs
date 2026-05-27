@@ -383,7 +383,14 @@ impl<'a> CheckerState<'a> {
         }
 
         let mut seen_dts_ambient_violation = false;
+        let statement_timing_enabled = tsz_common::perf_counters::enabled_fast();
         for &stmt_idx in &sf.statements.nodes {
+            let stmt_timing_start = statement_timing_enabled.then(web_time::Instant::now);
+            let stmt_timing_node = self
+                .ctx
+                .arena
+                .get(stmt_idx)
+                .map(|node| (node.kind, node.pos, node.end));
             if !is_dts
                 && !suppress_grammar
                 && let Some(stmt_node) = self.ctx.arena.get(stmt_idx)
@@ -404,6 +411,15 @@ impl<'a> CheckerState<'a> {
             self.check_statement(stmt_idx);
             if !self.statement_falls_through(stmt_idx) {
                 self.ctx.is_unreachable = true;
+            }
+            if let (Some(start), Some((kind, pos, end))) = (stmt_timing_start, stmt_timing_node) {
+                tsz_common::perf_counters::record_slow_check_statement_timing(
+                    &sf.file_name,
+                    kind,
+                    pos,
+                    end,
+                    start.elapsed().as_nanos() as u64,
+                );
             }
         }
         self.ctx.is_unreachable = prev_unreachable;

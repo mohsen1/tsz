@@ -141,6 +141,16 @@ def print_summary(snap: dict) -> None:
                 f"    {row['elapsed_ms']:>8.2f} ms  "
                 f"diags={fmt_int(row.get('diagnostics', 0)):>4}  {row['file']}"
             )
+    slow_statements = snap.get("slow_check_statement_timings") or []
+    if slow_statements:
+        print("  slowest semantic check statements:")
+        for row in slow_statements[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"kind={fmt_int(row.get('kind')):>4}  "
+                f"span={fmt_int(row.get('pos'))}..{fmt_int(row.get('end'))}  "
+                f"{row['file']}"
+            )
     print()
     print("overlay copy:")
     print(
@@ -262,6 +272,22 @@ def print_diff(post: dict, base: dict) -> None:
         if post_slow:
             a = post_slow[0]
             print(f"    current  {a['elapsed_ms']:.2f} ms  {a['file']}")
+    post_stmt = post.get("slow_check_statement_timings") or []
+    base_stmt = base.get("slow_check_statement_timings") or []
+    if post_stmt or base_stmt:
+        print("  slowest semantic check statement:")
+        if base_stmt:
+            b = base_stmt[0]
+            print(
+                f"    baseline {b['elapsed_ms']:.2f} ms  "
+                f"kind={b.get('kind')} span={b.get('pos')}..{b.get('end')} {b['file']}"
+            )
+        if post_stmt:
+            a = post_stmt[0]
+            print(
+                f"    current  {a['elapsed_ms']:.2f} ms  "
+                f"kind={a.get('kind')} span={a.get('pos')}..{a.get('end')} {a['file']}"
+            )
     print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}
     base_rows = {r["reason"]: r for r in by_reason_rows(base, optional=True)}
