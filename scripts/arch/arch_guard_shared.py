@@ -519,9 +519,9 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # Refreshed #9852 on current main for contextual-wrapper excess-property
         # diagnostics; this records the merged live count.
         #
-        # Ratcheted down after current-main guard tests caught slack in the
-        # live direct-reference count.
-        3337,
+        # Aligned with the shared current-main guard count after the config
+        # surface landed at the merged live reference total.
+        3338,
     ),
 ]
 
