@@ -1145,6 +1145,54 @@ fn direct_source_file_type_alias_rejects_generic_alias_application_with_typeof_b
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_guarded_recursive_json_aliases() {
+    with_two_file_state(
+        "type JsonPrimitive = null | number | string | boolean;\ntype JsonObject = { [Key in string]: JsonValue };\ntype JsonArray = JsonValue[] | readonly JsonValue[];\nexport type JsonValue = JsonPrimitive | JsonObject | JsonArray;",
+        "import { JsonValue } from './target';",
+        |state, target_binder| {
+            let value_sym = target_binder
+                .file_locals
+                .get("JsonValue")
+                .expect("JsonValue");
+            let (value_ty, value_params) = state
+                .direct_source_file_type_alias_result(value_sym, Some(1), true)
+                .expect("guarded recursive JSON aliases should lower directly");
+            assert_ne!(value_ty, TypeId::UNKNOWN);
+            assert_ne!(value_ty, TypeId::ERROR);
+            assert!(value_params.is_empty(), "JsonValue should be non-generic");
+
+            let object_sym = target_binder
+                .file_locals
+                .get("JsonObject")
+                .expect("JsonObject");
+            let (object_ty, object_params) = state
+                .direct_source_file_type_alias_result(object_sym, Some(1), true)
+                .expect("mapped object aliases may guard recursive references");
+            assert_ne!(object_ty, TypeId::UNKNOWN);
+            assert_ne!(object_ty, TypeId::ERROR);
+            assert!(object_params.is_empty(), "JsonObject should be non-generic");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_renamed_guarded_recursive_object_aliases() {
+    with_two_file_state(
+        "type Leaf = string;\ntype Node = Leaf | Branch;\ntype Branch = { next: Node };\nexport type Root = Node;",
+        "import { Root } from './target';",
+        |state, target_binder| {
+            let root_sym = target_binder.file_locals.get("Root").expect("Root");
+            let (root_ty, root_params) = state
+                .direct_source_file_type_alias_result(root_sym, Some(1), true)
+                .expect("object members structurally guard recursive aliases");
+            assert_ne!(root_ty, TypeId::UNKNOWN);
+            assert_ne!(root_ty, TypeId::ERROR);
+            assert!(root_params.is_empty(), "Root should be non-generic");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_mutual_recursion_in_chain() {
     with_two_file_state(
         "type Ping = Pong | string;\nexport type Pong = Ping | number;",
