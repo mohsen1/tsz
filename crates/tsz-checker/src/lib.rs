@@ -427,6 +427,9 @@ mod architecture_contract_tests;
 #[path = "tests/architecture_contract_tests.rs"]
 mod architecture_contract_tests_src;
 #[cfg(test)]
+#[path = "tests/array_elaboration_relation_routing_arch_tests.rs"]
+mod array_elaboration_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/array_isarray_mutual_subtype_narrowing_tests.rs"]
 mod array_isarray_mutual_subtype_narrowing_tests;
 #[cfg(test)]
