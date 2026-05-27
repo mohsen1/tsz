@@ -58,6 +58,9 @@ pub struct PrintOptions {
     pub single_quote: bool,
     /// Enable source map generation
     pub source_map: bool,
+    /// Lower iteration constructs (`for-of`, spread) via the iterator protocol
+    /// helpers instead of array-index fast paths.
+    pub downlevel_iteration: bool,
     /// JSX emit mode
     pub jsx: JsxEmit,
 }
@@ -103,7 +106,7 @@ impl PrintOptions {
             module: self.module,
             remove_comments: self.remove_comments,
             single_quote: self.single_quote,
-            downlevel_iteration: false,
+            downlevel_iteration: self.downlevel_iteration,
             jsx: self.jsx,
             ..Default::default()
         }

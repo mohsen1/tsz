@@ -743,6 +743,10 @@ pub struct IRSwitchCase {
 pub struct IRCatchClause {
     pub param: Option<Cow<'static, str>>,
     pub body: Vec<IRNode>,
+    /// Emit the catch body on a single line (`catch (e) { stmt; }`) instead of
+    /// the default multi-line block. Matches `tsc`'s downlevel-iteration
+    /// `for-of` error-handling shape.
+    pub single_line: bool,
 }
 
 /// Property descriptor for Object.defineProperty

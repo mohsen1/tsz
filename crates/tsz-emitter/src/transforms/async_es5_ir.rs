@@ -75,6 +75,8 @@ mod element_access;
 mod for_await;
 #[path = "async_es5_ir_for_of.rs"]
 mod for_of;
+#[path = "async_es5_ir_generator_fn.rs"]
+mod generator_fn;
 #[path = "async_es5_ir_hoists.rs"]
 mod hoists;
 #[path = "async_es5_ir_loop_control.rs"]
@@ -392,88 +394,6 @@ impl<'a> AsyncES5Transformer<'a> {
             let mut body = hoisted_decls;
             self.emit_arguments_capture_decl(&mut body);
             body.push(awaiter_call);
-            IRNode::FunctionExpr {
-                name: None,
-                parameters: ir_params,
-                body,
-                is_expression_body: false,
-                body_source_range: None,
-            }
-        }
-    }
-
-    pub fn transform_generator_function(&mut self, func_idx: NodeIndex) -> IRNode {
-        self.state.reset();
-        self.reset_loop_exit_placeholders();
-        self.generator_mode = true;
-        self.helpers_needed.generator = true;
-        let Some(node) = self.arena.get(func_idx) else {
-            self.generator_mode = false;
-            return IRNode::Undefined;
-        };
-        let (name, params, param_binding_names, body_idx) = if node.kind
-            == syntax_kind_ext::FUNCTION_DECLARATION
-            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
-        {
-            if let Some(func) = self.arena.get_function(node) {
-                let name = if func.name.is_none() {
-                    None
-                } else {
-                    Some(crate::transforms::emit_utils::identifier_text_or_empty(
-                        self.arena, func.name,
-                    ))
-                };
-                let params = self.collect_parameters(&func.parameters);
-                let mut param_binding_names = Vec::new();
-                self.collect_parameter_binding_names(&func.parameters, &mut param_binding_names);
-                (name, params, param_binding_names, func.body)
-            } else {
-                self.generator_mode = false;
-                return IRNode::Undefined;
-            }
-        } else {
-            self.generator_mode = false;
-            return IRNode::Undefined;
-        };
-        let has_yield = self.body_contains_await(body_idx);
-        self.state.has_await = has_yield;
-        self.state.captures_arguments =
-            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
-        if self.state.captures_arguments {
-            self.state.arguments_capture_name =
-                self.fresh_arguments_capture_name(body_idx, &param_binding_names);
-        }
-        let mut generator_body = self.build_generator_body(body_idx, has_yield, &[]);
-        let hoisted_var_groups = self.extract_hoisted_var_groups(&mut generator_body);
-        let ir_params: Vec<IRParam> = params.iter().map(|p| IRParam::new(p.clone())).collect();
-        let mut body = Vec::new();
-        for group in hoisted_var_groups {
-            let declarations = group
-                .into_iter()
-                .map(|name| IRNode::VarDecl {
-                    name: name.into(),
-                    initializer: None,
-                })
-                .collect();
-            body.push(IRNode::VarDeclList(declarations));
-        }
-        if self.state.captures_arguments {
-            body.push(IRNode::VarDecl {
-                name: self.state.arguments_capture_name.clone().into(),
-                initializer: Some(Box::new(IRNode::Raw("arguments".to_string().into()))),
-            });
-        }
-        body.push(generator_body);
-        self.generator_mode = false;
-        if let Some(func_name) = name {
-            IRNode::FunctionDecl {
-                name: func_name.into(),
-                parameters: ir_params,
-                body,
-                body_source_range: None,
-                leading_comment: None,
-            }
-        } else {
             IRNode::FunctionExpr {
                 name: None,
                 parameters: ir_params,
@@ -1883,6 +1803,7 @@ impl<'a> AsyncES5Transformer<'a> {
                             IRNode::BooleanLiteral(true),
                         ))),
                     ],
+                    single_line: false,
                 }),
                 finally_block: Some(Box::new(IRNode::Block(vec![IRNode::ExpressionStatement(
                     Box::new(IRNode::CallExpr {

@@ -1189,6 +1189,7 @@ impl<'a> AstToIr<'a> {
                 Some(IRCatchClause {
                     param: param.map(Into::into),
                     body,
+                    single_line: false,
                 })
             } else {
                 None
@@ -2142,6 +2143,7 @@ impl<'a> AstToIr<'a> {
                                 IRNode::BooleanLiteral(true),
                             )),
                         ],
+                        single_line: false,
                     }),
                     finally_block: Some(Box::new(IRNode::Block(vec![IRNode::expr_stmt(
                         IRNode::CallExpr {

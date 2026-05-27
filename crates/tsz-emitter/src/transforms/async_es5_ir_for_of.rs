@@ -96,6 +96,14 @@ impl<'a> AsyncES5Transformer<'a> {
         ) {
             return true;
         }
+        if self.process_plain_downlevel_for_of_statement_in_async(
+            idx,
+            for_of,
+            &assignment_target,
+            current_statements,
+        ) {
+            return true;
+        }
         let target_object_temp = if matches!(
             assignment_target,
             ForOfAssignmentTarget::Simple {
@@ -402,6 +410,160 @@ impl<'a> AsyncES5Transformer<'a> {
 
         Self::patch_if_break_target(cases, end_placeholder, end_label);
         *current_label = end_label;
+        true
+    }
+
+    /// Lower a non-suspending `for-of` under `--downlevelIteration` inside an
+    /// async/generator body to the `tsc`-parity `__values` iterator protocol
+    /// (`try { for (it = __values(x), step = it.next(); !step.done; ...) } catch
+    /// ... finally ...`). Without this, such loops fall through to the
+    /// array-index fast path, which is only correct when `downlevelIteration`
+    /// is disabled. Temps are pushed as IR `VarDecl`s so the surrounding
+    /// generator hoists them and the `__generator` state name is chosen after
+    /// them. Returns `false` for shapes this path does not handle so the caller
+    /// falls back to the existing lowering.
+    fn process_plain_downlevel_for_of_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        for_of: &tsz_parser::parser::node::ForInOfData,
+        assignment_target: &ForOfAssignmentTarget,
+        current_statements: &mut Vec<IRNode>,
+    ) -> bool {
+        if !self.downlevel_iteration || for_of.await_modifier {
+            return false;
+        }
+        if self.contains_await_recursive(for_of.initializer)
+            || self.contains_await_recursive(for_of.expression)
+            || self.contains_await_recursive(for_of.statement)
+        {
+            return false;
+        }
+        let ForOfAssignmentTarget::Simple {
+            target: ForInAssignmentTarget::Direct(target),
+            declared_name: Some(iteration_name),
+        } = assignment_target
+        else {
+            return false;
+        };
+        if !matches!(target.as_ref(), IRNode::Identifier(name) if name.as_ref() == iteration_name) {
+            return false;
+        }
+        // Limit to identifier iterables, where the iterator temp is named after
+        // the source (`xs` -> `xs_1`/`xs_1_1`) and matches tsc. Other iterable
+        // expressions fall back to the existing lowering.
+        if self
+            .arena
+            .get(for_of.expression)
+            .is_none_or(|node| node.kind != tsz_scanner::SyntaxKind::Identifier as u16)
+        {
+            return false;
+        }
+
+        let iterator = self.for_of_iterable_temp_name_for_statement(idx, for_of.expression);
+        let step = self.fresh_reserved_name(format!("{iterator}_1"));
+        let error_record = self.fresh_reserved_name("e_1");
+        let catch_temp = self.fresh_reserved_name("e_1_1");
+        let return_temp = self.generate_hoisted_temp();
+
+        // Hoisted temps: `var <iterator>, <step>, <iteration>;` then a group
+        // break and `var <error_record>, <return_temp>;` (matches tsc).
+        for name in [&iterator, &step, iteration_name] {
+            current_statements.push(IRNode::VarDecl {
+                name: name.clone().into(),
+                initializer: None,
+            });
+        }
+        current_statements.push(IRNode::HoistedVarGroupBreak);
+        for name in [&error_record, &return_temp] {
+            current_statements.push(IRNode::VarDecl {
+                name: name.clone().into(),
+                initializer: None,
+            });
+        }
+
+        let next_call = || IRNode::call(IRNode::prop(IRNode::id(iterator.clone()), "next"), vec![]);
+
+        let mut body = vec![Self::expression_statement(IRNode::assign(
+            (**target).clone(),
+            IRNode::prop(IRNode::id(step.clone()), "value"),
+        ))];
+        if let Some(body_node) = self.arena.get(for_of.statement) {
+            if body_node.kind == syntax_kind_ext::BLOCK {
+                if let Some(block) = self.arena.get_block(body_node) {
+                    body.extend(
+                        block
+                            .statements
+                            .nodes
+                            .iter()
+                            .map(|&stmt| self.statement_to_ir(stmt)),
+                    );
+                }
+            } else {
+                body.push(self.statement_to_ir(for_of.statement));
+            }
+        }
+
+        let for_statement = IRNode::ForStatement {
+            initializer: Some(Box::new(IRNode::binary(
+                IRNode::assign(
+                    IRNode::id(iterator.clone()),
+                    IRNode::CallExpr {
+                        callee: Box::new(IRNode::RuntimeHelper("__values".into())),
+                        arguments: vec![self.expression_to_ir(for_of.expression)],
+                    },
+                ),
+                ",",
+                IRNode::assign(IRNode::id(step.clone()), next_call()),
+            ))),
+            condition: Some(Box::new(IRNode::PrefixUnaryExpr {
+                operator: "!".into(),
+                operand: Box::new(IRNode::prop(IRNode::id(step.clone()), "done")),
+            })),
+            incrementor: Some(Box::new(IRNode::assign(
+                IRNode::id(step.clone()),
+                next_call(),
+            ))),
+            body: Box::new(IRNode::Block(body)),
+        };
+
+        let catch_clause = crate::transforms::ir::IRCatchClause {
+            param: Some(catch_temp.clone().into()),
+            body: vec![Self::expression_statement(IRNode::assign(
+                IRNode::id(error_record.clone()),
+                IRNode::ObjectLiteral {
+                    properties: vec![crate::transforms::ir::IRProperty {
+                        key: crate::transforms::ir::IRPropertyKey::Identifier("error".into()),
+                        value: IRNode::id(catch_temp),
+                        kind: crate::transforms::ir::IRPropertyKind::Init,
+                    }],
+                    source_range: None,
+                    extra_indent: 0,
+                },
+            ))],
+            single_line: true,
+        };
+
+        // The finally's inner `try { if (...) return.call(it); } finally { ... }`
+        // is fixed text driven only by the temp names; emit the single-line
+        // pieces as `Raw` (the structured `Block` provides correct indentation).
+        let inner_try = IRNode::TryStatement {
+            try_block: Box::new(IRNode::Block(vec![IRNode::Raw(
+                format!(
+                    "if ({step} && !{step}.done && ({return_temp} = {iterator}.return)) {return_temp}.call({iterator});"
+                )
+                .into(),
+            )])),
+            catch_clause: None,
+            finally_block: Some(Box::new(IRNode::Raw(
+                format!("{{ if ({error_record}) throw {error_record}.error; }}").into(),
+            ))),
+        };
+
+        current_statements.push(IRNode::TryStatement {
+            try_block: Box::new(IRNode::Block(vec![for_statement])),
+            catch_clause: Some(catch_clause),
+            finally_block: Some(Box::new(IRNode::Block(vec![inner_try]))),
+        });
         true
     }
 
