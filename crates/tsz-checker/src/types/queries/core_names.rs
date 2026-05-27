@@ -1,6 +1,6 @@
 //! Name, computed-property, and display-name query helpers for `CheckerState`.
 
-use super::core::get_literal_property_name;
+use super::core::{get_literal_or_well_known_property_name, get_literal_property_name};
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -157,6 +157,18 @@ impl<'a> CheckerState<'a> {
                 {
                     self.register_well_known_symbol_name_mapping(&well_known, symbol_ref);
                 }
+                return Some(well_known);
+            }
+            // Fallback for property access expressions like `[Symbol.iterator]` where the
+            // computed expression is not a bare identifier (so `resolve_computed_symbol_property_name`
+            // returns None) but the prop type widened to plain `symbol` — e.g. when `Symbol` is a
+            // user-declared const with `{ readonly iterator: unique symbol }` type annotation.
+            // Text-based matching recovers `"[Symbol.xxx]"` without registering a well-known symbol
+            // mapping, preserving `keyof` behavior for user-declared Symbol shapes.
+            if prop_name_type == TypeId::SYMBOL
+                && let Some(well_known) =
+                    get_literal_or_well_known_property_name(self.ctx.arena, name_idx)
+            {
                 return Some(well_known);
             }
             if let Some(symbol_name) =
