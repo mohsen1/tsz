@@ -148,6 +148,31 @@ const n: number = c.iterator;
     );
 }
 
+#[test]
+fn namespace_shadowed_symbol_constructor_member_index_does_not_emit_ts7053() {
+    let diags = check_source_diagnostics(
+        r#"
+var obj = {
+    [Symbol.iterator]: 0
+};
+
+namespace M {
+    var Symbol: SymbolConstructor;
+    obj[Symbol.iterator];
+}
+"#,
+    );
+    let ts7053: Vec<_> = diags.iter().filter(|d| d.code == 7053).collect();
+    assert!(
+        ts7053.is_empty(),
+        "a namespace-local SymbolConstructor member is not the global well-known key; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
 // ── async and generator method shorthand variants ───────────────────────────
 
 #[test]
