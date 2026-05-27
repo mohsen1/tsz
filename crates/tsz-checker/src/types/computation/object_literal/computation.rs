@@ -987,6 +987,14 @@ impl<'a> CheckerState<'a> {
                         value_type = literal_type;
                     }
 
+                    if prop_name_type == TypeId::SYMBOL {
+                        self.report_contextual_symbol_index_value_mismatch(
+                            prop.name,
+                            Some(prop.initializer),
+                            value_type,
+                            contextual_type,
+                        );
+                    }
                     self.route_computed_member_value_to_index_signature(
                         prop_name_type,
                         value_type,
@@ -1738,6 +1746,14 @@ impl<'a> CheckerState<'a> {
                         );
                     }
 
+                    if prop_name_type == TypeId::SYMBOL {
+                        self.report_contextual_symbol_index_value_mismatch(
+                            method.name,
+                            None,
+                            method_type,
+                            contextual_type,
+                        );
+                    }
                     self.route_computed_member_value_to_index_signature(
                         prop_name_type,
                         method_type,

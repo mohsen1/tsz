@@ -59,7 +59,7 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    fn resolve_index_signature_key_type_via_env(&self, key_type: TypeId) -> TypeId {
+    pub(crate) fn resolve_index_signature_key_type_via_env(&self, key_type: TypeId) -> TypeId {
         let mut current = key_type;
         for _ in 0..8 {
             let Some(def_id) =
