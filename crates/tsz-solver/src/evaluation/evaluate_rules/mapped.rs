@@ -753,6 +753,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
+
         // For homomorphic mapped types, restore source declaration order.
         // The key extraction and dedup may have reordered properties.
         if !source_decl_order.is_empty() {
@@ -973,6 +975,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 });
             }
         }
+
+        crate::type_queries::merge_colliding_mapped_properties(self.interner(), &mut properties);
 
         Some(self.interner().object(properties))
     }
