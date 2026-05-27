@@ -967,10 +967,9 @@ impl<'a> CheckerState<'a> {
                     let normalized_rest_expected =
                         self.rest_argument_element_type_with_env(expected);
                     if normalized_rest_expected != expected
-                        && self.diagnostic_relation_boolean_guard_with_env(
-                            actual,
-                            normalized_rest_expected,
-                        )
+                        && self
+                            .assign_relation_outcome_with_env(actual, normalized_rest_expected)
+                            .related
                     {
                         return if fallback_return != TypeId::ERROR {
                             fallback_return

@@ -97,3 +97,59 @@ fn nominal_lib_object_callback_returns_use_env_relation_outcome_boundary() {
         "nominal lib object callback return diagnostics should not regress to raw env boolean guards"
     );
 }
+
+#[test]
+fn call_result_spread_rest_recovery_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call_result.rs")
+        .expect("failed to read call_result.rs");
+    let helper_start = source
+        .find("let mismatch_is_spread_arg =")
+        .expect("missing spread mismatch recovery block");
+    let helper_end = source[helper_start..]
+        .find("let aggregate_literal_actual =")
+        .map(|offset| helper_start + offset)
+        .expect("missing aggregate literal recovery block");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "spread rest recovery should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "spread rest recovery should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard_with_env("),
+        "spread rest recovery should not regress to raw env boolean guards"
+    );
+}
+
+#[test]
+fn call_finalize_aggregate_rest_recovery_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call_finalize.rs")
+        .expect("failed to read call_finalize.rs");
+    let helper_start = source
+        .find("let aggregate_rest_mismatch =")
+        .expect("missing aggregate rest mismatch block");
+    let helper_end = source[helper_start..]
+        .find("if aggregate_assignable")
+        .map(|offset| helper_start + offset)
+        .expect("missing aggregate assignability branch");
+    let helper = &source[helper_start..helper_end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        2,
+        "aggregate rest recovery should route both env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.matches(".related").count() >= 2,
+        "aggregate rest recovery should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard_with_env("),
+        "aggregate rest recovery should not regress to raw env boolean guards"
+    );
+}

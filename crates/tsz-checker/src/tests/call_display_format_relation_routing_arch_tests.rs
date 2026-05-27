@@ -52,3 +52,32 @@ fn generator_never_yield_display_uses_env_relation_outcome_boundary() {
         "generator never-yield display fallback should not regress to raw env boolean guards"
     );
 }
+
+#[test]
+fn variadic_tuple_display_uses_env_relation_outcome_boundary() {
+    let source =
+        fs::read_to_string("src/error_reporter/call_errors/display_formatting_variadic.rs")
+            .expect("failed to read display_formatting_variadic.rs");
+    let start = source
+        .find("fn constrained_variadic_tuple_parameter_display_structured")
+        .expect("missing variadic tuple display helper");
+    let end = source[start..]
+        .find("fn constrained_variadic_tuple_parameter_display_from_surface")
+        .map(|offset| start + offset)
+        .expect("missing next variadic tuple display helper");
+    let helper = &source[start..end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "variadic tuple display should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "variadic tuple display should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard_with_env("),
+        "variadic tuple display should not regress to raw env boolean guards"
+    );
+}
