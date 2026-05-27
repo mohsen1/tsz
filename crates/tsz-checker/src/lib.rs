@@ -685,6 +685,9 @@ mod mapped_indexed_access_diagnostic_tests;
 #[path = "tests/mapped_infer_with_substitution_tests.rs"]
 mod mapped_infer_with_substitution_tests;
 #[cfg(test)]
+#[path = "tests/mapped_type_key_collision_union_tests.rs"]
+mod mapped_type_key_collision_union_tests;
+#[cfg(test)]
 #[path = "../tests/member_access_architecture_boundary_tests.rs"]
 mod member_access_architecture_boundary_tests;
 #[cfg(test)]

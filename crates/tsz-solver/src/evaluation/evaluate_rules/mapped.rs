@@ -753,6 +753,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
         }
 
+        // Merge colliding remapped keys: when multiple source keys remap to the
+        // same literal key via an `as` clause (e.g. `{ [K in keyof T as "all"]: T[K] }`),
+        // union their value types instead of silently keeping the last one.
+        if properties.len() > 1 {
+            let mut seen: FxHashMap<Atom, usize> = FxHashMap::default();
+            let mut merged: Vec<PropertyInfo> = Vec::with_capacity(properties.len());
+            for prop in properties {
+                if let Some(&idx) = seen.get(&prop.name) {
+                    merged[idx].type_id = self.interner().union2(merged[idx].type_id, prop.type_id);
+                    merged[idx].write_type = self
+                        .interner()
+                        .union2(merged[idx].write_type, prop.write_type);
+                } else {
+                    seen.insert(prop.name, merged.len());
+                    merged.push(prop);
+                }
+            }
+            properties = merged;
+        }
+
         // For homomorphic mapped types, restore source declaration order.
         // The key extraction and dedup may have reordered properties.
         if !source_decl_order.is_empty() {
