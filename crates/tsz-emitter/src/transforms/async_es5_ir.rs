@@ -5249,7 +5249,7 @@ impl<'a> AsyncES5Transformer<'a> {
         *current_label = end_label;
     }
 
-    fn async_statements_end_control_flow(statements: &[IRNode]) -> bool {
+    const fn async_statements_end_control_flow(statements: &[IRNode]) -> bool {
         matches!(
             statements.last(),
             Some(
@@ -5381,7 +5381,9 @@ impl<'a> AsyncES5Transformer<'a> {
                         );
                     }
                 }
-                IRNode::WithStatement { body, .. } => {
+                IRNode::WithStatement { body, .. }
+                | IRNode::ForStatement { body, .. }
+                | IRNode::ForInOfStatement { body, .. } => {
                     Self::extract_and_remove_var_decl_groups_from_node(
                         body,
                         hoisted,
@@ -5403,13 +5405,6 @@ impl<'a> AsyncES5Transformer<'a> {
                             current_group,
                         );
                     }
-                }
-                IRNode::ForStatement { body, .. } | IRNode::ForInOfStatement { body, .. } => {
-                    Self::extract_and_remove_var_decl_groups_from_node(
-                        body,
-                        hoisted,
-                        current_group,
-                    );
                 }
                 _ => {}
             }
@@ -5448,7 +5443,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     );
                 }
             }
-            IRNode::WithStatement { body, .. } => {
+            IRNode::WithStatement { body, .. }
+            | IRNode::ForStatement { body, .. }
+            | IRNode::ForInOfStatement { body, .. } => {
                 Self::extract_and_remove_var_decl_groups_from_node(body, hoisted, current_group);
             }
             IRNode::SwitchStatement { cases, .. } => {
@@ -5459,9 +5456,6 @@ impl<'a> AsyncES5Transformer<'a> {
                         current_group,
                     );
                 }
-            }
-            IRNode::ForStatement { body, .. } | IRNode::ForInOfStatement { body, .. } => {
-                Self::extract_and_remove_var_decl_groups_from_node(body, hoisted, current_group);
             }
             _ => {}
         }

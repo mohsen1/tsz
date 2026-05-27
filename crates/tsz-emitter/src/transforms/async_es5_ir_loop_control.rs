@@ -531,7 +531,7 @@ impl<'a> AsyncES5Transformer<'a> {
             || kind == syntax_kind_ext::LABELED_STATEMENT
     }
 
-    pub(super) fn loop_statements_end_control_flow(statements: &[IRNode]) -> bool {
+    pub(super) const fn loop_statements_end_control_flow(statements: &[IRNode]) -> bool {
         matches!(
             statements.last(),
             Some(

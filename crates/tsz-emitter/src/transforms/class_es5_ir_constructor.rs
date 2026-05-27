@@ -1049,17 +1049,13 @@ impl<'a> ES5ClassTransformer<'a> {
     }
 
     fn root_super_call_from_statement(&self, stmt_idx: NodeIndex) -> Option<NodeIndex> {
-        let Some(stmt_node) = self.arena.get(stmt_idx) else {
-            return None;
-        };
+        let stmt_node = self.arena.get(stmt_idx)?;
 
         if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
             return None;
         }
 
-        let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
-            return None;
-        };
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
         self.root_super_call_expression(expr_stmt.expression)
     }
 
@@ -1067,9 +1063,7 @@ impl<'a> ES5ClassTransformer<'a> {
         let mut current = expr_idx;
         while let Some(node) = self.arena.get(current) {
             if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
-                let Some(paren) = self.arena.get_parenthesized(node) else {
-                    return None;
-                };
+                let paren = self.arena.get_parenthesized(node)?;
                 current = paren.expression;
                 continue;
             }

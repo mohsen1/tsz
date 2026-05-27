@@ -1523,7 +1523,7 @@ impl ParserState {
         }
     }
 
-    pub(crate) fn is_statement_tail_reserved_parameter_keyword(&self) -> bool {
+    pub(crate) const fn is_statement_tail_reserved_parameter_keyword(&self) -> bool {
         matches!(
             self.token(),
             SyntaxKind::EnumKeyword

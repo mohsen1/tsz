@@ -137,7 +137,7 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.dynamic_import_promise_counter.set(next_id);
     }
 
-    pub fn dynamic_import_promise_counter(&self) -> u32 {
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
         self.transformer.dynamic_import_promise_counter.get()
     }
 

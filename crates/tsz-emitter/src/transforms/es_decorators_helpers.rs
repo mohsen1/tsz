@@ -169,7 +169,7 @@ fn find_member_body_start(text: &str) -> Option<usize> {
     None
 }
 
-fn starts_type_literal(prev_sig: char) -> bool {
+const fn starts_type_literal(prev_sig: char) -> bool {
     matches!(
         prev_sig,
         '\0' | ':' | '|' | '&' | '<' | ',' | '(' | '[' | '=' | '?' | '{'

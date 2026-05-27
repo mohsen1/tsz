@@ -91,6 +91,13 @@ struct AutoAccessorClassCtx<'a> {
     class_alias: &'a str,
 }
 
+struct AutoAccessorMemberEmitCtx<'a> {
+    previous_extra_initializers: Option<&'a str>,
+    injected_assignments: Option<&'a [String]>,
+    class: AutoAccessorClassCtx<'a>,
+    indent: &'a str,
+}
+
 struct CtorMembersCtx<'a> {
     parameter_properties: &'a [ParameterPropertyInfo],
     field_infos: &'a [DecoratedFieldInfo],
@@ -814,18 +821,8 @@ impl<'a> TC39DecoratorEmitter<'a> {
                     out.push_str(&format!(
                         "{i2}static {{ {set_fn}({class_this_var}, {fn_name}); }}\n"
                     ));
-                } else if self.expression_mode
-                    && self.function_name.is_none()
-                    && (!class_decorator_static_private_methods.is_empty()
-                        || !class_decorator_auto_accessor_infos.is_empty()
-                        || !class_decorator_static_private_fields.is_empty())
-                {
-                    let set_fn = self.helper("__setFunctionName");
-                    out.push_str(&format!(
-                        "{i2}static {{ {set_fn}(this, \"{class_name}\"); }}\n"
-                    ));
-                } else if !self.expression_mode
-                    && !class_name.is_empty()
+                } else if ((self.expression_mode && self.function_name.is_none())
+                    || (!self.expression_mode && !class_name.is_empty()))
                     && (class_name_was_empty
                         || !class_decorator_static_private_methods.is_empty()
                         || !class_decorator_auto_accessor_infos.is_empty()
@@ -1534,10 +1531,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         if let Some(member_idx) = instance_auto_accessor_storage_sink
             && !instance_auto_accessor_storage_assignments.is_empty()
         {
-            injected_assignments.insert(
-                member_idx,
-                instance_auto_accessor_storage_assignments.clone(),
-            );
+            injected_assignments.insert(member_idx, instance_auto_accessor_storage_assignments);
         }
 
         let decorated_member_indices: std::collections::HashMap<NodeIndex, usize> =
@@ -1862,13 +1856,17 @@ impl<'a> TC39DecoratorEmitter<'a> {
                         member,
                         info,
                         var_info,
-                        previous_extra_initializers,
-                        injected_assignments.get(&member_idx).map(Vec::as_slice),
-                        &AutoAccessorClassCtx {
-                            class_name,
-                            class_alias: _class_alias,
+                        &AutoAccessorMemberEmitCtx {
+                            previous_extra_initializers,
+                            injected_assignments: injected_assignments
+                                .get(&member_idx)
+                                .map(Vec::as_slice),
+                            class: AutoAccessorClassCtx {
+                                class_name,
+                                class_alias: _class_alias,
+                            },
+                            indent,
                         },
-                        indent,
                         out,
                     );
                 }
@@ -2911,23 +2909,26 @@ impl<'a> TC39DecoratorEmitter<'a> {
         member: &DecoratedMember,
         info: &DecoratedAutoAccessorInfo,
         var_info: &MemberVarInfo,
-        previous_extra_initializers: Option<&str>,
-        injected_assignments: Option<&[String]>,
-        class_ctx: &AutoAccessorClassCtx<'_>,
-        indent: &str,
+        ctx: &AutoAccessorMemberEmitCtx<'_>,
         out: &mut String,
     ) {
+        let AutoAccessorMemberEmitCtx {
+            previous_extra_initializers,
+            injected_assignments,
+            class,
+            indent,
+        } = ctx;
         let AutoAccessorClassCtx {
             class_name,
             class_alias,
-        } = class_ctx;
+        } = class;
         let run_init = self.helper("__runInitializers");
         let init_var = var_info
             .initializers_var
             .as_deref()
             .unwrap_or("_initializers");
         let init_arg = self.auto_accessor_initializer_arg(info);
-        let getter_name = self.auto_accessor_member_name(member, info, injected_assignments);
+        let getter_name = self.auto_accessor_member_name(member, info, *injected_assignments);
         let setter_name = self.auto_accessor_member_name(member, info, None);
         let static_prefix = if member.is_static { "static " } else { "" };
 
@@ -4413,9 +4414,9 @@ impl<'a> TC39DecoratorEmitter<'a> {
             class_private_ref,
             class_name,
             computed_key_vars,
-            class_decorator_static_private_methods,
+            class_decorator_static_private_methods: _,
             class_decorator_auto_accessor_infos,
-            class_decorator_static_private_fields,
+            class_decorator_static_private_fields: _,
         } = member_ctx;
         let EsDecorateVars {
             instance_extra_initializers_var,
@@ -4431,16 +4432,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         };
 
         let name_str = self.member_name_for_context(member, computed_key_vars, *member_index);
-        let access_str = self.member_access_for_context(
-            member,
-            computed_key_vars,
-            *member_index,
-            class_private_ref,
-            class_name,
-            class_decorator_static_private_methods,
-            class_decorator_auto_accessor_infos,
-            class_decorator_static_private_fields,
-        );
+        let access_str = self.member_access_for_context(member, member_ctx);
 
         let is_field_like = matches!(member.kind, MemberKind::Field | MemberKind::Accessor);
 
@@ -4796,14 +4788,18 @@ impl<'a> TC39DecoratorEmitter<'a> {
     fn member_access_for_context(
         &self,
         member: &DecoratedMember,
-        computed_key_vars: &[(usize, String)],
-        member_index: usize,
-        class_alias: &str,
-        class_name: &str,
-        class_decorator_static_private_methods: &[ClassDecoratorStaticPrivateMethodInfo],
-        class_decorator_auto_accessor_infos: &[ClassDecoratorAutoAccessorInfo],
-        class_decorator_static_private_fields: &[ClassDecoratorStaticPrivateFieldInfo],
+        member_ctx: &EsDecorateMemberCtx<'_>,
     ) -> String {
+        let EsDecorateMemberCtx {
+            member_index,
+            class_alias: _,
+            class_private_ref: class_alias,
+            class_name,
+            computed_key_vars,
+            class_decorator_static_private_methods,
+            class_decorator_auto_accessor_infos,
+            class_decorator_static_private_fields,
+        } = member_ctx;
         if member.is_static && member.is_private {
             let get_helper = self.helper("__classPrivateFieldGet");
             let set_helper = self.helper("__classPrivateFieldSet");
@@ -4920,7 +4916,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             MemberName::Private(name) => name.clone(),
             MemberName::Computed(_) => computed_key_vars
                 .iter()
-                .find(|(i, _)| *i == member_index)
+                .find(|(i, _)| *i == *member_index)
                 .map(|(_, var)| var.clone())
                 .unwrap_or_else(|| "undefined".to_string()),
         };
@@ -5380,7 +5376,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
         hygienic_temp_name(&format!("_{temp_base}_{private_name}"), class_span_text)
     }
 
-    fn needs_es2015_private_descriptor(&self, member: &DecoratedMember) -> bool {
+    const fn needs_es2015_private_descriptor(&self, member: &DecoratedMember) -> bool {
         !self.use_static_blocks
             && member.is_private
             && matches!(
@@ -5389,7 +5385,7 @@ impl<'a> TC39DecoratorEmitter<'a> {
             )
     }
 
-    fn needs_es2015_instance_private_brand(&self, member: &DecoratedMember) -> bool {
+    const fn needs_es2015_instance_private_brand(&self, member: &DecoratedMember) -> bool {
         self.needs_es2015_private_descriptor(member) && !member.is_static
     }
 

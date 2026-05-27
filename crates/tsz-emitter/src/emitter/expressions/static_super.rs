@@ -279,7 +279,11 @@ impl<'a> Printer<'a> {
         Some(self.member_from_access(&access, is_element))
     }
 
-    fn member_from_access(&self, access: &AccessExprData, is_element: bool) -> StaticSuperMember {
+    const fn member_from_access(
+        &self,
+        access: &AccessExprData,
+        is_element: bool,
+    ) -> StaticSuperMember {
         if is_element {
             StaticSuperMember::Element(access.name_or_argument)
         } else {
