@@ -99,6 +99,36 @@ steps:
       cp bench-prep.tar bench-prep.env "${literal_scoped_dir}/"
       cp bench-prep.tar bench-prep.env bench-prep/latest/
 
+      gcs_access_token="$(
+        curl -fsSL \
+          -H 'Metadata-Flavor: Google' \
+          'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token' |
+          jq -r '.access_token'
+      )"
+      if [[ -z "${gcs_access_token}" || "${gcs_access_token}" == "null" ]]; then
+        echo "Cloud Build metadata server did not return a GCS access token." >&2
+        exit 1
+      fi
+
+      upload_gcs_object() {
+        local source_file="$1"
+        local object_name="$2"
+        local encoded_object
+        encoded_object="$(node -e 'process.stdout.write(encodeURIComponent(process.argv[1]))' "${object_name}")"
+        curl --retry 3 --retry-delay 2 -fsS \
+          -X POST \
+          -H "Authorization: Bearer ${gcs_access_token}" \
+          -H "Content-Type: application/octet-stream" \
+          --data-binary "@${source_file}" \
+          "https://storage.googleapis.com/upload/storage/v1/b/tsz-ci_cloudbuild/o?uploadType=media&name=${encoded_object}" \
+          >/dev/null
+      }
+
+      upload_gcs_object bench-prep.tar "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.tar"
+      upload_gcs_object bench-prep.env "bench-prep/${_BENCH_TARGET_SHA}/bench-prep.env"
+      upload_gcs_object bench-prep.tar "bench-prep/latest/bench-prep.tar"
+      upload_gcs_object bench-prep.env "bench-prep/latest/bench-prep.env"
+
 artifacts:
   objects:
     location: gs://tsz-ci_cloudbuild/

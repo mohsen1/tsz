@@ -1024,6 +1024,18 @@ impl<'a> ES5ClassTransformer<'a> {
         idx: NodeIndex,
         class_alias: &str,
     ) -> IRNode {
+        if self
+            .arena
+            .get(idx)
+            .and_then(|node| self.arena.get_function(node))
+            .is_some_and(|function| function.is_async && function.equals_greater_than_token)
+        {
+            return IRNode::ASTRefWithGeneratorThis {
+                node: idx,
+                generator_this: class_alias.to_string().into(),
+            };
+        }
+
         let converter = self
             .make_converter()
             .with_static(true)
@@ -1329,8 +1341,11 @@ impl<'a> ES5ClassTransformer<'a> {
             stmts.insert(0, IRNode::VarDeclList(var_decls));
         }
 
-        // If we have a class_alias, prepend the alias declaration: `var <alias> = this;`
-        if let Some(alias) = class_alias {
+        // Non-static alias contexts capture the current receiver. Static blocks
+        // already use the class alias from the surrounding class IIFE.
+        if let Some(alias) = class_alias
+            && !is_static
+        {
             stmts.insert(
                 0,
                 IRNode::VarDecl {
