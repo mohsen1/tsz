@@ -1,5 +1,6 @@
 use super::super::super::Printer;
 use super::AutoAccessorEmitOptions;
+use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::Node;
 use tsz_parser::parser::syntax_kind_ext;
@@ -64,6 +65,13 @@ impl<'a> Printer<'a> {
                     }
                     return self.identifier_binding_name(param.name);
                 }
+                syntax_kind_ext::PROPERTY_DECLARATION => {
+                    let property = self.arena.get_property_decl(parent_node)?;
+                    if property.initializer != current {
+                        return None;
+                    }
+                    return self.property_declaration_binding_name(property.name);
+                }
                 syntax_kind_ext::BINARY_EXPRESSION => {
                     let binary = self.arena.get_binary_expr(parent_node)?;
                     if binary.right != current
@@ -88,6 +96,15 @@ impl<'a> Printer<'a> {
 
         let name = self.get_identifier_text_idx(name_idx);
         (!name.is_empty()).then_some(name)
+    }
+
+    fn property_declaration_binding_name(&self, name_idx: NodeIndex) -> Option<String> {
+        let name_node = self.arena.get(name_idx)?;
+        if name_node.kind == SyntaxKind::PrivateIdentifier as u16 {
+            get_private_field_name(self.arena, name_idx)
+        } else {
+            self.get_property_key_text(name_idx)
+        }
     }
 
     pub(in crate::emitter) fn emit_class_expr_set_function_name_comma_item(

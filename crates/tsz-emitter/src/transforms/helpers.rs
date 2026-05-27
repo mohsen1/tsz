@@ -748,6 +748,8 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(GENERATOR_HELPER);
         output.push('\n');
     }
+    let mut emitted_unprioritized = Vec::new();
+    emit_class_private_helpers(helpers, &mut output, &mut emitted_unprioritized);
     if helpers.set_function_name {
         output.push_str(SET_FUNCTION_NAME_HELPER);
         output.push('\n');
@@ -760,27 +762,55 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(DISPOSE_RESOURCES_HELPER);
         output.push('\n');
     }
-    emit_unprioritized_helpers(helpers, &mut output);
+    emit_unprioritized_helpers(helpers, &mut output, &mut emitted_unprioritized);
 
     output
 }
 
-fn emit_unprioritized_helpers(helpers: &HelpersNeeded, output: &mut String) {
-    let mut emitted = Vec::new();
-
+fn emit_unprioritized_helpers(
+    helpers: &HelpersNeeded,
+    output: &mut String,
+    emitted: &mut Vec<HelperEmitOrder>,
+) {
     if helpers.unprioritized_order.is_empty() {
         for helper in fallback_unprioritized_order(helpers) {
-            emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+            emit_unprioritized_helper(helper, helpers, output, emitted);
         }
         return;
     }
 
     for &helper in &helpers.unprioritized_order {
-        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+        emit_unprioritized_helper(helper, helpers, output, emitted);
     }
     for helper in fallback_unprioritized_order(helpers) {
-        emit_unprioritized_helper(helper, helpers, output, &mut emitted);
+        emit_unprioritized_helper(helper, helpers, output, emitted);
     }
+}
+
+fn emit_class_private_helpers(
+    helpers: &HelpersNeeded,
+    output: &mut String,
+    emitted: &mut Vec<HelperEmitOrder>,
+) {
+    let (first, second) = if helpers.class_private_field_set_before_get {
+        (
+            HelperEmitOrder::ClassPrivateFieldSet,
+            HelperEmitOrder::ClassPrivateFieldGet,
+        )
+    } else {
+        (
+            HelperEmitOrder::ClassPrivateFieldGet,
+            HelperEmitOrder::ClassPrivateFieldSet,
+        )
+    };
+    emit_unprioritized_helper(first, helpers, output, emitted);
+    emit_unprioritized_helper(second, helpers, output, emitted);
+    emit_unprioritized_helper(
+        HelperEmitOrder::ClassPrivateFieldIn,
+        helpers,
+        output,
+        emitted,
+    );
 }
 
 const fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
@@ -1214,6 +1244,24 @@ mod tests {
         assert!(i_generator < i_set_name);
         assert!(i_set_name < i_await);
         assert!(i_await < i_async_generator);
+    }
+
+    #[test]
+    fn emit_helpers_order_class_private_before_set_function_name() {
+        let mut helpers = HelpersNeeded {
+            set_function_name: true,
+            await_helper: true,
+            ..HelpersNeeded::default()
+        };
+        helpers.mark_class_private_field_get();
+
+        let output = emit_helpers(&helpers);
+        let i_get = find_helper(&output, "__classPrivateFieldGet");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+        let i_await = find_helper(&output, "__await");
+
+        assert!(i_get < i_set_name);
+        assert!(i_set_name < i_await);
     }
 
     #[test]
