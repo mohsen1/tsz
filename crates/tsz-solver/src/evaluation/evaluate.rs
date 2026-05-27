@@ -1090,7 +1090,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             crate::type_queries::classify_body_for_arg_preservation(self.interner, body);
         let body_is_conditional =
             matches!(self.interner.lookup(body), Some(TypeData::Conditional(_)));
-        if body_is_conditional {
+        if matches!(
+            arg_preservation,
+            crate::type_queries::BodyArgPreservation::ConditionalApplicationInfer
+        ) {
+            std::borrow::Cow::Owned(
+                args.iter()
+                    .map(|&arg| self.prepare_conditional_application_infer_arg(arg))
+                    .collect(),
+            )
+        } else if body_is_conditional {
             std::borrow::Cow::Owned(
                 args.iter()
                     .map(|&arg| {
@@ -1110,6 +1119,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             std::borrow::Cow::Owned(self.expand_type_args_preserve_applications(args))
         } else {
             self.expand_type_args(args)
+        }
+    }
+
+    fn prepare_conditional_application_infer_arg(&mut self, arg: TypeId) -> TypeId {
+        if crate::visitor::contains_type_parameters(self.interner, arg) {
+            return arg;
+        }
+        if let Some(reduced) = self.reduce_alias_body_to_application_form(arg)
+            && matches!(
+                self.interner.lookup(reduced),
+                Some(TypeData::Application(_))
+            )
+        {
+            return reduced;
+        }
+        if matches!(self.interner.lookup(arg), Some(TypeData::Application(_))) {
+            arg
+        } else {
+            self.try_expand_type_arg(arg)
         }
     }
 
