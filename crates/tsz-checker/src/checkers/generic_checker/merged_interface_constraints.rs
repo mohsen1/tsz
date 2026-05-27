@@ -78,8 +78,10 @@ impl<'a> CheckerState<'a> {
                 return true;
             }
             let candidate_evaluated = self.evaluate_type_for_assignability(candidate);
-            self.diagnostic_relation_boolean_guard(candidate, required)
-                || self.diagnostic_relation_boolean_guard(candidate_evaluated, required)
+            self.assign_relation_outcome(candidate, required).related
+                || self
+                    .assign_relation_outcome(candidate_evaluated, required)
+                    .related
                 || self.satisfies_array_like_constraint(candidate_evaluated, required)
         })
     }

@@ -50,17 +50,21 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         )
         self.assertEqual(failures, ["a.rs: 2 output-surgery call(s), allowlist max is 1"])
 
-    def test_failure_summary_counts_failure_classes(self):
+    def test_failure_summary_preserves_call_counts(self):
         summary = self.audit.summarize_failures(
             [
-                "a.rs: 1 unallowlisted output-surgery call(s)",
+                "a.rs: 3 unallowlisted output-surgery call(s)",
                 "b.rs: 3 output-surgery call(s), allowlist max is 2",
                 "c.rs: allowlist entry is stale; no matching calls remain",
             ]
         )
-        self.assertEqual(summary.unallowlisted, 1)
+        self.assertEqual(summary.unallowlisted, 3)
+        self.assertEqual(summary.unallowlisted_files, 1)
         self.assertEqual(summary.over_allowlist, 1)
+        self.assertEqual(summary.over_allowlist_files, 1)
+        self.assertEqual(summary.over_allowlist_excess_calls, 1)
         self.assertEqual(summary.stale_allowlist, 1)
+        self.assertEqual(summary.stale_allowlist_files, 1)
 
     def test_json_report_includes_summary_and_categories(self):
         findings = [
@@ -79,6 +83,25 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
+        self.assertEqual(
+            report["categories"],
+            [
+                {
+                    "category": "UNALLOWLISTED",
+                    "count": 1,
+                    "max_count": None,
+                    "files": 1,
+                    "statuses": {"unallowlisted": 1},
+                },
+                {
+                    "category": "semantic-output-surgery",
+                    "count": 1,
+                    "max_count": 2,
+                    "files": 2,
+                    "statuses": {"allowlisted": 1, "stale_allowlist": 1},
+                },
+            ],
+        )
         self.assertEqual(report["findings"][0]["category"], "UNALLOWLISTED")
         self.assertEqual(report["findings"][1]["category"], "semantic-output-surgery")
         self.assertEqual(

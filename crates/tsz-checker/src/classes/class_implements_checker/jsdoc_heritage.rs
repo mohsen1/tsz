@@ -246,7 +246,10 @@ impl<'a> CheckerState<'a> {
             };
             let arg_eval = self.evaluate_type_for_assignability(arg_prop.type_id);
             let constraint_eval = self.evaluate_type_for_assignability(constraint_prop.type_id);
-            if !self.diagnostic_relation_boolean_guard(arg_eval, constraint_eval) {
+            if !self
+                .assign_relation_outcome(arg_eval, constraint_eval)
+                .related
+            {
                 return true;
             }
         }

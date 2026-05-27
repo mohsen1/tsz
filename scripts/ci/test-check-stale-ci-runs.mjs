@@ -203,6 +203,26 @@ assert.match(report, /no recent update/);
   assert.match(cancelReport, /failed: HTTP 500: Failed to cancel workflow run/);
 }
 
+{
+  const findings = staleRunFindings([run()], { now: NOW, staleMinutes: 45 });
+  const cancelResults = cancelStaleRuns(findings, "owner/repo", () => ({
+    status: 1,
+    stdout: "",
+    stderr: "gh: Cannot cancel a workflow re-run that has not yet queued. (HTTP 409)",
+  }));
+  assert.deepEqual(cancelResults, [{
+    id: 12345,
+    status: "skipped",
+    detail: "workflow re-run has not yet queued",
+  }]);
+
+  const cancelReport = formatReport(findings, {
+    cancelResults,
+    staleMinutes: 45,
+  });
+  assert.match(cancelReport, /skipped: workflow re-run has not yet queued/);
+}
+
 const advisory = runFixture([run()], ["--stale-minutes", "45"]);
 assert.equal(advisory.status, 0, advisory.stderr);
 assert.match(advisory.stdout, /Found 1 queued or in-progress workflow run/);
@@ -222,13 +242,12 @@ assert.match(clean.stdout, /No queued or in-progress workflow runs are stale/);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-cancel-"));
   try {
     const fakeGh = path.join(dir, "gh");
-    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
-const endpoint = process.argv.find((arg) => arg.includes("/actions/runs/"));
-if (endpoint) {
-  process.exit(0);
-}
-console.error("unexpected gh args", process.argv.slice(2).join(" "));
-process.exit(1);
+    fs.writeFileSync(fakeGh, `#!/bin/sh
+case "$*" in
+  *"/actions/runs/"*) exit 0 ;;
+esac
+printf 'unexpected gh args %s\\n' "$*" >&2
+exit 1
 `);
     fs.chmodSync(fakeGh, 0o755);
 
@@ -258,9 +277,9 @@ process.exit(1);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-cancel-fail-"));
   try {
     const fakeGh = path.join(dir, "gh");
-    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
-console.error("HTTP 500: Failed to cancel workflow run");
-process.exit(1);
+    fs.writeFileSync(fakeGh, `#!/bin/sh
+printf '%s\\n' 'HTTP 500: Failed to cancel workflow run' >&2
+exit 1
 `);
     fs.chmodSync(fakeGh, 0o755);
 
@@ -287,24 +306,59 @@ process.exit(1);
 }
 
 {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-cancel-skip-"));
+  try {
+    const fakeGh = path.join(dir, "gh");
+    fs.writeFileSync(fakeGh, `#!/bin/sh
+printf '%s\\n' 'gh: Cannot cancel a workflow re-run that has not yet queued. (HTTP 409)' >&2
+exit 1
+`);
+    fs.chmodSync(fakeGh, 0o755);
+
+    const result = withFixture([run()], (fixture) => spawnSync(process.execPath, [
+      SCRIPT,
+      "--fixture",
+      fixture,
+      "--repository",
+      "owner/repo",
+      "--now",
+      NOW,
+      "--cancel-stale",
+    ], {
+      cwd: ROOT,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${dir}${path.delimiter}${process.env.PATH || ""}` },
+    }));
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /skipped: workflow re-run has not yet queued/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+{
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "tsz-stale-ci-runs-gh-"));
   try {
     const fakeGh = path.join(dir, "gh");
-    fs.writeFileSync(fakeGh, `#!/usr/bin/env node
-const endpoint = process.argv.find((arg) => arg.includes("/actions/runs?")) || "";
-const status = /[?&]status=([^&]+)/.exec(endpoint)?.[1] || "in_progress";
-const run = {
-  id: status === "queued" ? 22222 : 11111,
-  status,
-  display_title: "large queued payload",
-  head_branch: "codex/large-payload",
-  html_url: "https://github.example/runs/large",
-  created_at: "2026-05-20T11:00:00Z",
-  run_started_at: status === "queued" ? null : "2026-05-20T11:01:00Z",
-  updated_at: "2026-05-20T11:05:00Z",
-  padding: "x".repeat(2 * 1024 * 1024),
-};
-console.log(JSON.stringify({ workflow_runs: [run] }));
+    fs.writeFileSync(fakeGh, `#!/bin/sh
+case "$*" in
+  *"status=queued"*)
+    id=22222
+    status=queued
+    started=null
+    ;;
+  *)
+    id=11111
+    status=in_progress
+    started='"2026-05-20T11:01:00Z"'
+    ;;
+esac
+padding=$(python3 - <<'PY'
+print("x" * (2 * 1024 * 1024))
+PY
+)
+printf '{"workflow_runs":[{"id":%s,"status":"%s","display_title":"large queued payload","head_branch":"codex/large-payload","html_url":"https://github.example/runs/large","created_at":"2026-05-20T11:00:00Z","run_started_at":%s,"updated_at":"2026-05-20T11:05:00Z","padding":"%s"}]}\\n' "$id" "$status" "$started" "$padding"
 `);
     fs.chmodSync(fakeGh, 0o755);
 
