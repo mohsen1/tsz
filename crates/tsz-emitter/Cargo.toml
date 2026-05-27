@@ -31,6 +31,10 @@ name = "comment_tests"
 path = "tests/comment_tests.rs"
 
 [[test]]
+name = "async_method_super_write_tests"
+path = "tests/async_method_super_write_tests.rs"
+
+[[test]]
 name = "variable_declaration_emit_tests"
 path = "tests/variable_declaration_emit_tests.rs"
 
