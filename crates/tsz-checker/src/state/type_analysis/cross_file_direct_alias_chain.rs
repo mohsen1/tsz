@@ -174,10 +174,7 @@ impl<'a> CheckerState<'a> {
             && type_param_names.iter().any(|name| name == removed_name)
     }
 
-    fn source_file_bare_type_param_name<'b>(
-        arena: &'b NodeArena,
-        node_idx: NodeIndex,
-    ) -> Option<&'b str> {
+    fn source_file_bare_type_param_name(arena: &NodeArena, node_idx: NodeIndex) -> Option<&str> {
         let node = arena.get(node_idx)?;
         if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE {
             let wrapped = arena.get_wrapped_type(node)?;
