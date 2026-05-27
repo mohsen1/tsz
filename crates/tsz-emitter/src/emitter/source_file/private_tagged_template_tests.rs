@@ -72,3 +72,28 @@ class Widget {
         "Side-effecting static private method tag receivers should be captured once.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn static_private_method_call_captures_receiver_and_preserves_rest_param() {
+    let source = r#"
+class Widget {
+    static #run(a, ...b) {}
+    static factory() { return Widget; }
+    run(items) {
+        Widget.factory().#run(0, ...items, 3);
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "__classPrivateFieldGet((_b = _a.factory()), _a, \"m\", _Widget_run).call(_b, 0, ...items, 3)"
+        ),
+        "Side-effecting static private method call receivers should be captured once.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("_Widget_run = function _Widget_run(a, ...b) { }"),
+        "Extracted private method definitions should preserve rest parameters.\nOutput:\n{output}"
+    );
+}
