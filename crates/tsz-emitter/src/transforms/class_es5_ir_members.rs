@@ -1152,6 +1152,7 @@ impl<'a> ES5ClassTransformer<'a> {
                             member_idx,
                             class_alias.clone(),
                             true,
+                            true,
                         );
                         let iife = IRNode::StaticBlockIIFE { statements };
                         // Defer static blocks to after methods/accessors,
@@ -1195,8 +1196,12 @@ impl<'a> ES5ClassTransformer<'a> {
         deferred_static_block_indices
             .into_iter()
             .map(|member_idx| {
-                let statements =
-                    self.convert_block_body_with_alias_impl(member_idx, class_alias.clone(), true);
+                let statements = self.convert_block_body_with_alias_impl(
+                    member_idx,
+                    class_alias.clone(),
+                    true,
+                    true,
+                );
                 IRNode::StaticBlockIIFE { statements }
             })
             .collect()
