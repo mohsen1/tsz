@@ -963,6 +963,23 @@ jobs:
           ref: ${{ env.BENCH_TARGET_SHA }}
           fetch-depth: 1
 
+      - name: Download benchmark prep artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: bench-prep-ready
+          path: .
+
+      - name: Validate source benchmark prep artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f bench-prep.env
+          test -f bench-prep.tar
+          grep -qx "BENCH_TARGET_SHA=${BENCH_TARGET_SHA}" bench-prep.env
+          grep -qx "BENCH_PGO_OPTIMIZED=1" bench-prep.env
+          tar -tf bench-prep.tar .target-bench/dist/tsz >/dev/null
+          tar -tf bench-prep.tar .target-bench/dist/.bench-pgo-optimized >/dev/null
+
       - id: cloudbuild-submit
         name: Submit benchmark shard to Cloud Build pool
         shell: bash
