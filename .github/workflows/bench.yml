@@ -561,11 +561,43 @@ jobs:
           bash scripts/install.sh --version latest --dir "${install_dir}"
           "${install_dir}/tsz" --version
 
-  bench-prep-artifact:
-    name: bench-prep-artifact
+  bench-prep-target-fresh:
+    name: bench-prep-target-fresh
     needs: [bench-prepare, bench-prepare-cloudbuild]
     if: >-
       always() &&
+      (needs.bench-prepare.outputs.should_run == 'true' ||
+       (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
+        !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
+        !(github.event_name == 'schedule' && github.event.schedule == '0 5 * * *') &&
+        needs.bench-prepare-cloudbuild.outputs.should_run == 'true')) &&
+      !contains(needs.*.result, 'failure') &&
+      !contains(needs.*.result, 'cancelled')
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.fresh.outputs.should_run }}
+    steps:
+      - id: fresh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          should_run=true
+          target_sha="${{ env.BENCH_TARGET_SHA }}"
+          main_sha="$(gh api "repos/${{ github.repository }}/git/ref/heads/main" --jq '.object.sha' 2>/dev/null || true)"
+          if [[ -n "$main_sha" && "$target_sha" != "$main_sha" ]]; then
+            echo "Benchmark target ${target_sha} became stale before prep artifact download; current main is ${main_sha}. Skipping self-hosted prep wait."
+            should_run=false
+          fi
+          echo "should_run=${should_run}" >> "$GITHUB_OUTPUT"
+
+  bench-prep-artifact:
+    name: bench-prep-artifact
+    needs: [bench-prepare, bench-prepare-cloudbuild, bench-prep-target-fresh]
+    if: >-
+      always() &&
+      needs.bench-prep-target-fresh.outputs.should_run == 'true' &&
       (needs.bench-prepare.outputs.should_run == 'true' ||
        (!(github.event_name == 'workflow_dispatch' && inputs.publish_latest_pgo) &&
         !(github.event_name == 'schedule' && github.event.schedule == '0 3 * * *') &&
