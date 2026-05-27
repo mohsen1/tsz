@@ -365,6 +365,20 @@ impl<'a> IRPrinter<'a> {
         self.write(");");
     }
 
+    /// Emit a block on a single line: `{ stmt1; stmt2; }`. Used for `tsc`-parity
+    /// shapes such as the downlevel-iteration `for-of` catch body.
+    pub(super) fn emit_block_single_line(&mut self, stmts: &[IRNode]) {
+        if stmts.is_empty() {
+            self.write("{ }");
+            return;
+        }
+        self.write("{ ");
+        for stmt in stmts {
+            self.emit_node(stmt);
+        }
+        self.write(" }");
+    }
+
     pub(super) fn emit_block(&mut self, stmts: &[IRNode]) {
         if stmts.is_empty() {
             self.write("{ }");

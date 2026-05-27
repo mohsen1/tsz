@@ -1225,7 +1225,11 @@ impl<'a> IRPrinter<'a> {
                         self.write(")");
                     }
                     self.write(" ");
-                    self.emit_block(&catch.body);
+                    if catch.single_line {
+                        self.emit_block_single_line(&catch.body);
+                    } else {
+                        self.emit_block(&catch.body);
+                    }
                 }
                 if let Some(finally) = finally_block {
                     self.write_line();
