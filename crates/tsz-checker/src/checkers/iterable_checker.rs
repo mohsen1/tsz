@@ -1725,8 +1725,8 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
-        // Check if the sent type is assignable to the iterator's next type
-        if self.diagnostic_relation_boolean_guard(sent_type, next_type) {
+        // Check if the sent type is assignable to the iterator's next type.
+        if self.assign_relation_outcome(sent_type, next_type).related {
             return true;
         }
 
