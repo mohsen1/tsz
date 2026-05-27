@@ -11,6 +11,7 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
 TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/temporal.ts
+TypeScript/tests/cases/compiler/unionWithIndexSignature.ts
 TypeScript/tests/cases/conformance/es2019/globalThisAmbientModules.ts
 TypeScript/tests/cases/conformance/es2024/sharedMemory.ts
 TypeScript/tests/cases/conformance/es6/destructuring/destructuringArrayBindingPatternAndAssignment2.ts
