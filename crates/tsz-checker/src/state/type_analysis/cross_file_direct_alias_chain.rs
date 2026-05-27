@@ -2,7 +2,7 @@ use super::source_alias_attribution::record_source_alias_rejection_kinds;
 use crate::state::CheckerState;
 use tsz_binder::{BinderState, Symbol, SymbolId, symbol_flags};
 use tsz_parser::NodeList;
-use tsz_parser::parser::node::{NodeArena, TypeAliasData};
+use tsz_parser::parser::node::{NodeAccess, NodeArena, TypeAliasData};
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -85,6 +85,79 @@ impl<'a> CheckerState<'a> {
             .is_some_and(|visited| visited.file_idx == key.file_idx && visited.sym_id == key.sym_id)
         {
             seen.pop();
+        }
+    }
+
+    fn source_file_type_arguments_contain_guard_name(
+        arena: &NodeArena,
+        args: &NodeList,
+        guard_names: &[String],
+    ) -> bool {
+        !guard_names.is_empty()
+            && args.nodes.iter().copied().any(|arg| {
+                Self::source_file_type_node_contains_any_identifier_name(arena, arg, guard_names)
+            })
+    }
+
+    fn source_file_type_node_contains_any_identifier_name(
+        arena: &NodeArena,
+        root: NodeIndex,
+        names: &[String],
+    ) -> bool {
+        names
+            .iter()
+            .any(|name| Self::source_file_type_node_contains_identifier_name(arena, root, name))
+    }
+
+    fn collect_tuple_rest_infer_type_param_names(
+        arena: &NodeArena,
+        root: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
+        let mut stack = vec![root];
+        while let Some(idx) = stack.pop() {
+            let Some(node) = arena.get(idx) else {
+                continue;
+            };
+            if node.kind == syntax_kind_ext::TUPLE_TYPE
+                && let Some(tuple) = arena.get_tuple_type(node)
+            {
+                for element_idx in tuple.elements.nodes.iter().copied() {
+                    let Some(element_node) = arena.get(element_idx) else {
+                        continue;
+                    };
+                    if element_node.kind == syntax_kind_ext::REST_TYPE
+                        && let Some(wrapped) = arena.get_wrapped_type(element_node)
+                    {
+                        Self::collect_infer_type_param_name_from_node(
+                            arena,
+                            wrapped.type_node,
+                            names,
+                        );
+                    }
+                }
+            }
+            stack.extend(arena.get_children(idx));
+        }
+    }
+
+    fn collect_infer_type_param_name_from_node(
+        arena: &NodeArena,
+        node_idx: NodeIndex,
+        names: &mut Vec<String>,
+    ) {
+        let Some(node) = arena.get(node_idx) else {
+            return;
+        };
+        if node.kind == syntax_kind_ext::INFER_TYPE
+            && let Some(infer_type) = arena.get_infer_type(node)
+            && let Some(type_param_node) = arena.get(infer_type.type_parameter)
+            && let Some(type_param) = arena.get_type_parameter(type_param_node)
+            && let Some(name_node) = arena.get(type_param.name)
+            && let Some(ident) = arena.get_identifier(name_node)
+            && !names.iter().any(|name| name == &ident.escaped_text)
+        {
+            names.push(ident.escaped_text.to_string());
         }
     }
 
@@ -224,6 +297,7 @@ impl<'a> CheckerState<'a> {
             seen,
             proof,
             false,
+            &[],
         )
     }
 
@@ -235,6 +309,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         if Self::source_file_type_node_is_generic_scope_independent(
             arena,
@@ -287,6 +362,7 @@ impl<'a> CheckerState<'a> {
                                 seen,
                                 proof,
                                 recursion_guarded,
+                                tuple_rest_guard_names,
                             )
                         });
                 };
@@ -303,6 +379,7 @@ impl<'a> CheckerState<'a> {
                                 seen,
                                 proof,
                                 recursion_guarded,
+                                tuple_rest_guard_names,
                             )
                         });
                 }
@@ -314,7 +391,12 @@ impl<'a> CheckerState<'a> {
                 let key = SourceFileAliasProofKey {
                     file_idx: resolved.file_idx,
                     sym_id: resolved.sym_id,
-                    guarded: recursion_guarded,
+                    guarded: recursion_guarded
+                        || Self::source_file_type_arguments_contain_guard_name(
+                            arena,
+                            args,
+                            tuple_rest_guard_names,
+                        ),
                 };
                 if Self::source_file_alias_proof_seen_contains(seen, key) {
                     return Self::source_file_alias_proof_cycle_is_guarded(seen, key);
@@ -336,6 +418,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
+                            tuple_rest_guard_names,
                         )
                     });
                 }
@@ -378,6 +461,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 }) {
                     return false;
@@ -401,6 +485,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         &resolved_proof,
                         false,
+                        &[],
                     );
                 Self::source_file_alias_proof_seen_pop(seen, key);
                 result
@@ -413,6 +498,12 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_branch_names,
                     );
+                    let mut true_tuple_rest_guard_names = tuple_rest_guard_names.to_vec();
+                    Self::collect_tuple_rest_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_tuple_rest_guard_names,
+                    );
                     Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -421,6 +512,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -429,6 +521,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -437,6 +530,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        &true_tuple_rest_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -445,6 +539,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -457,6 +552,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
+                    tuple_rest_guard_names,
                 )
             }),
             k if k == syntax_kind_ext::TUPLE_TYPE => arena.get_tuple_type(node).is_some_and(|tuple| {
@@ -469,6 +565,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         true,
+                        tuple_rest_guard_names,
                     )
                 })
             }),
@@ -483,6 +580,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
+                            tuple_rest_guard_names,
                         )
                     })
                 })
@@ -500,6 +598,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -513,6 +612,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -526,6 +626,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
@@ -534,6 +635,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -546,6 +648,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -557,6 +660,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
@@ -568,6 +672,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -579,6 +684,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             _ => false,
@@ -593,7 +699,13 @@ impl<'a> CheckerState<'a> {
         proof: &SourceFileAliasProofContext<'b>,
     ) -> bool {
         Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
-            arena, binder, node_idx, seen, proof, false,
+            arena,
+            binder,
+            node_idx,
+            seen,
+            proof,
+            false,
+            &[],
         )
     }
 
@@ -604,6 +716,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         if Self::source_file_type_node_is_scope_independent(arena, node_idx) {
             return true;
@@ -639,6 +752,7 @@ impl<'a> CheckerState<'a> {
                                         seen,
                                         proof,
                                         recursion_guarded,
+                                        tuple_rest_guard_names,
                                     )
                                 })
                             }));
@@ -657,6 +771,7 @@ impl<'a> CheckerState<'a> {
                                         seen,
                                         proof,
                                         recursion_guarded,
+                                        tuple_rest_guard_names,
                                     )
                                 })
                             }));
@@ -669,7 +784,14 @@ impl<'a> CheckerState<'a> {
                 let key = SourceFileAliasProofKey {
                     file_idx: resolved.file_idx,
                     sym_id: resolved.sym_id,
-                    guarded: recursion_guarded,
+                    guarded: recursion_guarded
+                        || type_ref.type_arguments.as_ref().is_some_and(|args| {
+                            Self::source_file_type_arguments_contain_guard_name(
+                                arena,
+                                args,
+                                tuple_rest_guard_names,
+                            )
+                        }),
                 };
                 if Self::source_file_alias_proof_seen_contains(seen, key) {
                     return Self::source_file_alias_proof_cycle_is_guarded(seen, key);
@@ -693,6 +815,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
+                            tuple_rest_guard_names,
                         )
                     });
                 }
@@ -738,6 +861,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
+                            tuple_rest_guard_names,
                         )
                     }) {
                         return false;
@@ -788,6 +912,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         &resolved_proof,
                         false,
+                        &[],
                     )
                 } else if Self::source_file_type_node_contains_kind(
                     resolved.arena,
@@ -818,6 +943,7 @@ impl<'a> CheckerState<'a> {
                             seen,
                             proof,
                             recursion_guarded,
+                            tuple_rest_guard_names,
                         )
                     })
                 })
@@ -831,6 +957,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         true,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -838,7 +965,13 @@ impl<'a> CheckerState<'a> {
                 arena.get_tuple_type(node).is_some_and(|tuple| {
                     tuple.elements.nodes.iter().copied().all(|element| {
                         Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
-                            arena, binder, element, seen, proof, true,
+                            arena,
+                            binder,
+                            element,
+                            seen,
+                            proof,
+                            true,
+                            tuple_rest_guard_names,
                         )
                     })
                 })
@@ -855,6 +988,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -867,6 +1001,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -879,6 +1014,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     ) && Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
                         arena,
                         binder,
@@ -886,6 +1022,7 @@ impl<'a> CheckerState<'a> {
                         seen,
                         proof,
                         recursion_guarded,
+                        tuple_rest_guard_names,
                     )
                 })
             }
@@ -897,6 +1034,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -913,6 +1051,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -924,6 +1063,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             }
             _ => false,
@@ -1128,6 +1268,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -1161,6 +1302,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
         {
             return false;
@@ -1174,6 +1316,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
         {
             return false;
@@ -1196,6 +1339,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             ))
             && (mapped.type_node.is_none()
                 || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1206,6 +1350,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
+                    tuple_rest_guard_names,
                 ))
     }
 
@@ -1216,6 +1361,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -1242,6 +1388,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
         {
             return false;
@@ -1254,6 +1401,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
         {
             return false;
@@ -1267,6 +1415,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             ))
             && (mapped.type_node.is_none()
                 || Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
@@ -1276,6 +1425,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     true,
+                    tuple_rest_guard_names,
                 ))
     }
 
@@ -1287,6 +1437,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -1299,6 +1450,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             );
         }
         Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1309,6 +1461,7 @@ impl<'a> CheckerState<'a> {
             seen,
             proof,
             recursion_guarded,
+            tuple_rest_guard_names,
         )
     }
 
@@ -1319,6 +1472,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -1334,6 +1488,7 @@ impl<'a> CheckerState<'a> {
             seen,
             proof,
             recursion_guarded,
+            tuple_rest_guard_names,
         )
     }
 
@@ -1359,6 +1514,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         _recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
             Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1369,6 +1525,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 true,
+                tuple_rest_guard_names,
             )
         })
     }
@@ -1382,7 +1539,13 @@ impl<'a> CheckerState<'a> {
     ) -> bool {
         Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
             Self::source_file_type_node_is_local_alias_chain_lowerable_with_guard(
-                arena, binder, type_node, seen, proof, true,
+                arena,
+                binder,
+                type_node,
+                seen,
+                proof,
+                true,
+                &[],
             )
         })
     }
@@ -1395,6 +1558,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         let Some(template) = arena.get_template_literal_type(node) else {
             return false;
@@ -1418,6 +1582,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
         })
     }
@@ -1430,6 +1595,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> bool {
         let Some(function_type) = arena.get_function_type(node) else {
             return false;
@@ -1443,6 +1609,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
         else {
             return false;
@@ -1468,6 +1635,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
         }) && function_type.type_annotation.is_some()
             && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
@@ -1478,6 +1646,7 @@ impl<'a> CheckerState<'a> {
                 seen,
                 proof,
                 recursion_guarded,
+                tuple_rest_guard_names,
             )
     }
 
@@ -1489,6 +1658,7 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
         recursion_guarded: bool,
+        tuple_rest_guard_names: &[String],
     ) -> Option<Vec<String>> {
         let Some(params) = params else {
             return Some(Vec::new());
@@ -1519,6 +1689,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             {
                 return None;
@@ -1532,6 +1703,7 @@ impl<'a> CheckerState<'a> {
                     seen,
                     proof,
                     recursion_guarded,
+                    tuple_rest_guard_names,
                 )
             {
                 return None;

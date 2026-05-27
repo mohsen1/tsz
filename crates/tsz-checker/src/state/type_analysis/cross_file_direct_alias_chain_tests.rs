@@ -1278,6 +1278,40 @@ fn direct_source_file_type_alias_lowers_guarded_generic_mapped_helper_cycle() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_tuple_tail_conditional_recursion() {
+    with_two_file_state(
+        "type AllTrue<Items> = Items extends [infer First, ...infer Tail] ? First extends true ? AllTrue<Tail> : false : true;\nexport type Result<Flags extends boolean[]> = AllTrue<Flags>;",
+        "import { Result } from './target';",
+        |state, target_binder| {
+            let result_sym = target_binder.file_locals.get("Result").expect("Result");
+            let (result_ty, result_params) = state
+                .direct_source_file_type_alias_result(result_sym, Some(1), true)
+                .expect("tuple rest inference structurally guards tail-recursive aliases");
+            assert_ne!(result_ty, TypeId::UNKNOWN);
+            assert_ne!(result_ty, TypeId::ERROR);
+            assert_eq!(result_params.len(), 1, "Result should expose Flags");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_tuple_conditional_original_arg_recursion() {
+    with_two_file_state(
+        "export type Loop<Items> = Items extends [infer First, ...infer Tail] ? Loop<Items> : true;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "tuple-rest conditionals only guard recursive calls that consume the inferred tail",
+            );
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
     with_two_file_state(
         "export type Loop = Loop | string;",
