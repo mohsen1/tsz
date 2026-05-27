@@ -737,6 +737,7 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         idx: NodeIndex,
         is_static: bool,
+        emit_await_as_yield: bool,
         class_alias: Option<&str>,
         lexical_this_capture_alias: Option<&str>,
         trailing_comment_limit: Option<u32>,
@@ -746,6 +747,9 @@ impl<'a> ES5ClassTransformer<'a> {
             .with_trailing_comment_limit(trailing_comment_limit);
         if is_static {
             converter = converter.with_static(true);
+        }
+        if emit_await_as_yield {
+            converter = converter.with_await_as_yield(true);
         }
         if let Some(alias) = class_alias {
             converter = converter.with_class_alias(Some(alias.to_string()));
@@ -1114,7 +1118,7 @@ impl<'a> ES5ClassTransformer<'a> {
         block_idx: NodeIndex,
         class_alias: Option<String>,
     ) -> Vec<IRNode> {
-        self.convert_block_body_with_alias_impl(block_idx, class_alias, false)
+        self.convert_block_body_with_alias_impl(block_idx, class_alias, false, false)
     }
 
     fn convert_block_body_with_alias_impl(
@@ -1122,12 +1126,14 @@ impl<'a> ES5ClassTransformer<'a> {
         block_idx: NodeIndex,
         class_alias: Option<String>,
         is_static: bool,
+        emit_await_as_yield: bool,
     ) -> Vec<IRNode> {
         self.convert_block_body_with_alias_and_this_capture_impl(
             block_idx,
             class_alias,
             None,
             is_static,
+            emit_await_as_yield,
         )
     }
 
@@ -1141,6 +1147,7 @@ impl<'a> ES5ClassTransformer<'a> {
             None,
             lexical_this_capture_alias,
             false,
+            false,
         )
     }
 
@@ -1149,11 +1156,14 @@ impl<'a> ES5ClassTransformer<'a> {
         block_idx: NodeIndex,
         lexical_this_capture_alias: Option<String>,
     ) -> Vec<IRNode> {
+        // Static methods/accessors: is_static=true but await-recovery IIFE applies
+        // only to CLASS_STATIC_BLOCK_DECLARATION, not ordinary static members.
         self.convert_block_body_with_alias_and_this_capture_impl(
             block_idx,
             None,
             lexical_this_capture_alias,
             true,
+            false,
         )
     }
 
@@ -1163,6 +1173,7 @@ impl<'a> ES5ClassTransformer<'a> {
         class_alias: Option<String>,
         lexical_this_capture_alias: Option<String>,
         is_static: bool,
+        emit_await_as_yield: bool,
     ) -> Vec<IRNode> {
         // Snapshot hoisted temps before converting statements
         let hoisted_before = self.extra_hoisted_temps.borrow().len();
@@ -1178,6 +1189,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 self.convert_block_body_using_region(
                     block,
                     is_static,
+                    emit_await_as_yield,
                     class_alias.as_deref(),
                     lexical_this_capture_alias.as_deref(),
                     trailing_comment_limit,
@@ -1193,6 +1205,7 @@ impl<'a> ES5ClassTransformer<'a> {
                     converted.push(self.convert_statement_with_context(
                         stmt_idx,
                         is_static,
+                        emit_await_as_yield,
                         class_alias.as_deref(),
                         lexical_this_capture_alias.as_deref(),
                         trailing_comment_limit,
@@ -1242,6 +1255,7 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         block: &tsz_parser::parser::node::BlockData,
         is_static: bool,
+        emit_await_as_yield: bool,
         class_alias: Option<&str>,
         lexical_this_capture_alias: Option<&str>,
         trailing_comment_limit: Option<u32>,
@@ -1268,6 +1282,7 @@ impl<'a> ES5ClassTransformer<'a> {
                 try_body.push(self.convert_statement_with_context(
                     stmt_idx,
                     is_static,
+                    emit_await_as_yield,
                     class_alias,
                     lexical_this_capture_alias,
                     trailing_comment_limit,
