@@ -2409,7 +2409,7 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn extract_jsdoc_satisfies_expression(jsdoc: &str) -> Option<&str> {
-        let tag_pos = jsdoc.find("@satisfies")?;
+        let tag_pos = Self::jsdoc_tag_offset(jsdoc, "satisfies")?;
         let rest = &jsdoc[tag_pos + "@satisfies".len()..];
         let open = rest.find('{')?;
         let after_open = &rest[open + 1..];
@@ -3078,15 +3078,25 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn jsdoc_has_satisfies_tag(jsdoc: &str) -> bool {
-        jsdoc.lines().any(|raw_line| {
-            let line = raw_line.trim_start_matches('*').trim();
-            let Some(rest) = line.strip_prefix("@satisfies") else {
-                return false;
-            };
-            rest.chars()
+        Self::jsdoc_tag_offset(jsdoc, "satisfies").is_some()
+    }
+
+    fn jsdoc_tag_offset(jsdoc: &str, tag_name: &str) -> Option<usize> {
+        let needle = format!("@{tag_name}");
+        for (pos, _) in jsdoc.match_indices(&needle) {
+            let after = pos + needle.len();
+            if after >= jsdoc.len() {
+                return Some(pos);
+            }
+            let next_ch = jsdoc[after..]
+                .chars()
                 .next()
-                .is_none_or(|ch| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '$')
-        })
+                .expect("after < jsdoc.len() checked above");
+            if !next_ch.is_ascii_alphanumeric() && next_ch != '_' {
+                return Some(pos);
+            }
+        }
+        None
     }
 
     fn jsdoc_contains_type_tag(jsdoc: &str) -> bool {
