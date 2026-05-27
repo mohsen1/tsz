@@ -345,6 +345,10 @@ impl<'a> CheckerState<'a> {
         let prev_type = self.array_application_to_array_for_redeclaration(prev_type);
         let current_type = self.array_application_to_array_for_redeclaration(current_type);
 
+        if self.recursive_mapped_alias_applications_have_distinct_args(prev_type, current_type) {
+            return false;
+        }
+
         // Nominal identity check: when both types come from different named type
         // references (Application with different bases, or Lazy with different DefIds),
         // tsc's isTypeIdenticalTo rejects them even if structurally equivalent.
@@ -457,6 +461,35 @@ impl<'a> CheckerState<'a> {
         }
 
         result
+    }
+
+    fn recursive_mapped_alias_applications_have_distinct_args(
+        &self,
+        prev_type: TypeId,
+        current_type: TypeId,
+    ) -> bool {
+        let Some(prev_app) =
+            crate::query_boundaries::common::type_application(self.ctx.types, prev_type)
+        else {
+            return false;
+        };
+        let Some(current_app) =
+            crate::query_boundaries::common::type_application(self.ctx.types, current_type)
+        else {
+            return false;
+        };
+        if prev_app.base != current_app.base || prev_app.args == current_app.args {
+            return false;
+        }
+        let Some(def_id) =
+            crate::query_boundaries::common::lazy_def_id(self.ctx.types, prev_app.base)
+        else {
+            return false;
+        };
+        let Some(sym_id) = self.ctx.def_to_symbol_id(def_id) else {
+            return false;
+        };
+        self.symbol_declares_recursive_mapped_alias(sym_id)
     }
 
     fn array_application_to_array_for_redeclaration(&self, type_id: TypeId) -> TypeId {

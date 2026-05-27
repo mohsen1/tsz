@@ -9,16 +9,41 @@
 
 use tsz_checker::test_utils::check_source_codes;
 
+fn diagnostics_for(source: &str) -> Vec<u32> {
+    check_source_codes(source)
+}
+
 fn expect_no_error(source: &str) {
-    let errors = check_source_codes(source)
+    let errors = diagnostics_for(source)
         .into_iter()
         .filter(|&c| c == 2322)
         .count();
     assert_eq!(errors, 0, "Expected no TS2322 errors:\n{source}");
 }
 
+fn expect_no_type_or_property_error(source: &str) {
+    let diagnostics = diagnostics_for(source);
+    let unexpected = diagnostics
+        .iter()
+        .copied()
+        .filter(|&c| matches!(c, 2322 | 2339))
+        .collect::<Vec<_>>();
+    assert!(
+        unexpected.is_empty(),
+        "Expected no TS2322/TS2339 errors, got {unexpected:?} from {diagnostics:?}:\n{source}"
+    );
+}
+
+fn expect_property_error(source: &str) {
+    let errors = diagnostics_for(source)
+        .into_iter()
+        .filter(|&c| c == 2339)
+        .count();
+    assert!(errors > 0, "Expected at least one TS2339 error:\n{source}");
+}
+
 fn expect_error(source: &str) {
-    let errors = check_source_codes(source)
+    let errors = diagnostics_for(source)
         .into_iter()
         .filter(|&c| c == 2322)
         .count();
@@ -59,6 +84,50 @@ const g: number = obj["Green"];
 const b: number = obj["Blue"];
 "#;
     expect_no_error(source);
+}
+
+#[test]
+fn test_numeric_enum_typeof_indexed_access_literal_member() {
+    let source = r#"
+enum Direction { Up, Down, Left, Right }
+type UpType = (typeof Direction)["Up"];
+declare const up: UpType;
+const check: Direction.Up = up;
+"#;
+    expect_no_type_or_property_error(source);
+}
+
+#[test]
+fn test_numeric_enum_typeof_indexed_access_literal_renamed_member() {
+    let source = r#"
+enum Mode { Read = 1, Write = 2 }
+type WriteType = (typeof Mode)["Write"];
+declare const write: WriteType;
+const check: Mode.Write = write;
+"#;
+    expect_no_type_or_property_error(source);
+}
+
+#[test]
+fn test_numeric_enum_typeof_alias_indexed_access_literal_member() {
+    let source = r#"
+enum Direction { Up, Down, Left, Right }
+type DirectionObject = typeof Direction;
+type UpType = DirectionObject["Up"];
+declare const up: UpType;
+const check: Direction.Up = up;
+"#;
+    expect_no_type_or_property_error(source);
+}
+
+#[test]
+fn test_numeric_enum_type_alias_indexed_access_rejects_namespace_member() {
+    let source = r#"
+enum Direction { Up, Down, Left, Right }
+type DirectionValue = Direction;
+type UpType = DirectionValue["Up"];
+"#;
+    expect_property_error(source);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +183,17 @@ declare const obj: typeof Status;
 const v: string = obj.Active;
 "#;
     expect_no_error(source);
+}
+
+#[test]
+fn test_string_enum_typeof_indexed_access_literal_member() {
+    let source = r#"
+enum Status { Active = "active", Inactive = "inactive" }
+type ActiveType = (typeof Status)["Active"];
+declare const active: ActiveType;
+const check: Status.Active = active;
+"#;
+    expect_no_type_or_property_error(source);
 }
 
 #[test]

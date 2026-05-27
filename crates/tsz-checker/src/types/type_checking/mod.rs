@@ -27,4 +27,5 @@ mod global;
 mod indexed_access;
 mod property_init;
 mod type_alias_checking;
+mod type_alias_depth_helpers;
 mod unused;

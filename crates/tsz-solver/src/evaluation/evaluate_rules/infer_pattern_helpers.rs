@@ -6,9 +6,10 @@
 //! - Callable type patterns
 //! - Signature parameter / rest matching and template-capture binding helpers
 //!
-//! Object, object-with-index, union, and template-literal pattern matchers live
-//! in `infer_pattern_object_helpers.rs` (split to stay under the file-size
-//! ceiling); both are `impl TypeEvaluator` blocks in the same module tree.
+//! Object, object-with-index, and union matchers live in
+//! `infer_pattern_object_match.rs`; template-literal matchers live in
+//! `infer_pattern_template_match.rs`. These split modules stay under the
+//! file-size ceiling while sharing the same `impl TypeEvaluator` module tree.
 
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::relations::subtype::{SubtypeChecker, TypeResolver};

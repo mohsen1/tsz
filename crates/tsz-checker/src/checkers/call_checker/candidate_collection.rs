@@ -1037,6 +1037,11 @@ impl<'a> CheckerState<'a> {
             let contextual_callback_param_spans =
                 self.contextual_callback_function_param_spans(arg_idx);
             let contextual_callback_indices = self.contextual_callback_function_indices(arg_idx);
+            let callback_target_can_type_all_params = expected_context_type
+                .or(expected_type)
+                .is_none_or(|target| {
+                    self.target_can_contextually_type_callback_params(arg_idx, target)
+                });
             let function_arg_span = self.callback_argument_span(arg_idx);
             let is_sensitive_contextual_arg = apply_contextual
                 && expected_type.is_some()
@@ -1139,6 +1144,8 @@ impl<'a> CheckerState<'a> {
                         true
                     } else if is_direct_function_arg {
                         is_direct_callback_body_assignability
+                            || (!callback_target_can_type_all_params
+                                && is_function_arg_implicit_any_diag)
                             || !(is_callback_body_diag || is_function_arg_implicit_any_diag)
                     } else if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
                         // Generic contextual refresh re-checks object literal members with

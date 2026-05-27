@@ -212,18 +212,18 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
-            return;
-        }
-
         let target_prop_type_for_message =
             self.object_literal_property_value_diagnostic_target_type(target_prop_type);
         let report_idx = self
             .find_object_literal_property_element(obj_literal_idx, prop_name)
             .unwrap_or(obj_literal_idx);
-        self.error_type_not_assignable_at_with_anchor(
+        let _ = self
+            .check_assignable_or_report_at_exact_anchor_without_source_elaboration_with_display_types(
+            source_prop_type,
+            target_prop_type,
             source_prop_type,
             target_prop_type_for_message,
+            report_idx,
             report_idx,
         );
     }
@@ -606,20 +606,22 @@ impl<'a> CheckerState<'a> {
                 &crate::context::TypingRequest::NONE,
             );
             let target_prop_type_for_check = self.evaluate_type_for_assignability(target_prop_type);
-            if matches!(source_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN)
-                || self.diagnostic_relation_boolean_guard(source_type, target_prop_type_for_check)
-            {
+            if matches!(source_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
                 continue;
             }
 
             let target_prop_type_for_message =
                 self.object_literal_property_value_diagnostic_target_type(target_prop_type);
-            self.error_type_not_assignable_at_with_anchor(
+            let emitted_diagnostic = !self
+                .check_assignable_or_report_at_exact_anchor_without_source_elaboration_with_display_types(
+                source_type,
+                target_prop_type_for_check,
                 source_type,
                 target_prop_type_for_message,
+                prop.initializer,
                 prop.name,
             );
-            emitted = true;
+            emitted |= emitted_diagnostic;
         }
         emitted
     }
@@ -630,6 +632,25 @@ impl<'a> CheckerState<'a> {
         prop_name: Atom,
         fallback: TypeId,
     ) -> TypeId {
+        if crate::query_boundaries::type_predicates::is_recursive_operation_application(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            fallback,
+        ) || self
+            .ctx
+            .types
+            .get_display_alias(fallback)
+            .is_some_and(|alias| {
+                crate::query_boundaries::type_predicates::is_recursive_operation_application(
+                    self.ctx.types,
+                    &self.ctx.definition_store,
+                    alias,
+                )
+            })
+        {
+            return fallback;
+        }
+
         let prop_name_str = self.ctx.types.resolve_atom(prop_name);
 
         if let Some(type_id) =

@@ -394,11 +394,17 @@ mod conditional_infer_callable_arity_tests;
 #[path = "../tests/conditional_keyof_variance_tests.rs"]
 mod conditional_keyof_variance_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_readonly_array_relation_tests.rs"]
+mod conditional_readonly_array_relation_tests;
+#[cfg(test)]
 #[path = "../tests/constraint_tests.rs"]
 mod constraint_tests;
 #[cfg(test)]
 #[path = "../tests/function_comprehensive_tests.rs"]
 mod function_comprehensive_tests;
+#[cfg(test)]
+#[path = "../tests/function_optional_param_relation_tests.rs"]
+mod function_optional_param_relation_tests;
 #[cfg(test)]
 #[path = "../tests/index_access_comprehensive_tests.rs"]
 mod index_access_comprehensive_tests;
@@ -441,6 +447,9 @@ mod query_cache_statistics_tests;
 #[cfg(test)]
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;
+#[cfg(test)]
+#[path = "../tests/relation_policy_cache_agreement_tests.rs"]
+mod relation_policy_cache_agreement_tests;
 #[cfg(test)]
 #[path = "tests/solver_file_size_ceiling_tests.rs"]
 mod solver_file_size_ceiling_tests;

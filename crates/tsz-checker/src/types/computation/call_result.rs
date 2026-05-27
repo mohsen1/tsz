@@ -94,12 +94,14 @@ impl<'a> CheckerState<'a> {
         } else {
             return_type
         };
-        // Eagerly evaluate monomorphic TypeApplications to avoid nested return
-        // chains, but keep Promise-like applications wrapped for await handling.
-        let return_type = if common::is_generic_application(self.ctx.types, return_type)
-            && !self.contains_type_parameters_cached(return_type)
-            && !self.is_promise_type(return_type)
-        {
+        // Eagerly evaluate monomorphic `TypeApplications` and conditionals to avoid
+        // nested return chains, but keep Promise-like applications wrapped for await handling.
+        let is_monomorphic_application =
+            common::is_generic_application(self.ctx.types, return_type)
+                && !self.contains_type_parameters_cached(return_type);
+        let is_conditional_return = common::is_conditional_type(self.ctx.types, return_type);
+        let is_monomorphic_meta_return = is_monomorphic_application || is_conditional_return;
+        let return_type = if is_monomorphic_meta_return && !self.is_promise_type(return_type) {
             self.evaluate_type_with_env(return_type)
         } else {
             return_type
@@ -254,6 +256,7 @@ impl<'a> CheckerState<'a> {
                 self.finite_mapped_parameter_display_type(param_type)
                     .map(|display_type| self.format_type_for_assignability_message(display_type))
             })
+            .or_else(|| self.noinfer_call_parameter_mismatch_display(param_type, arg_type))
             .unwrap_or_else(|| self.format_type_diagnostic(param_type));
         if target_display.contains("Array<") {
             target_display = Self::normalize_array_generic_to_shorthand(&target_display);

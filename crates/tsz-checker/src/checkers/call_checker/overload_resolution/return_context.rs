@@ -89,7 +89,7 @@ impl<'a> CheckerState<'a> {
         if let Some((base, args)) =
             crate::query_boundaries::common::application_info(self.ctx.types, existing)
             && args.len() == 1
-            && self.return_context_application_base_has_name(base, &["Promise", "PromiseLike"])
+            && self.return_context_application_base_is_lib_promise_like(base)
             && let Some(refined_arg) = self.return_context_refinement_for_arg_inference_inner(
                 args[0],
                 contextual,

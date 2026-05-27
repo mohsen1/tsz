@@ -5,7 +5,10 @@ use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
-use tsz_solver::TypeId;
+use tsz_solver::{CallSignature, TypeId, TypeParamInfo};
+
+type JsdocTemplateParamScopeUpdates = Vec<(String, Option<TypeId>, bool)>;
+type JsdocTemplateParamPushResult = (Vec<TypeParamInfo>, JsdocTemplateParamScopeUpdates);
 
 // =============================================================================
 // Signature Building Methods
@@ -24,7 +27,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         func: &tsz_parser::parser::node::FunctionData,
         func_idx: tsz_parser::parser::NodeIndex,
-    ) -> tsz_solver::CallSignature {
+    ) -> CallSignature {
         // Push enclosing type parameters so that overload signatures can reference
         // type parameters from outer function/class/interface scopes.
         let enclosing_updates = self.push_enclosing_type_parameters(func_idx);
@@ -38,7 +41,7 @@ impl<'a> CheckerState<'a> {
         self.pop_type_parameters(type_param_updates);
         self.pop_type_parameters(enclosing_updates);
 
-        tsz_solver::CallSignature {
+        CallSignature {
             type_params,
             params,
             this_type,
@@ -46,6 +49,116 @@ impl<'a> CheckerState<'a> {
             type_predicate,
             is_method: false,
         }
+    }
+
+    pub(crate) fn jsdoc_overload_call_signatures_for_function(
+        &mut self,
+        func: &tsz_parser::parser::node::FunctionData,
+        func_idx: NodeIndex,
+    ) -> Vec<CallSignature> {
+        use tsz_common::comments::get_jsdoc_content;
+
+        if !self.is_js_file() || !self.ctx.compiler_options.check_js {
+            return Vec::new();
+        }
+
+        let Some(sf) = self.ctx.arena.source_files.first() else {
+            return Vec::new();
+        };
+        let source_text = sf.text.to_string();
+        let overload_docs: Vec<(String, u32)> = self
+            .leading_jsdoc_comments_for_node(func_idx)
+            .into_iter()
+            .filter_map(|comment| {
+                let jsdoc = get_jsdoc_content(&comment, &source_text);
+                Self::jsdoc_contains_tag(&jsdoc, "overload").then_some((jsdoc, comment.pos))
+            })
+            .collect();
+        if overload_docs.is_empty() {
+            return Vec::new();
+        }
+
+        let base_signature = self.call_signature_from_function(func, func_idx);
+        overload_docs
+            .into_iter()
+            .map(|(jsdoc, comment_pos)| {
+                let (type_params, updates) = self.push_jsdoc_overload_template_params(&jsdoc);
+                let mut signature = base_signature.clone();
+                signature.type_params = type_params;
+                let jsdoc_params = Self::extract_jsdoc_param_names(&jsdoc);
+                signature.params.truncate(jsdoc_params.len());
+
+                for (i, (param_name, _)) in jsdoc_params.iter().enumerate() {
+                    let Some(param) = signature.params.get_mut(i) else {
+                        break;
+                    };
+
+                    let jsdoc_optional = Self::extract_jsdoc_param_type_string(&jsdoc, param_name)
+                        .is_some_and(|type_expr| type_expr.trim().ends_with('='))
+                        || Self::is_jsdoc_param_optional_by_brackets(&jsdoc, param_name);
+
+                    if let Some(jsdoc_type) = self.resolve_jsdoc_param_type_with_pos(
+                        &jsdoc,
+                        param_name,
+                        Some(comment_pos),
+                    ) {
+                        param.type_id = jsdoc_type;
+                    }
+                    param.optional = jsdoc_optional;
+                    param.rest = Self::jsdoc_param_is_rest(&jsdoc, param_name);
+                }
+
+                let jsdoc_for_predicate = Some(jsdoc.clone());
+                if let Some(predicate) = self
+                    .extract_jsdoc_return_type_predicate(&jsdoc_for_predicate, &signature.params)
+                {
+                    signature.return_type = if predicate.asserts {
+                        TypeId::VOID
+                    } else {
+                        TypeId::BOOLEAN
+                    };
+                    signature.type_predicate = Some(predicate);
+                } else {
+                    signature.return_type = self
+                        .resolve_jsdoc_return_type(&jsdoc)
+                        .unwrap_or(TypeId::ANY);
+                    signature.type_predicate = None;
+                }
+
+                self.pop_type_parameters(updates);
+                signature
+            })
+            .collect()
+    }
+
+    fn push_jsdoc_overload_template_params(&mut self, jsdoc: &str) -> JsdocTemplateParamPushResult {
+        let template_names = Self::jsdoc_template_type_params(jsdoc);
+        if template_names.is_empty() {
+            return (Vec::new(), Vec::new());
+        }
+
+        let factory = self.ctx.types.factory();
+        let mut type_params = Vec::with_capacity(template_names.len());
+        let mut updates = Vec::with_capacity(template_names.len());
+
+        for (name, is_const, default_str) in template_names {
+            let atom = self.ctx.types.intern_string(&name);
+            let default = default_str
+                .as_deref()
+                .and_then(|type_expr| self.resolve_jsdoc_reference(type_expr));
+            let info = TypeParamInfo {
+                name: atom,
+                constraint: None,
+                default,
+                is_const,
+            };
+            let type_id = factory.type_param(info);
+            let previous = self.ctx.type_parameter_scope.insert(name.clone(), type_id);
+            updates.push((name, previous, false));
+            type_params.push(info);
+        }
+
+        (type_params, updates)
     }
 
     /// Build a `CallSignature` from a method declaration.

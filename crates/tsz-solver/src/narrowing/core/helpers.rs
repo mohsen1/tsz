@@ -233,15 +233,35 @@ impl<'a> NarrowingContext<'a> {
     pub(super) fn narrow_to_function(&self, source_type: TypeId) -> TypeId {
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
-            let functions: Vec<TypeId> = members
-                .iter()
-                .filter_map(|&member| {
-                    if let Some(narrowed) = self.narrow_type_param_to_function(member) {
-                        return narrowed.non_never();
-                    }
+            let mut functions: Option<Vec<TypeId>> = None;
+            for (index, &member) in members.iter().enumerate() {
+                let narrowed = if let Some(narrowed) = self.narrow_type_param_to_function(member) {
+                    narrowed.non_never()
+                } else {
                     self.is_function_type(member).then_some(member)
-                })
-                .collect();
+                };
+
+                match (narrowed, &mut functions) {
+                    (Some(result), Some(functions)) => functions.push(result),
+                    (Some(result), None) if result == member => {}
+                    (Some(result), None) => {
+                        let mut collected = Vec::with_capacity(members.len());
+                        collected.extend_from_slice(&members[..index]);
+                        collected.push(result);
+                        functions = Some(collected);
+                    }
+                    (None, Some(_)) => {}
+                    (None, None) => {
+                        let mut collected = Vec::with_capacity(members.len());
+                        collected.extend_from_slice(&members[..index]);
+                        functions = Some(collected);
+                    }
+                }
+            }
+
+            let Some(functions) = functions else {
+                return source_type;
+            };
 
             return union_or_single(self.db, functions);
         }
@@ -291,19 +311,38 @@ impl<'a> NarrowingContext<'a> {
     pub fn narrow_excluding_function(&self, source_type: TypeId) -> TypeId {
         if let Some(members) = union_list_id(self.db, source_type) {
             let members = self.db.type_list(members);
-            let remaining: Vec<TypeId> = members
-                .iter()
-                .filter_map(|&member| {
+            let mut remaining: Option<Vec<TypeId>> = None;
+            for (index, &member) in members.iter().enumerate() {
+                let narrowed =
                     if let Some(narrowed) = self.narrow_type_param_excluding_function(member) {
-                        return narrowed.non_never();
-                    }
-                    if self.is_function_type(member) {
+                        narrowed.non_never()
+                    } else if self.is_function_type(member) {
                         None
                     } else {
                         Some(member)
+                    };
+
+                match (narrowed, &mut remaining) {
+                    (Some(result), Some(remaining)) => remaining.push(result),
+                    (Some(result), None) if result == member => {}
+                    (Some(result), None) => {
+                        let mut collected = Vec::with_capacity(members.len());
+                        collected.extend_from_slice(&members[..index]);
+                        collected.push(result);
+                        remaining = Some(collected);
                     }
-                })
-                .collect();
+                    (None, Some(_)) => {}
+                    (None, None) => {
+                        let mut collected = Vec::with_capacity(members.len());
+                        collected.extend_from_slice(&members[..index]);
+                        remaining = Some(collected);
+                    }
+                }
+            }
+
+            let Some(remaining) = remaining else {
+                return source_type;
+            };
 
             return union_or_single(self.db, remaining);
         }

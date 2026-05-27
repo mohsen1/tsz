@@ -77,7 +77,7 @@ impl<'a> CheckerState<'a> {
         })
     }
 
-    fn leading_jsdoc_comments_for_node(
+    pub(crate) fn leading_jsdoc_comments_for_node(
         &self,
         node_idx: NodeIndex,
     ) -> Vec<tsz_common::comments::CommentRange> {
