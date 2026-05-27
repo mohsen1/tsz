@@ -142,6 +142,36 @@ export { a as a1 };
 }
 
 #[test]
+fn commonjs_namespace_import_local_export_emits_after_import() {
+    let source = r#"import * as constants from "../lib/constants";
+export { constants };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains(
+            "const constants = require(\"../lib/constants\");\nexports.constants = constants;"
+        ),
+        "A local export of a namespace import should publish the imported binding immediately after the import.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_renamed_namespace_import_local_export_emits_after_import() {
+    let source = r#"import * as constants from "../lib/constants";
+export { constants as exportedConstants };
+"#;
+
+    let output = emit_commonjs_with_target(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("const constants = require(\"../lib/constants\");\nexports.exportedConstants = constants;"),
+        "A renamed local export of a namespace import should publish the imported binding under the export alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn commonjs_merged_namespace_declaration_does_not_duplicate_export() {
     // Two `export namespace X` blocks with the same name both map to the
     // same CJS identifier.  The IIFE tail must fold to a single

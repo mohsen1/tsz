@@ -237,6 +237,77 @@ fn test_tc39_method_decorator_define_parameter_property_uses_initializer_value()
 }
 
 #[test]
+fn test_tc39_es5_public_field_decorators_schedule_instance_initializers() {
+    let output = emit_class_with(
+        r#"class C {
+            @dec(1) field1 = 1;
+            @dec(2) ["field2"] = 2;
+            @dec(3) [field3] = 3;
+        }"#,
+        true,
+        false,
+    );
+
+    assert!(
+        output.contains("var _field1_initializers = [];")
+            && output.contains("var _member_extraInitializers_1 = [];"),
+        "Decorated ES5 fields should declare per-field initializer arrays.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("this.field1 = __runInitializers(this, _field1_initializers, 1);")
+            && output.contains(
+                "this[_b] = (__runInitializers(this, _member_extraInitializers), __runInitializers(this, _member_initializers_1, 3));"
+            ),
+        "Instance field initializers should run decorator initializers in source order.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__runInitializers(this, _member_extraInitializers_1);"),
+        "The last instance field extra initializers should run after all decorated fields.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__esDecorate(null, null, _field1_decorators, { kind: \"field\"")
+            && output.contains("__esDecorate(null, null, _member_decorators_1, { kind: \"field\""),
+        "Field decorators should use the TC39 field helper shape.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn test_tc39_es5_public_static_field_decorators_schedule_after_decoration() {
+    let output = emit_class_with(
+        r#"class C {
+            @dec(1) static field1 = 1;
+            @dec(2) static ["field2"] = 2;
+            @dec(3) static [field3] = 3;
+        }"#,
+        true,
+        true,
+    );
+
+    let decorate_pos = output
+        .find("__esDecorate(null, null, _static_field1_decorators")
+        .expect("expected static field decoration");
+    let init_pos = output
+        .find("Object.defineProperty(_a, \"field1\"")
+        .expect("expected static field initializer after decoration");
+    assert!(
+        decorate_pos < init_pos,
+        "Static decorated fields should initialize after decoration.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("value: __runInitializers(_a, _static_field1_initializers, 1)")
+            && output.contains(
+                "value: (__runInitializers(_a, _static_member_extraInitializers), __runInitializers(_a, _static_member_initializers_1, 3))"
+            ),
+        "Static defineProperty values should chain decorator field initializers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("__runInitializers(_a, _static_member_extraInitializers_1);")
+            && !output.contains("C.field1 = 1;"),
+        "Static decorated fields should not also emit the undecorated static assignment.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn test_legacy_accessor_decorator_metadata_uses_setter_parameter_type() {
     let source = r#"class A {
         @dec get x() { return 0; }

@@ -290,6 +290,7 @@ impl<'a> Printer<'a> {
             }
         };
 
+        let recovered_array_tail_header = self.recovered_array_tail_for(node, loop_stmt);
         self.write("for (");
         if hoisted_initializer_exports.len() == 1 {
             // The exported `var` initializer was emitted immediately before the loop
@@ -308,6 +309,8 @@ impl<'a> Printer<'a> {
         if loop_stmt.condition.is_some() {
             self.write(" ");
             self.emit(loop_stmt.condition);
+        } else if recovered_array_tail_header {
+            self.write(" ");
         }
         // Map second `;` in for-header
         self.pending_source_pos = semi2_src;
@@ -318,6 +321,8 @@ impl<'a> Printer<'a> {
             self.ctx.flags.in_statement_expression = true;
             self.emit(loop_stmt.incrementor);
             self.ctx.flags.in_statement_expression = prev_stmt;
+        } else if recovered_array_tail_header {
+            self.write(" ");
         }
         let recovered_empty_header_comment =
             self.recovered_empty_for_header_body_comment(node, loop_stmt);
@@ -345,6 +350,29 @@ impl<'a> Printer<'a> {
         if scoped_initializer {
             self.ctx.block_scope_state.exit_scope();
         }
+    }
+
+    fn recovered_array_tail_for(
+        &self,
+        node: &Node,
+        loop_stmt: &tsz_parser::parser::node::LoopData,
+    ) -> bool {
+        if !(loop_stmt.initializer.is_some()
+            && loop_stmt.condition.is_none()
+            && loop_stmt.incrementor.is_none())
+        {
+            return false;
+        }
+        let Some(text) = self.source_text else {
+            return false;
+        };
+        let Some(header) = text
+            .as_bytes()
+            .get(node.pos as usize..(node.end as usize).min(text.len()))
+        else {
+            return false;
+        };
+        header.contains(&b']') && header.contains(&b')') && !header.contains(&b';')
     }
 
     fn recovered_empty_for_header_body_comment(

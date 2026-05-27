@@ -1013,6 +1013,50 @@ fn node_esm_import_equals_require_uses_create_require() {
 }
 
 #[test]
+fn node_esm_unused_import_equals_require_elides_to_marker() {
+    let source = "import mod = require(\"./native.node\");\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(output.trim_end(), "export {};");
+}
+
+#[test]
+fn node_esm_verbatim_unused_import_equals_require_preserves_require() {
+    let source = "import mod = require(\"./native.node\");\n";
+
+    let (parser, root) = parse_test_source(source);
+
+    let options = PrinterOptions {
+        module: ModuleKind::ESNext,
+        resolved_node_module_to_esm: true,
+        target: ScriptTarget::ES2020,
+        verbatim_module_syntax: true,
+        ..Default::default()
+    };
+    let mut printer = Printer::with_options(&parser.arena, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert_eq!(
+        output.trim_end(),
+        "import { createRequire as _createRequire } from \"module\";\nconst __require = _createRequire(import.meta.url);\nconst mod = __require(\"./native.node\");"
+    );
+}
+
+#[test]
 fn node_esm_import_equals_require_reuses_collision_safe_create_require() {
     let source = "const _createRequire = 1;\nconst __require = 2;\nimport a = require(\"a\");\nimport b = require(\"b\");\na.x;\nb.y;\n";
 

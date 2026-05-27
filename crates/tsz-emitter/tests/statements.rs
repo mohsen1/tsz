@@ -34,6 +34,41 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn parse_and_emit_strict_target(source: &str, file_name: &str, target: ScriptTarget) -> String {
+    let mut parser =
+        ParserState::new_with_language_version(file_name.to_string(), source.to_string(), target);
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
+fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::NodeNext,
+            resolved_node_module_to_cjs: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
     let output =
@@ -46,6 +81,95 @@ fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon
     assert!(
         !output.contains("a = () => 1 // ok\n;"),
         "Arrow body should not steal the statement trailing comment before the semicolon.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn reserved_void_type_alias_name_emits_recovered_runtime_statements() {
+    let source = "interface I {}\ntype any = I;\ntype void = I;\ntype object = I;";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(output.trim_end(), "\"use strict\";\ntype;\nvoid ;\nI;");
+}
+
+#[test]
+fn hard_reserved_parameter_names_emit_statement_tail_recovery() {
+    let source = "function f1(enum) {}\nfunction f2(class) {}\nfunction f3(function) {}\nfunction f4(while) {}\nfunction f5(for) {}";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction f1() { }\nvar ;\n(function () {\n})( || ( = {}));\n{ }\nfunction f2() { }\nclass {\n}\n{ }\nfunction f3() { }\nfunction () { }\n{ }\nfunction f4() { }\nwhile () { }\nfunction f5() { }\nfor (;;) { }"
+    );
+}
+
+#[test]
+fn reserved_array_binding_parameter_yields_statement_tail_recovery() {
+    let source = r#""use strict"
+function a4([while, for, public]){ }
+function a5(...while) { }
+"#;
+    let output = parse_and_emit_strict_es2015(source, "destructuring.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction a4([]) { }\nwhile (, )\n    for (, public; ; )\n        ;\n{ }\nfunction a5(...) { }\nwhile () { }"
+    );
+}
+
+#[test]
+fn invalid_import_attribute_entries_emit_statement_tail_recovery() {
+    let source = r#"export type LocalInterface =
+    & import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface
+    & import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface;
+
+export const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
+export const b = (null as any as import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface);"#;
+    let output = parse_and_emit_nodenext_cjs_es2015(source, "index.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.b = exports.a = void 0;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface\n    & import(\"pkg\", { with: { 1234: , \"resolution-mode\": \"import\" } }).ImportInterface;\nexports.a = null;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface;\n;\nexports.b = null;\n1234, \"resolution-mode\";\n\"import\";\nImportInterface;\n;"
+    );
+}
+
+#[test]
+fn es5_property_access_preserves_raw_astral_identifier_name() {
+    let source = "class Foo { methodA() { return this.\u{102A7}; } }";
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("return this.\u{102A7};"),
+        "Raw astral IdentifierName after property access should survive ES5 recovery.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("return this.;"),
+        "Raw astral IdentifierName after property access should not be emitted as a missing name.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_braced_astral_class_member_tail_emits_as_outer_statements() {
+    let source = r#"
+class Foo {
+    \u{102A7}: string;
+    constructor() {
+        this.\u{102A7} = " world";
+    }
+    methodA() {
+        return this.𐊧;
+    }
+}
+"#;
+    let output = parse_and_emit_strict_target(source, "unicode.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("}());\n{\n    102;\n    A7;\n}\nstring;\nconstructor();"),
+        "Invalid braced astral class member tail should be recovered after the class body.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("return this.𐊧;"),
+        "Recovered method body should still preserve raw astral IdentifierName property access.\nOutput:\n{output}"
     );
 }
 

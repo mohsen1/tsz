@@ -88,7 +88,6 @@ impl ParserState {
                 "Unexpected keyword or identifier.",
                 diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
             );
-            self.next_token();
             *previous_statement_was_block = false;
             return true;
         }
@@ -96,6 +95,23 @@ impl ParserState {
         if resync_after_unknown {
             self.resync_after_error_with_statement_starts(false);
         }
+        *previous_statement_was_block = false;
+        true
+    }
+
+    fn recover_colon_after_block_statement(
+        &mut self,
+        previous_statement_was_block: &mut bool,
+    ) -> bool {
+        if !*previous_statement_was_block || !self.is_token(SyntaxKind::ColonToken) {
+            return false;
+        }
+
+        self.parse_error_at_current_token(
+            "Declaration or statement expected.",
+            diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+        );
+        self.next_token();
         *previous_statement_was_block = false;
         true
     }
@@ -256,6 +272,11 @@ impl ParserState {
                 }
                 prev_block_needs_post_equals_semi = false;
                 previous_statement_was_block = false;
+                continue;
+            }
+
+            if self.recover_colon_after_block_statement(&mut previous_statement_was_block) {
+                prev_block_needs_post_equals_semi = false;
                 continue;
             }
 
@@ -532,6 +553,10 @@ impl ParserState {
                 );
                 self.next_token();
                 previous_statement_was_block = false;
+                continue;
+            }
+
+            if self.recover_colon_after_block_statement(&mut previous_statement_was_block) {
                 continue;
             }
 

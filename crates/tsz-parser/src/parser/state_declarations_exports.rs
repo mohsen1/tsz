@@ -939,7 +939,8 @@ impl ParserState {
         // Check for for-await-of: for await (...)
         let await_modifier = self.parse_optional(SyntaxKind::AwaitKeyword);
 
-        self.parse_expected(SyntaxKind::OpenParenToken);
+        let missing_open_paren_pos = self.token_pos();
+        let has_open_paren = self.parse_expected(SyntaxKind::OpenParenToken);
         if let Some(node) = self.try_parse_invalid_let_of_for_statement(start_pos) {
             return node;
         }
@@ -1011,6 +1012,41 @@ impl ParserState {
         // the missing comma between declarators) rather than the default
         // `';' expected.`. Mirror that message so our diagnostic at the `)`
         // matches tsc for `for (let X)`-style malformed inputs.
+        if !has_open_paren && self.is_token(SyntaxKind::CloseBracketToken) {
+            self.parse_error_at(
+                missing_open_paren_pos,
+                1,
+                "'(' expected.",
+                diagnostic_codes::EXPECTED,
+            );
+            self.parse_error_at_current_token("';' expected.", diagnostic_codes::EXPECTED);
+            self.next_token();
+            if self.is_token(SyntaxKind::CloseParenToken) {
+                self.parse_error_at_current_token(
+                    "Declaration or statement expected.",
+                    diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
+                );
+                self.next_token();
+            }
+            let statement = self.arena.add_token(
+                syntax_kind_ext::EMPTY_STATEMENT,
+                self.token_pos(),
+                self.token_pos(),
+            );
+            let end_pos = self.token_full_start();
+            return self.arena.add_loop(
+                syntax_kind_ext::FOR_STATEMENT,
+                start_pos,
+                end_pos,
+                LoopData {
+                    initializer,
+                    condition: NodeIndex::NONE,
+                    incrementor: NodeIndex::NONE,
+                    statement,
+                },
+            );
+        }
+
         let init_is_var_decl = self
             .arena
             .get(initializer)

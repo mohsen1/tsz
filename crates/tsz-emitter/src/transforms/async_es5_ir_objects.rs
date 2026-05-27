@@ -209,7 +209,7 @@ impl AsyncES5Transformer<'_> {
             &elements[..first_suspension_index],
             &object_temp,
             Some((node.pos, node.end)),
-            split_object_var_group,
+            self.generator_mode && split_object_var_group,
             current_statements,
         );
 
@@ -251,19 +251,6 @@ impl AsyncES5Transformer<'_> {
             return None;
         };
 
-        let suffix = &elements[first_suspension_index + 1..];
-        let suffix_needs_computed_lowering = suffix
-            .iter()
-            .any(|&element| self.object_element_needs_computed_lowering(element));
-        let result_temp = suffix_needs_computed_lowering.then(|| self.generate_hoisted_temp());
-        if let Some(temp) = &result_temp {
-            current_statements.push(IRNode::HoistedVarGroupBreak);
-            current_statements.push(IRNode::VarDecl {
-                name: temp.clone().into(),
-                initializer: None,
-            });
-        }
-
         let key = if let Some(key_temp) = &first_key_temp {
             IRNode::elem(
                 IRNode::id(object_temp.clone()),
@@ -280,6 +267,31 @@ impl AsyncES5Transformer<'_> {
             self.expression_to_ir(first_property_initializer)
         };
         let first_assignment = IRNode::assign(key, value);
+
+        let suffix = &elements[first_suspension_index + 1..];
+        if self.can_sequence_async_object_suffix_suspensions(suffix) {
+            return self.lower_async_object_suffix_suspensions(
+                suffix,
+                &object_temp,
+                first_assignment,
+                cases,
+                current_statements,
+                current_label,
+            );
+        }
+
+        let suffix_needs_computed_lowering = suffix
+            .iter()
+            .any(|&element| self.object_element_needs_computed_lowering(element));
+        let result_temp = (self.generator_mode && suffix_needs_computed_lowering)
+            .then(|| self.generate_hoisted_temp());
+        if let Some(temp) = &result_temp {
+            current_statements.push(IRNode::HoistedVarGroupBreak);
+            current_statements.push(IRNode::VarDecl {
+                name: temp.clone().into(),
+                initializer: None,
+            });
+        }
 
         if let Some(result_temp) = result_temp {
             let mut parts = vec![IRNode::assign(
@@ -306,6 +318,48 @@ impl AsyncES5Transformer<'_> {
         Some(IRNode::CommaExprMultiline(parts))
     }
 
+    fn can_sequence_async_object_suffix_suspensions(&self, suffix: &[NodeIndex]) -> bool {
+        !self.generator_mode
+            && suffix
+                .iter()
+                .any(|&element| self.simple_object_property_value_contains_suspension(element))
+            && suffix.iter().all(|&element| {
+                !self.object_element_contains_suspension(element)
+                    || self.simple_object_property_value_contains_suspension(element)
+            })
+    }
+
+    fn lower_async_object_suffix_suspensions(
+        &mut self,
+        suffix: &[NodeIndex],
+        object_temp: &str,
+        first_assignment: IRNode,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) -> Option<IRNode> {
+        let mut pending_assignment = first_assignment;
+        for &element in suffix {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(pending_assignment)));
+
+            if self.simple_object_property_value_contains_suspension(element) {
+                let prop = self.suspending_property_assignment(element)?;
+                let name = prop.name;
+                let initializer = prop.initializer;
+                self.emit_nested_suspension(initializer, cases, current_statements, current_label);
+                let key = self.convert_property_key_to_element_access(name, object_temp)?;
+                pending_assignment = IRNode::assign(key, IRNode::GeneratorSent);
+            } else {
+                pending_assignment = self.lower_object_property_es5(element, object_temp)?;
+            }
+        }
+
+        Some(IRNode::CommaExprMultiline(vec![
+            pending_assignment,
+            IRNode::id(object_temp.to_string()),
+        ]))
+    }
+
     fn emit_object_literal_prefix_before_suspension(
         &self,
         elements: &[NodeIndex],
@@ -318,12 +372,17 @@ impl AsyncES5Transformer<'_> {
             .iter()
             .position(|&element| self.object_element_needs_computed_lowering(element))
             .unwrap_or(elements.len());
+        let prefix_elements = &elements[..first_computed_idx];
+        let prefix_source_range = prefix_elements.last().and_then(|&last_idx| {
+            let last_node = self.arena.get(last_idx)?;
+            source_range.map(|(pos, _)| (pos, last_node.end))
+        });
         let initial_assignment = IRNode::assign(
             IRNode::id(temp.to_string()),
             IRNode::ObjectLiteral {
-                properties: self.convert_object_properties(&elements[..first_computed_idx]),
-                source_range,
-                extra_indent: u8::from(extra_indent),
+                properties: self.convert_object_properties(prefix_elements),
+                source_range: prefix_source_range,
+                extra_indent: u8::from(extra_indent && first_computed_idx == elements.len()),
             },
         );
 
@@ -376,6 +435,14 @@ impl AsyncES5Transformer<'_> {
                 });
         }
         false
+    }
+
+    fn simple_object_property_value_contains_suspension(&self, elem_idx: NodeIndex) -> bool {
+        let Some(prop) = self.suspending_property_assignment(elem_idx) else {
+            return false;
+        };
+        !self.object_property_name_is_computed(prop.name)
+            && self.body_contains_await(prop.initializer)
     }
 
     fn suspending_property_assignment(

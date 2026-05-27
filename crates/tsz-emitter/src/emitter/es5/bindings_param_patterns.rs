@@ -400,10 +400,9 @@ impl<'a> Printer<'a> {
                     value_name
                 };
 
-                // For an empty array pattern with downlevel_iteration, trigger the
-                // iterator protocol (__read(source, 0)) so the iterable is consumed.
-                // For an empty object pattern or an empty array without downlevel
-                // iteration, the source read above is sufficient.
+                // For defaulted empty nested patterns, tsc still materializes
+                // a final pattern temp after applying the default. Empty arrays
+                // under downlevelIteration read the iterable with limit 0.
                 if self
                     .arena
                     .get(elem.name)
@@ -418,6 +417,12 @@ impl<'a> Printer<'a> {
                     self.write("(");
                     self.write(&source_name);
                     self.write(", 0)");
+                } else if elem.initializer.is_some() {
+                    let empty_name = self.get_temp_var_name();
+                    self.write(", ");
+                    self.write(&empty_name);
+                    self.write(" = ");
+                    self.write(&source_name);
                 }
                 return Some(rest_prop);
             }
@@ -627,17 +632,17 @@ impl<'a> Printer<'a> {
     }
 
     fn can_inline_param_nested_source(&self, pattern_idx: NodeIndex) -> bool {
-        self.param_nested_source_inlineable(pattern_idx)
-            .is_some_and(|has_binding| has_binding)
+        self.param_nested_inline_binding_count(pattern_idx)
+            .is_some_and(|binding_count| binding_count == 1)
     }
 
-    fn param_nested_source_inlineable(&self, pattern_idx: NodeIndex) -> Option<bool> {
+    fn param_nested_inline_binding_count(&self, pattern_idx: NodeIndex) -> Option<usize> {
         let pattern_node = self.arena.get(pattern_idx)?;
         let pattern = self.arena.get_binding_pattern(pattern_node)?;
 
         match pattern_node.kind {
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN => {
-                let mut has_binding = false;
+                let mut binding_count = 0;
                 for &elem_idx in &pattern.elements.nodes {
                     let Some(elem_node) = self.arena.get(elem_idx) else {
                         continue;
@@ -650,12 +655,12 @@ impl<'a> Printer<'a> {
                     if !self.is_literal_property_name(key_idx) {
                         return None;
                     }
-                    has_binding |= self.param_nested_target_inlineable(elem.name)?;
+                    binding_count += self.param_nested_target_inline_binding_count(elem.name)?;
                 }
-                Some(has_binding)
+                Some(binding_count)
             }
             k if k == syntax_kind_ext::ARRAY_BINDING_PATTERN => {
-                let mut has_binding = false;
+                let mut binding_count = 0;
                 for &elem_idx in &pattern.elements.nodes {
                     if elem_idx.is_none() {
                         continue;
@@ -665,23 +670,23 @@ impl<'a> Printer<'a> {
                     if elem.dot_dot_dot_token || elem.initializer.is_some() {
                         return None;
                     }
-                    has_binding |= self.param_nested_target_inlineable(elem.name)?;
+                    binding_count += self.param_nested_target_inline_binding_count(elem.name)?;
                 }
-                Some(has_binding)
+                Some(binding_count)
             }
             _ => None,
         }
     }
 
-    fn param_nested_target_inlineable(&self, target_idx: NodeIndex) -> Option<bool> {
+    fn param_nested_target_inline_binding_count(&self, target_idx: NodeIndex) -> Option<usize> {
         let target_node = self.arena.get(target_idx)?;
 
         match target_node.kind {
-            k if k == SyntaxKind::Identifier as u16 => Some(true),
+            k if k == SyntaxKind::Identifier as u16 => Some(1),
             k if k == syntax_kind_ext::OBJECT_BINDING_PATTERN
                 || k == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
             {
-                self.param_nested_source_inlineable(target_idx)
+                self.param_nested_inline_binding_count(target_idx)
             }
             _ => None,
         }

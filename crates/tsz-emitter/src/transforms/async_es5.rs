@@ -133,6 +133,14 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
+        self.transformer.dynamic_import_promise_counter.set(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.transformer.dynamic_import_promise_counter.get()
+    }
+
     pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
         self.transformer.set_downlevel_iteration(enabled);
     }
@@ -267,9 +275,20 @@ impl<'a> AsyncES5Emitter<'a> {
         body_idx: NodeIndex,
         has_await: bool,
     ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
-        let mut ir = self
-            .transformer
-            .transform_generator_body(body_idx, has_await);
+        self.emit_generator_body_and_hoisted_vars_skipping(body_idx, has_await, &[])
+    }
+
+    pub fn emit_generator_body_and_hoisted_vars_skipping(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        skipped_statements: &[NodeIndex],
+    ) -> (String, Vec<Vec<String>>, Vec<String>, bool) {
+        let mut ir = self.transformer.transform_generator_body_skipping(
+            body_idx,
+            has_await,
+            skipped_statements,
+        );
         let directives = Self::extract_and_remove_directive_prologue(&mut ir);
         let hoisted = self.transformer.extract_hoisted_var_groups(&mut ir);
         let needs_lexical_this_capture = ir.contains_captured_this_reference();

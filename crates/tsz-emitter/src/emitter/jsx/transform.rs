@@ -436,6 +436,23 @@ impl<'a> Printer<'a> {
             self.decrease_indent();
         }
         self.close_brace();
+        if self
+            .ctx
+            .flags
+            .recovered_jsx_missing_false_tail_break_pending
+        {
+            self.ctx
+                .flags
+                .recovered_jsx_missing_false_tail_break_pending = false;
+            self.write_line();
+            self.write_line();
+            let saved_indent = self.writer.indent_level();
+            self.writer.set_indent_level(0);
+            self.write("    ");
+            self.write_line();
+            self.write("        ");
+            self.writer.set_indent_level(saved_indent);
+        }
     }
 
     fn find_jsx_expression_closing_brace(&self, node: &Node) -> u32 {

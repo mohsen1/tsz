@@ -4,10 +4,11 @@
 //! into IR nodes, avoiding `ASTRef` when possible.
 
 use super::*;
+use crate::context::transform::TransformDirective;
 use crate::transforms::async_es5_ir::AsyncES5Transformer;
 use rustc_hash::FxHashSet;
 use tsz_common::common::ModuleKind;
-use tsz_parser::parser::node::{FunctionData, Node};
+use tsz_parser::parser::node::{ForInOfData, FunctionData, Node};
 use tsz_parser::parser::node_flags;
 use tsz_parser::syntax::transform_utils::{
     contains_new_target_reference, contains_super_reference,
@@ -27,6 +28,10 @@ pub struct AstToIr<'a> {
     this_captured: Cell<bool>,
     /// Transform directives from `LoweringPass`
     transforms: Option<TransformContext>,
+    /// Base indentation for class declarations converted directly by this statement converter.
+    class_transformer_indent_base: u32,
+    /// Whether ES5 for-of lowering should use the full iterator protocol.
+    downlevel_iteration: bool,
     /// Current `this` substitution to use when lowering static initializer contexts.
     current_this_substitution: Cell<Option<ThisSubstitution>>,
     /// Capture alias for lexical `this` inside arrows within the current member body.
@@ -76,6 +81,8 @@ impl<'a> AstToIr<'a> {
             source_text: None,
             this_captured: Cell::new(false),
             transforms: None,
+            class_transformer_indent_base: 0,
+            downlevel_iteration: false,
             current_this_substitution: Cell::new(None),
             lexical_this_capture_alias: Cell::new(None),
             has_super: false,
@@ -130,6 +137,16 @@ impl<'a> AstToIr<'a> {
         self
     }
 
+    pub const fn with_class_transformer_indent_base(mut self, indent_base: u32) -> Self {
+        self.class_transformer_indent_base = indent_base;
+        self
+    }
+
+    pub const fn with_downlevel_iteration(mut self, enabled: bool) -> Self {
+        self.downlevel_iteration = enabled;
+        self
+    }
+
     pub const fn with_module_kind(mut self, module_kind: ModuleKind) -> Self {
         self.module_kind = module_kind;
         self
@@ -177,6 +194,11 @@ impl<'a> AstToIr<'a> {
         self
     }
 
+    pub fn with_dynamic_import_promise_counter(self, counter: u32) -> Self {
+        self.dynamic_import_promise_counter.set(counter);
+        self
+    }
+
     pub fn with_disposable_env_context<I>(self, next_id: u32, blocked_names: I) -> Self
     where
         I: IntoIterator<Item = String>,
@@ -194,6 +216,10 @@ impl<'a> AstToIr<'a> {
 
     pub const fn disposable_env_counter(&self) -> u32 {
         self.disposable_env_counter.get()
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.dynamic_import_promise_counter.get()
     }
 
     pub fn take_generated_disposable_env_names(&self) -> Vec<String> {
@@ -220,6 +246,42 @@ impl<'a> AstToIr<'a> {
                 captured: self.this_captured.get(),
             }
         }
+    }
+
+    fn enter_ordinary_function_this_scope(
+        &self,
+    ) -> (
+        bool,
+        Option<ThisSubstitution>,
+        Option<ThisSubstitution>,
+        bool,
+    ) {
+        let prev_captured = self.this_captured.replace(false);
+        let prev_substitution = self.current_this_substitution.take();
+        let prev_lexical_alias = self.lexical_this_capture_alias.take();
+        let prev_static = self.is_static.replace(true);
+        (
+            prev_captured,
+            prev_substitution,
+            prev_lexical_alias,
+            prev_static,
+        )
+    }
+
+    fn restore_ordinary_function_this_scope(
+        &self,
+        previous: (
+            bool,
+            Option<ThisSubstitution>,
+            Option<ThisSubstitution>,
+            bool,
+        ),
+    ) {
+        let (prev_captured, prev_substitution, prev_lexical_alias, prev_static) = previous;
+        self.this_captured.set(prev_captured);
+        self.current_this_substitution.set(prev_substitution);
+        self.lexical_this_capture_alias.set(prev_lexical_alias);
+        self.is_static.set(prev_static);
     }
 
     fn can_delegate_es5_for_of_to_ast_printer(&self, idx: NodeIndex) -> bool {
@@ -288,6 +350,12 @@ impl<'a> AstToIr<'a> {
 
     /// Generate a unique temp variable name and register it for hoisting
     fn generate_hoisted_temp(&self) -> String {
+        let name = self.generate_temp_name();
+        self.hoisted_temps.borrow_mut().push(name.clone());
+        name
+    }
+
+    fn generate_temp_name(&self) -> String {
         let counter = self.temp_var_counter.get();
         let name = if counter < 26 {
             format!("_{}", (b'a' + counter as u8) as char)
@@ -295,8 +363,14 @@ impl<'a> AstToIr<'a> {
             format!("_{counter}")
         };
         self.temp_var_counter.set(counter + 1);
-        self.hoisted_temps.borrow_mut().push(name.clone());
         name
+    }
+
+    fn source_has_identifier(&self, name: &str) -> bool {
+        self.arena
+            .identifiers
+            .iter()
+            .any(|identifier| identifier.escaped_text == name)
     }
 
     /// Set whether `this` should be captured as `_this`
@@ -634,6 +708,9 @@ impl<'a> AstToIr<'a> {
                 self.convert_object_literal(idx)
             }
             k if k == syntax_kind_ext::FUNCTION_EXPRESSION => self.convert_function_expression(idx),
+            k if k == syntax_kind_ext::CLASS_EXPRESSION && self.this_captured.get() => {
+                IRNode::ASTRefWithCapturedClassHeritageThis(idx)
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION => self.convert_arrow_function(idx),
             k if k == syntax_kind_ext::SPREAD_ELEMENT => self.convert_spread_element(idx),
             k if k == syntax_kind_ext::TEMPLATE_EXPRESSION
@@ -850,18 +927,144 @@ impl<'a> AstToIr<'a> {
     fn convert_class_declaration(&self, idx: NodeIndex) -> IRNode {
         let mut transformer = ES5ClassTransformer::new(self.arena);
         transformer.set_module_kind(self.module_kind);
+        transformer.set_dynamic_import_promise_counter(self.dynamic_import_promise_counter.get());
+        transformer.set_indent_base(self.class_transformer_indent_base);
+        transformer.set_downlevel_iteration(self.downlevel_iteration);
         if let Some(transforms) = self.transforms.clone() {
             transformer.set_transforms(transforms);
+        }
+        if !self.has_tc39_decorator_directive(idx) {
+            let class_decorators = self.collect_class_decorators(idx);
+            let has_member_decorators = self.class_has_member_decorators(idx);
+            if !class_decorators.is_empty() || has_member_decorators {
+                transformer.set_class_decorators(class_decorators);
+                transformer.set_legacy_decorators(has_member_decorators);
+            }
         }
         if let Some(source_text) = self.source_text {
             transformer.set_source_text(source_text);
         }
+        if self.this_captured.get() {
+            transformer.set_extends_this_captured(true);
+        }
 
         if let Some(ir) = transformer.transform_class_to_ir(idx) {
+            self.dynamic_import_promise_counter
+                .set(transformer.dynamic_import_promise_counter());
             return ir;
         }
 
         IRNode::ASTRef(idx)
+    }
+
+    fn has_tc39_decorator_directive(&self, idx: NodeIndex) -> bool {
+        self.transforms
+            .as_ref()
+            .and_then(|transforms| transforms.get(idx))
+            .is_some_and(Self::directive_is_tc39_decorators)
+    }
+
+    fn directive_is_tc39_decorators(directive: &TransformDirective) -> bool {
+        match directive {
+            TransformDirective::TC39Decorators { .. } => true,
+            TransformDirective::Chain(items) => {
+                items.iter().any(Self::directive_is_tc39_decorators)
+            }
+            _ => false,
+        }
+    }
+
+    fn collect_class_decorators(&self, idx: NodeIndex) -> Vec<NodeIndex> {
+        let Some(node) = self.arena.get(idx) else {
+            return Vec::new();
+        };
+        let Some(class_data) = self.arena.get_class(node) else {
+            return Vec::new();
+        };
+        Self::collect_decorators_from_modifiers(self.arena, class_data.modifiers.as_ref())
+    }
+
+    fn class_has_member_decorators(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        let Some(class_data) = self.arena.get_class(node) else {
+            return false;
+        };
+        class_data
+            .members
+            .nodes
+            .iter()
+            .any(|&member_idx| self.member_has_decorator(member_idx))
+    }
+
+    fn member_has_decorator(&self, member_idx: NodeIndex) -> bool {
+        let Some(member_node) = self.arena.get(member_idx) else {
+            return false;
+        };
+
+        let modifiers = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .and_then(|method| method.modifiers.as_ref()),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .and_then(|property| property.modifiers.as_ref()),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .and_then(|accessor| accessor.modifiers.as_ref()),
+            _ => None,
+        };
+        if !Self::collect_decorators_from_modifiers(self.arena, modifiers).is_empty() {
+            return true;
+        }
+
+        let parameters = match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .map(|method| &method.parameters),
+            k if k == syntax_kind_ext::CONSTRUCTOR => self
+                .arena
+                .get_constructor(member_node)
+                .map(|ctor| &ctor.parameters),
+            _ => None,
+        };
+
+        parameters.is_some_and(|params| {
+            params.nodes.iter().any(|&param_idx| {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    return false;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    return false;
+                };
+                !Self::collect_decorators_from_modifiers(self.arena, param.modifiers.as_ref())
+                    .is_empty()
+            })
+        })
+    }
+
+    fn collect_decorators_from_modifiers(
+        arena: &NodeArena,
+        modifiers: Option<&NodeList>,
+    ) -> Vec<NodeIndex> {
+        modifiers
+            .map(|m| {
+                m.nodes
+                    .iter()
+                    .copied()
+                    .filter(|&mod_idx| {
+                        arena
+                            .get(mod_idx)
+                            .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn convert_function_declaration(&self, idx: NodeIndex) -> IRNode {
@@ -876,11 +1079,16 @@ impl<'a> AstToIr<'a> {
             let mut transformer = AsyncES5Transformer::new(self.arena);
             transformer.set_temp_var_counter(self.temp_var_counter.get());
             transformer.set_module_kind(self.module_kind);
+            transformer
+                .dynamic_import_promise_counter
+                .set(self.dynamic_import_promise_counter.get());
             if let Some(source_text) = self.source_text {
                 transformer.set_source_text(source_text);
             }
             let ir = transformer.transform_async_function(idx);
             self.temp_var_counter.set(transformer.temp_var_counter());
+            self.dynamic_import_promise_counter
+                .set(transformer.dynamic_import_promise_counter.get());
             return ir;
         }
 
@@ -889,6 +1097,7 @@ impl<'a> AstToIr<'a> {
         self.temp_var_counter.set(0);
 
         let name = get_identifier_text(self.arena, func.name).unwrap_or_default();
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&func.parameters);
         let body_source_range = if func.body.is_some() {
             self.arena
@@ -898,10 +1107,6 @@ impl<'a> AstToIr<'a> {
             None
         };
 
-        // Function declarations have their own `this`; class/static-block
-        // substitutions must not leak into their bodies.
-        let prev_substitution = self.current_this_substitution.take();
-        let prev_static = self.is_static.replace(true);
         let body = if func.body.is_none() {
             vec![]
         } else if let Some(body_node) = self.arena.get(func.body)
@@ -916,8 +1121,7 @@ impl<'a> AstToIr<'a> {
         } else {
             vec![]
         };
-        self.is_static.set(prev_static);
-        self.current_this_substitution.set(prev_substitution);
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         self.temp_var_counter.set(saved_temp_counter);
 
         let mut body = body;
@@ -1205,6 +1409,13 @@ impl<'a> AstToIr<'a> {
         let Some(loop_data) = self.arena.get_for_in_of(node) else {
             return IRNode::ASTRef(idx);
         };
+        if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+            && !self.downlevel_iteration
+            && !loop_data.await_modifier
+            && let Some(ir) = self.convert_for_of_array_indexing(loop_data)
+        {
+            return ir;
+        }
         let kind = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT {
             if loop_data.await_modifier {
                 std::borrow::Cow::Borrowed("await of")
@@ -1254,6 +1465,76 @@ impl<'a> AstToIr<'a> {
             body: Box::new(self.convert_statement(loop_data.statement)),
             multiline_body: false,
         }
+    }
+
+    fn convert_for_of_array_indexing(&self, loop_data: &ForInOfData) -> Option<IRNode> {
+        let init_node = self.arena.get(loop_data.initializer)?;
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return None;
+        }
+        let var_data = self.arena.get_variable(init_node)?;
+        if var_data.declarations.nodes.len() != 1 {
+            return None;
+        }
+        let decl_idx = var_data.declarations.nodes[0];
+        let decl_node = self.arena.get(decl_idx)?;
+        let decl = self.arena.get_variable_declaration(decl_node)?;
+        let binding_name = get_identifier_text(self.arena, decl.name)?;
+
+        let index_name = if self.temp_var_counter.get() == 0 && !self.source_has_identifier("_i") {
+            "_i".to_string()
+        } else {
+            self.generate_temp_name()
+        };
+        let array_name = self.generate_temp_name();
+        let iterable = self.convert_expression(loop_data.expression);
+
+        let mut body = vec![IRNode::VarDecl {
+            name: binding_name.into(),
+            initializer: Some(Box::new(IRNode::elem(
+                IRNode::id(array_name.clone()),
+                IRNode::id(index_name.clone()),
+            ))),
+        }];
+        body.extend(self.convert_loop_body_statements(loop_data.statement));
+
+        Some(IRNode::ForStatement {
+            initializer: Some(Box::new(IRNode::VarDeclList(vec![
+                IRNode::VarDecl {
+                    name: index_name.clone().into(),
+                    initializer: Some(Box::new(IRNode::number("0"))),
+                },
+                IRNode::VarDecl {
+                    name: array_name.clone().into(),
+                    initializer: Some(Box::new(iterable)),
+                },
+            ]))),
+            condition: Some(Box::new(IRNode::BinaryExpr {
+                left: Box::new(IRNode::id(index_name.clone())),
+                operator: "<".into(),
+                right: Box::new(IRNode::prop(IRNode::id(array_name), "length")),
+            })),
+            incrementor: Some(Box::new(IRNode::PostfixUnaryExpr {
+                operand: Box::new(IRNode::id(index_name)),
+                operator: "++".into(),
+            })),
+            body: Box::new(IRNode::Block(body)),
+        })
+    }
+
+    fn convert_loop_body_statements(&self, statement_idx: NodeIndex) -> Vec<IRNode> {
+        if let Some(statement_node) = self.arena.get(statement_idx)
+            && statement_node.kind == syntax_kind_ext::BLOCK
+            && let Some(block) = self.arena.get_block(statement_node)
+        {
+            return block
+                .statements
+                .nodes
+                .iter()
+                .map(|&stmt_idx| self.convert_statement(stmt_idx))
+                .collect();
+        }
+        vec![self.convert_statement(statement_idx)]
     }
 
     fn convert_identifier(&self, idx: NodeIndex) -> IRNode {
@@ -1791,13 +2072,10 @@ impl<'a> AstToIr<'a> {
 
             let needs_computed_es5_lowering = obj.elements.nodes.iter().any(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::GET_ACCESSOR
-                            || n.kind == syntax_kind_ext::SET_ACCESSOR
-                    })
             });
             if needs_computed_es5_lowering {
-                return self.lower_object_literal_es5(&obj.elements.nodes);
+                return self
+                    .lower_object_literal_es5(&obj.elements.nodes, Some((node.pos, node.end)));
             }
 
             let props: Vec<IRProperty> = obj
@@ -2004,7 +2282,11 @@ impl<'a> AstToIr<'a> {
 
     /// Lower an object literal with computed properties to ES5 comma expression:
     /// `{ [expr]: val, static: 1 }` -> `(_a = { static: 1 }, _a[expr] = val, _a)`
-    fn lower_object_literal_es5(&self, elements: &[NodeIndex]) -> IRNode {
+    fn lower_object_literal_es5(
+        &self,
+        elements: &[NodeIndex],
+        source_range: Option<(u32, u32)>,
+    ) -> IRNode {
         let temp = self.generate_hoisted_temp();
 
         // Split: static props go in the initial object, computed props become assignments
@@ -2012,10 +2294,6 @@ impl<'a> AstToIr<'a> {
             .iter()
             .position(|&elem_idx| {
                 crate::transforms::emit_utils::is_computed_property_member(self.arena, elem_idx)
-                    || self.arena.get(elem_idx).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::GET_ACCESSOR
-                            || n.kind == syntax_kind_ext::SET_ACCESSOR
-                    })
             })
             .unwrap_or(elements.len());
 
@@ -2027,7 +2305,11 @@ impl<'a> AstToIr<'a> {
                 .iter()
                 .filter_map(|&p| self.convert_object_property(p))
                 .collect();
-            IRNode::object(props)
+            IRNode::ObjectLiteral {
+                properties: props,
+                source_range,
+                extra_indent: 0,
+            }
         } else {
             IRNode::ObjectLiteral {
                 properties: Vec::new(),
@@ -2097,6 +2379,12 @@ impl<'a> AstToIr<'a> {
                 };
                 let key_expr = self.convert_property_key_to_string_expr(accessor.name)?;
                 let func = self.convert_accessor_to_function_expr(node)?;
+                let descriptor_source_range =
+                    self.arena.get_extended(elem_idx).and_then(|extended| {
+                        let parent = extended.parent;
+                        let parent_node = self.arena.get(parent)?;
+                        Some((parent_node.pos, parent_node.end))
+                    });
                 // Object.defineProperty(_a, key, { get/set: function() {...}, enumerable: false, configurable: true })
                 let descriptor_props = vec![
                     IRProperty {
@@ -2125,7 +2413,7 @@ impl<'a> AstToIr<'a> {
                         key_expr,
                         IRNode::ObjectLiteral {
                             properties: descriptor_props,
-                            source_range: None,
+                            source_range: descriptor_source_range,
                             extra_indent: 0,
                         },
                     ],
@@ -2192,12 +2480,14 @@ impl<'a> AstToIr<'a> {
     /// Convert a method declaration to a function expression IR node
     fn convert_method_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let method = self.arena.get_method_decl(node)?;
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&method.parameters);
         let mut body = if method.body.is_some() {
             self.convert_block_to_stmts(method.body)
         } else {
             Vec::new()
         };
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         if self.method_body_contains_new_target(method.body, &method.parameters) {
             Self::prepend_new_target_capture(&mut body, IRNode::void_0());
         }
@@ -2214,12 +2504,14 @@ impl<'a> AstToIr<'a> {
     /// Convert a getter/setter to a function expression IR node
     fn convert_accessor_to_function_expr(&self, node: &Node) -> Option<IRNode> {
         let accessor = self.arena.get_accessor(node)?;
+        let previous_this_scope = self.enter_ordinary_function_this_scope();
         let params = self.convert_parameters(&accessor.parameters);
         let mut body = if accessor.body.is_some() {
             self.convert_block_to_stmts(accessor.body)
         } else {
             Vec::new()
         };
+        self.restore_ordinary_function_this_scope(previous_this_scope);
         if self.method_body_contains_new_target(accessor.body, &accessor.parameters) {
             Self::prepend_new_target_capture(&mut body, IRNode::void_0());
         }
@@ -2259,6 +2551,15 @@ impl<'a> AstToIr<'a> {
                 value,
                 kind: IRPropertyKind::Init,
             })
+        } else if let Some(accessor) = self.arena.get_accessor(node) {
+            let key = self.get_property_key(accessor.name)?;
+            let value = self.convert_accessor_to_function_expr(node)?;
+            let kind = if node.kind == syntax_kind_ext::GET_ACCESSOR {
+                IRPropertyKind::Get
+            } else {
+                IRPropertyKind::Set
+            };
+            Some(IRProperty { key, value, kind })
         } else {
             None
         }
@@ -2281,6 +2582,7 @@ impl<'a> AstToIr<'a> {
             let saved_temp_counter = self.temp_var_counter.get();
             self.temp_var_counter.set(0);
 
+            let previous_this_scope = self.enter_ordinary_function_this_scope();
             let needs_new_target_capture = self.function_body_contains_new_target(func);
             let name = if func.name.is_none() {
                 needs_new_target_capture.then_some("_a".to_string())
@@ -2297,11 +2599,6 @@ impl<'a> AstToIr<'a> {
                 None
             };
 
-            // Regular function expressions have their own `this`, so we must
-            // clear the class alias (it should NOT substitute `this` inside).
-            let prev_substitution = self.current_this_substitution.take();
-            let prev_static = self.is_static.replace(true);
-
             let body = if func.body.is_none() {
                 vec![]
             } else if let Some(body_node) = self.arena.get(func.body)
@@ -2312,9 +2609,7 @@ impl<'a> AstToIr<'a> {
                 vec![]
             };
 
-            // Restore previous alias
-            self.is_static.set(prev_static);
-            self.current_this_substitution.set(prev_substitution);
+            self.restore_ordinary_function_this_scope(previous_this_scope);
             self.temp_var_counter.set(saved_temp_counter);
             let mut body = body;
             self.prepend_function_hoisted_temps(&mut body, hoisted_before);
@@ -2345,21 +2640,8 @@ impl<'a> AstToIr<'a> {
 
         // ArrowFunction uses FunctionData (has equals_greater_than_token set)
         if let Some(arrow) = self.arena.get_function(node) {
-            // Async arrow functions need __awaiter/__generator lowering.
-            // Delegate to the main emitter via ASTRef so the ES5ArrowFunction
-            // directive triggers the full async arrow emit path.
             if arrow.is_async {
-                if let Some(substitution) = self.current_this_substitution.take() {
-                    self.current_this_substitution
-                        .set(Some(substitution.clone()));
-                    if let ThisSubstitution::Identifier(alias) = substitution {
-                        return IRNode::ASTRefWithGeneratorThis {
-                            node: idx,
-                            generator_this: alias.into(),
-                        };
-                    }
-                }
-                return IRNode::ASTRef(idx);
+                return self.convert_async_arrow_function(arrow);
             }
             let hoisted_before = self.hoisted_temps.borrow().len();
             let saved_temp_counter = self.temp_var_counter.get();
@@ -2451,6 +2733,65 @@ impl<'a> AstToIr<'a> {
             }
         } else {
             IRNode::ASTRef(idx)
+        }
+    }
+
+    fn convert_async_arrow_function(&self, arrow: &FunctionData) -> IRNode {
+        let mut transformer = AsyncES5Transformer::new(self.arena);
+        transformer.set_temp_var_counter(self.temp_var_counter.get());
+        transformer.set_module_kind(self.module_kind);
+        transformer
+            .dynamic_import_promise_counter
+            .set(self.dynamic_import_promise_counter.get());
+        if let Some(source_text) = self.source_text {
+            transformer.set_source_text(source_text);
+        }
+        let has_await = transformer.body_contains_await(arrow.body);
+        let mut generator_body = transformer.transform_generator_body(arrow.body, has_await);
+        self.temp_var_counter.set(transformer.temp_var_counter());
+        self.dynamic_import_promise_counter
+            .set(transformer.dynamic_import_promise_counter.get());
+        let hoisted_var_groups =
+            AsyncES5Transformer::extract_and_remove_var_decl_groups(&mut generator_body);
+        let this_arg = self.async_arrow_awaiter_this_arg();
+        IRNode::FunctionExpr {
+            name: None,
+            parameters: self.convert_parameters(&arrow.parameters),
+            body: vec![IRNode::AwaiterCall {
+                this_arg: Box::new(this_arg),
+                needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+                generator_body: Box::new(generator_body),
+                hoisted_var_groups,
+                promise_constructor: None,
+                multiline_callback: false,
+                directives: Vec::new(),
+            }],
+            is_expression_body: true,
+            body_source_range: None,
+        }
+    }
+
+    fn async_arrow_awaiter_this_arg(&self) -> IRNode {
+        if let Some(substitution) = self.current_this_substitution.take() {
+            self.current_this_substitution
+                .set(Some(substitution.clone()));
+            return match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::id(alias),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            };
+        }
+        if let Some(substitution) = self.lexical_this_capture_alias.take() {
+            self.lexical_this_capture_alias
+                .set(Some(substitution.clone()));
+            return match substitution {
+                ThisSubstitution::Identifier(alias) => IRNode::id(alias),
+                ThisSubstitution::Raw(expr) => IRNode::Raw(expr.into()),
+            };
+        }
+        if self.this_captured.get() {
+            IRNode::id("_this")
+        } else {
+            IRNode::void_0()
         }
     }
 

@@ -712,6 +712,14 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_assignment(
+            binary.left,
+            binary.operator_token,
+            binary.right,
+        ) {
+            return;
+        }
+
         // ES2015-ES2017: lower object rest assignment patterns.
         // Skip when targeting ES5; the ES5 destructuring lowering below
         // already handles object rest with fully ES5-compatible output.
@@ -811,12 +819,35 @@ impl<'a> Printer<'a> {
             self.ctx.flags.optional_chain_needs_parens = true;
             self.ctx.flags.nullish_coalescing_needs_parens = true;
         }
-        if self.is_assignment_operator(binary.operator_token)
+        let left_is_destructuring_pattern = self.arena.get(binary.left).is_some_and(|node| {
+            matches!(
+                node.kind,
+                syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    | syntax_kind_ext::ARRAY_BINDING_PATTERN
+                    | syntax_kind_ext::OBJECT_BINDING_PATTERN
+            )
+        });
+        let left_has_static_super_target = binary.operator_token == SyntaxKind::EqualsToken as u16
+            && left_is_destructuring_pattern
+            && self.pattern_has_scoped_static_super_assignment_target(binary.left);
+        if self.emit_system_live_export_assignment_expression(
+            binary.left,
+            binary.operator_token,
+            binary.right,
+        ) {
+            self.ctx.flags.optional_chain_needs_parens = prev_optional;
+            self.ctx.flags.nullish_coalescing_needs_parens = prev_nullish;
+            self.ctx.flags.in_binary_operand = prev_in_binary;
+            return;
+        } else if self.is_assignment_operator(binary.operator_token)
             && self.emit_commonjs_live_export_assignment_target(binary.left)
         {
             // The live export chain emitted the left-hand side.
         } else if self.assignment_left_is_recovered_super(binary.left, binary.operator_token) {
             self.write("super.");
+        } else if left_has_static_super_target {
+            self.emit_with_scoped_static_super_assignment_targets(binary.left);
         } else {
             self.emit(binary.left);
         }
@@ -1079,7 +1110,7 @@ impl<'a> Printer<'a> {
             .is_some_and(|node| node.kind == SyntaxKind::SuperKeyword as u16)
     }
 
-    const fn is_assignment_operator(&self, op: u16) -> bool {
+    pub(in crate::emitter) const fn is_assignment_operator(&self, op: u16) -> bool {
         op == SyntaxKind::EqualsToken as u16
             || op == SyntaxKind::PlusEqualsToken as u16
             || op == SyntaxKind::MinusEqualsToken as u16
@@ -1114,24 +1145,19 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_update(unary.operand, unary.operator, true) {
+            return;
+        }
+
         if (unary.operator == SyntaxKind::PlusPlusToken as u16
             || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && let Some(operand_node) = self.arena.get(unary.operand)
             && operand_node.kind == SyntaxKind::Identifier as u16
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
-            if self.in_system_execute_body {
-                if let Some(export_name) = self.system_reexported_names.get(&local_name).cloned() {
-                    self.write("exports_1(\"");
-                    self.write(&export_name);
-                    self.write("\", ");
-                    self.write(get_operator_text(unary.operator));
-                    self.write(&local_name);
-                    self.write(")");
-                    return;
-                }
-            }
-            if self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator) {
+            if self.emit_system_live_export_prefix_unary(&local_name, unary.operator)
+                || self.emit_cjs_live_export_prefix_unary(&local_name, unary.operator)
+            {
                 return;
             }
         }
@@ -1398,6 +1424,10 @@ impl<'a> Printer<'a> {
             return;
         }
 
+        if self.emit_scoped_static_super_update(unary.operand, unary.operator, false) {
+            return;
+        }
+
         if (unary.operator == SyntaxKind::PlusPlusToken as u16
             || unary.operator == SyntaxKind::MinusMinusToken as u16)
             && !self.ctx.options.target.supports_es2020()
@@ -1422,7 +1452,13 @@ impl<'a> Printer<'a> {
         {
             let local_name = self.get_identifier_text_idx(unary.operand);
             let is_statement = self.ctx.flags.in_statement_expression;
-            if self.emit_cjs_live_export_postfix_unary(&local_name, unary.operator, is_statement) {
+            if self.emit_system_live_export_postfix_unary(&local_name, unary.operator, is_statement)
+                || self.emit_cjs_live_export_postfix_unary(
+                    &local_name,
+                    unary.operator,
+                    is_statement,
+                )
+            {
                 return;
             }
         }

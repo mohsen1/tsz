@@ -479,7 +479,8 @@ impl<'a> Printer<'a> {
         self.write("\"use strict\";");
         self.write_line();
         self.emit_system_helpers_if_needed(source);
-        let mut dep_vars = self.collect_system_dependency_vars(&system_dependencies, source);
+        let mut dep_vars =
+            self.collect_system_dependency_vars(&system_dependencies, source, &system_plan);
         for (dep, actions) in &system_plan.actions {
             if let Some(SystemDependencyAction::Assign(dep_var)) = actions
                 .iter()
@@ -501,6 +502,7 @@ impl<'a> Printer<'a> {
         self.write_line();
 
         self.register_system_import_substitutions(source, &dep_vars, &system_plan);
+        self.install_system_local_export_bindings(source);
 
         // Hoist exported function declarations to the outer module scope,
         // before the `return { setters, execute }` block.  TSC does the same:
@@ -587,6 +589,12 @@ impl<'a> Printer<'a> {
                     continue;
                 }
                 if let Some(func_decl) = self.arena.get_function(clause_node) {
+                    if self
+                        .arena
+                        .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                    {
+                        continue;
+                    }
                     let func_name = self.get_identifier_text_idx(func_decl.name);
                     if func_name.is_empty() {
                         if export_decl.is_default_export {
@@ -600,6 +608,12 @@ impl<'a> Printer<'a> {
             if stmt_node.kind == syntax_kind_ext::FUNCTION_DECLARATION
                 && let Some(func_decl) = self.arena.get_function(stmt_node)
             {
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if !func_name.is_empty() {
                     names.insert(func_name);
@@ -711,6 +725,12 @@ impl<'a> Printer<'a> {
                 let Some(func_decl) = self.arena.get_function(clause_node) else {
                     continue;
                 };
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if func_name.is_empty() {
                     // `export default function() {}` — anonymous, needs a generated name
@@ -757,6 +777,12 @@ impl<'a> Printer<'a> {
                 let Some(func_decl) = self.arena.get_function(stmt_node) else {
                     continue;
                 };
+                if self
+                    .arena
+                    .has_modifier(&func_decl.modifiers, SyntaxKind::DeclareKeyword)
+                {
+                    continue;
+                }
                 let func_name = self.get_identifier_text_idx(func_decl.name);
                 if func_name.is_empty() {
                     continue;
@@ -942,8 +968,11 @@ impl<'a> Printer<'a> {
                     continue;
                 }
 
-                let dep_var =
-                    namespace_name.unwrap_or_else(|| self.next_commonjs_module_var(&module_spec));
+                let dep_var = if clause.name.is_none() {
+                    namespace_name.unwrap_or_else(|| self.next_commonjs_module_var(&module_spec))
+                } else {
+                    self.next_commonjs_module_var(&module_spec)
+                };
                 plan.import_vars.insert(stmt_node.pos, dep_var.clone());
                 plan.actions
                     .entry(module_spec)
@@ -1025,12 +1054,26 @@ impl<'a> Printer<'a> {
     }
 
     fn collect_system_dependency_vars(
-        &self,
+        &mut self,
         dependencies: &[String],
         source: &tsz_parser::parser::node::SourceFileData,
+        system_plan: &SystemDependencyPlan,
     ) -> HashMap<String, String> {
         let mut dep_vars = HashMap::new();
-        for (idx, dep) in dependencies.iter().enumerate() {
+        for dep in dependencies {
+            if let Some(SystemDependencyAction::Assign(dep_var)) =
+                system_plan.actions.get(dep).and_then(|actions| {
+                    actions
+                        .iter()
+                        .find(|action| matches!(action, SystemDependencyAction::Assign(_)))
+                })
+            {
+                dep_vars.insert(dep.clone(), dep_var.clone());
+                continue;
+            }
+            if !system_plan.actions.contains_key(dep) {
+                continue;
+            }
             let mut chosen = None;
             for &stmt_idx in &source.statements.nodes {
                 let Some(stmt_node) = self.arena.get(stmt_idx) else {
@@ -1062,8 +1105,7 @@ impl<'a> Printer<'a> {
             let dep_var = if let Some(local_name) = chosen {
                 local_name
             } else {
-                let base = crate::transforms::emit_utils::sanitize_module_name(dep);
-                format!("{base}_{}", idx + 1)
+                self.next_commonjs_module_var(dep)
             };
             dep_vars.insert(dep.clone(), dep_var);
         }

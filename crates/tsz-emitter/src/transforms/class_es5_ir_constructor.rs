@@ -66,7 +66,8 @@ impl<'a> ES5ClassTransformer<'a> {
                     return None;
                 }
                 (self.use_define_for_class_fields
-                    || self.property_initializer_has_equals(member_node, prop_data))
+                    || self.property_initializer_has_equals(member_node, prop_data)
+                    || self.tc39_es5_decorated_field(member_idx).is_some())
                 .then_some(member_idx)
             })
             .collect();
@@ -147,7 +148,10 @@ impl<'a> ES5ClassTransformer<'a> {
             let moved_initializers_contain_new_target =
                 self.moved_instance_initializers_contain_new_target(&instance_props);
             if self.has_extends && !self.extends_null {
-                if instance_props.is_empty() && !has_private_fields {
+                if instance_props.is_empty()
+                    && !has_private_fields
+                    && !self.tc39_instance_initializers_needed()
+                {
                     // Simple: return _super !== null && _super.apply(this, arguments) || this;
                     ctor_body.push(IRNode::ret(Some(IRNode::logical_or(
                         IRNode::logical_and(
@@ -194,10 +198,15 @@ impl<'a> ES5ClassTransformer<'a> {
                     // Instance property initializations
                     for &prop_idx in &instance_props {
                         self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                        if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+                        if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                             ctor_body.push(ir);
                         }
                     }
+                    self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(
+                        &mut ctor_body,
+                        true,
+                    );
+                    self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, true);
 
                     // return _this;
                     ctor_body.push(IRNode::ret(Some(IRNode::id("_this"))));
@@ -205,7 +214,9 @@ impl<'a> ES5ClassTransformer<'a> {
             } else {
                 // Non-derived class default constructor
                 // Check if instance property initializers need _this capture
-                if self.instance_props_need_this_capture(&instance_props) {
+                let instance_props_need_this_capture =
+                    self.instance_props_need_this_capture(&instance_props);
+                if instance_props_need_this_capture {
                     ctor_body.push(IRNode::var_decl("_this", Some(IRNode::this())));
                 }
                 if moved_initializers_contain_new_target {
@@ -220,10 +231,16 @@ impl<'a> ES5ClassTransformer<'a> {
                 // Instance property initializations
                 for &prop_idx in &instance_props {
                     self.emit_property_leading_comment(&mut ctor_body, prop_idx);
-                    if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
+                    if let Some(ir) = self.emit_property_initializer_ir(
+                        prop_idx,
+                        false,
+                        instance_props_need_this_capture,
+                    ) {
                         ctor_body.push(ir);
                     }
                 }
+                self.emit_tc39_instance_extra_initializers_if_unconsumed_ir(&mut ctor_body, false);
+                self.emit_tc39_instance_field_extra_initializers_ir(&mut ctor_body, false);
             }
         }
 
@@ -301,8 +318,19 @@ impl<'a> ES5ClassTransformer<'a> {
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
-        let needs_pre_super_this_capture =
-            self.derived_constructor_needs_pre_super_this_capture(block, super_stmt_position);
+        let needs_materialized_this_after_super = stmts_after_super > 0
+            || !instance_props.is_empty()
+            || has_param_props
+            || has_destructuring_params
+            || has_private_fields
+            || has_auto_accessors
+            || has_private_accessors
+            || needs_this_capture;
+        let needs_pre_super_this_capture = self.derived_constructor_needs_pre_super_this_capture(
+            block,
+            super_stmt_position,
+            needs_materialized_this_after_super,
+        );
         let has_top_level_using = block.statements.nodes.iter().any(|&stmt_idx| {
             self.using_declaration_list_for_statement(stmt_idx)
                 .is_some()
@@ -429,10 +457,11 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit instance property initializers
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         // Emit remaining statements after super()
         // In derived constructors, `this` becomes `_this` after super() call
@@ -523,10 +552,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(&mut try_body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 try_body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(&mut try_body, true);
 
         if super_stmt_idx.is_some() {
             for (i, &stmt_idx) in block.statements.nodes.iter().enumerate() {
@@ -613,10 +643,11 @@ impl<'a> ES5ClassTransformer<'a> {
 
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, true, true) {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, true);
 
         let mut prev_stmt_end = body_node.pos;
         for &stmt_idx in &block.statements.nodes {
@@ -940,10 +971,12 @@ impl<'a> ES5ClassTransformer<'a> {
         // Emit instance property initializers
         for &prop_idx in instance_props {
             self.emit_property_leading_comment(body, prop_idx);
-            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false) {
+            if let Some(ir) = self.emit_property_initializer_ir(prop_idx, false, needs_this_capture)
+            {
                 body.push(ir);
             }
         }
+        self.emit_tc39_instance_field_extra_initializers_ir(body, false);
 
         // Emit original constructor body
         if let Some(block_node) = self.arena.get(body_idx)
@@ -1012,41 +1045,66 @@ impl<'a> ES5ClassTransformer<'a> {
 
     /// Check if a statement is a `super()` call
     fn is_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
+        self.root_super_call_from_statement(stmt_idx).is_some()
+    }
+
+    fn root_super_call_from_statement(&self, stmt_idx: NodeIndex) -> Option<NodeIndex> {
+        let stmt_node = self.arena.get(stmt_idx)?;
+
+        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+            return None;
+        }
+
+        let expr_stmt = self.arena.get_expression_statement(stmt_node)?;
+        self.root_super_call_expression(expr_stmt.expression)
+    }
+
+    fn root_super_call_expression(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = expr_idx;
+        while let Some(node) = self.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let paren = self.arena.get_parenthesized(node)?;
+                current = paren.expression;
+                continue;
+            }
+
+            if node.kind != syntax_kind_ext::CALL_EXPRESSION {
+                return None;
+            }
+
+            let call = self.arena.get_call_expr(node)?;
+            let callee = self.arena.get(call.expression)?;
+            return (callee.kind == SyntaxKind::SuperKeyword as u16).then_some(current);
+        }
+        None
+    }
+
+    fn is_parenthesized_root_super_call_statement(&self, stmt_idx: NodeIndex) -> bool {
         let Some(stmt_node) = self.arena.get(stmt_idx) else {
             return false;
         };
-
-        if stmt_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
-            return false;
-        }
-
         let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node) else {
             return false;
         };
-        let Some(call_node) = self.arena.get(expr_stmt.expression) else {
-            return false;
-        };
-
-        if call_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return false;
-        }
-
-        let Some(call) = self.arena.get_call_expr(call_node) else {
-            return false;
-        };
-        let Some(callee) = self.arena.get(call.expression) else {
-            return false;
-        };
-
-        callee.kind == SyntaxKind::SuperKeyword as u16
+        self.arena
+            .get(expr_stmt.expression)
+            .is_some_and(|node| node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION)
+            && self
+                .root_super_call_expression(expr_stmt.expression)
+                .is_some()
     }
 
     /// Emit super(args) as var _this = _super.call(this, args) || this;
     fn emit_super_call_ir(&self, stmt_idx: NodeIndex) -> IRNode {
-        IRNode::var_decl(
-            "_this",
-            Some(self.emit_super_call_assignment_value_ir(stmt_idx)),
-        )
+        let value = if self.is_parenthesized_root_super_call_statement(stmt_idx) {
+            IRNode::Parenthesized(Box::new(IRNode::assign(
+                IRNode::id("_this"),
+                self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, true),
+            )))
+        } else {
+            self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, true)
+        };
+        IRNode::var_decl("_this", Some(value))
     }
 
     fn emit_super_call_assignment_ir(&self, stmt_idx: NodeIndex) -> IRNode {
@@ -1058,14 +1116,15 @@ impl<'a> ES5ClassTransformer<'a> {
         stmt_idx: NodeIndex,
         capture_args_this: bool,
     ) -> IRNode {
-        IRNode::assign(
+        let assignment = IRNode::assign(
             IRNode::id("_this"),
             self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, capture_args_this),
-        )
-    }
-
-    fn emit_super_call_assignment_value_ir(&self, stmt_idx: NodeIndex) -> IRNode {
-        self.emit_super_call_assignment_value_ir_with_arg_capture(stmt_idx, false)
+        );
+        if self.is_parenthesized_root_super_call_statement(stmt_idx) {
+            IRNode::Parenthesized(Box::new(assignment))
+        } else {
+            assignment
+        }
     }
 
     fn emit_super_call_assignment_value_ir_with_arg_capture(
@@ -1075,9 +1134,8 @@ impl<'a> ES5ClassTransformer<'a> {
     ) -> IRNode {
         let mut args = vec![IRNode::this()];
 
-        if let Some(stmt_node) = self.arena.get(stmt_idx)
-            && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-            && let Some(call_node) = self.arena.get(expr_stmt.expression)
+        if let Some(call_idx) = self.root_super_call_from_statement(stmt_idx)
+            && let Some(call_node) = self.arena.get(call_idx)
             && let Some(call) = self.arena.get_call_expr(call_node)
             && let Some(ref call_args) = call.arguments
         {
@@ -1104,17 +1162,19 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         block: &tsz_parser::parser::node::BlockData,
         super_stmt_position: usize,
+        needs_materialized_this_after_super: bool,
     ) -> bool {
         if super_stmt_position == 0 {
             return false;
         }
-        // A pre-super this capture is only necessary when a statement that runs
-        // before super() actually references `this` or `super.prop` (which
-        // implicitly uses `this`). String literals, console.log() calls, and
-        // other statements that don't touch `this` don't need the capture.
         for &stmt_idx in block.statements.nodes.iter().take(super_stmt_position) {
             if contains_this_reference(self.arena, stmt_idx)
                 || contains_super_reference(self.arena, stmt_idx)
+            {
+                return true;
+            }
+            if needs_materialized_this_after_super
+                && self.pre_super_statement_requires_materialized_this_capture(stmt_idx)
             {
                 return true;
             }
@@ -1122,14 +1182,51 @@ impl<'a> ES5ClassTransformer<'a> {
         false
     }
 
+    fn pre_super_statement_requires_materialized_this_capture(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        if stmt.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            return self.arena.get_variable(stmt).is_some_and(|vars| {
+                self.variable_declarations_have_initializer(&vars.declarations)
+            });
+        }
+
+        if stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            return self
+                .arena
+                .get_expression_statement(stmt)
+                .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
+                .is_none_or(|expr| expr.kind != SyntaxKind::StringLiteral as u16);
+        }
+
+        true
+    }
+
+    fn variable_declarations_have_initializer(&self, declarations: &NodeList) -> bool {
+        declarations.nodes.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                return self.arena.get_variable(decl_node).is_some_and(|vars| {
+                    self.variable_declarations_have_initializer(&vars.declarations)
+                });
+            }
+            self.arena
+                .get_variable_declaration(decl_node)
+                .is_some_and(|decl| !decl.initializer.is_none())
+        })
+    }
+
     /// Emit super(args) as return _super.call(this, args) || this;
     /// Used when the constructor body only contains `super()` with no other work.
     fn emit_super_call_return_ir(&self, stmt_idx: NodeIndex) -> IRNode {
         let mut args = vec![IRNode::this()];
 
-        if let Some(stmt_node) = self.arena.get(stmt_idx)
-            && let Some(expr_stmt) = self.arena.get_expression_statement(stmt_node)
-            && let Some(call_node) = self.arena.get(expr_stmt.expression)
+        if let Some(call_idx) = self.root_super_call_from_statement(stmt_idx)
+            && let Some(call_node) = self.arena.get(call_idx)
             && let Some(call) = self.arena.get_call_expr(call_node)
             && let Some(ref call_args) = call.arguments
         {
@@ -1156,6 +1253,8 @@ impl<'a> ES5ClassTransformer<'a> {
         use_this: bool,
     ) {
         let mut consumed_tc39_instance_initializers = false;
+        let parameter_properties_consume_tc39_initializers =
+            !self.tc39_has_instance_decorated_fields();
         for &param_idx in &params.nodes {
             let Some(param_node) = self.arena.get(param_idx) else {
                 continue;
@@ -1172,7 +1271,8 @@ impl<'a> ES5ClassTransformer<'a> {
                 } else {
                     IRNode::this()
                 };
-                let value = if self.tc39_instance_initializers_needed()
+                let value = if parameter_properties_consume_tc39_initializers
+                    && self.tc39_instance_initializers_needed()
                     && !consumed_tc39_instance_initializers
                 {
                     consumed_tc39_instance_initializers = true;
@@ -1214,7 +1314,10 @@ impl<'a> ES5ClassTransformer<'a> {
             }
         }
 
-        if self.tc39_instance_initializers_needed() && !consumed_tc39_instance_initializers {
+        if parameter_properties_consume_tc39_initializers
+            && self.tc39_instance_initializers_needed()
+            && !consumed_tc39_instance_initializers
+        {
             let receiver_text = if use_this { "_this" } else { "this" };
             body.push(IRNode::expr_stmt(IRNode::Raw(
                 format!("__runInitializers({receiver_text}, _instanceExtraInitializers)").into(),
@@ -1222,7 +1325,7 @@ impl<'a> ES5ClassTransformer<'a> {
         }
     }
 
-    const fn tc39_instance_initializers_needed(&self) -> bool {
+    pub(super) const fn tc39_instance_initializers_needed(&self) -> bool {
         self.tc39_decorators && self.tc39_has_instance_member_decorators
     }
 

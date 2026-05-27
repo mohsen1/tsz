@@ -199,6 +199,11 @@ impl<'a> Printer<'a> {
             // Emit modifiers (static, async only for JavaScript)
             self.emit_method_modifiers_js(&method.modifiers);
         }
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         // Emit generator asterisk (skip for async generators being lowered)
         if has_generator_asterisk && !needs_async_generator_lowering {
@@ -361,6 +366,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_method_modifiers_js(&method.modifiers);
+        if self.should_preserve_native_decorator_comments(&method.modifiers)
+            && let Some(name_node) = self.arena.get(method.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if method.asterisk_token {
             self.write("*");
@@ -438,6 +448,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         // ES decorators are emitted verbatim when not using legacy
                         // (experimental) decorator lowering via __decorate.
@@ -581,6 +594,11 @@ impl<'a> Printer<'a> {
 
         // Emit modifiers (static and accessor for JavaScript)
         self.emit_class_member_modifiers_js(&prop.modifiers);
+        if self.should_preserve_native_decorator_comments(&prop.modifiers)
+            && let Some(name_node) = self.arena.get(prop.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         if prop.initializer.is_some()
             && self.is_tc39_decorated_anonymous_class_expression(prop.initializer)
@@ -589,6 +607,21 @@ impl<'a> Printer<'a> {
             if name_node.is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME) {
                 if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
                 {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit_class_member_name_preserving_class_expression_name(prop.name);
+                        self.write(" = ");
+                        self.with_scoped_static_initializer_context_cleared(|this| {
+                            this.emit_with_tc39_class_expression_name(
+                                prop.initializer,
+                                name,
+                                false,
+                            );
+                        });
+                        self.write_semicolon();
+                        return;
+                    }
                     self.write("[");
                     let name_expr =
                         self.emit_tc39_named_class_computed_property_name(computed.expression);
@@ -664,6 +697,9 @@ impl<'a> Printer<'a> {
 
             for &mod_idx in &mods.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if mod_node.kind == syntax_kind_ext::DECORATOR {
                         if !self.ctx.options.legacy_decorators {
                             self.emit(mod_idx);
@@ -687,6 +723,21 @@ impl<'a> Printer<'a> {
                 }
             }
         }
+    }
+
+    pub(in crate::emitter) fn should_preserve_native_decorator_comments(
+        &self,
+        modifiers: &Option<NodeList>,
+    ) -> bool {
+        self.ctx.options.target == ScriptTarget::ESNext
+            && !self.ctx.options.legacy_decorators
+            && modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     pub(in crate::emitter) fn emit_constructor_declaration(&mut self, node: &Node) {
@@ -1071,21 +1122,7 @@ impl<'a> Printer<'a> {
                             .arena
                             .get_expression_statement(stmt_node)
                             .is_some_and(|expr_stmt| {
-                                self.arena
-                                    .get(expr_stmt.expression)
-                                    .is_some_and(|expr_node| {
-                                        expr_node.kind == syntax_kind_ext::CALL_EXPRESSION
-                                            && self.arena.get_call_expr(expr_node).is_some_and(
-                                                |call| {
-                                                    self.arena.get(call.expression).is_some_and(
-                                                        |callee| {
-                                                            callee.kind
-                                                == tsz_scanner::SyntaxKind::SuperKeyword as u16
-                                                        },
-                                                    )
-                                                },
-                                            )
-                                    })
+                                self.is_constructor_root_super_call(expr_stmt.expression)
                             })
                 })
             })
@@ -1169,6 +1206,27 @@ impl<'a> Printer<'a> {
 
         self.decrease_indent();
         self.write("}");
+    }
+
+    fn is_constructor_root_super_call(&self, expression: NodeIndex) -> bool {
+        let mut current = expression;
+        while let Some(node) = self.arena.get(current) {
+            if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return false;
+                };
+                current = paren.expression;
+                continue;
+            }
+
+            return node.kind == syntax_kind_ext::CALL_EXPRESSION
+                && self.arena.get_call_expr(node).is_some_and(|call| {
+                    self.arena
+                        .get(call.expression)
+                        .is_some_and(|callee| callee.kind == SyntaxKind::SuperKeyword as u16)
+                });
+        }
+        false
     }
 
     /// Emit parameter property and field initializer assignments (constructor prologue).
@@ -1344,6 +1402,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("get ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);
@@ -1375,6 +1438,11 @@ impl<'a> Printer<'a> {
         };
 
         self.emit_accessor_member_modifiers_js(&accessor.modifiers);
+        if self.should_preserve_native_decorator_comments(&accessor.modifiers)
+            && let Some(name_node) = self.arena.get(accessor.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
 
         self.write("set ");
         self.emit_class_member_name_preserving_class_expression_name(accessor.name);

@@ -429,12 +429,22 @@ impl<'a> LoweringPass<'a> {
                 // Namespace import: import * as ns from "mod" -> needs __importStar
                 if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
                     // NAMESPACE_IMPORT = 275
-                    if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                    if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        && self
+                            .arena
+                            .get_named_imports(bindings_node)
+                            .and_then(|named_imports| {
+                                self.get_identifier_text_ref(named_imports.name)
+                            })
+                            .is_some_and(|name| !name.is_empty())
+                    {
                         let helpers = self.transforms.helpers_mut();
                         helpers.import_star = true;
                         helpers.create_binding = true;
                     } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                        && named_imports.name.is_some()
+                        && self
+                            .get_identifier_text_ref(named_imports.name)
+                            .is_some_and(|name| !name.is_empty())
                         && named_imports.elements.nodes.is_empty()
                     {
                         let helpers = self.transforms.helpers_mut();
@@ -1170,6 +1180,14 @@ impl<'a> LoweringPass<'a> {
         let has_tc39_decorators = !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
             && self.class_has_decorators(class);
+        let has_tc39_class_decorators = has_tc39_decorators
+            && class.modifiers.as_ref().is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::DECORATOR)
+                })
+            });
         let has_legacy_class_decorators = self.ctx.options.legacy_decorators
             && class.modifiers.as_ref().is_some_and(|mods| {
                 mods.nodes.iter().any(|&mod_idx| {
@@ -1211,6 +1229,19 @@ impl<'a> LoweringPass<'a> {
         }
         if has_tc39_decorators {
             self.mark_tc39_decorator_helpers(class);
+            if self.ctx.target_es5
+                && !has_tc39_class_decorators
+                && self.class_has_static_tc39_public_field_decorator(class)
+                && let Some(&enclosing_body) = self.enclosing_function_bodies.last()
+            {
+                let capture_name = self
+                    .enclosing_capture_names
+                    .last()
+                    .cloned()
+                    .unwrap_or_else(|| Arc::from("_this"));
+                self.transforms
+                    .mark_this_capture_scope(enclosing_body, capture_name);
+            }
         }
 
         // Determine the base transform

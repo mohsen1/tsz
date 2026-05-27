@@ -40,6 +40,16 @@ impl<'a> AsyncES5Transformer<'a> {
             );
             return;
         }
+        if statement_node.kind == syntax_kind_ext::DO_STATEMENT {
+            self.process_do_while_statement_in_async_with_label(
+                labeled.statement,
+                cases,
+                current_statements,
+                current_label,
+                Some(&label),
+            );
+            return;
+        }
         if statement_node.kind == syntax_kind_ext::FOR_OF_STATEMENT
             && self.process_for_await_statement_in_async(
                 labeled.statement,

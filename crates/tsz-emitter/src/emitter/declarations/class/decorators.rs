@@ -264,7 +264,13 @@ impl<'a> Printer<'a> {
     fn emit_decorator_member_name(&mut self, member_name: &DecoratorMemberName) {
         match member_name {
             DecoratorMemberName::Literal(text) => self.emit_string_literal_text(text),
-            DecoratorMemberName::Computed { expr, .. } => self.emit(*expr),
+            DecoratorMemberName::Computed { expr, .. } => {
+                if let Some(temp) = self.legacy_decorator_computed_name_temp_map.get(expr) {
+                    self.write(&temp.clone());
+                } else {
+                    self.emit(*expr);
+                }
+            }
         }
     }
 

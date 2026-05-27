@@ -97,6 +97,25 @@ impl<'a> IRPrinter<'a> {
         }
     }
 
+    fn is_generator_break_return(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ReturnStatement(Some(expr))
+                if matches!(expr.as_ref(), IRNode::GeneratorOp { opcode: 3, .. })
+        )
+    }
+
+    fn is_generator_sent_assignment(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ExpressionStatement(expr)
+                if matches!(
+                    expr.as_ref(),
+                    IRNode::BinaryExpr { right, .. } if matches!(right.as_ref(), IRNode::GeneratorSent)
+                )
+        )
+    }
+
     const fn is_generator_inline_throw_expression(expr: &IRNode) -> bool {
         matches!(
             expr,
@@ -832,6 +851,9 @@ impl<'a> IRPrinter<'a> {
                 } else {
                     false
                 };
+                let has_source_trailing_comma = source_range.is_some_and(|(pos, end)| {
+                    self.object_literal_source_has_trailing_comma(pos, end)
+                });
 
                 if is_multiline {
                     // Multiline format
@@ -842,7 +864,7 @@ impl<'a> IRPrinter<'a> {
                     for (i, prop) in properties.iter().enumerate() {
                         self.write_indent();
                         self.emit_property(prop);
-                        if i < properties.len() - 1 {
+                        if i < properties.len() - 1 || has_source_trailing_comma {
                             self.write(",");
                         }
                         self.write_line();
@@ -1077,12 +1099,15 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.write("if (");
                 self.emit_node(condition);
-                self.write(") ");
-                if let IRNode::Block(stmts) = then_branch.as_ref()
-                    && stmts.is_empty()
-                {
-                    self.emit_empty_block_multiline();
+                self.write(")");
+                if Self::is_generator_break_return(then_branch) {
+                    self.write_line();
+                    self.increase_indent();
+                    self.write_indent();
+                    self.emit_node(then_branch);
+                    self.decrease_indent();
                 } else {
+                    self.write(" ");
                     self.emit_node(then_branch);
                 }
                 if let Some(else_br) = else_branch {
@@ -1090,10 +1115,6 @@ impl<'a> IRPrinter<'a> {
                     self.write_indent();
                     self.write("else");
                     match else_br.as_ref() {
-                        IRNode::Block(stmts) if stmts.is_empty() => {
-                            self.write(" ");
-                            self.emit_empty_block_multiline();
-                        }
                         IRNode::Block(_) | IRNode::IfStatement { .. } => {
                             self.write(" ");
                             self.emit_node(else_br);
@@ -1135,7 +1156,7 @@ impl<'a> IRPrinter<'a> {
             } => {
                 self.write("for (");
                 if let Some(init) = initializer {
-                    self.emit_node(init);
+                    self.emit_for_initializer(init);
                 }
                 self.write(";");
                 if let Some(cond) = condition {
@@ -1148,13 +1169,7 @@ impl<'a> IRPrinter<'a> {
                     self.emit_node(incr);
                 }
                 self.write(") ");
-                if let IRNode::Block(stmts) = body.as_ref()
-                    && stmts.is_empty()
-                {
-                    self.emit_empty_block_multiline();
-                } else {
-                    self.emit_node(body);
-                }
+                self.emit_node(body);
             }
             IRNode::ForInOfStatement {
                 kind,
@@ -1582,6 +1597,12 @@ impl<'a> IRPrinter<'a> {
                     i += 1;
                 }
             }
+            IRNode::WithStatement { expression, body } => {
+                self.write("with (");
+                self.emit_node(expression);
+                self.write(") ");
+                self.emit_node(body);
+            }
             IRNode::ASTRef(_) => self.emit_ast_ref_node(node),
 
             IRNode::ASTRefWithGeneratorThis {
@@ -1603,6 +1624,21 @@ impl<'a> IRPrinter<'a> {
                         generator_this,
                     ));
                     return;
+                }
+                self.write("undefined");
+            }
+
+            IRNode::ASTRefWithCapturedClassHeritageThis(idx) => {
+                if let Some(arena) = self.arena {
+                    let mut printer = self.build_nested_ast_printer(arena);
+                    printer.set_es5_class_expression_extends_this_captured(true);
+                    printer.emit_expression(*idx);
+                    self.merge_ast_printer_block_scope_reserved_names(&printer);
+                    let output = printer.get_output();
+                    if !output.trim().is_empty() {
+                        self.write_embedded_output(output.trim());
+                        return;
+                    }
                 }
                 self.write("undefined");
             }

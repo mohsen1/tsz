@@ -533,13 +533,59 @@ impl<'a> IRPrinter<'a> {
                     self.write(" ");
                     self.emit_node(&case_item.statements[0]);
                     self.write_line();
+                } else if case_item.statements.len() == 2
+                    && Self::is_generator_inline_case_statement(&case_item.statements[0])
+                    && let IRNode::TrailingComment(text) = &case_item.statements[1]
+                {
+                    self.write(" ");
+                    self.emit_node(&case_item.statements[0]);
+                    if !self.remove_comments {
+                        self.write(" ");
+                        self.write(text);
+                    }
+                    self.write_line();
                 } else if !case_item.statements.is_empty() {
                     self.write_line();
                     self.increase_indent();
-                    for stmt in &case_item.statements {
+                    let mut i = 0;
+                    while i < case_item.statements.len() {
+                        let stmt = &case_item.statements[i];
+                        if matches!(stmt, IRNode::TrailingComment(_)) {
+                            i += 1;
+                            continue;
+                        }
                         self.write_indent();
-                        self.emit_node(stmt);
+                        if i + 1 < case_item.statements.len()
+                            && Self::is_generator_sent_assignment(stmt)
+                            && let IRNode::TrailingComment(text) = &case_item.statements[i + 1]
+                        {
+                            if let IRNode::ExpressionStatement(expr) = stmt {
+                                self.emit_node(expr);
+                            }
+                            if !self.remove_comments {
+                                self.write(" ");
+                                self.write(text);
+                            }
+                            self.write_line();
+                            self.write_indent();
+                            self.write(";");
+                            i += 2;
+                            self.write_line();
+                            continue;
+                        } else {
+                            self.emit_node(stmt);
+                            if i + 1 < case_item.statements.len()
+                                && let IRNode::TrailingComment(text) = &case_item.statements[i + 1]
+                            {
+                                if !self.remove_comments {
+                                    self.write(" ");
+                                    self.write(text);
+                                }
+                                i += 1;
+                            }
+                        }
                         self.write_line();
+                        i += 1;
                     }
                     self.decrease_indent();
                 } else {
