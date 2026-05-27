@@ -2879,7 +2879,7 @@ fn fix_missing_type_annotation_wrong_error_code_returns_empty() {
 }
 
 /// Verify tsz generates TS2304 for `useMemo` even when its declaration file
-/// is in open_files. The `.d.ts` is a module (has top-level exports), so
+/// is in `open_files`. The `.d.ts` is a module (has top-level exports), so
 /// `useMemo` is NOT in global scope — `app.tsx` still needs an import.
 #[test]
 fn semantic_diagnostics_ts2304_for_usememo_with_dts_in_open_files() {
@@ -2908,7 +2908,7 @@ fn semantic_diagnostics_ts2304_for_usememo_with_dts_in_open_files() {
     );
 }
 
-/// Sanity check: without the .d.ts file, TS2304 IS generated for `useMemo`.
+/// Sanity check: without the `.d.ts` file, TS2304 IS generated for `useMemo`.
 #[test]
 fn semantic_diagnostics_ts2304_for_usememo_without_dts() {
     let mut server = make_server();
@@ -2929,9 +2929,9 @@ fn semantic_diagnostics_ts2304_for_usememo_without_dts() {
 }
 
 /// Regression test for `importFixesWithPackageJsonInSideAnotherPackage`:
-/// When a package has a nested subpath package.json (e.g. preact/hooks) but
-/// no parent package.json in open_files, the import fix should still find
-/// the correct module specifier "preact/hooks" for a missing identifier.
+/// When a package has a nested subpath `package.json` (e.g. `preact/hooks`) but
+/// no parent `package.json` in `open_files`, the import fix should still find
+/// the correct module specifier `preact/hooks` for a missing identifier.
 #[test]
 fn import_fix_with_package_json_in_nested_subpackage() {
     let mut server = make_server();
