@@ -322,6 +322,10 @@ name = "ts2304_tests"
 path = "tests/ts2304_tests.rs"
 
 [[test]]
+name = "missing_name_type_parameter_reference_tests"
+path = "tests/missing_name_type_parameter_reference_tests.rs"
+
+[[test]]
 name = "jsx_component_attribute_tests"
 path = "tests/jsx_component_attribute_tests.rs"
 
