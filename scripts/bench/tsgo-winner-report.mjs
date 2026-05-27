@@ -169,14 +169,19 @@ function singleRowSidecarAttribution(rows, inputPath) {
 
   const row = rows[0];
   const relativePath = toPortablePath(path.relative(process.cwd(), perfPath));
+  const mode = snapshot.mode ?? null;
+  const isAttributionMode = mode === "attribution";
   return new Map([
     [
       row.name,
       {
         path: relativePath,
         generated_at: fs.statSync(perfPath).mtime.toISOString(),
-        mode: snapshot.mode ?? null,
-        dominant_subsystem: inferDominantSubsystemFromPerfSnapshot(snapshot),
+        mode,
+        dominant_subsystem: isAttributionMode
+          ? inferDominantSubsystemFromPerfSnapshot(snapshot)
+          : null,
+        warning: isAttributionMode ? null : "sidecar perf snapshot mode is not attribution",
       },
     ],
   ]);
@@ -224,6 +229,7 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
   const pathValue = artifact.path ?? artifact.file ?? artifact.artifact ?? null;
   const urlValue = artifact.url ?? null;
   const dominantSubsystem = artifact.dominant_subsystem ?? artifact.dominantSubsystem ?? null;
+  const warningValue = artifact.warning ?? null;
   return {
     present: true,
     path: pathValue,
@@ -231,12 +237,12 @@ function attributionStatusForRow(row, fallbackArtifact = null) {
     generated_at: artifact.generated_at ?? artifact.generatedAt ?? null,
     mode: artifact.mode ?? null,
     dominant_subsystem: dominantSubsystem,
-    warning: dominantSubsystem ? null : "attribution dominant_subsystem missing",
+    warning: warningValue ?? (dominantSubsystem ? null : "attribution dominant_subsystem missing"),
   };
 }
 
 function hasCompleteAttribution(status) {
-  return Boolean(status?.present && status?.dominant_subsystem);
+  return Boolean(status?.present && status?.dominant_subsystem && !status?.warning);
 }
 
 function targetGapFactor(speedup) {
