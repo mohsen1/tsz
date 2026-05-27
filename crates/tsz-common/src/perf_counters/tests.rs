@@ -2,10 +2,10 @@ mod json_tests {
     use super::*;
 
     #[test]
-    fn schema_version_is_four() {
+    fn schema_version_is_five() {
         // Bumping schema_version is a breaking change for the bench harness;
         // make the intent explicit.
-        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 4);
+        assert_eq!(PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION, 5);
     }
 
     #[test]
@@ -50,10 +50,11 @@ mod json_tests {
             "source_file_symbol_arena_cache_eligibility_outcomes",
             "slow_check_file_timings",
             "slow_check_statement_timings",
+            "slow_type_alias_check_timings",
         ] {
             assert!(json.get(key).is_some(), "missing top-level key: {key}");
         }
-        assert_eq!(json["schema_version"], 4);
+        assert_eq!(json["schema_version"], 5);
     }
 
     #[test]
@@ -140,6 +141,40 @@ mod json_tests {
                 >= rows[1]["elapsed_ms"].as_f64().unwrap_or_default(),
             "rows must be sorted by descending elapsed_ms"
         );
+    }
+
+    #[test]
+    fn slow_type_alias_check_timings_keep_slowest_rows_sorted() {
+        {
+            let mut rows = slow_type_alias_check_timings()
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            rows.push(SlowTypeAliasCheckTiming {
+                file: "fast.ts".to_string(),
+                name: "Fast".to_string(),
+                phase: "body",
+                pos: 1,
+                end: 2,
+                elapsed_ms: 1.0,
+            });
+            rows.push(SlowTypeAliasCheckTiming {
+                file: "slow.ts".to_string(),
+                name: "Slow".to_string(),
+                phase: "body_validation",
+                pos: 3,
+                end: 9,
+                elapsed_ms: 12.5,
+            });
+        }
+
+        let json = serde_json::to_value(PerfCounters::snapshot()).expect("serializes");
+        let rows = json["slow_type_alias_check_timings"]
+            .as_array()
+            .expect("slow_type_alias_check_timings is array");
+        assert!(rows.len() >= 2, "expected alias timing rows: {rows:?}");
+        assert_eq!(rows[0]["file"], "slow.ts");
+        assert_eq!(rows[0]["name"], "Slow");
+        assert_eq!(rows[0]["phase"], "body_validation");
     }
 
     #[test]
@@ -1828,7 +1863,10 @@ mod json_tests {
         let raw = std::fs::read_to_string(&path).expect("read back");
         // Round-trip through serde to confirm structure.
         let value: serde_json::Value = serde_json::from_str(&raw).expect("valid JSON");
-        assert_eq!(value["schema_version"], 4);
+        assert_eq!(
+            value["schema_version"],
+            PERF_COUNTER_SNAPSHOT_SCHEMA_VERSION
+        );
         assert!(value["wired"].is_object());
         // The atomic-rename `.json.tmp` should not be left behind.
         let tmp = path.with_extension("json.tmp");
