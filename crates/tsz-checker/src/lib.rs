@@ -658,6 +658,9 @@ mod jsx_element_type_constraint_tests;
 #[path = "tests/jsx_excess_attr_with_spread_display_tests.rs"]
 mod jsx_excess_attr_with_spread_display_tests;
 #[cfg(test)]
+#[path = "tests/jsx_react_alias_relation_routing_arch_tests.rs"]
+mod jsx_react_alias_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/jsx_react_hoc_spread_props_tests.rs"]
 mod jsx_react_hoc_spread_props_tests;
 #[cfg(test)]
