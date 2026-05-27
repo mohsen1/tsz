@@ -1273,16 +1273,7 @@ impl<'a> CheckerState<'a> {
         let Some(callee_access) = self.ctx.arena.get_access_expr(callee_node) else {
             return false;
         };
-        let Some(object_node) = self.ctx.arena.get(callee_access.expression) else {
-            return false;
-        };
-        if object_node.kind != SyntaxKind::Identifier as u16 {
-            return false;
-        }
-        let Some(object_ident) = self.ctx.arena.get_identifier(object_node) else {
-            return false;
-        };
-        if object_ident.escaped_text != "Object" {
+        if !self.prototype_define_property_base_is_global_object(callee_access.expression) {
             return false;
         }
         let Some(name_node) = self.ctx.arena.get(callee_access.name_or_argument) else {
@@ -1323,6 +1314,28 @@ impl<'a> CheckerState<'a> {
             return false;
         };
         proto_ident.escaped_text == "prototype"
+    }
+
+    fn prototype_define_property_base_is_global_object(&self, idx: NodeIndex) -> bool {
+        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
+            return false;
+        };
+        if base_ident.escaped_text != "Object" {
+            return false;
+        }
+        let is_object_lib_symbol = |sym_id| {
+            self.ctx
+                .binder
+                .get_symbol(sym_id)
+                .is_some_and(|symbol| symbol.escaped_name == "Object")
+                && (self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                    || self.ctx.symbol_is_from_lib(sym_id))
+        };
+
+        if let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) {
+            return is_object_lib_symbol(sym_id);
+        }
+        !self.known_global_value_has_local_shadow(idx, "Object")
     }
 
     /// Resolve a self-referencing class constructor in a static initializer.

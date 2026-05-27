@@ -66,6 +66,7 @@ class BudgetSummary:
     allowlist_cap: int = 0
     remaining_allowlist_capacity: int = 0
     allowlisted_files: int = 0
+    budget_status: str = "no_allowlist"
 
 
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
@@ -290,6 +291,26 @@ def summarize_budget(file_summaries: list[dict[str, object]]) -> BudgetSummary:
         allowlist_cap=allowlist_cap,
         remaining_allowlist_capacity=max(0, allowlist_cap - allowlisted_calls),
         allowlisted_files=allowlisted_files,
+        budget_status=classify_budget_status(allowlisted_calls, allowlist_cap),
+    )
+
+
+def classify_budget_status(allowlisted_calls: int, allowlist_cap: int) -> str:
+    if allowlist_cap == 0:
+        return "no_allowlist"
+    if allowlisted_calls > allowlist_cap:
+        return "over_cap"
+    if allowlisted_calls == allowlist_cap:
+        return "exhausted"
+    return "available"
+
+
+def format_budget_metrics(budget: BudgetSummary) -> str:
+    return (
+        f"allowlisted_calls={budget.allowlisted_calls}, "
+        f"allowlist_cap={budget.allowlist_cap}, "
+        f"remaining_allowlist_capacity={budget.remaining_allowlist_capacity}, "
+        f"allowlist_budget_status={budget.budget_status}"
     )
 
 
@@ -356,9 +377,7 @@ def format_pass_summary(
         "Output-surgery audit passed: "
         f"total_findings={len(findings)}, "
         f"files_with_findings={len(grouped_counts(findings))}, "
-        f"allowlisted_calls={budget.allowlisted_calls}, "
-        f"allowlist_cap={budget.allowlist_cap}, "
-        f"remaining_allowlist_capacity={budget.remaining_allowlist_capacity}, "
+        f"{format_budget_metrics(budget)}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
         f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
@@ -388,8 +407,10 @@ def main(argv: list[str] | None = None) -> int:
 
     if failures:
         summary = summarize_failures(failures)
+        budget = summarize_budget(build_file_summaries(grouped_counts(findings), allowlist))
         print(
             "\nOutput-surgery audit summary: "
+            f"{format_budget_metrics(budget)}, "
             f"unallowlisted_calls={summary.unallowlisted}, "
             f"unallowlisted_files={summary.unallowlisted_files}, "
             f"over_allowlist_files={summary.over_allowlist_files}, "

@@ -90,6 +90,7 @@ class OutputSurgeryAuditTests(unittest.TestCase):
                 "allowlist_cap": 2,
                 "remaining_allowlist_capacity": 1,
                 "allowlisted_files": 2,
+                "budget_status": "available",
             },
         )
         self.assertEqual(
@@ -142,11 +143,18 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             "allowlisted_calls=2, "
             "allowlist_cap=2, "
             "remaining_allowlist_capacity=0, "
+            "allowlist_budget_status=exhausted, "
             "unallowlisted_calls=0, "
             "over_allowlist_files=0, "
             "over_allowlist_excess_calls=0, "
             "stale_allowlist_files=0.",
         )
+
+    def test_budget_status_classifies_budget_edges(self):
+        self.assertEqual(self.audit.classify_budget_status(0, 0), "no_allowlist")
+        self.assertEqual(self.audit.classify_budget_status(1, 2), "available")
+        self.assertEqual(self.audit.classify_budget_status(2, 2), "exhausted")
+        self.assertEqual(self.audit.classify_budget_status(3, 2), "over_cap")
 
     def test_write_json_report_creates_parent_and_writes_json(self):
         with tempfile.TemporaryDirectory(dir=ROOT) as temp_dir:
