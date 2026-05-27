@@ -69,15 +69,21 @@ class Dog extends Animal {
 }
 
 /// When `super.property` is accessed before `super()` but `this` is NOT
-/// accessed, TS17009 must not fire (it is only for `this`-before-super).
+/// accessed, TS2376 must fire (super-not-first), and TS17009 must NOT fire
+/// (it is only for `this`-before-super).
+///
+/// NOTE: `Child` must have an initialized property so that the class is
+/// "position-sensitive" — without one, `has_position_sensitive_members` is
+/// false and tsz (like tsc) skips the TS2376 placement check entirely.
 #[test]
-fn super_property_before_super_call_does_not_emit_ts17009() {
+fn super_property_before_super_call_emits_ts2376_not_ts17009() {
     let diags = check_source_diagnostics(
         r#"
 class Base {
     value = 0;
 }
 class Child extends Base {
+    x = 1;
     constructor() {
         super.value;
         super();
@@ -87,10 +93,49 @@ class Child extends Base {
     );
 
     let ts17009: Vec<_> = diags.iter().filter(|d| d.code == 17009).collect();
+    let ts2376: Vec<_> = diags.iter().filter(|d| d.code == 2376).collect();
 
     assert!(
         ts17009.is_empty(),
         "Expected no TS17009 when only super.property (not this) precedes super(); got: {diags:?}"
+    );
+    assert!(
+        !ts2376.is_empty(),
+        "Expected TS2376 when super.property precedes super() in a position-sensitive constructor; got: {diags:?}"
+    );
+}
+
+/// Mixed case: both `super.property` and `this` appear before `super()`.
+/// TS17009 subsumes TS2376 — only TS17009 should fire (at the `this` site),
+/// and TS2376 must be suppressed even though `super.property` is also present.
+#[test]
+fn super_property_and_this_before_super_emits_ts17009_only() {
+    let diags = check_source_diagnostics(
+        r#"
+class Base {
+    value = 0;
+}
+class Mixed extends Base {
+    x = 1;
+    constructor() {
+        super.value;
+        this.x;
+        super();
+    }
+}
+"#,
+    );
+
+    let ts17009: Vec<_> = diags.iter().filter(|d| d.code == 17009).collect();
+    let ts2376: Vec<_> = diags.iter().filter(|d| d.code == 2376).collect();
+
+    assert!(
+        !ts17009.is_empty(),
+        "Expected TS17009 for this-before-super in mixed super.property+this case; got: {diags:?}"
+    );
+    assert!(
+        ts2376.is_empty(),
+        "Expected no TS2376 when TS17009 already covers the mixed case; got: {diags:?}"
     );
 }
 
