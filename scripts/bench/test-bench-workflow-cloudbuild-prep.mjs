@@ -103,4 +103,16 @@ assert.match(
   "latest prep artifact fallback must validate the downloaded artifact target SHA and PGO marker",
 );
 
+assert.match(
+  workflow,
+  /TARGET_SHA="\$\{BENCH_TARGET_SHA:-\$\{GITHUB_SHA\}\}"[\s\S]+if \[\[ -n "\$\{MAIN_SHA\}" && "\$\{TARGET_SHA\}" != "\$\{MAIN_SHA\}" \]\]; then[\s\S]+echo "catchup_main_sha=\$\{MAIN_SHA\}" >> "\$GITHUB_OUTPUT"/,
+  "benchmark publish should expose the current main SHA when a finished run publishes an older target",
+);
+
+assert.match(
+  workflow,
+  /- name: Trigger benchmark catch-up[\s\S]+steps\.publish\.outputs\.catchup_main_sha != ''[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+-d '\{"ref":"main","inputs":\{"publish_latest_pgo":"false"\}\}'/,
+  "stale benchmark publishes should dispatch a catch-up benchmark for current main",
+);
+
 console.log("bench workflow Cloud Build prep artifact tests passed");
