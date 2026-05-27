@@ -1,8 +1,8 @@
 //! Core implementation for class instance type resolution.
 
 use super::helpers::{
-    can_skip_base_instantiation, declaration_is_module_augmentation,
-    exceeds_class_inheritance_depth_limit,
+    AccessorAggregate, MethodAggregate, can_skip_base_instantiation,
+    declaration_is_module_augmentation, exceeds_class_inheritance_depth_limit,
 };
 use crate::context::{EnclosingClassInfo, is_js_file_name};
 use crate::query_boundaries::class_type::{callable_shape_for_type, object_shape_for_type};
@@ -102,24 +102,6 @@ impl<'a> CheckerState<'a> {
                 class_type_params = jsdoc_params;
                 class_type_param_updates.extend(jsdoc_updates);
             }
-        }
-
-        struct MethodAggregate {
-            overload_signatures: Vec<CallSignature>,
-            impl_signatures: Vec<CallSignature>,
-            overload_optional: bool,
-            impl_optional: bool,
-            visibility: Visibility,
-            declaration_order: u32,
-            is_symbol_named: bool,
-        }
-
-        struct AccessorAggregate {
-            getter: Option<TypeId>,
-            setter: Option<TypeId>,
-            visibility: Visibility,
-            declaration_order: u32,
-            is_symbol_named: bool,
         }
 
         struct DeferredAccessor<'b> {
