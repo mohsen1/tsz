@@ -14,12 +14,11 @@ use crate::test_utils::check_source_diagnostics;
 /// tsz before fix: TS2345 at the argument span (wrong code and wrong span).
 #[test]
 fn ts2353_generic_constraint_excess_property_repro() {
-    let diags = check_source_diagnostics(
-        r#"
+    let source = r#"
 declare function g<T extends { id: number }>(x: T): T;
 g({ name: "a" });
-"#,
-    );
+"#;
+    let diags = check_source_diagnostics(source);
     let codes: Vec<u32> = diags.iter().map(|d| d.code).collect();
     assert!(
         codes.contains(&2353),
@@ -28,6 +27,20 @@ g({ name: "a" });
     assert!(
         !codes.contains(&2345),
         "TS2345 should be suppressed when TS2353 fires; got: {codes:?}"
+    );
+    // TS2353 must be anchored at the excess-property identifier, not at the
+    // argument span. A future regression could keep the right code while
+    // drifting back to the wrong anchor.
+    let ts2353 = diags.iter().find(|d| d.code == 2353).unwrap();
+    let expected_start = source.find("name").unwrap() as u32;
+    assert_eq!(
+        ts2353.start, expected_start,
+        "TS2353 must be anchored at the 'name' property, not the argument span"
+    );
+    assert!(
+        ts2353.message_text.contains("name"),
+        "TS2353 message must name the offending property; got: {}",
+        ts2353.message_text
     );
 }
 
