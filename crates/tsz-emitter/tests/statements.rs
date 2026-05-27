@@ -104,6 +104,20 @@ fn hard_reserved_parameter_names_emit_statement_tail_recovery() {
 }
 
 #[test]
+fn reserved_array_binding_parameter_yields_statement_tail_recovery() {
+    let source = r#""use strict"
+function a4([while, for, public]){ }
+function a5(...while) { }
+"#;
+    let output = parse_and_emit_strict_es2015(source, "destructuring.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nfunction a4([]) { }\nwhile (, )\n    for (, public; ; )\n        ;\n{ }\nfunction a5(...) { }\nwhile () { }"
+    );
+}
+
+#[test]
 fn invalid_import_attribute_entries_emit_statement_tail_recovery() {
     let source = r#"export type LocalInterface =
     & import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface

@@ -302,10 +302,20 @@ impl ParserState {
                 continue;
             }
 
+            let in_parameter_binding_pattern = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                != 0;
+
             // Reserved words in the first array-binding position should recover as
             // an invalid destructuring pattern rather than a generic identifier error.
             if elements.is_empty() && self.is_reserved_word() {
                 self.error_array_element_destructuring_pattern_expected();
+                if in_parameter_binding_pattern
+                    && self.recover_reserved_parameter_as_statement_tail_allowed
+                {
+                    self.reserved_parameter_yielded_to_statement = true;
+                    break;
+                }
                 self.next_token();
                 continue;
             }
@@ -313,9 +323,6 @@ impl ParserState {
             // Later reserved words in an array binding should stay on the
             // structural recovery path instead of surfacing a reserved-word
             // identifier diagnostic that tsc does not emit here.
-            let in_parameter_binding_pattern = (self.context_flags
-                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
-                != 0;
             let hard_reserved_word = self.is_reserved_word();
             let parameter_future_reserved_word =
                 in_parameter_binding_pattern && self.is_strict_mode_future_reserved_word();

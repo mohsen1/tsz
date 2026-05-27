@@ -425,7 +425,16 @@ impl ParserState {
                 rest_param_length = node.end.saturating_sub(node.pos);
             }
             seen_rest_parameter = seen_rest_parameter || is_rest_param;
+            if is_rest_param
+                && self.recover_reserved_parameter_as_statement_tail_allowed
+                && self.is_statement_tail_reserved_parameter_keyword()
+            {
+                self.reserved_parameter_yielded_to_statement = true;
+            }
             params.push(param);
+            if self.reserved_parameter_yielded_to_statement {
+                break;
+            }
 
             let has_comma = self.parse_optional(SyntaxKind::CommaToken);
 
@@ -1014,9 +1023,33 @@ impl ParserState {
             let reserved_start = self.token_pos();
             let reserved_end = self.token_end();
             if dot_dot_dot_token {
-                self.error_reserved_word_identifier();
-                if matches!(keyword, SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword) {
-                    self.parse_error_at_current_token("'(' expected.", diagnostic_codes::EXPECTED);
+                if self.recover_reserved_parameter_as_statement_tail_allowed
+                    && matches!(keyword, SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword)
+                {
+                    if self.should_report_error() {
+                        let word = self.current_keyword_text();
+                        self.parse_error_at_current_token(
+                            &format!(
+                                "Identifier expected. '{word}' is a reserved word that cannot be used here."
+                            ),
+                            diagnostic_codes::IDENTIFIER_EXPECTED_IS_A_RESERVED_WORD_THAT_CANNOT_BE_USED_HERE,
+                        );
+                    }
+                    self.parse_error_at(
+                        reserved_end,
+                        1,
+                        "'(' expected.",
+                        diagnostic_codes::EXPECTED,
+                    );
+                    self.reserved_parameter_yielded_to_statement = true;
+                } else {
+                    self.error_reserved_word_identifier();
+                    if matches!(keyword, SyntaxKind::WhileKeyword | SyntaxKind::ForKeyword) {
+                        self.parse_error_at_current_token(
+                            "'(' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                    }
                 }
             } else {
                 self.error_reserved_word_in_parameter_name();
