@@ -685,9 +685,6 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
 
         use crate::relations::subtype::{MAX_SUBTYPE_DEPTH, SubtypeChecker};
         let mut checker = SubtypeChecker::with_resolver(self.interner, self.resolver);
-        if let Some(db) = self.query_db {
-            checker = checker.with_query_db(db);
-        }
         checker.bypass_evaluation = true;
         checker.max_depth = MAX_SUBTYPE_DEPTH;
         checker.no_unchecked_indexed_access = self.no_unchecked_indexed_access;
