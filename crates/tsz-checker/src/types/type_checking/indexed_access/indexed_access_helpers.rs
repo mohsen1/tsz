@@ -884,6 +884,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         index_type_for_check: TypeId,
+        index_constraint: Option<TypeId>,
     ) -> bool {
         let has_plain_string_index = self
             .ctx
@@ -895,6 +896,46 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let string_or_number = self.ctx.types.union2(TypeId::STRING, TypeId::NUMBER);
-        self.diagnostic_relation_boolean_guard(index_type_for_check, string_or_number)
+        if self
+            .string_index_candidate_is_string_or_number_key(index_type_for_check, string_or_number)
+        {
+            return true;
+        }
+        if let Some(constraint) = index_constraint {
+            let evaluated_constraint = self.evaluate_type_with_env(constraint);
+            return self
+                .string_index_candidate_is_string_or_number_key(constraint, string_or_number)
+                || self.string_index_candidate_is_string_or_number_key(
+                    evaluated_constraint,
+                    string_or_number,
+                );
+        }
+        false
+    }
+
+    fn string_index_candidate_is_string_or_number_key(
+        &mut self,
+        candidate: TypeId,
+        string_or_number: TypeId,
+    ) -> bool {
+        self.diagnostic_relation_boolean_guard(candidate, string_or_number)
+            || self.keyof_candidate_target_is_array_like(candidate)
+    }
+
+    fn keyof_candidate_target_is_array_like(&mut self, candidate: TypeId) -> bool {
+        let Some(target) =
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+        else {
+            return false;
+        };
+        self.type_or_constraint_is_array_like(target)
+    }
+
+    fn type_or_constraint_is_array_like(&mut self, type_id: TypeId) -> bool {
+        if self.indexed_access_type_has_array_like_length(type_id) {
+            return true;
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.indexed_access_type_has_array_like_length(evaluated)
     }
 }

@@ -9,7 +9,6 @@ TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElabora
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/jsxComplexSignatureHasApplicabilityError.tsx
-TypeScript/tests/cases/compiler/mappedTypeInferenceFromApparentType.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/compiler/temporal.ts
 TypeScript/tests/cases/compiler/unionPropertyOfProtectedAndIntersectionProperty.ts
