@@ -45,7 +45,7 @@ as campaigns instead of isolated conformance picks.
 ## Current Public Metrics
 
 Sources: checked-in conformance and emit artifacts, live GitHub orientation on
-2026-05-27, `scripts/bench/project-row-summary.mjs`, and public README
+2026-05-28, `scripts/bench/project-row-summary.mjs`, and public README
 metrics. The public README emit block was refreshed from the checked-in emit
 artifact on 2026-05-26; release planning uses exact artifact numerators and
 denominators.
@@ -57,7 +57,7 @@ denominators.
 | JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `20` open `bug` issues in live GitHub orientation |
+| Open bug issues | `23` open `bug` issues in live GitHub orientation |
 | Output-surgery audit | red: `1` unallowlisted call, `0` stale allowlist entries (`#10575`) |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
