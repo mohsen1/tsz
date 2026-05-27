@@ -257,9 +257,9 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.class_instance_property_access_type_text(expr_idx)),
             k if k == syntax_kind_ext::CALL_EXPRESSION => self
                 .late_bound_call_return_type_text(expr_idx)
-                .or_else(|| self.well_known_method_call_return_type_text(expr_idx))
                 .or_else(|| self.direct_call_primitive_return_type_text(expr_idx, depth + 1))
                 .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                .or_else(|| self.object_literal_member_call_return_type_text(expr_idx, depth + 1))
                 .or_else(|| {
                     self.get_node_type_or_names(&[expr_idx])
                         .filter(|type_id| {
@@ -271,7 +271,8 @@ impl<'a> DeclarationEmitter<'a> {
                             )
                         })
                         .map(|type_id| self.print_type_id(type_id))
-                }),
+                })
+                .or_else(|| self.well_known_method_call_return_type_text(expr_idx)),
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
@@ -569,6 +570,124 @@ impl<'a> DeclarationEmitter<'a> {
         Self::function_type_return_type_text(&callee_type)
     }
 
+    fn object_literal_member_call_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_node = self.arena.get(call.expression)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(callee_node)?;
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        let object_idx = self.object_literal_expression_for_value(access.expression)?;
+        let object_node = self.arena.get(object_idx)?;
+        let object = self.arena.get_literal_expr(object_node)?;
+
+        for member_idx in object.elements.nodes.iter().copied() {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            if self.object_literal_member_name_text(name_idx).as_deref()
+                != Some(property_name.as_str())
+            {
+                continue;
+            }
+            if let Some(method) = self.arena.get_method_decl(member_node) {
+                return self.method_source_return_type_text(member_idx, method);
+            }
+            let initializer = self.object_literal_member_initializer(member_node)?;
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(initializer);
+            let initializer_node = self.arena.get(initializer)?;
+            let func = self.arena.get_function(initializer_node)?;
+            return self.function_expression_return_type_text(func, depth + 1);
+        }
+
+        None
+    }
+
+    fn object_literal_expression_for_value(&self, expr_idx: NodeIndex) -> Option<NodeIndex> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return Some(expr_idx);
+        }
+        if expr_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+
+        let sym_id = self.value_reference_symbol(expr_idx)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+        let mut found = None;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_idx) = self.variable_declaration_from_symbol_decl(decl_idx) else {
+                continue;
+            };
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let Some(var_decl) = self.arena.get_variable_declaration(decl_node) else {
+                continue;
+            };
+            if var_decl.initializer == NodeIndex::NONE {
+                continue;
+            }
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(var_decl.initializer);
+            let Some(initializer_node) = self.arena.get(initializer) else {
+                continue;
+            };
+            if initializer_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                continue;
+            }
+            if found.replace(initializer).is_some() {
+                return None;
+            }
+        }
+        found
+    }
+
+    fn function_expression_return_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+        depth: u32,
+    ) -> Option<String> {
+        if func.type_annotation.is_some() {
+            return self.emit_type_node_text(func.type_annotation);
+        }
+        if func.body == NodeIndex::NONE {
+            return None;
+        }
+        let body_node = self.arena.get(func.body)?;
+        if body_node.kind == syntax_kind_ext::BLOCK {
+            return self
+                .function_body_single_return_expression(func.body)
+                .and_then(|return_expr| {
+                    self.declaration_summary_primitive_expression_type_text(return_expr, depth + 1)
+                        .or_else(|| self.infer_fallback_type_text_at(return_expr, depth + 1))
+                })
+                .or_else(|| self.function_body_preferred_return_type_text(func.body));
+        }
+        self.declaration_summary_primitive_expression_type_text(func.body, depth + 1)
+            .or_else(|| self.infer_fallback_type_text_at(func.body, depth + 1))
+    }
+
     fn well_known_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
         let expr_node = self.arena.get(expr_idx)?;
         let call = self.arena.get_call_expr(expr_node)?;
@@ -578,9 +697,41 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let access = self.arena.get_access_expr(callee_node)?;
         match self.get_identifier_text(access.name_or_argument)?.as_str() {
-            "toString" => Some("string".to_string()),
+            "toString" if self.property_access_receiver_is_primitive(access.expression) => {
+                Some("string".to_string())
+            }
             _ => None,
         }
+    }
+
+    fn property_access_receiver_is_primitive(&self, expr_idx: NodeIndex) -> bool {
+        if let Some(type_id) = self
+            .get_node_type_or_names(&[expr_idx])
+            .or_else(|| self.get_symbol_cached_type(expr_idx))
+        {
+            return matches!(
+                type_id,
+                tsz_solver::types::TypeId::STRING
+                    | tsz_solver::types::TypeId::NUMBER
+                    | tsz_solver::types::TypeId::BOOLEAN
+                    | tsz_solver::types::TypeId::BIGINT
+                    | tsz_solver::types::TypeId::SYMBOL
+            ) || self.type_interner.is_some_and(|interner| {
+                tsz_solver::visitor::literal_value(interner, type_id).is_some()
+            });
+        }
+
+        self.enclosing_function_for_node(expr_idx)
+            .and_then(|func| self.function_parameter_type_text(func, expr_idx))
+            .or_else(|| self.reference_declared_type_annotation_text(expr_idx))
+            .is_some_and(|type_text| Self::is_primitive_type_text(&type_text))
+    }
+
+    fn is_primitive_type_text(type_text: &str) -> bool {
+        matches!(
+            type_text.trim(),
+            "string" | "number" | "boolean" | "bigint" | "symbol"
+        )
     }
 
     fn direct_call_primitive_return_type_text(

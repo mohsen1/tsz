@@ -207,6 +207,25 @@ var exprTotal = Expr.extra + Expr.pick(1) + new Expr().n;
 }
 
 #[test]
+fn user_defined_to_string_return_type_wins_over_builtin_fallback() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const custom = {
+    toString() {
+        return 1;
+    }
+};
+var value = custom.toString();
+"#,
+    );
+
+    assert!(
+        output.contains("declare var value: number;"),
+        "Expected user-defined toString return type to win over builtin fallback: {output}"
+    );
+}
+
+#[test]
 fn repeated_expando_arithmetic_var_declarations_keep_number_facts() {
     let output = emit_dts_with_usage_analysis(
         r#"
