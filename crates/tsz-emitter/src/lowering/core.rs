@@ -429,12 +429,22 @@ impl<'a> LoweringPass<'a> {
                 // Namespace import: import * as ns from "mod" -> needs __importStar
                 if let Some(bindings_node) = self.arena.get(clause.named_bindings) {
                     // NAMESPACE_IMPORT = 275
-                    if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT {
+                    if bindings_node.kind == syntax_kind_ext::NAMESPACE_IMPORT
+                        && self
+                            .arena
+                            .get_named_imports(bindings_node)
+                            .and_then(|named_imports| {
+                                self.get_identifier_text_ref(named_imports.name)
+                            })
+                            .is_some_and(|name| !name.is_empty())
+                    {
                         let helpers = self.transforms.helpers_mut();
                         helpers.import_star = true;
                         helpers.create_binding = true;
                     } else if let Some(named_imports) = self.arena.get_named_imports(bindings_node)
-                        && named_imports.name.is_some()
+                        && self
+                            .get_identifier_text_ref(named_imports.name)
+                            .is_some_and(|name| !name.is_empty())
                         && named_imports.elements.nodes.is_empty()
                     {
                         let helpers = self.transforms.helpers_mut();
