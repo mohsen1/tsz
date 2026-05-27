@@ -788,8 +788,56 @@ impl<'a> CheckerState<'a> {
         self.resolve_lib_type_by_name(name)
     }
 
+    /// When `type_id` is a union with at least one `Application` member, evaluate
+    /// those application members through the type environment and return the
+    /// rebuilt union. Returns `None` when `type_id` is not such a union or no
+    /// application member made progress, so callers can fall through to their
+    /// normal resolution path.
+    fn resolve_union_application_members(&mut self, type_id: TypeId) -> Option<TypeId> {
+        use crate::query_boundaries::state::type_environment::is_application_type;
+        let members = crate::query_boundaries::common::union_members(self.ctx.types, type_id)?;
+        if !members
+            .iter()
+            .any(|&m| is_application_type(self.ctx.types, m))
+        {
+            return None;
+        }
+        let mut changed = false;
+        let resolved: Vec<TypeId> = members
+            .iter()
+            .map(|&member| {
+                if is_application_type(self.ctx.types, member) {
+                    let evaluated = self.evaluate_application_type(member);
+                    if evaluated != member {
+                        changed = true;
+                    }
+                    evaluated
+                } else {
+                    member
+                }
+            })
+            .collect();
+        changed.then(|| self.ctx.types.union(resolved))
+    }
+
     pub(crate) fn resolve_type_for_property_access(&mut self, type_id: TypeId) -> TypeId {
         use rustc_hash::FxHashSet;
+
+        // A union whose members are `Application(Lazy(DefId), …)` instantiations
+        // of generic lib references (e.g. `Int32Array | Uint8Array`) keeps those
+        // members opaque under the solver's environment-free evaluator, hiding
+        // the referenced interface's members and index signatures. Such unions
+        // arise from narrowing or constraint-position substitution, where the
+        // members are interned in their raw application form rather than the
+        // resolved object form a directly-declared union would carry. Resolve
+        // the application members through the type environment first so property
+        // and element access see the interface shape; the recursion then runs
+        // the normal per-member resolution on the resolved union. This precedes
+        // the per-id resolve cache, which can otherwise return a stale identity
+        // entry recorded on an earlier pass before the members were resolvable.
+        if let Some(resolved) = self.resolve_union_application_members(type_id) {
+            return self.resolve_type_for_property_access(resolved);
+        }
 
         if let Some(&cached) = self
             .ctx
