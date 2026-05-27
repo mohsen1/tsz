@@ -83,6 +83,25 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["total_findings"], 2)
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
+        self.assertEqual(
+            report["categories"],
+            [
+                {
+                    "category": "UNALLOWLISTED",
+                    "count": 1,
+                    "max_count": None,
+                    "files": 1,
+                    "statuses": {"unallowlisted": 1},
+                },
+                {
+                    "category": "semantic-output-surgery",
+                    "count": 1,
+                    "max_count": 2,
+                    "files": 2,
+                    "statuses": {"allowlisted": 1, "stale_allowlist": 1},
+                },
+            ],
+        )
         self.assertEqual(report["findings"][0]["category"], "UNALLOWLISTED")
         self.assertEqual(report["findings"][1]["category"], "semantic-output-surgery")
         self.assertEqual(

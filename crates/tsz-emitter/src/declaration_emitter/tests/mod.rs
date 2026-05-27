@@ -297,6 +297,7 @@ mod enum_template_and_advanced;
 mod export_specifiers;
 mod fix_verification;
 mod generics_and_ambient;
+mod js_define_property;
 mod jsdoc_template_defaults;
 mod misc_features;
 mod misc_inference_features;
