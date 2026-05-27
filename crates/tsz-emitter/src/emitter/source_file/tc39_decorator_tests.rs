@@ -1067,6 +1067,10 @@ class D {
         "ES2015 decorated static private fields should use generated storage descriptors for decorator access and class-decorator static-block capture.\nOutput:\n{output}"
     );
     assert!(
+        !output.starts_with("\"use strict\";\nvar _a;"),
+        "TC39-decorated class wrappers should keep receiver temps local instead of reserving a file-level temp.\nOutput:\n{output}"
+    );
+    assert!(
         !output.contains(".#value"),
         "ES2015 decorated static private field output must not keep native private-field access.\nOutput:\n{output}"
     );

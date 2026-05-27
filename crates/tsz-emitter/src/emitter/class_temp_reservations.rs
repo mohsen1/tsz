@@ -134,6 +134,10 @@ impl<'a> Printer<'a> {
             return 0;
         }
 
+        if !self.ctx.options.legacy_decorators && self.class_has_decorators(class) {
+            return 0;
+        }
+
         let legacy_computed_temps =
             self.estimate_legacy_decorator_computed_prefix_temp_count(class_idx, class);
         let static_initializer_nodes = self.class_static_initializer_nodes_for_temp_plan(class);
