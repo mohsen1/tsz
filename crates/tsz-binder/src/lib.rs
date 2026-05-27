@@ -8,6 +8,7 @@
 //! - `BinderState` - Name resolution and symbol table construction
 //! - `LibFile` - Lib file loading for built-in type definitions
 
+pub mod binder_stack_guard;
 mod binding;
 pub mod flow;
 pub mod lib_loader;

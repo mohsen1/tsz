@@ -549,12 +549,18 @@ impl BinderState {
             return;
         };
 
-        if node.kind == syntax_kind_ext::ARROW_FUNCTION
-            || node.kind == syntax_kind_ext::RETURN_STATEMENT
-        {
-            tracing::debug!(idx = idx.0, kind = node.kind, "bind_node called");
+        // Amortized stack guard: bail immediately if the breaker was already tripped,
+        // probe every 64th call to avoid paying `remaining_stack()` on each node,
+        // and trip the breaker + return if headroom is critically low.
+        if crate::binder_stack_guard::stack_overflow_tripped() {
+            return;
         }
-
+        if crate::binder_stack_guard::should_probe_stack()
+            && stacker::remaining_stack().unwrap_or(0) < 1024 * 1024
+        {
+            crate::binder_stack_guard::trip_stack_overflow();
+            return;
+        }
         stacker::maybe_grow(256 * 1024, 2 * 1024 * 1024, || {
             self.bind_node_by_node_kind(arena, node, idx);
         });
