@@ -204,6 +204,12 @@ impl<'a> CheckerState<'a> {
                     resolved.arena,
                     symbol,
                     arg_count,
+                ) || Self::source_file_local_type_alias_application_is_projection_lowerable(
+                    resolved.arena,
+                    resolved.binder,
+                    symbol,
+                    arg_count,
+                    &proof.for_file(resolved.file_idx),
                 )
             })
     }
@@ -1295,6 +1301,59 @@ impl<'a> CheckerState<'a> {
         }
 
         true
+    }
+
+    fn source_file_local_type_alias_application_is_projection_lowerable<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        symbol: &Symbol,
+        arg_count: usize,
+        proof: &SourceFileAliasProofContext<'b>,
+    ) -> bool {
+        let disallowed = symbol_flags::VALUE
+            | symbol_flags::CLASS
+            | symbol_flags::INTERFACE
+            | symbol_flags::VALUE_MODULE
+            | symbol_flags::NAMESPACE_MODULE;
+        if symbol.flags & symbol_flags::TYPE_ALIAS == 0
+            || symbol.flags & disallowed != 0
+            || symbol.declarations.len() != 1
+        {
+            return false;
+        }
+
+        let decl_idx = symbol.declarations[0];
+        let Some(decl_node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let Some(type_alias) = arena.get_type_alias(decl_node) else {
+            return false;
+        };
+        let mut seen = Vec::new();
+        let Some(target_param_names) =
+            Self::source_file_type_alias_application_param_names_are_lowerable(
+                arena, binder, type_alias, arg_count, &mut seen, proof,
+            )
+        else {
+            return false;
+        };
+        if target_param_names.is_empty()
+            || Self::source_file_type_node_contains_disallowed_type_query(
+                arena,
+                binder,
+                type_alias.type_node,
+            )
+        {
+            return false;
+        }
+        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            arena,
+            binder,
+            type_alias.type_node,
+            &target_param_names,
+            &mut seen,
+            proof,
+        )
     }
 
     pub(super) fn source_file_import_alias_target_for_lowering<'b>(
