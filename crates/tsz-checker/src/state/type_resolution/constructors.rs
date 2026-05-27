@@ -1,6 +1,7 @@
 use crate::query_boundaries::common::call_signatures_for_type;
 use crate::query_boundaries::state::type_resolution as query;
 use crate::state::CheckerState;
+use crate::types_domain::queries::lib_resolution::resolve_name_to_lib_symbol;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::{NodeIndex, NodeList, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
@@ -589,6 +590,9 @@ impl<'a> CheckerState<'a> {
         let ctor_types = self.constructor_types_from_type(evaluated_type);
         tracing::debug!(?ctor_types, "base_constructor_type: ctor_types");
         if ctor_types.is_empty() {
+            if matches!(evaluated_type, TypeId::ERROR | TypeId::UNKNOWN) {
+                return None;
+            }
             if evaluated_type == TypeId::NULL {
                 let null_ctor = Some(TypeId::NULL);
                 if should_cache {
@@ -897,6 +901,12 @@ impl<'a> CheckerState<'a> {
                 return self.cache_base_instance_result(expr_idx, should_cache, Some(array_base));
             }
 
+            if let Some(lib_base) =
+                self.actual_or_cloned_lib_instance_type_for_heritage(base_sym_id, type_arguments)
+            {
+                return self.cache_base_instance_result(expr_idx, should_cache, Some(lib_base));
+            }
+
             if let Some(base_class_idx) = self.get_class_declaration_from_symbol(base_sym_id)
                 && let Some(base_node) = self.ctx.arena.get(base_class_idx)
                 && let Some(base_class) = self.ctx.arena.get_class(base_node)
@@ -953,6 +963,13 @@ impl<'a> CheckerState<'a> {
             return self.cache_base_instance_result(expr_idx, should_cache, None);
         }
 
+        if let Some(name) = self.heritage_name_text(expr_idx)
+            && let Some(lib_base) =
+                self.actual_or_cloned_lib_instance_type_for_heritage_name(&name, type_arguments)
+        {
+            return self.cache_base_instance_result(expr_idx, should_cache, Some(lib_base));
+        }
+
         let ctor_type = self.base_constructor_type_from_expression(expr_idx, type_arguments)?;
         let adds_implicit_any_index = self.constructor_type_explicitly_returns_any(ctor_type);
         let mut resolved = self.instance_type_from_constructor_type(ctor_type);
@@ -975,6 +992,163 @@ impl<'a> CheckerState<'a> {
             };
         }
         self.cache_base_instance_result(expr_idx, should_cache, resolved)
+    }
+
+    fn actual_or_cloned_lib_instance_type_for_heritage(
+        &mut self,
+        base_sym_id: tsz_binder::SymbolId,
+        type_arguments: Option<&NodeList>,
+    ) -> Option<TypeId> {
+        use tsz_binder::symbol_flags;
+
+        let (name, flags, value_declaration, declarations) = {
+            let symbol = self.get_cross_file_symbol(base_sym_id)?;
+            (
+                symbol.escaped_name.clone(),
+                symbol.flags,
+                symbol.value_declaration,
+                symbol.declarations.clone(),
+            )
+        };
+        if flags & symbol_flags::INTERFACE == 0
+            || flags & symbol_flags::VALUE == 0
+            || !self.ctx.symbol_is_from_actual_or_cloned_lib(base_sym_id)
+            || (!self.lib_heritage_value_has_construct_signature(
+                base_sym_id,
+                value_declaration,
+                &declarations,
+            ) && !self.lib_context_value_has_construct_signature(&name))
+        {
+            return None;
+        }
+
+        let (lib_type, params) = self.resolve_lib_type_with_params(&name);
+        let lib_type = lib_type?;
+        if matches!(lib_type, TypeId::ERROR | TypeId::UNKNOWN) {
+            return None;
+        }
+        let def_id = self.ctx.get_canonical_lib_def_id(&name, base_sym_id);
+        self.ctx
+            .register_def_auto_params_in_envs(def_id, lib_type, params.clone());
+        Some(self.instantiate_base_instance_type_with_args(lib_type, &params, type_arguments))
+    }
+
+    fn actual_or_cloned_lib_instance_type_for_heritage_name(
+        &mut self,
+        name: &str,
+        type_arguments: Option<&NodeList>,
+    ) -> Option<TypeId> {
+        let sym_id = resolve_name_to_lib_symbol(
+            name,
+            self.ctx.binder,
+            self.ctx.global_file_locals_index.as_deref(),
+            self.ctx
+                .all_binders
+                .as_ref()
+                .map(|binders| binders.as_ref().as_slice()),
+            &self.ctx.lib_contexts,
+        )?;
+        self.actual_or_cloned_lib_instance_type_for_heritage(sym_id, type_arguments)
+    }
+
+    fn lib_heritage_value_has_construct_signature(
+        &self,
+        base_sym_id: tsz_binder::SymbolId,
+        value_declaration: NodeIndex,
+        declarations: &[NodeIndex],
+    ) -> bool {
+        declarations
+            .iter()
+            .copied()
+            .chain(std::iter::once(value_declaration))
+            .filter(|decl_idx| decl_idx.is_some())
+            .any(|decl_idx| self.lib_decl_has_construct_signature(base_sym_id, decl_idx))
+    }
+
+    fn lib_context_value_has_construct_signature(&self, name: &str) -> bool {
+        self.ctx.lib_contexts.iter().any(|lib_ctx| {
+            let Some(sym_id) = lib_ctx.binder.file_locals.get(name) else {
+                return false;
+            };
+            let Some(symbol) = lib_ctx.binder.get_symbol(sym_id) else {
+                return false;
+            };
+            symbol
+                .declarations
+                .iter()
+                .copied()
+                .chain(std::iter::once(symbol.value_declaration))
+                .filter(|decl_idx| decl_idx.is_some())
+                .any(|decl_idx| {
+                    if let Some(arenas) = lib_ctx.binder.declaration_arenas.get(&(sym_id, decl_idx))
+                    {
+                        arenas.iter().any(|arena| {
+                            Self::arena_decl_has_construct_signature(arena.as_ref(), decl_idx)
+                        })
+                    } else {
+                        Self::arena_decl_has_construct_signature(lib_ctx.arena.as_ref(), decl_idx)
+                    }
+                })
+        })
+    }
+
+    fn lib_decl_has_construct_signature(
+        &self,
+        base_sym_id: tsz_binder::SymbolId,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        if let Some(arenas) = self
+            .ctx
+            .binder
+            .declaration_arenas
+            .get(&(base_sym_id, decl_idx))
+        {
+            for arena in arenas {
+                if Self::arena_decl_has_construct_signature(arena.as_ref(), decl_idx) {
+                    return true;
+                }
+            }
+        }
+
+        if let Some(arena) = self.ctx.binder.symbol_arenas.get(&base_sym_id)
+            && Self::arena_decl_has_construct_signature(arena.as_ref(), decl_idx)
+        {
+            return true;
+        }
+
+        Self::arena_decl_has_construct_signature(self.ctx.arena, decl_idx)
+    }
+
+    fn arena_decl_has_construct_signature(
+        arena: &tsz_parser::parser::NodeArena,
+        decl_idx: NodeIndex,
+    ) -> bool {
+        let Some(node) = arena.get(decl_idx) else {
+            return false;
+        };
+        let type_annotation = arena
+            .get_variable_declaration(node)
+            .map(|decl| decl.type_annotation)
+            .unwrap_or(NodeIndex::NONE);
+        let Some(type_node) = arena.get(type_annotation) else {
+            return false;
+        };
+        if type_node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE {
+            return true;
+        }
+        let Some(type_literal) = arena.get_type_literal(type_node) else {
+            return false;
+        };
+        type_literal
+            .members
+            .nodes
+            .iter()
+            .copied()
+            .any(|member_idx| {
+                arena
+                    .get(member_idx)
+                    .is_some_and(|member| member.kind == syntax_kind_ext::CONSTRUCT_SIGNATURE)
+            })
     }
 
     fn constructor_type_explicitly_returns_any(&mut self, ctor_type: TypeId) -> bool {

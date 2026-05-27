@@ -1064,6 +1064,47 @@ impl<'a> TypeResolver for CheckerContext<'a> {
         self.get_existing_def_id(sym_id)
     }
 
+    fn get_class_extends(&self, def_id: tsz_solver::DefId) -> Option<tsz_solver::DefId> {
+        self.type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_class_extends_def(def_id))
+            .or_else(|| {
+                self.type_environment
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| env.get_class_extends_def(def_id))
+            })
+    }
+
+    fn class_def_for_instance_type(
+        &self,
+        type_id: tsz_solver::TypeId,
+    ) -> Option<tsz_solver::DefId> {
+        self.type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.class_def_for_instance(type_id))
+            .or_else(|| {
+                self.type_environment
+                    .try_borrow()
+                    .ok()
+                    .and_then(|env| env.class_def_for_instance(type_id))
+            })
+            .or_else(|| {
+                let def_id = self.definition_store.find_def_for_type(type_id)?;
+                matches!(
+                    self.definition_store.get_kind(def_id),
+                    Some(tsz_solver::def::DefKind::Class)
+                )
+                .then_some(def_id)
+            })
+    }
+
+    fn def_for_type(&self, type_id: tsz_solver::TypeId) -> Option<tsz_solver::DefId> {
+        self.definition_store.find_def_for_type(type_id)
+    }
+
     /// Resolve an `UnresolvedTypeName(name)` text to a `DefId` using the
     /// merged binder graph. This recovers cross-file qualified names whose
     /// lowering pass landed `Application(UnresolvedTypeName(name), args)`

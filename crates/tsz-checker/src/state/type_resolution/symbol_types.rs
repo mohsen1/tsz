@@ -79,6 +79,25 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some((ref escaped_name, flags, ref declarations, value_declaration)) = symbol_meta {
+            if flags & symbol_flags::INTERFACE != 0
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                && !declarations.is_empty()
+            {
+                let (lib_type, params) = self.resolve_lib_type_with_params(escaped_name);
+                if let Some(lib_type) = lib_type
+                    && lib_type != TypeId::ERROR
+                    && lib_type != TypeId::UNKNOWN
+                {
+                    let def_id = self.ctx.get_canonical_lib_def_id(escaped_name, sym_id);
+                    if !params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, params);
+                    }
+                    self.ctx.register_def_in_envs(def_id, lib_type);
+                    self.ctx.leave_recursion();
+                    return lib_type;
+                }
+            }
+
             let prefer_interface_type_position =
                 (flags & symbol_flags::CLASS) != 0 && (flags & symbol_flags::INTERFACE) != 0;
             if flags & symbol_flags::CLASS != 0 && !prefer_interface_type_position {
@@ -1181,6 +1200,25 @@ impl<'a> CheckerState<'a> {
         }
 
         if let Some(symbol) = self.ctx.binder.get_symbol(sym_id) {
+            if symbol.has_any_flags(symbol_flags::INTERFACE)
+                && self.ctx.symbol_is_from_actual_or_cloned_lib(sym_id)
+                && !symbol.declarations.is_empty()
+            {
+                let name = symbol.escaped_name.clone();
+                let (lib_type, params) = self.resolve_lib_type_with_params(&name);
+                if let Some(lib_type) = lib_type
+                    && lib_type != TypeId::ERROR
+                    && lib_type != TypeId::UNKNOWN
+                {
+                    let def_id = self.ctx.get_canonical_lib_def_id(&name, sym_id);
+                    if !params.is_empty() {
+                        self.ctx.insert_def_type_params(def_id, params.clone());
+                    }
+                    self.ctx.register_def_in_envs(def_id, lib_type);
+                    return (lib_type, params);
+                }
+            }
+
             if symbol.has_any_flags(symbol_flags::ALIAS) {
                 if self
                     .ctx

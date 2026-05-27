@@ -13,11 +13,13 @@
 use crate::operations::iterators::get_iterator_info;
 use crate::type_queries::get_return_type;
 use crate::types::{
-    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, TypeId, Visibility,
+    IntrinsicKind, ObjectFlags, ObjectShape, ObjectShapeId, PropertyInfo, SymbolRef, TypeId,
+    Visibility,
 };
 use crate::utils;
 use crate::visitor::{
-    application_id, object_shape_id, object_with_index_shape_id, template_literal_id, union_list_id,
+    application_id, lazy_def_id, object_shape_id, object_with_index_shape_id, template_literal_id,
+    union_list_id,
 };
 use tsz_common::interner::Atom;
 
@@ -198,6 +200,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
         let target_receiver =
             target_receiver.or_else(|| self.receiver_type_from_shape_symbol(target));
+        let target_def = self.class_relation_target_def(target_receiver, Some(target));
+        if self.class_instance_extends_target_def(source, source_receiver, target_def) {
+            return SubtypeResult::True;
+        }
         // Private brand checking for nominal typing of classes with private fields
         if !self.check_private_brand_compatibility(&source.properties, &target.properties) {
             return SubtypeResult::False;
@@ -567,6 +573,74 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.instantiated_generic_method_args
                 .extend(app.args.iter().copied());
         }
+    }
+
+    fn class_instance_extends_target_def(
+        &self,
+        source: &ObjectShape,
+        source_receiver: Option<TypeId>,
+        target_def: Option<crate::def::DefId>,
+    ) -> bool {
+        let Some(source_def) = source_receiver
+            .and_then(|type_id| self.resolver.class_def_for_instance_type(type_id))
+            .or_else(|| {
+                source
+                    .symbol
+                    .and_then(|symbol| self.resolver.symbol_to_def_id(SymbolRef(symbol.0)))
+            })
+        else {
+            return false;
+        };
+        let Some(target_def) = target_def else {
+            return false;
+        };
+
+        if self.resolver.defs_are_equivalent(source_def, target_def) {
+            return true;
+        }
+
+        let mut current = source_def;
+        for _ in 0..50 {
+            let Some(parent) = self.resolver.get_class_extends(current) else {
+                return false;
+            };
+            if self.resolver.defs_are_equivalent(parent, target_def) {
+                return true;
+            }
+            current = parent;
+        }
+        false
+    }
+
+    fn class_relation_target_def(
+        &self,
+        target_receiver: Option<TypeId>,
+        target: Option<&ObjectShape>,
+    ) -> Option<crate::def::DefId> {
+        target_receiver
+            .and_then(|type_id| {
+                lazy_def_id(self.interner, type_id)
+                    .or_else(|| self.resolver.def_for_type(type_id))
+                    .or_else(|| self.resolver.class_def_for_instance_type(type_id))
+                    .or_else(|| self.def_for_receiver_shape_symbol(type_id))
+            })
+            .or_else(|| {
+                target.and_then(|shape| {
+                    shape
+                        .symbol
+                        .and_then(|symbol| self.resolver.symbol_to_def_id(SymbolRef(symbol.0)))
+                })
+            })
+    }
+
+    fn def_for_receiver_shape_symbol(&self, type_id: TypeId) -> Option<crate::def::DefId> {
+        object_shape_id(self.interner, type_id)
+            .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            .or_else(|| {
+                object_with_index_shape_id(self.interner, type_id)
+                    .and_then(|shape_id| self.interner.object_shape(shape_id).symbol)
+            })
+            .and_then(|symbol| self.resolver.symbol_to_def_id(SymbolRef(symbol.0)))
     }
 
     /// Inner property type comparison with `in_property_check` already set.
@@ -1105,6 +1179,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     ) -> SubtypeResult {
         let source_receiver =
             source_receiver.or_else(|| self.receiver_type_from_shape_symbol(source));
+        let target_def = self.class_relation_target_def(target_receiver, None);
+        if self.class_instance_extends_target_def(source, source_receiver, target_def) {
+            return SubtypeResult::True;
+        }
         for t_prop in target {
             if let Some(sp) =
                 self.lookup_property(&source.properties, Some(source_shape_id), t_prop.name)

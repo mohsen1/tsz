@@ -11,7 +11,6 @@ TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
-TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
 TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
