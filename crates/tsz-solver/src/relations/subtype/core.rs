@@ -138,9 +138,7 @@ pub struct SubtypeChecker<'a, R: TypeResolver = NoopResolver> {
     /// Unified recursion guard for DefId-pair cycle detection.
     /// Catches cycles in Lazy(DefId) types before they're resolved.
     pub(crate) def_guard: crate::recursion::RecursionGuard<(DefId, DefId)>,
-    /// Per-`DefId` nesting depth for the one-sided application expansion paths
-    /// (`App <: T` and `T <: App`), bounding recursion-identity nesting the way
-    /// the two-sided path's `def_guard` does. See `enter_app_expansion_depth`.
+    /// Per-`DefId` one-sided application expansion depth; see `enter_app_expansion_depth`.
     pub(crate) app_expand_depth: FxHashMap<DefId, u32>,
     /// Symbol-pair visiting set for Object-level cycle detection.
     /// Catches cycles when comparing evaluated Object types with symbols
@@ -2791,10 +2789,6 @@ mod index_signature_tests;
 #[cfg(test)]
 #[path = "../../../tests/generics_rules_tests.rs"]
 mod generics_rules_tests;
-
-#[cfg(test)]
-#[path = "../../../tests/one_sided_app_expansion_depth_tests.rs"]
-mod one_sided_app_expansion_depth_tests;
 
 #[cfg(test)]
 #[path = "../../../tests/callable_tests.rs"]

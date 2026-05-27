@@ -26,3 +26,7 @@ pub use self::core::*;
 
 // Re-export SubtypeFailureReason so rules/ submodules can use `super::super::SubtypeFailureReason`
 pub(crate) use crate::diagnostics::SubtypeFailureReason;
+
+#[cfg(test)]
+#[path = "../../../tests/one_sided_app_expansion_depth_tests.rs"]
+mod one_sided_app_expansion_depth_tests;

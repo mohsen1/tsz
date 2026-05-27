@@ -5,10 +5,12 @@
 //! re-introducing the same generic, while leaving shallow finite expansions
 //! (and real mismatches) untouched.
 
-use super::*;
 use crate::construction::TypeInterner;
+use crate::def::resolver::TypeEnvironment;
 use crate::def::{DefId, DefKind};
+use crate::relations::subtype::SubtypeChecker;
 use crate::relations::subtype::rules::generics::ONE_SIDED_APP_EXPANSION_MAX_DEPTH;
+use crate::types::{PropertyInfo, TypeData, TypeId, TypeParamInfo};
 
 /// Build a recursive generic `R<T> = { next: R<R<T>> }` whose every expansion
 /// re-introduces `R` with a structurally deeper argument. The iteration
