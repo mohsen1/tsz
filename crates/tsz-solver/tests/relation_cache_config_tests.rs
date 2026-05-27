@@ -28,9 +28,11 @@
 use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::QueryCache;
+use crate::computation::TypeEnvironment;
+use crate::def::{DefId, DefKind};
 use crate::intern::TypeInterner;
 use crate::relations::relation_queries::{
-    RelationContext, RelationKind, RelationPolicy, query_relation,
+    RelationContext, RelationKind, RelationPolicy, query_relation, query_relation_with_resolver,
 };
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
@@ -316,6 +318,126 @@ fn assume_related_on_cycle_partitions_cache_entries() {
         "assume_related_on_cycle",
         RelationPolicy::default().with_assume_related_on_cycle(true),
         RelationPolicy::default().with_assume_related_on_cycle(false),
+    );
+}
+
+#[test]
+fn subtype_cache_assume_related_on_cycle_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let mut env = TypeEnvironment::new();
+
+    let left_def = DefId(9101);
+    let right_def = DefId(9102);
+    let next = interner.intern_string("next");
+
+    let left = interner.lazy(left_def);
+    let right = interner.lazy(right_def);
+    env.insert_def(
+        left_def,
+        interner.object(vec![PropertyInfo::new(next, left)]),
+    );
+    env.insert_def(
+        right_def,
+        interner.object(vec![PropertyInfo::new(next, right)]),
+    );
+    env.insert_def_kind(left_def, DefKind::TypeAlias);
+    env.insert_def_kind(right_def, DefKind::TypeAlias);
+
+    let assume = RelationPolicy::default().with_assume_related_on_cycle(true);
+    let reject = RelationPolicy::default().with_assume_related_on_cycle(false);
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..RelationContext::default()
+    };
+
+    let assume_uncached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        assume,
+        RelationContext::default(),
+    )
+    .is_related();
+    let reject_uncached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        reject,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        assume_uncached,
+        "recursive aliases with the same shape should rely on the cycle assumption",
+    );
+    assert!(
+        !reject_uncached,
+        "disabling the cycle assumption should reject the same recursive alias pair",
+    );
+
+    let reject_key = RelationCacheKey::for_subtype(left, right, reject.cache_config());
+    let assume_key = RelationCacheKey::for_subtype(left, right, assume.cache_config());
+    assert_ne!(
+        reject_key, assume_key,
+        "cycle-assuming and cycle-rejecting policies must occupy distinct cache slots",
+    );
+
+    let reject_cached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        reject,
+        context,
+    )
+    .is_related();
+
+    assert_eq!(
+        reject_cached, reject_uncached,
+        "cached cycle-rejecting policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(reject_key),
+        Some(reject_uncached),
+        "cycle-rejecting result must be stored in the rejecting slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(assume_key),
+        None,
+        "cycle-assuming lookup must not hit the rejecting slot",
+    );
+
+    let assume_cached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        assume,
+        context,
+    )
+    .is_related();
+
+    assert_eq!(
+        assume_cached, assume_uncached,
+        "cached cycle-assuming policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(assume_key),
+        Some(assume_uncached),
+        "cycle-assuming result must be stored in the assuming slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(reject_key),
+        Some(reject_uncached),
+        "cycle-rejecting slot must remain intact after the assuming lookup",
     );
 }
 
