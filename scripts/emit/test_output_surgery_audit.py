@@ -84,6 +84,15 @@ class OutputSurgeryAuditTests(unittest.TestCase):
         self.assertEqual(report["files_with_findings"], 2)
         self.assertEqual(report["failure_summary"]["unallowlisted"], 1)
         self.assertEqual(
+            report["budget_summary"],
+            {
+                "allowlisted_calls": 1,
+                "allowlist_cap": 2,
+                "remaining_allowlist_capacity": 1,
+                "allowlisted_files": 2,
+            },
+        )
+        self.assertEqual(
             report["categories"],
             [
                 {
@@ -118,14 +127,21 @@ class OutputSurgeryAuditTests(unittest.TestCase):
             self.audit.Finding("a.rs", 1, "replacen", "output = output.replacen(&a, &b, 1);"),
             self.audit.Finding("b.rs", 2, "replace", "rewritten = rewritten.replace(&a, &b);"),
         ]
+        allowlist = {
+            "a.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "existing debt"),
+            "b.rs": self.audit.AllowEntry("semantic-output-surgery", 1, "existing debt"),
+        }
 
-        summary = self.audit.format_pass_summary(findings, [])
+        summary = self.audit.format_pass_summary(findings, [], allowlist)
 
         self.assertEqual(
             summary,
             "Output-surgery audit passed: "
             "total_findings=2, "
             "files_with_findings=2, "
+            "allowlisted_calls=2, "
+            "allowlist_cap=2, "
+            "remaining_allowlist_capacity=0, "
             "unallowlisted_calls=0, "
             "over_allowlist_files=0, "
             "over_allowlist_excess_calls=0, "

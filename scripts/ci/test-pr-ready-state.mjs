@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { readyStateFailures } from "./check-pr-ready-state.mjs";
+import { normalizePullRequest, readyStateFailures } from "./check-pr-ready-state.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
@@ -41,6 +41,23 @@ function runFixture(pr) {
 }
 
 assert.deepEqual(readyStateFailures(readyPr()), []);
+
+assert.deepEqual(
+  normalizePullRequest({
+    number: 456,
+    title: "chore(ci): sample",
+    body: "AgentName: TestAgent\n",
+    draft: false,
+    labels: [{ name: "agent:Studio-F" }, { name: "merge-queue" }],
+  }),
+  {
+    number: 456,
+    title: "chore(ci): sample",
+    body: "AgentName: TestAgent\n",
+    draft: false,
+    labels: ["agent:Studio-F", "merge-queue"],
+  },
+);
 
 assert.deepEqual(
   readyStateFailures(readyPr({ labels: ["WIP"] })),

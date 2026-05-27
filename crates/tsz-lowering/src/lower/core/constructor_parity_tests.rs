@@ -87,3 +87,27 @@ fn with_hybrid_resolver_initializes_invariant_defaults() {
     assert!(lowering.def_id_resolver.is_some());
     assert!(lowering.value_resolver.is_some());
 }
+
+#[test]
+fn type_param_scope_update_replaces_placeholder_binding() {
+    let arena = NodeArena::new();
+    let interner = TypeInterner::new();
+    let lowering = TypeLowering::new(&arena, &interner);
+    let name = interner.intern_string("T");
+
+    lowering.push_type_param_scope();
+    lowering.add_type_param_binding(name, TypeId::STRING);
+    lowering.update_type_param_binding(name, TypeId::NUMBER);
+
+    let scopes = lowering.type_param_scopes.borrow();
+    assert_eq!(scopes.len(), 1);
+    assert_eq!(scopes[0].len(), 1);
+    let (stored_name, binding) = scopes[0].iter().next().expect("binding");
+    assert_eq!(stored_name.as_ref(), "T");
+    assert_eq!(binding.type_id, TypeId::NUMBER);
+    drop(scopes);
+
+    assert_eq!(lowering.lookup_type_param("T"), Some(TypeId::NUMBER));
+    assert_eq!(lowering.lookup_type_param("U"), None);
+    lowering.pop_type_param_scope();
+}

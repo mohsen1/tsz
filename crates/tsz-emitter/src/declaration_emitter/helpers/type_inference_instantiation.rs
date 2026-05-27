@@ -643,7 +643,11 @@ impl<'a> DeclarationEmitter<'a> {
 
         self.short_circuit_const_literal_reference_type_text(expr_idx)
             .or_else(|| self.js_literal_type_text(expr_idx))
-            .or_else(|| self.preferred_expression_type_text(expr_idx))
+            .or_else(|| self.declaration_summary_primitive_expression_type_text(expr_idx, 0))
+            .or_else(|| {
+                self.preferred_expression_type_text(expr_idx)
+                    .filter(|text| text != "any")
+            })
             .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             .or_else(|| {
                 let expr_idx = self.skip_parenthesized_expression_via_parent_node(expr_idx)?;
@@ -655,7 +659,13 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 self.short_circuit_const_literal_reference_type_text(expr_idx)
                     .or_else(|| self.js_literal_type_text(expr_idx))
-                    .or_else(|| self.preferred_expression_type_text(expr_idx))
+                    .or_else(|| {
+                        self.declaration_summary_primitive_expression_type_text(expr_idx, 0)
+                    })
+                    .or_else(|| {
+                        self.preferred_expression_type_text(expr_idx)
+                            .filter(|text| text != "any")
+                    })
                     .or_else(|| self.infer_fallback_type_text_at(expr_idx, 0))
             })
     }

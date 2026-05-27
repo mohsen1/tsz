@@ -802,6 +802,48 @@ class Foo {
 }
 
 #[test]
+fn js_method_return_type_uses_constructor_assignment_property_facts() {
+    let output = emit_js_dts_with_usage_analysis(
+        r#"
+export class Counted {
+    constructor() {
+        this.total = 12;
+        this.label = "ok";
+    }
+    value() {
+        return this.total;
+    }
+    describe() {
+        return "value: " + this.label;
+    }
+}
+
+export class Renamed {
+    constructor(seed) {
+        this.amount = seed;
+    }
+    current() {
+        return this.amount;
+    }
+}
+"#,
+    );
+
+    assert!(
+        output.contains("value(): number;"),
+        "Expected JS method return to reuse constructor-assigned property facts: {output}"
+    );
+    assert!(
+        output.contains("describe(): string;"),
+        "Expected composed JS method return to reuse constructor-assigned property facts: {output}"
+    );
+    assert!(
+        output.contains("current(): any;"),
+        "Expected unsupported untyped constructor parameter assignments to preserve fallback behavior: {output}"
+    );
+}
+
+#[test]
 fn method_return_type_bitwise_operations_produce_number() {
     let output = emit_dts_with_binding(
         r#"
