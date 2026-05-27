@@ -60,6 +60,14 @@ class FailureSummary:
     stale_allowlist_files: int = 0
 
 
+@dataclasses.dataclass(frozen=True)
+class BudgetSummary:
+    allowlisted_calls: int = 0
+    allowlist_cap: int = 0
+    remaining_allowlist_capacity: int = 0
+    allowlisted_files: int = 0
+
+
 def iter_rust_files(base: pathlib.Path = SOURCE_ROOT):
     yield from sorted(base.rglob("*.rs"))
 
@@ -266,6 +274,25 @@ def build_category_summaries(file_summaries: list[dict[str, object]]) -> list[di
     return result
 
 
+def summarize_budget(file_summaries: list[dict[str, object]]) -> BudgetSummary:
+    allowlisted_calls = 0
+    allowlist_cap = 0
+    allowlisted_files = 0
+    for summary in file_summaries:
+        max_count = summary["max_count"]
+        if max_count is None:
+            continue
+        allowlisted_calls += int(summary["count"])
+        allowlist_cap += int(max_count)
+        allowlisted_files += 1
+    return BudgetSummary(
+        allowlisted_calls=allowlisted_calls,
+        allowlist_cap=allowlist_cap,
+        remaining_allowlist_capacity=max(0, allowlist_cap - allowlisted_calls),
+        allowlisted_files=allowlisted_files,
+    )
+
+
 def build_json_report(
     findings: list[Finding],
     allowlist: dict[str, AllowEntry],
@@ -279,6 +306,7 @@ def build_json_report(
         "total_findings": len(findings),
         "files_with_findings": len(counts),
         "failure_summary": dataclasses.asdict(summary),
+        "budget_summary": dataclasses.asdict(summarize_budget(file_summaries)),
         "failures": failures,
         "categories": build_category_summaries(file_summaries),
         "files": file_summaries,
@@ -317,12 +345,20 @@ def print_report(findings: list[Finding], allowlist: dict[str, AllowEntry]) -> N
             print(f"  {finding.line_no}: {finding.text}")
 
 
-def format_pass_summary(findings: list[Finding], failures: list[str]) -> str:
+def format_pass_summary(
+    findings: list[Finding],
+    failures: list[str],
+    allowlist: dict[str, AllowEntry],
+) -> str:
     summary = summarize_failures(failures)
+    budget = summarize_budget(build_file_summaries(grouped_counts(findings), allowlist))
     return (
         "Output-surgery audit passed: "
         f"total_findings={len(findings)}, "
         f"files_with_findings={len(grouped_counts(findings))}, "
+        f"allowlisted_calls={budget.allowlisted_calls}, "
+        f"allowlist_cap={budget.allowlist_cap}, "
+        f"remaining_allowlist_capacity={budget.remaining_allowlist_capacity}, "
         f"unallowlisted_calls={summary.unallowlisted}, "
         f"over_allowlist_files={summary.over_allowlist_files}, "
         f"over_allowlist_excess_calls={summary.over_allowlist_excess_calls}, "
@@ -366,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  - {failure}", file=sys.stderr)
         return 1
 
-    print(format_pass_summary(findings, failures))
+    print(format_pass_summary(findings, failures, allowlist))
     return 0
 
 

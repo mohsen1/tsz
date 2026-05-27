@@ -424,7 +424,7 @@ impl<'a> CheckerState<'a> {
                         self.ctx.types,
                         structural_type,
                     ) {
-                    let evaluated = self.evaluate_type_with_resolution(structural_type);
+                    let evaluated = self.evaluate_type_with_env(structural_type);
                     if matches!(evaluated, TypeId::ERROR | TypeId::UNKNOWN) {
                         structural_type
                     } else {
