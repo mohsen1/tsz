@@ -460,6 +460,9 @@ mod call_context_relation_routing_arch_tests;
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]
+#[path = "tests/callable_constraint_function_identity_tests.rs"]
+mod callable_constraint_function_identity_tests;
+#[cfg(test)]
 #[path = "tests/callable_interface_assignment_tests.rs"]
 mod callable_interface_assignment_tests;
 #[cfg(test)]
