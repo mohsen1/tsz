@@ -154,6 +154,9 @@ mod environment_capabilities_tests;
 #[path = "tests/flow_inferred_predicate_boundary_tests.rs"]
 mod flow_inferred_predicate_boundary_tests;
 #[cfg(test)]
+#[path = "tests/flow_promise_identity_tests.rs"]
+mod flow_promise_identity_tests;
+#[cfg(test)]
 #[path = "tests/function_type_return_node_tests.rs"]
 mod function_type_return_node_tests;
 #[cfg(test)]
@@ -453,6 +456,9 @@ mod call_context_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
+#[cfg(test)]
+#[path = "tests/callable_constraint_function_identity_tests.rs"]
+mod callable_constraint_function_identity_tests;
 #[cfg(test)]
 #[path = "tests/callable_interface_assignment_tests.rs"]
 mod callable_interface_assignment_tests;

@@ -565,6 +565,7 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.subtype.strict_function_types = policy.strict_function_types();
     checker.subtype.exact_optional_property_types = policy.exact_optional_property_types();
     checker.subtype.no_unchecked_indexed_access = policy.no_unchecked_indexed_access();
+    checker.set_disable_method_bivariance(policy.disable_method_bivariance());
     checker.subtype.disable_method_bivariance = policy.disable_method_bivariance();
     checker.subtype.allow_void_return = policy.allow_void_return();
     checker.subtype.allow_bivariant_rest = policy.allow_bivariant_rest();
