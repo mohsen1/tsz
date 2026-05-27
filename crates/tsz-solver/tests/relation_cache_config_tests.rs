@@ -1111,3 +1111,82 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
         "bivariant-rest policy result must use its own cache slot",
     );
 }
+
+#[test]
+fn assignability_cache_allow_bivariant_param_count_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    ));
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(TypeId::STRING)],
+        TypeId::VOID,
+    ));
+    let strict_count_policy = RelationPolicy::from_flags(0);
+    let bivariant_count_policy =
+        RelationPolicy::from_flags(RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT);
+
+    let strict_count_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_count_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_count_cached = db.is_assignable_to_with_policy(source, target, strict_count_policy);
+
+    assert_eq!(
+        strict_count_cached, strict_count_uncached,
+        "cached strict parameter-count assignability must match the uncached relation facade",
+    );
+
+    let bivariant_count_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_count_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let bivariant_count_cached =
+        db.is_assignable_to_with_policy(source, target, bivariant_count_policy);
+
+    assert_eq!(
+        bivariant_count_cached, bivariant_count_uncached,
+        "cached bivariant parameter-count assignability must match the uncached relation facade",
+    );
+    assert!(
+        !strict_count_cached,
+        "without ALLOW_BIVARIANT_PARAM_COUNT, extra required source parameters must be rejected",
+    );
+    assert!(
+        bivariant_count_cached,
+        "ALLOW_BIVARIANT_PARAM_COUNT should allow the bivariant comparison to ignore extra required source parameters",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            strict_count_policy.cache_config(),
+        )),
+        Some(strict_count_cached),
+        "strict parameter-count policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
+            source,
+            target,
+            bivariant_count_policy.cache_config(),
+        )),
+        Some(bivariant_count_cached),
+        "bivariant parameter-count policy result must use its own cache slot",
+    );
+}
