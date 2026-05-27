@@ -57,7 +57,7 @@ impl<'a> CheckerState<'a> {
         }
 
         let param_union = self.ctx.types.factory().union(param_types);
-        if !self.diagnostic_relation_boolean_guard(actual, param_union) {
+        if !self.assign_relation_outcome(actual, param_union).related {
             return None;
         }
 
@@ -220,7 +220,7 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.diagnostic_relation_boolean_guard(arg_types[2], target) {
+        if self.assign_relation_outcome(arg_types[2], target).related {
             return false;
         }
         self.error_argument_not_assignable_preserving_param_display(arg_types[2], target, args[2]);

@@ -173,7 +173,9 @@ impl<'a> CheckerState<'a> {
             .iter()
             .zip(inner_target.params.iter())
             .any(|(source_param, target_param)| {
-                !self.diagnostic_relation_boolean_guard(target_param.type_id, source_param.type_id)
+                !self
+                    .assign_relation_outcome(target_param.type_id, source_param.type_id)
+                    .related
             })
     }
 

@@ -901,7 +901,8 @@ impl<'a> CheckerState<'a> {
                     self.replace_return_type(impl_stripped, tsz_solver::TypeId::ANY);
                 let overload_with_any_ret =
                     self.replace_return_type(overload_stripped, tsz_solver::TypeId::ANY);
-                self.diagnostic_relation_boolean_guard(impl_with_any_ret, overload_with_any_ret)
+                self.assign_relation_outcome(impl_with_any_ret, overload_with_any_ret)
+                    .related
             }
             _ => {
                 // If we can't get return types, fall back to bivariant assignability
