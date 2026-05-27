@@ -710,22 +710,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         // restore `saved_apparent` — outer caller observes `None`.
         let saved_apparent = self.apparent_conditional_branch.take();
 
-        // Phase 4 — raw-args cache shortcut. Lite resolvers (e.g. inside
-        // `SubtypeChecker`) often return `None` for `get_lazy_type_params`,
-        // so the normal expanded-args lookup never runs. Trying `app.args`
-        // first lets every context benefit from previously computed results.
-        //
-        // The application-eval cache lives on the interner (the per-file
-        // `QueryCache`), so even evaluators that were not handed an explicit
-        // `query_db` can read previously computed, authoritative results. This
-        // is the read-side counterpart to the write-side gating in
-        // `insert_application_eval_cache_if_some`, which still only writes from
-        // an authoritative (full-resolver) `query_db` context.
-        {
+        // Phase 4 — raw-args cache shortcut. Only evaluators with an explicit
+        // `query_db` consume this cache: limited/noop resolvers can otherwise
+        // observe a result computed under stronger resolution assumptions and
+        // skip the fallback behavior that preserves recursive/inference parity.
+        if let Some(db) = self.query_db {
             let no_unchecked = self.no_unchecked_indexed_access;
-            if let Some(cached) =
-                self.interner
-                    .lookup_application_eval_cache(def_id, &app.args, no_unchecked)
+            if let Some(cached) = db.lookup_application_eval_cache(def_id, &app.args, no_unchecked)
             {
                 self.decrement_def_depth(def_id);
                 return cached;
@@ -948,11 +939,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let expanded_args = self.prepare_expanded_args_for_body(resolved, args);
         let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        if let Some(cached) = self.interner.lookup_application_eval_cache(
-            def_id,
-            &expanded_args,
-            no_unchecked_indexed_access,
-        ) {
+        if let Some(db) = self.query_db
+            && let Some(cached) = db.lookup_application_eval_cache(
+                def_id,
+                &expanded_args,
+                no_unchecked_indexed_access,
+            )
+        {
             return ApplicationEvalOutcome::ShortCircuit(cached);
         }
 
@@ -1034,11 +1027,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let expanded_args = self.expand_type_args(args);
         let no_unchecked_indexed_access = self.no_unchecked_indexed_access;
 
-        if let Some(cached) = self.interner.lookup_application_eval_cache(
-            def_id,
-            &expanded_args,
-            no_unchecked_indexed_access,
-        ) {
+        if let Some(db) = self.query_db
+            && let Some(cached) = db.lookup_application_eval_cache(
+                def_id,
+                &expanded_args,
+                no_unchecked_indexed_access,
+            )
+        {
             return ApplicationEvalOutcome::ShortCircuit(cached);
         }
 
@@ -1275,9 +1270,8 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Writes stay gated on an authoritative (full-resolver) `query_db`
     /// context: a limited resolver could otherwise store an under-resolved
     /// result under the resolver-independent `(DefId, args)` key and poison
-    /// sibling reads. Reads, by contrast, go through the interner (see
-    /// `evaluate_application`) so every evaluator can consume these
-    /// authoritative entries.
+    /// sibling reads. Reads use the same explicit `query_db` gate for the same
+    /// reason.
     fn insert_application_eval_cache_if_some(
         &self,
         def_id: DefId,

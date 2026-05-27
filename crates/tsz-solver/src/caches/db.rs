@@ -204,11 +204,12 @@ pub trait TypeCompilerOptions {
 /// Per-file cache hooks for evaluated generic applications.
 ///
 /// The cache is keyed by the resolver-independent `(DefId, args,
-/// no_unchecked_indexed_access)` triple, so reads are safe for any evaluator
-/// regardless of how it was spawned. Writes remain gated by callers to
-/// authoritative full-resolver contexts. Keeping these hooks separate from
-/// [`TypeDatabase`] makes application-eval cache access a narrow cache
-/// capability instead of growing the general type storage interface.
+/// no_unchecked_indexed_access)` triple. Callers are responsible for using it
+/// only from authoritative full-resolver contexts; limited/noop resolvers can
+/// otherwise skip fallback behavior that is part of recursive and inference
+/// parity. Keeping these hooks separate from [`TypeDatabase`] makes
+/// application-eval cache access a narrow cache capability instead of growing
+/// the general type storage interface.
 pub trait TypeApplicationEvalCache {
     /// Look up a shared cache entry for evaluated generic applications.
     ///
