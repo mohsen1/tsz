@@ -1,7 +1,9 @@
 //! Public declaration surfaces for mapped types.
 
 use crate::construction::TypeDatabase;
-use crate::types::{IntrinsicKind, MappedType, ObjectFlags, PropertyInfo, TypeData, TypeId};
+use crate::types::{
+    IntrinsicKind, MappedType, ObjectFlags, ObjectShape, PropertyInfo, TypeData, TypeId, Visibility,
+};
 use tsz_common::Atom;
 
 /// Return the public declaration surface for an inferred mapped type whose
@@ -76,25 +78,101 @@ pub fn inferred_declaration_mapped_constraint_surface_with(
 }
 
 fn mapped_surface_with_optional_undefined(db: &dyn TypeDatabase, surface: TypeId) -> TypeId {
-    let Some(TypeData::Object(shape_id)) = db.lookup(surface) else {
+    mapped_surface_with_optional_undefined_inner(db, surface, 0)
+}
+
+fn mapped_surface_with_optional_undefined_inner(
+    db: &dyn TypeDatabase,
+    surface: TypeId,
+    depth: u8,
+) -> TypeId {
+    if depth >= 8 {
         return surface;
+    };
+
+    let Some(type_data) = db.lookup(surface) else {
+        return surface;
+    };
+    let (shape_id, with_index) = match type_data {
+        TypeData::Object(shape_id) => (shape_id, false),
+        TypeData::ObjectWithIndex(shape_id) => (shape_id, true),
+        _ => return surface,
     };
     let shape = db.object_shape(shape_id);
     let mut changed = false;
     let mut properties = shape.properties.clone();
     for prop in &mut properties {
-        if !prop.optional || super::type_includes_undefined(db, prop.type_id) {
-            continue;
-        }
         let original_type = prop.type_id;
-        prop.type_id = db.union2(prop.type_id, TypeId::UNDEFINED);
-        if prop.write_type == original_type {
-            prop.write_type = prop.type_id;
+        let nested_type = mapped_surface_with_optional_undefined_inner(db, prop.type_id, depth + 1);
+        if nested_type != prop.type_id {
+            prop.type_id = nested_type;
+            if prop.write_type == original_type {
+                prop.write_type = nested_type;
+            }
+            changed = true;
         }
+
+        if prop.optional && !super::type_includes_undefined(db, prop.type_id) {
+            let optional_type = db.union2(prop.type_id, TypeId::UNDEFINED);
+            if prop.write_type == prop.type_id {
+                prop.write_type = optional_type;
+            }
+            prop.type_id = optional_type;
+            changed = true;
+        }
+    }
+
+    let is_array_like_surface = shape.number_index.is_some()
+        && properties.iter().any(|prop| {
+            matches!(
+                db.resolve_atom_ref(prop.name).as_ref(),
+                "length" | "toString" | "flatMap" | "[Symbol.unscopables]"
+            )
+        });
+
+    if is_array_like_surface && let Some(index) = &shape.number_index {
+        let value_type = index.value_type;
+        for (name, readonly) in [("[Symbol.iterator]", false), ("[Symbol.unscopables]", true)] {
+            let atom = db.intern_string(name);
+            if properties.iter().any(|prop| prop.name == atom) {
+                continue;
+            }
+            properties.push(PropertyInfo {
+                name: atom,
+                type_id: value_type,
+                write_type: value_type,
+                optional: true,
+                readonly,
+                is_method: false,
+                is_class_prototype: false,
+                visibility: Visibility::Public,
+                parent_id: None,
+                declaration_order: 0,
+                is_string_named: false,
+                is_symbol_named: true,
+                single_quoted_name: false,
+            });
+            changed = true;
+        }
+    }
+
+    if is_array_like_surface {
+        super::mapped_display_order::sort_array_homomorphic_source_properties(db, &mut properties);
         changed = true;
     }
+
     if changed {
-        db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+        if with_index {
+            db.object_with_index(ObjectShape {
+                flags: shape.flags,
+                properties,
+                string_index: shape.string_index,
+                number_index: shape.number_index,
+                symbol: shape.symbol,
+            })
+        } else {
+            db.object_with_flags_and_symbol(properties, shape.flags, shape.symbol)
+        }
     } else {
         surface
     }
