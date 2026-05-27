@@ -95,6 +95,24 @@ function rawr(dino: RexOrRaptor) {
 }
 
 #[test]
+fn isomorphic_mapped_call_infers_variadic_tuple_return_from_argument() {
+    let output = emit_dts_with_binding(
+        r#"
+type Box<T> = { value: T };
+type Boxified<T> = { [P in keyof T]: Box<T[P]> };
+declare function unboxify<T>(x: Boxified<T>): T;
+declare let x10: [Box<number>, Box<string>, ...Box<boolean>[]];
+let y10 = unboxify(x10);
+"#,
+    );
+
+    assert!(
+        output.contains("declare let y10: [number, string, ...boolean[]];"),
+        "Expected mapped tuple call to recover the public tuple return: {output}"
+    );
+}
+
+#[test]
 fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
     let source = r#"
 let [hello, brave] = ["Hello", "Brave"];

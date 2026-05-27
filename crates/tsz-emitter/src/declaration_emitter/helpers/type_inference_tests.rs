@@ -1,6 +1,7 @@
 use super::DeclarationEmitter;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_binder::BinderState;
+use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::ParserState;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::construction::TypeInterner;
@@ -571,5 +572,143 @@ fn tuple_item_lookup_mapped_type_expands_compact_string_key() {
             "{\n    a: {\n        readonly name: \"a\";\n    };\n    b: {\n        readonly name: \"b\";\n    };\n}"
                 .to_string()
         )
+    );
+}
+
+#[test]
+fn isomorphic_mapped_argument_unwraps_tuple_and_array_wrappers() {
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "[Box<number>, Box<string>, ...Box<boolean>[]]",
+            "Box",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "[Box<number>, Box<string>, ...Box<boolean>]",
+            "Box",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text("Box<number>[]", "Box"),
+        Some("number[]".to_string())
+    );
+}
+
+#[test]
+fn partial_argument_inference_restores_required_public_surface() {
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "[number | undefined, string?, ...boolean[]]",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "[number | undefined, string?, ...boolean]",
+        ),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+    assert_eq!(
+        DeclarationEmitter::infer_required_from_partial_argument_text(
+            "{ a: number | undefined; b?: string[]; }",
+        ),
+        Some("{\n    a: number;\n    b: string[];\n}".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_inverts_isomorphic_mapped_tuple_argument() {
+    let source = r#"
+type Box<T> = { value: T };
+type Boxified<T> = { [P in keyof T]: Box<T[P]> };
+declare function unboxify<T>(x: Boxified<T>): T;
+declare let x10: [Box<number>, Box<string>, ...Box<boolean>[]];
+let y10 = unboxify(x10);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("[number, string, ...boolean[]]".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_inverts_structural_partial_like_mapped_alias() {
+    let source = r#"
+type OptionalShape<T> = { [Key in keyof T]?: T[Key] };
+declare function complete<T>(x: OptionalShape<T>): T;
+declare let value: { a?: number; b: string | undefined };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        Some("{\n    a: number;\n    b: string;\n}".to_string())
+    );
+}
+
+#[test]
+fn declared_call_return_does_not_treat_shadowed_partial_name_as_builtin() {
+    let source = r#"
+type Partial<T> = T;
+declare function complete<T>(x: Partial<T>): T;
+declare let value: { a?: number };
+let y = complete(value);
+"#;
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    let call_idx = parser
+        .arena
+        .nodes
+        .iter()
+        .enumerate()
+        .find_map(|(idx, node)| {
+            (node.kind == syntax_kind_ext::CALL_EXPRESSION).then_some(NodeIndex(idx as u32))
+        })
+        .expect("missing call expression");
+
+    assert_eq!(
+        emitter.call_expression_declared_return_type_text(call_idx),
+        None
     );
 }
