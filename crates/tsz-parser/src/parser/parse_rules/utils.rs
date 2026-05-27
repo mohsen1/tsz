@@ -113,10 +113,7 @@ pub fn look_ahead_is_type_alias_declaration(
     current_token: SyntaxKind,
 ) -> bool {
     look_ahead_is_on_same_line(scanner, current_token, |token| {
-        // `void` has a dedicated recovery path in parse_type_alias_declaration
-        // so TS2457 is preserved alongside parser/expression diagnostics.
-        is_identifier_or_contextual_keyword(token)
-            || matches!(token, SyntaxKind::NumericLiteral | SyntaxKind::VoidKeyword)
+        is_identifier_or_contextual_keyword(token) || token == SyntaxKind::NumericLiteral
     })
 }
 
@@ -447,12 +444,10 @@ mod tests {
     }
 
     #[test]
-    fn look_ahead_is_type_alias_declaration_accepts_void_keyword_for_recovery() {
-        // `void` uses type-alias recovery so TS2457 is preserved in addition
-        // to parser/expression diagnostics.
+    fn look_ahead_is_type_alias_declaration_rejects_void_keyword_for_statement_recovery() {
         let (mut scanner, current) = scanner_after_first("type void = T");
         assert_eq!(current, SyntaxKind::TypeKeyword);
-        assert!(look_ahead_is_type_alias_declaration(&mut scanner, current));
+        assert!(!look_ahead_is_type_alias_declaration(&mut scanner, current));
     }
 
     #[test]

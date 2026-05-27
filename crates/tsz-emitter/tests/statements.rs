@@ -50,6 +50,14 @@ fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon
 }
 
 #[test]
+fn reserved_void_type_alias_name_emits_recovered_runtime_statements() {
+    let source = "interface I {}\ntype any = I;\ntype void = I;\ntype object = I;";
+    let output = parse_and_emit_strict_es2015(source, "reserved.ts");
+
+    assert_eq!(output.trim_end(), "\"use strict\";\ntype;\nvoid ;\nI;");
+}
+
+#[test]
 fn variable_arrow_initializer_places_semicolon_before_following_comment() {
     let output =
         parse_and_emit_strict_es2015("var f = (a: any)\n=> a\n\n// Should be valid.\n;\n", "a.ts");
