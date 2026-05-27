@@ -1311,12 +1311,8 @@ impl<'a> TypeInstantiator<'a> {
                 let tp_slice = std::slice::from_ref(&mapped.type_param);
                 let (shadowed_len, saved_visiting) = self.enter_shadowing_scope(tp_slice);
 
-                // HOMOMORPHIC ARRAY/TUPLE: Check if this is `{ [K in keyof T]: Template }`
-                // where T is being substituted with an array-like type. If so, produce
-                // an array result directly, matching tsc's instantiateMappedArrayType.
-                // This must be done BEFORE standard instantiation because instantiating
-                // `keyof T` eagerly evaluates it to a flat union, losing the homomorphic
-                // structure needed for array/tuple preservation.
+                // Homomorphic array/tuple handling must run before standard
+                // instantiation collapses `keyof T` to a flat union.
                 let has_identity_name_type = mapped.name_type.is_some_and(|name_type| {
                     matches!(
                         self.interner.lookup(name_type),
@@ -1621,16 +1617,19 @@ impl<'a> TypeInstantiator<'a> {
                         };
                     }
 
-                    // PRIMITIVE PASSTHROUGH: tsc's instantiateMappedType returns the
-                    // source type unchanged when it is a primitive (null, undefined,
-                    // string, number, boolean, etc.). This matches the evaluate_application
-                    // passthrough but also covers mapped types that appear nested inside
-                    // unions or other compound types (not just at the top level of a type
-                    // alias body). Without this, `{ [K in keyof null]: null[K] }` inside
-                    // a union evaluates to `{}` instead of `null`.
+                    // Primitive homomorphic sources pass through unchanged.
                     if template_uses_source_index && Self::is_primitive_or_primitive_union(self.interner, resolved) {
                         self.exit_shadowing_scope(shadowed_len, saved_visiting);
                         return resolved;
+                    }
+
+                    if let Some(result) = self.try_expand_substituted_homomorphic_object_mapped(
+                        &mapped,
+                        resolved,
+                        has_identity_name_type,
+                    ) {
+                        self.exit_shadowing_scope(shadowed_len, saved_visiting);
+                        return result;
                     }
                 }
 
@@ -1981,6 +1980,7 @@ impl<'a> TypeInstantiator<'a> {
 
 mod api;
 mod display_properties;
+mod homomorphic;
 
 pub use self::api::*;
 use self::api::{

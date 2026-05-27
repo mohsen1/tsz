@@ -38,6 +38,10 @@ name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 
 [[test]]
+name = "homomorphic_mapped_keyof_modifier_tests"
+path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
+
+[[test]]
 name = "ts2371_binding_pattern_default_tests"
 path = "tests/ts2371_binding_pattern_default_tests.rs"
 
