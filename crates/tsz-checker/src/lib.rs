@@ -841,6 +841,9 @@ mod strict_null_manual;
 #[path = "tests/string_literal_union_display_order_tests.rs"]
 mod string_literal_union_display_order_tests;
 #[cfg(test)]
+#[path = "tests/super_call_ts2376_ts17009_priority_tests.rs"]
+mod super_call_ts2376_ts17009_priority_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
 #[cfg(test)]
@@ -876,6 +879,9 @@ mod ts2339_js_this_function_name_display_tests;
 #[cfg(test)]
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
+#[cfg(test)]
+#[path = "tests/ts2353_generic_constraint_tests.rs"]
+mod ts2353_generic_constraint_tests;
 #[cfg(test)]
 #[path = "tests/ts2565_jsdoc_prototype_type_decl_tests.rs"]
 mod ts2565_jsdoc_prototype_type_decl_tests;
