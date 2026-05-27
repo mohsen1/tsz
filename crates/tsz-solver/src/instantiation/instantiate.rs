@@ -1645,11 +1645,7 @@ impl<'a> TypeInstantiator<'a> {
                 let saved_preserve_unsubstituted = self.preserve_unsubstituted_type_params;
                 self.preserve_unsubstituted_type_params = true;
 
-                let new_constraint = self.instantiate_mapped_constraint(
-                    mapped.constraint,
-                    mapped.template,
-                    mapped.type_param.name,
-                );
+                let new_constraint = self.instantiate(mapped.constraint);
                 let new_template = self.instantiate(mapped.template);
                 let new_name_type = mapped.name_type.map(|t| self.instantiate(t));
                 let new_param_constraint =
@@ -1985,7 +1981,6 @@ impl<'a> TypeInstantiator<'a> {
 
 mod api;
 mod display_properties;
-mod mapped_constraint;
 
 pub use self::api::*;
 use self::api::{

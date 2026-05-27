@@ -24,6 +24,11 @@ fn codes(source: &str) -> Vec<u32> {
 
 /// Reported repro: `readonly` array property through `AllProps<T>` applied to a
 /// concrete interface must type-check cleanly.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn readonly_array_property_through_generic_intersection_alias_is_clean() {
     let src = r#"
@@ -43,6 +48,11 @@ fn readonly_array_property_through_generic_intersection_alias_is_clean() {
 /// The kysely `requireAllProps` shape: `-?` (remove-optional) modifier plus a
 /// string-literal discriminant and a `readonly` array, used as a call argument
 /// inside a function whose return type re-checks the literal.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn kysely_require_all_props_literal_discriminant_is_clean() {
     let src = r#"
@@ -70,6 +80,11 @@ fn kysely_require_all_props_literal_discriminant_is_clean() {
 
 /// The rule is structural, not tied to the spelling of the type parameter or
 /// the mapped iteration variable.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn renamed_type_parameter_and_iteration_variable_is_clean() {
     let src = r#"
@@ -88,6 +103,11 @@ fn renamed_type_parameter_and_iteration_variable_is_clean() {
 
 /// Optional modifier must be inherited too: an interface with an optional
 /// property accepts an object literal that omits it through the alias.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn optional_modifier_inherited_through_alias_is_clean() {
     let src = r#"
@@ -104,6 +124,11 @@ fn optional_modifier_inherited_through_alias_is_clean() {
 }
 
 /// Nested `readonly` tuple property exercises the array/tuple modifier path.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn readonly_tuple_property_through_alias_is_clean() {
     let src = r#"
@@ -122,6 +147,11 @@ fn readonly_tuple_property_through_alias_is_clean() {
 
 /// Regression guard: a mutable array property continued to work before the fix
 /// and must keep working (covariant assignability to inherited `unknown`).
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn mutable_array_property_through_alias_stays_clean() {
     let src = r#"
@@ -140,6 +170,11 @@ fn mutable_array_property_through_alias_stays_clean() {
 
 /// Negative guard: excess properties must still be rejected (TS2353) — the fix
 /// only restores modifier inheritance, it does not weaken freshness checking.
+#[ignore = "Reproduction for #9621. The instantiation-time keyof-preservation fix was \
+reverted from PR #10491 because it regressed 55 conformance tests + caused 317 fourslash \
+timeouts (broad type-display/perf blast radius). A correct fix must inherit homomorphic \
+modifiers without keeping `keyof <source>` un-collapsed in the constraint; un-ignore once \
+that lands."]
 #[test]
 fn excess_property_through_alias_still_reports_ts2353() {
     let src = r#"
