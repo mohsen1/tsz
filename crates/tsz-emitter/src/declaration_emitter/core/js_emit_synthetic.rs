@@ -575,59 +575,49 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         type_text: &str,
     ) -> String {
-        const NEEDLE: &str = "typeof module.exports.";
-        let mut output: Option<String> = None;
-        let mut cursor = 0usize;
+        const MODULE_EXPORTS_TYPEOF_PREFIX: &str = "typeof module.exports.";
 
-        while let Some(relative_start) = type_text[cursor..].find(NEEDLE) {
-            let start = cursor + relative_start;
-            let name_start = start + NEEDLE.len();
-            let export_name: String = type_text[name_start..]
-                .chars()
-                .take_while(|ch| Self::define_property_jsdoc_identifier_part(*ch))
-                .collect();
-            let name_end = name_start + export_name.len();
-            let Some(out) = output.as_mut() else {
-                if export_name.is_empty()
-                    || self
-                        .js_define_property_function_initializer_for_export_name(&export_name)
-                        .is_none()
-                {
-                    cursor = name_end;
-                    continue;
-                }
-
-                let mut out = String::with_capacity(type_text.len());
-                out.push_str(&type_text[..start]);
-                out.push_str("() => void");
-                output = Some(out);
-                cursor = name_end;
-                continue;
-            };
-
-            out.push_str(&type_text[cursor..start]);
-            if !export_name.is_empty()
-                && self
-                    .js_define_property_function_initializer_for_export_name(&export_name)
-                    .is_some()
+        if let Some(export_name) = type_text.strip_prefix(MODULE_EXPORTS_TYPEOF_PREFIX) {
+            if self
+                .js_define_property_function_initializer_for_export_name(export_name)
+                .is_some()
             {
-                out.push_str("() => void");
-            } else {
-                out.push_str(&type_text[start..name_end]);
+                return "() => void".to_string();
             }
-            cursor = name_end;
         }
 
-        if let Some(mut out) = output {
-            out.push_str(&type_text[cursor..]);
-            out
-        } else {
-            type_text.to_string()
+        let mut normalized = String::new();
+        let mut last_emitted = 0;
+        let mut search_start = 0;
+        let mut changed = false;
+        while let Some(relative_start) =
+            type_text[search_start..].find(MODULE_EXPORTS_TYPEOF_PREFIX)
+        {
+            let start = search_start + relative_start;
+            let export_start = start + MODULE_EXPORTS_TYPEOF_PREFIX.len();
+            let export_end = commonjs_export_name_end(type_text, export_start);
+            if export_end == export_start {
+                search_start = export_start;
+                continue;
+            }
+            let export_name = &type_text[export_start..export_end];
+            if self
+                .js_define_property_function_initializer_for_export_name(export_name)
+                .is_some()
+            {
+                normalized.push_str(&type_text[last_emitted..start]);
+                normalized.push_str("() => void");
+                last_emitted = export_end;
+                changed = true;
+            }
+            search_start = export_end;
         }
-    }
 
-    const fn define_property_jsdoc_identifier_part(ch: char) -> bool {
-        ch == '_' || ch == '$' || ch.is_ascii_alphanumeric()
+        if changed {
+            normalized.push_str(&type_text[last_emitted..]);
+            return normalized;
+        }
+        type_text.to_string()
     }
 
     pub(in crate::declaration_emitter) fn js_define_property_jsdoc_body_return_text(
@@ -1323,4 +1313,16 @@ impl<'a> DeclarationEmitter<'a> {
             let _ = self.emit_js_named_class_expression_declaration(name_idx, initializer, false);
         }
     }
+}
+
+fn commonjs_export_name_end(text: &str, start: usize) -> usize {
+    let mut end = start;
+    for (offset, ch) in text[start..].char_indices() {
+        if ch == '_' || ch == '$' || ch.is_ascii_alphanumeric() {
+            end = start + offset + ch.len_utf8();
+        } else {
+            break;
+        }
+    }
+    end
 }
