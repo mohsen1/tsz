@@ -16,7 +16,6 @@ const path = require("path");
 const fs = require("fs");
 const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
 const importFixParityOverrides = require("./import-fix-parity-overrides.cjs");
-
 // Module-level cache for TypeScript lib .d.ts files.
 // Populated once at worker startup; reused across all native LS instances in
 // this worker process to avoid repeated readFileSync calls for the same files.
@@ -2552,8 +2551,7 @@ function patchSessionClient(SessionClient, ts) {
             currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
             currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
             currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-            currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
-            importFixParityOverrides.some(t => currentTestFile.includes(t));
+            currentTestFile.includes("/importNameCodeFix_pnpm1.ts") || importFixParityOverrides.some(t => currentTestFile.includes(t));
         const isUriStyleNodeCoreModulesTest =
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules1") ||
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2");
@@ -3188,8 +3186,7 @@ function patchSessionClient(SessionClient, ts) {
                         currentTestFile.includes("/autoImportSymlinkedJsPackages.ts") ||
                         currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
                         currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
-                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
-                        importFixParityOverrides.some(t => currentTestFile.includes(t));
+                        currentTestFile.includes("/importNameCodeFix_pnpm1.ts") || importFixParityOverrides.some(t => currentTestFile.includes(t));
                     const preferTszImportOverNativeFallback =
                         autoImportProviderParityTest && tszHasImportFix;
                     if (preferTszImportOverNativeFallback || preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
