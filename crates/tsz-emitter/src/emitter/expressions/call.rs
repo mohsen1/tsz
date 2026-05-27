@@ -225,10 +225,14 @@ impl<'a> Printer<'a> {
                 self.write_helper("__classPrivateFieldGet");
                 self.write("(");
                 if let Some(temp) = receiver_temp_str {
+                    self.write("(");
                     self.write(temp);
                     self.write(" = ");
+                    self.emit_private_receiver(expression, &clean_name);
+                    self.write(")");
+                } else {
+                    self.emit_private_receiver(expression, &clean_name);
                 }
-                self.emit_private_receiver(expression, &clean_name);
                 self.write(", ");
                 if let Some(info) = self.private_member_info.get(&clean_name).cloned() {
                     if let Some(ref state_var) = info.state_var {

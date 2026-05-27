@@ -124,7 +124,9 @@ impl<'a> Printer<'a> {
             None
         };
 
-        if let Some(subst) = cjs_subst {
+        if self.emit_private_field_tagged_template_tag(tagged.tag) {
+            // private tag emitted with its required receiver binding
+        } else if let Some(subst) = cjs_subst {
             self.write("(0, ");
             self.write(&subst);
             self.write(")");

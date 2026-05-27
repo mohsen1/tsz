@@ -2922,33 +2922,14 @@ impl<'a> Printer<'a> {
                     if !first {
                         self.write(", ");
                     }
-                    self.write(var_name);
-                    self.write(" = function ");
-                    self.write(var_name);
-                    self.write("(");
-                    for (i, &param_idx) in params.iter().enumerate() {
-                        if i > 0 {
-                            self.write(", ");
-                        }
-                        if let Some(param_node) = self.arena.get(param_idx)
-                            && let Some(param_data) = self.arena.get_parameter(param_node)
-                        {
-                            self.emit(param_data.name);
-                        }
-                    }
-                    self.write(") ");
-                    let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                    if private_member_def_needs_class_alias
-                        && let Some(alias) = class_value_alias.as_ref()
-                        && !class_name.is_empty()
-                    {
-                        self.scoped_class_expression_self_alias = Some((
-                            Arc::<str>::from(class_name.as_str()),
-                            Arc::<str>::from(alias.as_str()),
-                        ));
-                    }
-                    self.emit_single_line_block(*body_idx);
-                    self.scoped_class_expression_self_alias = prev_self_alias;
+                    self.emit_private_method_function_def(
+                        var_name,
+                        *body_idx,
+                        params,
+                        private_member_def_needs_class_alias,
+                        class_value_alias.as_deref(),
+                        &class_name,
+                    );
                     first = false;
                 }
                 for def in &accessor_defs {
@@ -3726,34 +3707,14 @@ impl<'a> Printer<'a> {
                 if !first {
                     self.write(", ");
                 }
-                self.write(var_name);
-                self.write(" = function ");
-                self.write(var_name);
-                self.write("(");
-                for (i, &param_idx) in params.iter().enumerate() {
-                    if i > 0 {
-                        self.write(", ");
-                    }
-                    // Emit parameter name (identifier or pattern)
-                    if let Some(param_node) = self.arena.get(param_idx)
-                        && let Some(param_data) = self.arena.get_parameter(param_node)
-                    {
-                        self.emit(param_data.name);
-                    }
-                }
-                self.write(") ");
-                let prev_self_alias = self.scoped_class_expression_self_alias.clone();
-                if private_member_def_needs_class_alias
-                    && let Some(alias) = class_value_alias.as_ref()
-                    && !class_name.is_empty()
-                {
-                    self.scoped_class_expression_self_alias = Some((
-                        Arc::<str>::from(class_name.as_str()),
-                        Arc::<str>::from(alias.as_str()),
-                    ));
-                }
-                self.emit_single_line_block(*body_idx);
-                self.scoped_class_expression_self_alias = prev_self_alias;
+                self.emit_private_method_function_def(
+                    var_name,
+                    *body_idx,
+                    params,
+                    private_member_def_needs_class_alias,
+                    class_value_alias.as_deref(),
+                    &class_name,
+                );
                 first = false;
             }
 

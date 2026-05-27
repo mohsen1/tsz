@@ -1,6 +1,6 @@
 //! Name, computed-property, and display-name query helpers for `CheckerState`.
 
-use super::core::{get_literal_or_well_known_property_name, get_literal_property_name};
+use super::core::get_literal_property_name;
 use crate::state::CheckerState;
 use tsz_common::interner::Atom;
 use tsz_parser::parser::NodeIndex;
@@ -163,13 +163,11 @@ impl<'a> CheckerState<'a> {
             // computed expression is not a bare identifier (so `resolve_computed_symbol_property_name`
             // returns None) but the prop type widened to plain `symbol` — e.g. when `Symbol` is a
             // user-declared const with `{ readonly iterator: unique symbol }` type annotation.
-            // Text-based matching recovers `"[Symbol.xxx]"` without registering a well-known symbol
-            // mapping, preserving `keyof` behavior for user-declared Symbol shapes.
             if prop_name_type == TypeId::SYMBOL
-                && let Some(well_known) =
-                    get_literal_or_well_known_property_name(self.ctx.arena, name_idx)
+                && let Some(unique_member_name) =
+                    self.declared_unique_symbol_member_property_name(computed.expression)
             {
-                return Some(well_known);
+                return Some(unique_member_name);
             }
             if let Some(symbol_name) =
                 self.symbol_valued_binding_property_name(computed.expression, prop_name_type)
@@ -298,6 +296,9 @@ impl<'a> CheckerState<'a> {
 
     pub(crate) fn computed_property_expression_is_symbol_named(&self, expr_idx: NodeIndex) -> bool {
         self.get_symbol_property_name_from_expr(expr_idx).is_some()
+            || self
+                .declared_unique_symbol_member_property_name(expr_idx)
+                .is_some()
             || self
                 .computed_identifier_unique_symbol_property_ref(expr_idx)
                 .is_some()
@@ -500,6 +501,12 @@ impl<'a> CheckerState<'a> {
         let Some(computed) = self.ctx.arena.get_computed_property(name_node) else {
             return false;
         };
+        if self
+            .declared_unique_symbol_member_property_name(computed.expression)
+            .is_some()
+        {
+            return true;
+        }
 
         let prev_checking = self.ctx.checking_computed_property_name;
         self.ctx.checking_computed_property_name = Some(name_idx);
@@ -588,6 +595,106 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        None
+    }
+
+    pub(crate) fn declared_unique_symbol_member_property_name(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let (base_expr, member_name) = self.property_access_identifier_parts(expr_idx)?;
+        let local_sym_id = self.resolve_identifier_symbol_without_tracking(base_expr)?;
+        let sym_id = self
+            .ctx
+            .resolve_import_alias_and_register(local_sym_id)
+            .unwrap_or(local_sym_id);
+        let file_idx = self.ctx.resolve_symbol_file_index(sym_id).or_else(|| {
+            self.get_cross_file_symbol(sym_id)
+                .map(|symbol| symbol.decl_file_idx as usize)
+        })?;
+        let symbol = self
+            .ctx
+            .get_binder_for_file(file_idx)
+            .and_then(|binder| binder.get_symbol(sym_id))
+            .or_else(|| self.get_cross_file_symbol(sym_id))?;
+        let value_decl = symbol.value_declaration;
+        if value_decl.is_none() {
+            return None;
+        }
+        let decl_arena = self.ctx.get_arena_for_file(file_idx as u32);
+        let decl_node = decl_arena.get(value_decl)?;
+        let var_decl = decl_arena.get_variable_declaration(decl_node)?;
+        let type_annotation = var_decl.type_annotation;
+        let type_node = crate::types_domain::unique_symbol_arena::unwrap_parenthesized_type(
+            decl_arena,
+            type_annotation,
+        );
+        let type_node = decl_arena.get(type_node)?;
+        if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+            return None;
+        }
+        let type_lit = decl_arena.get_type_literal(type_node)?;
+        let has_unique_member = type_lit.members.nodes.iter().any(|&member_idx| {
+            let Some(member_node) = decl_arena.get(member_idx) else {
+                return false;
+            };
+            if member_node.kind != syntax_kind_ext::PROPERTY_SIGNATURE {
+                return false;
+            }
+            let Some(sig) = decl_arena.get_signature(member_node) else {
+                return false;
+            };
+            get_literal_property_name(decl_arena, sig.name).is_some_and(|name| {
+                name == member_name
+                    && sig.type_annotation.is_some()
+                    && crate::types_domain::unique_symbol_arena::is_unique_symbol_type_annotation_unwrapped(
+                        decl_arena,
+                        sig.type_annotation,
+                    )
+            })
+        });
+        has_unique_member.then(|| {
+            let base_name = self
+                .ctx
+                .arena
+                .get_identifier_at(base_expr)
+                .map(|ident| ident.escaped_text.as_str())
+                .unwrap_or("Symbol");
+            format!("[{base_name}.{member_name}]")
+        })
+    }
+
+    fn property_access_identifier_parts(
+        &self,
+        mut expr_idx: NodeIndex,
+    ) -> Option<(NodeIndex, String)> {
+        while let Some(node) = self.ctx.arena.get(expr_idx)
+            && node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+        {
+            expr_idx = self.ctx.arena.get_parenthesized(node)?.expression;
+        }
+        let node = self.ctx.arena.get(expr_idx)?;
+        if node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return None;
+        }
+        let access = self.ctx.arena.get_access_expr(node)?;
+        let base_node = self.ctx.arena.get(access.expression)?;
+        self.ctx.arena.get_identifier(base_node)?;
+        let name_node = self.ctx.arena.get(access.name_or_argument)?;
+        if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
+            return Some((access.expression, ident.escaped_text.clone()));
+        }
+        if matches!(
+            name_node.kind,
+            k if k == SyntaxKind::StringLiteral as u16
+                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        ) && let Some(lit) = self.ctx.arena.get_literal(name_node)
+            && !lit.text.is_empty()
+        {
+            return Some((access.expression, lit.text.clone()));
+        }
         None
     }
 
