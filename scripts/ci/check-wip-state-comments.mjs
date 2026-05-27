@@ -321,7 +321,7 @@ function commentHasAgentName(comment) {
 function commentIsExplanatory(comment) {
   const body = commentBody(comment);
   return commentHasAgentName(comment)
-    && /\b(reason|why)\b/i.test(body)
+    && /\b(reason|why|because)\b/i.test(body)
     && /\b(blocker|blocked|current work|currently|next work)\b/i.test(body)
     && /\b(next owner|next action|next step|owner|action)\b/i.test(body);
 }
