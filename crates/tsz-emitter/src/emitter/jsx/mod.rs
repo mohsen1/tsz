@@ -566,8 +566,11 @@ pub(super) fn needs_quoting(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::process_jsx_text;
+    use crate::context::emit::EmitContext;
     use crate::emitter::{JsxEmit, Printer as EmitPrinter, PrinterOptions};
+    use crate::lowering::LoweringPass;
     use crate::output::printer::{PrintOptions, Printer};
+    use tsz_common::ScriptTarget;
     use tsz_parser::ParserState;
 
     fn emit_jsx(source: &str) -> String {
@@ -606,12 +609,70 @@ mod tests {
         printer.get_output().to_string()
     }
 
+    fn emit_jsx_preserve_es2015(source: &str) -> String {
+        let mut parser =
+            ParserState::new("jsxAndTypeAssertion.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::Preserve,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer =
+            EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
     #[test]
     fn self_closing_no_attributes_has_space_before_slash() {
         let output = emit_jsx("const x = <Tag />;");
         assert!(
             output.contains("<Tag />"),
             "Self-closing element without attributes should have space before />.\nOutput: {output}"
+        );
+    }
+
+    #[test]
+    fn recovered_jsx_conditional_missing_false_branch_preserves_tsc_layout() {
+        let source = r#"// @target: es2015
+// @jsx: preserve
+
+declare var createElement: any;
+
+class foo {}
+
+var x: any;
+x = <any> { test: <any></any> };
+
+x = <any><any></any>;
+
+x = <foo>hello {<foo>{}} </foo>;
+
+x = <foo test={<foo>{}}>hello</foo>;
+
+x = <foo test={<foo>{}}>hello{<foo>{}}</foo>;
+
+x = <foo>x</foo>, x = <foo/>;
+
+<foo>{<foo><foo>{/foo/.test(x) ? <foo><foo></foo> : <foo><foo></foo>}</foo>}</foo>"#;
+
+        let output = emit_jsx_preserve_es2015(source);
+
+        let expected_tail = concat!(
+            "    <foo>{<foo><foo>{/foo/.test(x) ? <foo><foo></foo> : ",
+            "<foo><foo></foo>}</foo>}</foo>\n",
+            "            :\n",
+            "        }\n\n",
+            "    \n",
+            "        </></>}</></>}/></></></>;"
+        );
+        assert!(
+            output.trim_end_matches('\n').ends_with(expected_tail),
+            "Recovered JSX conditional tail should match tsc layout.\nOutput:\n{output}"
         );
     }
 

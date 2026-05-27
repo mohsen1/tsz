@@ -262,6 +262,9 @@ impl<'a> Printer<'a> {
         if !suppress_modifiers && let Some(ref modifiers) = class.modifiers {
             for &mod_idx in &modifiers.nodes {
                 if let Some(mod_node) = self.arena.get(mod_idx) {
+                    if self.should_preserve_native_decorator_comments(&class.modifiers) {
+                        self.emit_comments_before_pos(mod_node.pos);
+                    }
                     if emit_invalid_namespace_static
                         && mod_node.kind == SyntaxKind::StaticKeyword as u16
                     {
@@ -1125,14 +1128,51 @@ impl<'a> Printer<'a> {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                // Only property declarations participate in computed property hoisting
-                if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION {
-                    continue;
-                }
-                let Some(prop) = self.arena.get_property_decl(member_node) else {
-                    continue;
+                let (modifiers, name_idx, property_is_erased) = match member_node.kind {
+                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
+                        let Some(prop) = self.arena.get_property_decl(member_node) else {
+                            continue;
+                        };
+                        let is_erased = if self
+                            .arena
+                            .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
+                            || self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
+                        {
+                            true
+                        } else {
+                            let is_private = self
+                                .arena
+                                .get(prop.name)
+                                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+                            let has_accessor = self
+                                .arena
+                                .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
+                            prop.initializer.is_none() && !is_private && !has_accessor
+                        };
+                        (&prop.modifiers, prop.name, Some(is_erased))
+                    }
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => {
+                        let Some(method) = self.arena.get_method_decl(member_node) else {
+                            continue;
+                        };
+                        if !method.body.is_some() {
+                            continue;
+                        }
+                        (&method.modifiers, method.name, None)
+                    }
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        let Some(accessor) = self.arena.get_accessor(member_node) else {
+                            continue;
+                        };
+                        (&accessor.modifiers, accessor.name, None)
+                    }
+                    _ => continue,
                 };
-                let Some(name_node) = self.arena.get(prop.name) else {
+                let Some(name_node) = self.arena.get(name_idx) else {
                     continue;
                 };
                 if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
@@ -1151,44 +1191,41 @@ impl<'a> Printer<'a> {
                 if is_constant {
                     continue;
                 }
-                // Check if this property is erased (type-only, abstract, declared).
-                // `declare` fields have no runtime effect even when an
-                // initializer is present (the initializer is part of the
-                // declaration and is dropped). tsc still emits the computed
-                // expression for its side effects, but does not allocate a
-                // temp — see the `esDecorators-classDeclaration-fields-staticAmbient`
-                // baseline where `static declare [field3] = 3;` produces
-                // no `var _a; _a = field3;` pair.
-                let is_erased = if self
-                    .arena
-                    .has_modifier(&prop.modifiers, SyntaxKind::AbstractKeyword)
-                    || self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::DeclareKeyword)
-                {
-                    true
-                } else {
-                    let is_private = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-                    let has_accessor = self
-                        .arena
-                        .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                    prop.initializer.is_none() && !is_private && !has_accessor
-                };
-                if is_erased {
+                let has_legacy_decorators = self.ctx.options.legacy_decorators
+                    && !self.collect_class_decorators(modifiers).is_empty();
+                if property_is_erased.is_none() {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp);
+                    }
+                    continue;
+                }
+                if property_is_erased == Some(true) {
                     // Side-effect only: expression is emitted for its effects but no temp.
-                    let is_side_effect_free =
-                        self.is_computed_name_expr_side_effect_free(computed.expression);
-                    if !is_side_effect_free {
+                    if has_legacy_decorators {
+                        let temp = self.make_unique_name_hoisted();
+                        self.computed_prop_temp_map
+                            .insert(computed.expression, temp.clone());
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                        computed_prop_entries.push((Some(temp), computed.expression, member_idx));
+                    } else if !self.is_computed_name_expr_side_effect_free(computed.expression) {
                         computed_prop_entries.push((None, computed.expression, member_idx));
                     }
                 } else {
                     // Allocate a temp variable for this computed property name
-                    let temp = self.make_unique_name_hoisted();
+                    let temp = if self.ctx.options.legacy_decorators && !has_legacy_decorators {
+                        self.make_class_static_temp_name_hoisted(_idx)
+                    } else {
+                        self.make_unique_name_hoisted()
+                    };
                     self.computed_prop_temp_map
                         .insert(computed.expression, temp.clone());
+                    if has_legacy_decorators {
+                        self.legacy_decorator_computed_name_temp_map
+                            .insert(computed.expression, temp.clone());
+                    }
                     computed_prop_entries.push((Some(temp), computed.expression, member_idx));
                 }
             }
@@ -1268,8 +1305,97 @@ impl<'a> Printer<'a> {
             && (has_static_field_comma_expr
                 || has_static_block_comma_expr
                 || has_static_computed_method_or_accessor);
-        let needs_computed_prop_comma_expr =
-            emits_as_class_expression && !computed_prop_entries.is_empty();
+        let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
+        if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
+            let mut pending_computed_entries = Vec::new();
+            for &member_idx in &class.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+
+                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
+                    if let Some(entry_idx) = computed_prop_entries
+                        .iter()
+                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+                    {
+                        pending_computed_entries.push(entry_idx);
+                    }
+                    continue;
+                }
+
+                let computed_name = match member_node.kind {
+                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                        .arena
+                        .get_method_decl(member_node)
+                        .and_then(|method| self.arena.get(method.name)),
+                    k if k == syntax_kind_ext::GET_ACCESSOR
+                        || k == syntax_kind_ext::SET_ACCESSOR =>
+                    {
+                        self.arena
+                            .get_accessor(member_node)
+                            .and_then(|accessor| self.arena.get(accessor.name))
+                    }
+                    _ => None,
+                };
+                let Some(computed_name) = computed_name else {
+                    continue;
+                };
+                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+                    continue;
+                }
+                let Some(computed) = self.arena.get_computed_property(computed_name) else {
+                    continue;
+                };
+                let decorated_key_temp = self
+                    .legacy_decorator_computed_name_temp_map
+                    .get(&computed.expression)
+                    .cloned();
+                if pending_computed_entries.is_empty() && decorated_key_temp.is_none() {
+                    continue;
+                }
+
+                let mut comma_parts = Vec::new();
+                for entry_idx in pending_computed_entries.drain(..) {
+                    let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
+                    let expr_text = self.capture_emit(expr_idx);
+                    if let Some(temp) = temp_name {
+                        comma_parts.push(format!("{temp} = {expr_text}"));
+                    } else {
+                        comma_parts.push(expr_text);
+                    }
+                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
+                }
+                let expr_text = self.capture_emit(computed.expression);
+                if let Some(temp) = decorated_key_temp {
+                    comma_parts.push(format!("{temp} = {expr_text}"));
+                } else {
+                    comma_parts.push(expr_text);
+                }
+                let replacement = if comma_parts.len() == 1 {
+                    comma_parts.pop().unwrap_or_default()
+                } else {
+                    format!("({})", comma_parts.join(", "))
+                };
+                self.computed_prop_temp_map
+                    .insert(computed.expression, replacement);
+            }
+        }
+        if let Some(member_idx) = auto_accessor_computed_storage_key_member
+            && let Some(entry_idx) = computed_prop_entries
+                .iter()
+                .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
+            && !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+        {
+            computed_prop_entries_consumed_by_member_name.push(entry_idx);
+        }
+
+        let needs_computed_prop_comma_expr = emits_as_class_expression
+            && computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                });
         let needs_any_comma_expr =
             needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
@@ -1329,76 +1455,6 @@ impl<'a> Printer<'a> {
                 None
             }
         });
-
-        let mut computed_prop_entries_consumed_by_member_name: Vec<usize> = Vec::new();
-        if needs_computed_prop_hoisting && !computed_prop_entries.is_empty() {
-            let mut pending_computed_entries = Vec::new();
-            for &member_idx in &class.members.nodes {
-                let Some(member_node) = self.arena.get(member_idx) else {
-                    continue;
-                };
-
-                if member_node.kind == syntax_kind_ext::PROPERTY_DECLARATION {
-                    if let Some(entry_idx) = computed_prop_entries
-                        .iter()
-                        .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
-                    {
-                        pending_computed_entries.push(entry_idx);
-                    }
-                    continue;
-                }
-
-                let computed_name = match member_node.kind {
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|method| self.arena.get(method.name)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|accessor| self.arena.get(accessor.name))
-                    }
-                    _ => None,
-                };
-                let Some(computed_name) = computed_name else {
-                    continue;
-                };
-                if computed_name.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
-                    continue;
-                }
-                let Some(computed) = self.arena.get_computed_property(computed_name) else {
-                    continue;
-                };
-                if pending_computed_entries.is_empty() {
-                    continue;
-                }
-
-                let mut comma_parts = Vec::new();
-                for entry_idx in pending_computed_entries.drain(..) {
-                    let (temp_name, expr_idx, _) = computed_prop_entries[entry_idx].clone();
-                    let expr_text = self.capture_emit(expr_idx);
-                    if let Some(temp) = temp_name {
-                        comma_parts.push(format!("{temp} = {expr_text}"));
-                    } else {
-                        comma_parts.push(expr_text);
-                    }
-                    computed_prop_entries_consumed_by_member_name.push(entry_idx);
-                }
-                comma_parts.push(self.capture_emit(computed.expression));
-                self.computed_prop_temp_map
-                    .insert(computed.expression, format!("({})", comma_parts.join(", ")));
-            }
-        }
-        if let Some(member_idx) = auto_accessor_computed_storage_key_member
-            && let Some(entry_idx) = computed_prop_entries
-                .iter()
-                .position(|(_, _, entry_member_idx)| *entry_member_idx == member_idx)
-            && !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
-        {
-            computed_prop_entries_consumed_by_member_name.push(entry_idx);
-        }
 
         let has_extends = class.heritage_clauses.as_ref().is_some_and(|clauses| {
             clauses.nodes.iter().any(|&idx| {
@@ -1462,6 +1518,11 @@ impl<'a> Printer<'a> {
                 static_super_base_alias.as_deref()
             };
 
+        if self.should_preserve_native_decorator_comments(&class.modifiers)
+            && let Some(name_node) = self.arena.get(class.name)
+        {
+            self.emit_comments_before_pos(name_node.pos);
+        }
         self.write("class");
 
         // Determine the class expression name.
@@ -2725,7 +2786,13 @@ impl<'a> Printer<'a> {
                     self.emit_expression(*expr_idx);
                     self.decrease_indent();
                 }
-            } else {
+            } else if computed_prop_entries
+                .iter()
+                .enumerate()
+                .any(|(entry_idx, _)| {
+                    !computed_prop_entries_consumed_by_member_name.contains(&entry_idx)
+                })
+            {
                 // Emit as a single comma expression: `_a = expr1, sideEffect, _b = expr2;`
                 self.write_line();
                 let mut emitted_entry = false;

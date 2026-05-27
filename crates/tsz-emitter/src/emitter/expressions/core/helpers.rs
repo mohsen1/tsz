@@ -1,4 +1,4 @@
-use super::super::super::Printer;
+use super::super::super::{Printer, ScriptTarget};
 use tsz_parser::parser::{NodeIndex, node::Node, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 
@@ -309,6 +309,19 @@ impl<'a> Printer<'a> {
             // `/** ... */ (x)` with a space before the paren.
         }
         self.write("(");
+        let suppress_inner_comments_for_transformed_decorated_class = !(self.ctx.options.target
+            == ScriptTarget::ESNext
+            && self.ctx.options.use_define_for_class_fields)
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression);
+        let break_after_open_for_decorated_class = self.ctx.options.target == ScriptTarget::ESNext
+            && self.parenthesized_inner_is_decorated_class_expression(paren.expression)
+            && self
+                .arena
+                .get(paren.expression)
+                .is_none_or(|inner_node| !self.has_pending_comment_before(inner_node.pos));
+        if break_after_open_for_decorated_class {
+            self.write_line();
+        }
         // Emit inline comments between `(` and inner expression
         // (e.g., `( /* Preserve */j = f())`)
         // Preserve whether the first inner comment started on the `(` line.
@@ -316,6 +329,7 @@ impl<'a> Printer<'a> {
         // comment already on the following source line gets a printed newline.
         if let Some(inner_node) = self.arena.get(paren.expression)
             && self.has_pending_comment_before(inner_node.pos)
+            && !suppress_inner_comments_for_transformed_decorated_class
         {
             let actual_inner_start =
                 self.skip_trivia_forward(inner_node.pos, inner_node.pos + 2048);
@@ -390,6 +404,25 @@ impl<'a> Printer<'a> {
         let trailing_comment_end =
             self.parenthesized_same_line_trailing_comment_end(close_paren_end);
         self.emit_parenthesized_same_line_trailing_comments(close_paren_end, trailing_comment_end);
+    }
+
+    fn parenthesized_inner_is_decorated_class_expression(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        if node.kind != syntax_kind_ext::CLASS_EXPRESSION {
+            return false;
+        }
+        self.arena
+            .get_class(node)
+            .and_then(|class| class.modifiers.as_ref())
+            .is_some_and(|mods| {
+                mods.nodes.iter().any(|&mod_idx| {
+                    self.arena
+                        .get(mod_idx)
+                        .is_some_and(|mod_node| mod_node.kind == syntax_kind_ext::DECORATOR)
+                })
+            })
     }
 
     fn parenthesized_same_line_trailing_comment_end(&self, start: u32) -> u32 {
@@ -684,6 +717,8 @@ impl<'a> Printer<'a> {
         // multiline ternary formatting (tsc preserves these line breaks).
         let (newline_before_question, newline_before_colon) =
             self.detect_conditional_newlines(cond.condition, cond.when_true, cond.when_false);
+        let missing_false_after_recovered_jsx_true =
+            self.missing_false_after_recovered_jsx_true(cond.when_true, cond.when_false);
 
         // When lowering optional chains or nullish coalescing in the condition
         // (e.g., `o?.b ? 1 : 0` → `(o === null ... : o.b) ? 1 : 0`,
@@ -755,8 +790,14 @@ impl<'a> Printer<'a> {
         } else if newline_before_colon {
             self.write(" ? ");
             self.emit(cond.when_true);
-            let colon_on_new_line = !self.colon_on_true_line(cond.when_true, cond.when_false);
-            if colon_on_new_line {
+            if missing_false_after_recovered_jsx_true {
+                self.write_line();
+                self.write(":");
+                self.write_line();
+                self.ctx
+                    .flags
+                    .recovered_jsx_missing_false_tail_break_pending = true;
+            } else if !self.colon_on_true_line(cond.when_true, cond.when_false) {
                 // Newline before `:` — e.g.:
                 //   var v = a ? b
                 //       : c;
@@ -844,6 +885,9 @@ impl<'a> Printer<'a> {
         let false_node = self.arena.get(_when_false);
         let newline_before_colon = match (true_node, false_node) {
             (Some(t), Some(f)) => {
+                if self.missing_false_after_recovered_jsx_true(when_true, _when_false) {
+                    return (newline_before_question, true);
+                }
                 let bytes = text.as_bytes();
                 let f_pos = std::cmp::min(f.pos as usize, bytes.len());
                 // Find `:` scanning backward from when_false.pos
@@ -869,6 +913,26 @@ impl<'a> Printer<'a> {
         };
 
         (newline_before_question, newline_before_colon)
+    }
+
+    fn missing_false_after_recovered_jsx_true(
+        &self,
+        when_true: NodeIndex,
+        when_false: NodeIndex,
+    ) -> bool {
+        if !self.arena.is_missing_recovery_identifier(when_false) {
+            return false;
+        }
+        let Some(true_node) = self.arena.get(when_true) else {
+            return false;
+        };
+        if true_node.kind != syntax_kind_ext::JSX_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+            && true_node.kind != syntax_kind_ext::JSX_FRAGMENT
+        {
+            return false;
+        }
+        true
     }
 
     /// Check whether the `?` token in a conditional expression is on the

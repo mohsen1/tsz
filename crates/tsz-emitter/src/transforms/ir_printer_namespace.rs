@@ -385,11 +385,4 @@ impl<'a> IRPrinter<'a> {
         self.write_indent();
         self.write("}");
     }
-
-    pub(super) fn emit_empty_block_multiline(&mut self) {
-        self.write("{");
-        self.write_line();
-        self.write_indent();
-        self.write("}");
-    }
 }

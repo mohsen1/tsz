@@ -170,6 +170,16 @@ impl ParserState {
     }
 
     pub(crate) fn parse_statement_type_keyword(&mut self) -> NodeIndex {
+        if let Some((start, end)) = self.look_ahead_next_void_keyword_on_same_line() {
+            self.parse_error_at(
+                start,
+                end - start,
+                "Type alias name cannot be 'void'.",
+                tsz_common::diagnostics::diagnostic_codes::TYPE_ALIAS_NAME_CANNOT_BE,
+            );
+            return self.parse_expression_statement();
+        }
+
         if self.look_ahead_is_type_alias_declaration()
             || self.look_ahead_next_is_numeric_literal_on_same_line()
         {
@@ -361,6 +371,19 @@ impl ParserState {
         self.next_token();
         let result =
             !self.scanner.has_preceding_line_break() && self.is_token(SyntaxKind::NumericLiteral);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        result
+    }
+
+    /// Check if the next token is `void` on the same line.
+    pub(super) fn look_ahead_next_void_keyword_on_same_line(&mut self) -> Option<(u32, u32)> {
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let result = (!self.scanner.has_preceding_line_break()
+            && self.is_token(SyntaxKind::VoidKeyword))
+        .then(|| (self.token_pos(), self.token_end()));
         self.scanner.restore_state(snapshot);
         self.current_token = current;
         result

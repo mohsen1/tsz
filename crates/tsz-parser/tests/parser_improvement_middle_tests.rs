@@ -1,7 +1,10 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
-use crate::parser::test_fixture::{parse_source, parse_source_with_language_version};
+use crate::parser::syntax_kind_ext;
+use crate::parser::test_fixture::{
+    parse_source, parse_source_named, parse_source_with_language_version,
+};
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
 
@@ -581,6 +584,73 @@ const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "requi
         codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "Expected tail recovery to surface TS1128 diagnostics, got {:?}",
         parser.get_diagnostics()
+    );
+    assert!(
+        codes.contains(&diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER),
+        "Expected tail recovery to surface TS1434 diagnostics, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(_root).unwrap();
+    assert!(
+        source_file.statements.nodes.iter().any(|&stmt| {
+            arena
+                .get(stmt)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+        }),
+        "invalid import-attribute entries should recover as statement tails"
+    );
+}
+
+#[test]
+fn js_flow_style_type_parameter_recovery_preserves_class_members() {
+    let source = r#"
+class B<T: BaseA> {
+    _AClass: Class<T>;
+    constructor(AClass: Class<T>) {
+        this._AClass = AClass;
+    }
+}
+"#;
+    let (parser, root) = parse_source_named("test.js", source);
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(root).unwrap();
+    let class_node = arena
+        .get(source_file.statements.nodes[0])
+        .expect("class declaration");
+    let class_data = arena.get_class(class_node).expect("class data");
+    assert_eq!(
+        class_data.members.nodes.len(),
+        2,
+        "malformed JS type parameter recovery should still parse class members"
+    );
+
+    let property_node = arena
+        .get(class_data.members.nodes[0])
+        .expect("property member");
+    let property = arena
+        .get_property_decl(property_node)
+        .expect("property data");
+    assert!(
+        property.type_annotation.is_some(),
+        "property type annotation should be preserved for JS grammar diagnostics"
+    );
+
+    let constructor_node = arena
+        .get(class_data.members.nodes[1])
+        .expect("constructor member");
+    let constructor = arena
+        .get_constructor(constructor_node)
+        .expect("constructor data");
+    let parameter_node = arena
+        .get(constructor.parameters.nodes[0])
+        .expect("constructor parameter");
+    let parameter = arena.get_parameter(parameter_node).expect("parameter data");
+    assert!(
+        parameter.type_annotation.is_some(),
+        "constructor parameter type annotation should be preserved for JS grammar diagnostics"
     );
 }
 
@@ -1701,6 +1771,21 @@ export var _\u{102A7} = new Foo().\u{102A7};
             "ES5 braced astral identifier escape should report TS1127 at {escape_pos}, got {diagnostics:?}"
         );
     }
+}
+
+#[test]
+fn es5_raw_astral_property_access_reports_invalid_character_but_preserves_name() {
+    let source = "class Foo { methodA() { return this.𐊧; } }";
+    let raw_astral = source.find('𐊧').expect("raw astral") as u32;
+    let (parser, _root) = parse_source_with_language_version(source, ScriptTarget::ES5);
+
+    let diagnostics = parser.get_diagnostics();
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d.code == diagnostic_codes::INVALID_CHARACTER && d.start == raw_astral),
+        "ES5 raw astral property access should report TS1127 at the property name, got {diagnostics:?}"
+    );
 }
 
 #[test]

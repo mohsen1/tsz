@@ -73,6 +73,9 @@ pub struct ClassES5Emitter<'a> {
     transforms: Option<TransformContext>,
     /// When true, emit TC39 decorator application around the ES5 class IIFE.
     tc39_decorators: bool,
+    /// When false, collect TC39 member-decorator facts for constructor/static
+    /// initialization but leave wrapping to an outer class-decorator plan.
+    tc39_wrap_output: bool,
     /// Leading comment text to place after `WeakMap` decls and before the class IIFE.
     leading_comment: Option<String>,
     /// When true, suppress `/** @class */` annotation and leading comments.
@@ -107,6 +110,7 @@ impl<'a> ClassES5Emitter<'a> {
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
+            tc39_wrap_output: true,
         }
     }
 
@@ -186,9 +190,17 @@ impl<'a> ClassES5Emitter<'a> {
         self.transformer.set_use_define_for_class_fields(enable);
     }
 
+    pub const fn set_extends_this_captured(&mut self, captured: bool) {
+        self.transformer.set_extends_this_captured(captured);
+    }
+
     pub const fn set_tc39_decorators(&mut self, enabled: bool) {
         self.tc39_decorators = enabled;
         self.transformer.set_tc39_decorators(enabled);
+    }
+
+    pub const fn set_tc39_wrap_output(&mut self, enabled: bool) {
+        self.tc39_wrap_output = enabled;
     }
 
     pub const fn set_skip_static_members(&mut self, skip: bool) {
@@ -205,6 +217,14 @@ impl<'a> ClassES5Emitter<'a> {
 
     pub const fn temp_var_counter(&self) -> u32 {
         self.transformer.temp_var_counter()
+    }
+
+    pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
+        self.transformer.set_dynamic_import_promise_counter(next_id);
+    }
+
+    pub const fn dynamic_import_promise_counter(&self) -> u32 {
+        self.transformer.dynamic_import_promise_counter()
     }
 
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
@@ -674,6 +694,7 @@ impl<'a> ClassES5Emitter<'a> {
         let mut output = printer.emit(&ir).to_string();
         self.merge_ir_printer_block_scope_reserved_names(&printer);
         if self.tc39_decorators
+            && self.tc39_wrap_output
             && let Some(wrapped) =
                 self.transformer
                     .wrap_tc39_es5_output(class_idx, override_name, &output)
@@ -685,6 +706,45 @@ impl<'a> ClassES5Emitter<'a> {
             output.push_str(&recovery_emit);
         }
         output
+    }
+
+    pub fn wrap_tc39_es5_class_decorated_output(
+        &self,
+        class_idx: NodeIndex,
+        inner_name: &str,
+        binding_name: &str,
+        display_name: &str,
+        inner_output: &str,
+        class_decorator_exprs: &[String],
+    ) -> Option<String> {
+        self.transformer.wrap_tc39_es5_class_decorated_output(
+            class_idx,
+            inner_name,
+            binding_name,
+            display_name,
+            inner_output,
+            class_decorator_exprs,
+        )
+    }
+
+    pub fn wrap_tc39_es5_class_decorated_expression_output(
+        &self,
+        class_idx: NodeIndex,
+        inner_name: &str,
+        binding_name: &str,
+        display_name: &str,
+        inner_output: &str,
+        class_decorator_exprs: &[String],
+    ) -> Option<String> {
+        self.transformer
+            .wrap_tc39_es5_class_decorated_expression_output(
+                class_idx,
+                inner_name,
+                binding_name,
+                display_name,
+                inner_output,
+                class_decorator_exprs,
+            )
     }
 
     /// TypeScript parser recovery parity for malformed class members like:

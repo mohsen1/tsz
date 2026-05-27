@@ -289,6 +289,12 @@ function readBooleanOption(
   return typeof value === 'boolean' ? value : undefined;
 }
 
+function optionHasToken(value: unknown, token: string): boolean {
+  if (typeof value !== 'string') return false;
+  const expected = token.toLowerCase();
+  return value.split(',').some(part => part.trim().toLowerCase() === expected);
+}
+
 function saveCache(): void {
   if (!fs.existsSync(CACHE_DIR)) {
     fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -657,12 +663,17 @@ async function findTestCases(filter: string, maxTests: number, dtsOnly: boolean)
       ? parseModule(String(tsconfigOptions.module))
       : undefined;
     const hasEmbeddedTsconfig = Object.keys(tsconfigOptions).length > 0;
+    const moduleResolutionOption =
+      variant.moduleresolution ?? directives.moduleresolution ?? tsconfigOptions.moduleResolution;
+    const usesBundlerModuleResolution =
+      optionHasToken(moduleResolutionOption, 'bundler');
     const module = variant.module ? parseModule(variant.module)
       : directives.module ? parseModule(String(directives.module))
       : tsconfigModule !== undefined ? tsconfigModule
       // Project-style tsconfig baselines inherit tsc's compiler-option default:
-      // unspecified `module` remains CommonJS, independent of `target`.
-      : hasEmbeddedTsconfig ? parseModule('commonjs')
+      // unspecified `module` remains CommonJS, independent of `target`, except
+      // bundler resolution, whose emit baselines preserve ES module syntax.
+      : hasEmbeddedTsconfig && !usesBundlerModuleResolution ? parseModule('commonjs')
       : inferDefaultModule(target);
     const lib = parseLibList(directives.lib) ?? parseLibList(tsconfigOptions.lib);
 

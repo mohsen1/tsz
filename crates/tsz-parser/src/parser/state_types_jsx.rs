@@ -173,10 +173,17 @@ impl ParserState {
         self.parse_expected(SyntaxKind::CloseParenToken);
 
         // Parse =>
-        self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
+        let saw_arrow = self.parse_expected(SyntaxKind::EqualsGreaterThanToken);
 
-        // Parse return type (supports type predicates: param is T)
-        let type_annotation = self.parse_return_type();
+        // Recovery for `(x: T): U`: consume the bad `:` but leave `U` visible
+        // for statement-level recovery, matching tsc's JS emit.
+        let type_annotation = if !saw_arrow && self.is_token(SyntaxKind::ColonToken) {
+            self.next_token();
+            NodeIndex::NONE
+        } else {
+            // Parse return type (supports type predicates: param is T)
+            self.parse_return_type()
+        };
 
         let end_pos = self.token_full_start();
 

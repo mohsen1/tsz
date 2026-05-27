@@ -1075,6 +1075,14 @@ impl<'a> Printer<'a> {
             if is_computed {
                 if let Some(computed) = name_node.and_then(|n| self.arena.get_computed_property(n))
                 {
+                    if let Some(name) = self
+                        .tc39_class_expression_name_from_computed_property_expr(computed.expression)
+                    {
+                        self.emit(prop.name);
+                        self.write(": ");
+                        self.emit_with_tc39_class_expression_name(prop.initializer, name, false);
+                        return;
+                    }
                     self.write("[");
                     let name_expr =
                         self.emit_tc39_named_class_computed_property_name(computed.expression);
@@ -1083,7 +1091,8 @@ impl<'a> Printer<'a> {
                     self.emit_with_tc39_class_expression_name(prop.initializer, name_expr, true);
                     return;
                 }
-            } else if let Some(name) = self.tc39_class_expression_name_from_property_name(prop.name)
+            } else if let Some(name) =
+                self.tc39_class_expression_name_from_object_property_name(prop.name)
             {
                 self.emit_property_key_name(prop.name);
                 self.write(": ");
@@ -1237,7 +1246,7 @@ impl<'a> Printer<'a> {
         class.name.is_none()
             && !self.ctx.options.legacy_decorators
             && !target_supports_native_decorators
-            && !self.collect_class_decorators(&class.modifiers).is_empty()
+            && self.class_has_tc39_decorator_nodes(class)
     }
 
     pub(in crate::emitter) fn emit_with_tc39_class_expression_name(
@@ -1282,6 +1291,34 @@ impl<'a> Printer<'a> {
             || name_node.kind == SyntaxKind::NumericLiteral as u16
         {
             let literal = self.arena.get_literal(name_node)?;
+            return Some(literal.text.clone());
+        }
+        None
+    }
+
+    fn tc39_class_expression_name_from_object_property_name(
+        &self,
+        name: NodeIndex,
+    ) -> Option<String> {
+        self.tc39_class_expression_name_from_property_name(name)
+            .map(|name| {
+                if name == "__proto__" {
+                    String::new()
+                } else {
+                    name
+                }
+            })
+    }
+
+    pub(in crate::emitter) fn tc39_class_expression_name_from_computed_property_expr(
+        &self,
+        expression: NodeIndex,
+    ) -> Option<String> {
+        let expr_node = self.arena.get(expression)?;
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            let literal = self.arena.get_literal(expr_node)?;
             return Some(literal.text.clone());
         }
         None

@@ -1117,15 +1117,15 @@ impl<'a> AsyncES5Transformer<'a> {
             // yield T; case N: temp = sent(); goto end
             // false_label: temp = F
             // end_label: <temp is the result>
-            let false_label = self.state.next_label();
-            let end_label = self.state.next_label();
+            let false_placeholder = self.next_loop_exit_placeholder();
+            let end_placeholder = self.next_loop_exit_placeholder();
 
             current_statements.push(IRNode::IfBreak {
                 condition: Box::new(IRNode::PrefixUnaryExpr {
                     operator: "!".to_string().into(),
                     operand: Box::new(self.expression_to_ir(cond.condition)),
                 }),
-                target_label: false_label,
+                target_label: false_placeholder,
             });
             // yield when_true
             self.emit_nested_suspension(cond.when_true, cases, current_statements, current_label);
@@ -1138,19 +1138,26 @@ impl<'a> AsyncES5Transformer<'a> {
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::BREAK,
-                    value: Some(Box::new(IRNode::number(end_label.to_string()))),
+                    value: Some(Box::new(IRNode::number(end_placeholder.to_string()))),
                     comment: Some("break".to_string().into()),
                 },
             ))));
-            // false_label: temp = F
+            // false_label: temp = F. Allocate this after the suspension so
+            // it follows the yield resume case, matching tsc's case order.
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
+            let false_label = self.state.next_label();
             *current_label = false_label;
+            let end_label = self.state.next_label();
             current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
                 IRNode::id(temp.clone()),
                 self.expression_to_ir(cond.when_false),
+            ))));
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(end_label.to_string()),
             ))));
             // end_label:
             cases.push(IRGeneratorCase {
@@ -1158,21 +1165,23 @@ impl<'a> AsyncES5Transformer<'a> {
                 statements: std::mem::take(current_statements),
             });
             *current_label = end_label;
+            Self::patch_if_break_target(cases, false_placeholder, false_label);
+            Self::patch_if_break_target(cases, end_placeholder, end_label);
         } else if !true_has_await && false_has_await {
             // cond ? T : await F
             // if (!cond) goto false_label
             // temp = T; goto end
             // false_label: yield F; case N: temp = sent()
             // end_label: <temp is the result>
-            let false_label = self.state.next_label();
-            let end_label = self.state.next_label();
+            let false_placeholder = self.next_loop_exit_placeholder();
+            let end_placeholder = self.next_loop_exit_placeholder();
 
             current_statements.push(IRNode::IfBreak {
                 condition: Box::new(IRNode::PrefixUnaryExpr {
                     operator: "!".to_string().into(),
                     operand: Box::new(self.expression_to_ir(cond.condition)),
                 }),
-                target_label: false_label,
+                target_label: false_placeholder,
             });
             // true branch: temp = T
             current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
@@ -1183,7 +1192,7 @@ impl<'a> AsyncES5Transformer<'a> {
             current_statements.push(IRNode::ReturnStatement(Some(Box::new(
                 IRNode::GeneratorOp {
                     opcode: opcodes::BREAK,
-                    value: Some(Box::new(IRNode::number(end_label.to_string()))),
+                    value: Some(Box::new(IRNode::number(end_placeholder.to_string()))),
                     comment: Some("break".to_string().into()),
                 },
             ))));
@@ -1192,6 +1201,7 @@ impl<'a> AsyncES5Transformer<'a> {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
+            let false_label = self.state.next_label();
             *current_label = false_label;
             // yield when_false
             self.emit_nested_suspension(cond.when_false, cases, current_statements, current_label);
@@ -1200,12 +1210,19 @@ impl<'a> AsyncES5Transformer<'a> {
                 IRNode::id(temp.clone()),
                 IRNode::GeneratorSent,
             ))));
+            let end_label = self.state.next_label();
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::GeneratorLabel,
+                IRNode::number(end_label.to_string()),
+            ))));
             // end_label:
             cases.push(IRGeneratorCase {
                 label: *current_label,
                 statements: std::mem::take(current_statements),
             });
             *current_label = end_label;
+            Self::patch_if_break_target(cases, false_placeholder, false_label);
+            Self::patch_if_break_target(cases, end_placeholder, end_label);
         } else {
             // Both branches have await — use the generic path
             return None;

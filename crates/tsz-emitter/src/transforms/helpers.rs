@@ -420,6 +420,9 @@ pub struct HelpersNeeded {
     pub dispose_resources: bool,
     pub es_decorate: bool,
     pub run_initializers: bool,
+    /// Direct helper declarations keep `tsc`'s stable same-priority order for
+    /// member decorators, where initializer helper requests precede decoration.
+    pub run_initializers_before_es_decorate: bool,
     pub prop_key: bool,
     pub set_function_name: bool,
     pub rewrite_relative_import_extension: bool,
@@ -661,7 +664,7 @@ impl HelpersNeeded {
 /// Priority mapping (from TypeScript's factory/emitHelpers.ts):
 ///   0: extends, makeTemplateObject
 ///   1: assign, createBinding
-///   2: decorate, esDecorate, runInitializers, importStar, exportStar
+///   2: decorate, esDecorate/runInitializers, importStar, exportStar
 ///   3: metadata
 ///   4: param
 ///   5: awaiter
@@ -690,16 +693,20 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push_str(CREATE_BINDING_HELPER);
         output.push('\n');
     }
-    // Priority 2: decorate, esDecorate, runInitializers, importStar (with setModuleDefault), exportStar
+    // Priority 2: decorate, esDecorate/runInitializers, importStar (with setModuleDefault), exportStar
     if helpers.decorate {
         output.push_str(DECORATE_HELPER);
+        output.push('\n');
+    }
+    if helpers.run_initializers_before_es_decorate && helpers.run_initializers {
+        output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
     if helpers.es_decorate {
         output.push_str(ES_DECORATE_HELPER);
         output.push('\n');
     }
-    if helpers.run_initializers {
+    if !helpers.run_initializers_before_es_decorate && helpers.run_initializers {
         output.push_str(RUN_INITIALIZERS_HELPER);
         output.push('\n');
     }
@@ -1207,6 +1214,25 @@ mod tests {
         assert!(i_generator < i_set_name);
         assert!(i_set_name < i_await);
         assert!(i_await < i_async_generator);
+    }
+
+    #[test]
+    fn emit_helpers_orders_member_decorator_initializers_before_es_decorate() {
+        let helpers = HelpersNeeded {
+            run_initializers: true,
+            run_initializers_before_es_decorate: true,
+            es_decorate: true,
+            set_function_name: true,
+            ..HelpersNeeded::default()
+        };
+
+        let output = emit_helpers(&helpers);
+        let i_run = find_helper(&output, "__runInitializers");
+        let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+
+        assert!(i_run < i_es_decorate);
+        assert!(i_es_decorate < i_set_name);
     }
 
     #[test]

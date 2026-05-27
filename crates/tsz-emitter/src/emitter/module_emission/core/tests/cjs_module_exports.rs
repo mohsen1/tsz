@@ -6,6 +6,22 @@ use tsz_parser::ParserState;
 
 use super::parse_test_source;
 
+fn emit_commonjs_es_module_interop(source: &str) -> String {
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        module: ModuleKind::CommonJS,
+        target: ScriptTarget::ES2015,
+        es_module_interop: true,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer = Printer::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn commonjs_unused_classic_jsx_factory_name_elides_namespace_import_without_jsx() {
     let source = r#"import * as React from "react";
@@ -31,6 +47,44 @@ export var x = 1;
     assert!(
         output.contains("exports.x = 1;"),
         "The exported value should still emit normally.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_es_module_interop_namespace_import_emits_import_star_helper() {
+    let source = r#"import * as ns from "foo";
+console.log(ns.x);
+"#;
+
+    let output = emit_commonjs_es_module_interop(source);
+
+    assert!(
+        output.contains("var __importStar = "),
+        "Valid namespace imports should request the __importStar helper.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("const ns = __importStar(require(\"foo\"));"),
+        "Valid namespace imports should lower through __importStar.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn commonjs_recovered_empty_namespace_import_skips_import_star_helper() {
+    let source = r#"import * as while from "foo"
+while (from) "foo";
+"#;
+
+    let output = emit_commonjs_es_module_interop(source);
+
+    assert!(
+        !output.contains("__importStar")
+            && !output.contains("__createBinding")
+            && !output.contains("__setModuleDefault"),
+        "Recovered namespace imports without a binding name must not schedule interop helpers.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("Object.defineProperty(exports, \"__esModule\", { value: true });"),
+        "The recovered import should still mark the file as CommonJS module output.\nOutput:\n{output}"
     );
 }
 

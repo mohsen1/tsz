@@ -106,6 +106,14 @@ impl<'a> Printer<'a> {
             return;
         };
 
+        if (self.writer.is_at_line_start() || self.writer.get_output().ends_with('\n'))
+            && self.jsx_node_contains_recovered_missing_false_conditional(node)
+        {
+            let saved_indent = self.writer.indent_level();
+            self.writer.set_indent_level(0);
+            self.write("    ");
+            self.writer.set_indent_level(saved_indent);
+        }
         self.emit(jsx.opening_element);
         let has_synthesized_empty_close = self
             .arena
@@ -137,6 +145,51 @@ impl<'a> Printer<'a> {
             self.emit(child);
         }
         self.emit(jsx.closing_element);
+    }
+
+    fn jsx_node_contains_recovered_missing_false_conditional(&self, node: &Node) -> bool {
+        if node.kind == syntax_kind_ext::CONDITIONAL_EXPRESSION {
+            let Some(cond) = self.arena.get_conditional_expr(node) else {
+                return false;
+            };
+            let Some(true_node) = self.arena.get(cond.when_true) else {
+                return false;
+            };
+            return self.arena.is_missing_recovery_identifier(cond.when_false)
+                && (true_node.kind == syntax_kind_ext::JSX_ELEMENT
+                    || true_node.kind == syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                    || true_node.kind == syntax_kind_ext::JSX_FRAGMENT);
+        }
+        if node.kind == syntax_kind_ext::JSX_EXPRESSION {
+            return self
+                .arena
+                .get_jsx_expression(node)
+                .and_then(|expr| self.arena.get(expr.expression))
+                .is_some_and(|expr| {
+                    self.jsx_node_contains_recovered_missing_false_conditional(expr)
+                });
+        }
+        if node.kind == syntax_kind_ext::JSX_ELEMENT {
+            let Some(jsx) = self.arena.get_jsx_element(node) else {
+                return false;
+            };
+            return jsx.children.nodes.iter().any(|&child| {
+                self.arena.get(child).is_some_and(|child_node| {
+                    self.jsx_node_contains_recovered_missing_false_conditional(child_node)
+                })
+            });
+        }
+        if node.kind == syntax_kind_ext::JSX_FRAGMENT {
+            let Some(jsx) = self.arena.get_jsx_fragment(node) else {
+                return false;
+            };
+            return jsx.children.nodes.iter().any(|&child| {
+                self.arena.get(child).is_some_and(|child_node| {
+                    self.jsx_node_contains_recovered_missing_false_conditional(child_node)
+                })
+            });
+        }
+        false
     }
 
     fn emit_jsx_self_closing_preserve(&mut self, node: &Node) {

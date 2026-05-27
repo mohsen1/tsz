@@ -75,8 +75,12 @@ mod element_access;
 mod for_await;
 #[path = "async_es5_ir_for_of.rs"]
 mod for_of;
+#[path = "async_es5_ir_hoists.rs"]
+mod hoists;
 #[path = "async_es5_ir_loop_control.rs"]
 mod loop_control;
+#[path = "async_es5_ir_names.rs"]
+mod names;
 #[path = "async_es5_ir_state.rs"]
 mod state;
 #[path = "async_es5_ir_statement_helpers.rs"]
@@ -150,10 +154,15 @@ pub struct AsyncES5Transformer<'a> {
     /// Module kind for dynamic `import()` lowering inside generator bodies.
     pub(super) module_kind: ModuleKind,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
-    pub(super) dynamic_import_promise_counter: Cell<u32>,
+    pub(in crate::transforms) dynamic_import_promise_counter: Cell<u32>,
     /// Active async-lowered loop labels and the generator label that implements
     /// `continue <label>` for that loop.
     pub(super) labeled_continue_targets: Vec<(String, u32)>,
+    /// Active async-lowered loop labels and the generator label that implements
+    /// `break <label>` for that loop.
+    pub(super) labeled_break_targets: Vec<(String, u32)>,
+    /// Active catch binding substitutions used while lowering async try regions.
+    pub(super) catch_binding_renames: Vec<(String, String)>,
 }
 
 impl<'a> AsyncES5Transformer<'a> {
@@ -182,212 +191,14 @@ impl<'a> AsyncES5Transformer<'a> {
             module_kind: ModuleKind::None,
             dynamic_import_promise_counter: Cell::new(1),
             labeled_continue_targets: Vec::new(),
+            labeled_break_targets: Vec::new(),
+            catch_binding_renames: Vec::new(),
         }
     }
 
     /// Record a hoisted-temp name produced by an IR-conversion lowering
     /// (`??`, `?.`, etc.) so the surrounding `transform_*` entry point can
     /// declare it alongside the rest of the state-machine var hoists.
-    pub(super) fn push_lowering_hoist(&self, name: String) {
-        self.pending_lowering_hoists.borrow_mut().push(name);
-    }
-
-    pub const fn set_source_text(&mut self, source_text: &'a str) {
-        self.source_text = Some(source_text);
-    }
-
-    pub fn with_class_super_context(
-        mut self,
-        has_super: bool,
-        super_name: String,
-        is_static: bool,
-    ) -> Self {
-        self.class_has_super = has_super;
-        self.class_super_name = super_name;
-        self.class_super_is_static = is_static;
-        self
-    }
-
-    /// Set the module kind so dynamic `import()` calls inside the generator
-    /// body are lowered to the appropriate module-system form.
-    pub const fn set_module_kind(&mut self, kind: ModuleKind) {
-        self.module_kind = kind;
-    }
-
-    pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
-        self.downlevel_iteration = enabled;
-    }
-
-    pub(crate) fn set_lexical_this_capture(&self, capture: bool) {
-        self.lexical_this_capture.set(capture);
-    }
-
-    pub(super) const fn captures_lexical_this(&self) -> bool {
-        self.lexical_this_capture.get()
-    }
-
-    pub(super) const fn captures_this_references(&self) -> bool {
-        self.capture_this_references.get()
-    }
-
-    pub(super) fn set_capture_this_references(&self, capture: bool) {
-        self.capture_this_references.set(capture);
-    }
-
-    fn reset_loop_exit_placeholders(&self) {
-        self.loop_exit_placeholder_counter.set(0);
-    }
-
-    fn next_loop_exit_placeholder(&self) -> u32 {
-        let counter = self.loop_exit_placeholder_counter.get();
-        self.loop_exit_placeholder_counter.set(counter + 1);
-        u32::MAX - counter
-    }
-
-    pub(super) fn generate_hoisted_temp(&self) -> String {
-        loop {
-            let counter = self.temp_var_counter.get();
-            let name = if counter < 26 {
-                format!("_{}", (b'a' + counter as u8) as char)
-            } else {
-                format!("_{counter}")
-            };
-            self.temp_var_counter.set(counter + 1);
-            if self.blocked_temp_names.borrow_mut().insert(name.clone()) {
-                return name;
-            }
-        }
-    }
-
-    pub(super) fn set_temp_var_counter(&self, counter: u32) {
-        self.temp_var_counter.set(counter);
-    }
-
-    pub const fn temp_var_counter(&self) -> u32 {
-        self.temp_var_counter.get()
-    }
-
-    fn reset_temp_name_reservations(&self, body_idx: NodeIndex) {
-        let mut blocked_names = Vec::new();
-        self.collect_body_binding_names(body_idx, &mut blocked_names);
-        *self.blocked_temp_names.borrow_mut() = blocked_names.into_iter().collect();
-    }
-
-    fn fresh_reserved_name(&self, preferred: impl Into<String>) -> String {
-        let preferred = preferred.into();
-        if self
-            .blocked_temp_names
-            .borrow_mut()
-            .insert(preferred.clone())
-        {
-            return preferred;
-        }
-        let mut suffix = 1u32;
-        loop {
-            let candidate = format!("{preferred}_{suffix}");
-            if self
-                .blocked_temp_names
-                .borrow_mut()
-                .insert(candidate.clone())
-            {
-                return candidate;
-            }
-            suffix += 1;
-        }
-    }
-
-    pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
-    where
-        I: IntoIterator<Item = String>,
-    {
-        self.disposable_env_counter.set(next_id);
-        self.blocked_disposable_env_names = blocked_names.into_iter().collect();
-        self.generated_disposable_env_names.clear();
-    }
-
-    pub const fn disposable_env_counter(&self) -> u32 {
-        self.disposable_env_counter.get()
-    }
-
-    pub fn take_generated_disposable_env_names(&mut self) -> Vec<String> {
-        std::mem::take(&mut self.generated_disposable_env_names)
-    }
-
-    fn next_disposable_env_names(&mut self) -> (String, String, String) {
-        loop {
-            let env_id = self.disposable_env_counter.get();
-            let env_name = format!("env_{env_id}");
-            let error_name = format!("e_{env_id}");
-            let result_name = format!("result_{env_id}");
-            self.disposable_env_counter.set(env_id + 1);
-
-            if self.blocked_disposable_env_names.contains(&env_name)
-                || self.blocked_disposable_env_names.contains(&error_name)
-                || self.blocked_disposable_env_names.contains(&result_name)
-            {
-                continue;
-            }
-
-            self.blocked_disposable_env_names.insert(env_name.clone());
-            self.blocked_disposable_env_names.insert(error_name.clone());
-            self.blocked_disposable_env_names
-                .insert(result_name.clone());
-            self.generated_disposable_env_names.push(env_name.clone());
-            self.generated_disposable_env_names.push(error_name.clone());
-            self.generated_disposable_env_names
-                .push(result_name.clone());
-            return (env_name, error_name, result_name);
-        }
-    }
-
-    fn next_disposable_env_names_allowing_error_gap(&mut self) -> (String, String, String, u32) {
-        loop {
-            let env_id = self.disposable_env_counter.get();
-            let env_name = format!("env_{env_id}");
-            let result_name = format!("result_{env_id}");
-            self.disposable_env_counter.set(env_id + 1);
-
-            if self.blocked_disposable_env_names.contains(&env_name)
-                || self.blocked_disposable_env_names.contains(&result_name)
-            {
-                continue;
-            }
-
-            let mut error_id = env_id;
-            loop {
-                let error_name = format!("e_{error_id}");
-                if self.blocked_disposable_env_names.contains(&error_name) {
-                    error_id += 1;
-                    continue;
-                }
-
-                self.blocked_disposable_env_names.insert(env_name.clone());
-                self.blocked_disposable_env_names.insert(error_name.clone());
-                self.blocked_disposable_env_names
-                    .insert(result_name.clone());
-                self.generated_disposable_env_names.push(env_name.clone());
-                self.generated_disposable_env_names.push(error_name.clone());
-                self.generated_disposable_env_names
-                    .push(result_name.clone());
-                return (env_name, error_name, result_name, error_id);
-            }
-        }
-    }
-
-    fn env_id_from_name(&self, name: &str) -> Option<u32> {
-        name.strip_prefix("env_")?.parse().ok()
-    }
-
-    /// Get the helpers needed after transformation
-    pub const fn get_helpers_needed(&self) -> &HelpersNeeded {
-        &self.helpers_needed
-    }
-
-    /// Take the helpers needed (consumes the transformer)
-    pub fn take_helpers_needed(self) -> HelpersNeeded {
-        self.helpers_needed
-    }
-
     /// Transform an async function declaration to IR
     ///
     /// Returns an `IRNode::AwaiterCall` with a nested `IRNode::GeneratorBody`
@@ -807,6 +618,26 @@ impl<'a> AsyncES5Transformer<'a> {
         self.build_generator_body(body_idx, has_await, &[])
     }
 
+    pub fn transform_generator_body_skipping(
+        &mut self,
+        body_idx: NodeIndex,
+        has_await: bool,
+        skipped_statements: &[NodeIndex],
+    ) -> IRNode {
+        self.state.reset();
+        self.reset_loop_exit_placeholders();
+        self.state.has_await = has_await;
+        self.helpers_needed.generator = true;
+
+        self.state.captures_arguments =
+            tsz_parser::syntax::transform_utils::contains_arguments_reference(self.arena, body_idx);
+        if self.state.captures_arguments && self.state.arguments_capture_name.is_empty() {
+            self.state.arguments_capture_name = self.fresh_arguments_capture_name(body_idx, &[]);
+        }
+
+        self.build_generator_body(body_idx, has_await, skipped_statements)
+    }
+
     /// Build the generator body IR
     fn build_generator_body(
         &mut self,
@@ -931,7 +762,14 @@ impl<'a> AsyncES5Transformer<'a> {
                 },
             ))));
         } else if self.contains_await_recursive(idx) {
-            let value = if let Some(lowered_call) = self.lower_call_callee_before_suspension(
+            let value = if let Some(lowered_object) = self.lower_object_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                lowered_object
+            } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
                 idx,
                 cases,
                 current_statements,
@@ -2660,6 +2498,15 @@ impl<'a> AsyncES5Transformer<'a> {
                                 current_label,
                             ) {
                             lowered_comma
+                        } else if let Some(lowered_object) = self
+                            .lower_object_literal_before_suspension(
+                                ret.expression,
+                                cases,
+                                current_statements,
+                                current_label,
+                            )
+                        {
+                            lowered_object
                         } else if let Some(lowered_call) = self.lower_call_callee_before_suspension(
                             ret.expression,
                             cases,
@@ -2717,6 +2564,7 @@ impl<'a> AsyncES5Transformer<'a> {
             k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                 // Structure: VARIABLE_STATEMENT -> VARIABLE_DECLARATION_LIST -> VARIABLE_DECLARATION
                 if let Some(var_stmt) = self.arena.get_variable(node) {
+                    let mut trailing_comment = self.extract_trailing_line_comment_in_node(idx);
                     for &decl_list_idx in &var_stmt.declarations.nodes {
                         if let Some(decl_list_node) = self.arena.get(decl_list_idx)
                             && let Some(decl_list) = self.arena.get_variable(decl_list_node)
@@ -2727,6 +2575,7 @@ impl<'a> AsyncES5Transformer<'a> {
                                     cases,
                                     current_statements,
                                     current_label,
+                                    &mut trailing_comment,
                                 );
                             }
                         }
@@ -2904,11 +2753,171 @@ impl<'a> AsyncES5Transformer<'a> {
                 );
             }
 
+            k if k == syntax_kind_ext::WITH_STATEMENT => {
+                self.process_with_statement_in_async(idx, cases, current_statements, current_label);
+            }
+
             _ => {
                 // Pass through other statements as-is
                 let ir = self.statement_to_ir(idx);
                 current_statements.push(ir);
             }
+        }
+    }
+
+    fn process_with_statement_in_async(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+    ) {
+        let Some(node) = self.arena.get(idx) else {
+            return;
+        };
+        let Some(with_data) = self.arena.get_with_statement(node) else {
+            return;
+        };
+
+        let expression_has_await = self.contains_await_recursive(with_data.expression);
+        let body_has_await = self.contains_await_recursive(with_data.then_statement);
+        if !expression_has_await && !body_has_await {
+            current_statements.push(self.statement_to_ir(idx));
+            return;
+        }
+
+        let temp = self.generate_hoisted_temp();
+        current_statements.push(IRNode::VarDecl {
+            name: temp.clone().into(),
+            initializer: None,
+        });
+
+        if expression_has_await {
+            self.emit_nested_suspension(
+                with_data.expression,
+                cases,
+                current_statements,
+                current_label,
+            );
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                IRNode::GeneratorSent,
+            ))));
+        } else {
+            current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+                IRNode::id(temp.clone()),
+                self.expression_to_ir(with_data.expression),
+            ))));
+        }
+
+        let body_label = self.state.next_label();
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(body_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = body_label;
+
+        let mut nested_cases = Vec::new();
+        let mut nested_current = Vec::new();
+        let mut nested_label = *current_label;
+        self.process_block_or_statement_in_async(
+            with_data.then_statement,
+            &mut nested_cases,
+            &mut nested_current,
+            &mut nested_label,
+        );
+
+        for mut case in nested_cases {
+            cases.push(IRGeneratorCase {
+                label: case.label,
+                statements: Self::wrap_statements_in_with(
+                    &temp,
+                    std::mem::take(&mut case.statements),
+                ),
+            });
+        }
+
+        *current_label = nested_label;
+        if nested_current.is_empty() {
+            return;
+        }
+        current_statements.extend(Self::wrap_statements_in_with(&temp, nested_current));
+        let end_label = self.state.next_label();
+        current_statements.push(IRNode::ExpressionStatement(Box::new(IRNode::assign(
+            IRNode::GeneratorLabel,
+            IRNode::number(end_label.to_string()),
+        ))));
+        cases.push(IRGeneratorCase {
+            label: *current_label,
+            statements: std::mem::take(current_statements),
+        });
+        *current_label = end_label;
+    }
+
+    fn wrap_statements_in_with(temp: &str, mut statements: Vec<IRNode>) -> Vec<IRNode> {
+        let leading_var_count = statements
+            .iter()
+            .take_while(|statement| matches!(statement, IRNode::VarDecl { .. }))
+            .count();
+        let mut leading_vars = statements.drain(..leading_var_count).collect::<Vec<_>>();
+        let trailing_label_assignment = statements
+            .last()
+            .is_some_and(Self::is_generator_label_assignment)
+            .then(|| statements.pop().expect("checked last statement"));
+
+        let mut wrapped = Vec::new();
+        wrapped.append(&mut leading_vars);
+        if !statements.is_empty() {
+            wrapped.push(IRNode::WithStatement {
+                expression: Box::new(IRNode::id(temp.to_string())),
+                body: Box::new(IRNode::Block(statements)),
+            });
+        }
+        if let Some(label_assignment) = trailing_label_assignment {
+            wrapped.push(label_assignment);
+        }
+        wrapped
+    }
+
+    fn is_generator_label_assignment(node: &IRNode) -> bool {
+        matches!(
+            node,
+            IRNode::ExpressionStatement(expr)
+                if matches!(
+                    expr.as_ref(),
+                    IRNode::BinaryExpr {
+                        left,
+                        operator,
+                        ..
+                    } if matches!(left.as_ref(), IRNode::GeneratorLabel)
+                        && operator.as_ref() == "="
+                )
+        )
+    }
+
+    fn statement_to_hoistable_ir(&mut self, idx: NodeIndex) -> IRNode {
+        let Some(node) = self.arena.get(idx) else {
+            return IRNode::EmptyStatement;
+        };
+
+        let mut cases = Vec::new();
+        let mut statements = Vec::new();
+        let mut label = 0;
+        self.process_block_or_statement_in_async(idx, &mut cases, &mut statements, &mut label);
+        if !cases.is_empty() {
+            return self.statement_to_ir(idx);
+        }
+        if node.kind == syntax_kind_ext::BLOCK {
+            return IRNode::Block(statements);
+        }
+        if statements.len() == 1 {
+            statements.pop().expect("len checked")
+        } else {
+            IRNode::Block(statements)
         }
     }
 
@@ -3051,6 +3060,15 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             ) {
                 current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_array)));
+                return;
+            }
+            if let Some(lowered_object) = self.lower_object_literal_before_suspension(
+                idx,
+                cases,
+                current_statements,
+                current_label,
+            ) {
+                current_statements.push(IRNode::ExpressionStatement(Box::new(lowered_object)));
                 return;
             }
             if let Some(lowered_access) = self.lower_element_access_object_before_suspension(
@@ -3247,6 +3265,23 @@ impl<'a> AsyncES5Transformer<'a> {
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
     ) {
+        self.process_await_expression_with_trailing_comment(
+            idx,
+            cases,
+            current_statements,
+            current_label,
+            None,
+        );
+    }
+
+    fn process_await_expression_with_trailing_comment(
+        &mut self,
+        idx: NodeIndex,
+        cases: &mut Vec<IRGeneratorCase>,
+        current_statements: &mut Vec<IRNode>,
+        current_label: &mut u32,
+        trailing_comment: Option<&str>,
+    ) {
         let Some(node) = self.arena.get(idx) else {
             return;
         };
@@ -3298,6 +3333,9 @@ impl<'a> AsyncES5Transformer<'a> {
                     comment: Some("yield".to_string().into()),
                 },
             ))));
+            if let Some(comment) = trailing_comment {
+                current_statements.push(IRNode::TrailingComment(comment.to_string().into()));
+            }
 
             // Create new case for code after await
             cases.push(IRGeneratorCase {
@@ -3436,6 +3474,7 @@ impl<'a> AsyncES5Transformer<'a> {
         cases: &mut Vec<IRGeneratorCase>,
         current_statements: &mut Vec<IRNode>,
         current_label: &mut u32,
+        trailing_comment: &mut Option<String>,
     ) {
         let Some(node) = self.arena.get(idx) else {
             return;
@@ -3447,6 +3486,7 @@ impl<'a> AsyncES5Transformer<'a> {
 
             // Check if initializer contains await
             if decl.initializer.is_some() && self.is_suspension_expression(decl.initializer) {
+                let trailing_comment = trailing_comment.take();
                 // var x = await foo(); -> first declare var x, then yield foo(), then x = _a.sent()
                 // We need to declare the variable first to avoid ReferenceError in strict mode
                 current_statements.push(IRNode::VarDecl {
@@ -3454,11 +3494,12 @@ impl<'a> AsyncES5Transformer<'a> {
                     initializer: None,
                 });
 
-                self.process_await_expression(
+                self.process_await_expression_with_trailing_comment(
                     decl.initializer,
                     cases,
                     current_statements,
                     current_label,
+                    trailing_comment.as_deref(),
                 );
 
                 // Assign the sent value to the variable
@@ -3469,6 +3510,9 @@ impl<'a> AsyncES5Transformer<'a> {
                         right: Box::new(IRNode::GeneratorSent),
                     },
                 )));
+                if let Some(comment) = trailing_comment {
+                    current_statements.push(IRNode::TrailingComment(comment.into()));
+                }
             } else if decl.initializer.is_some() && self.contains_await_recursive(decl.initializer)
             {
                 // Initializer contains await but is not a direct await expression
@@ -3757,9 +3801,17 @@ impl<'a> AsyncES5Transformer<'a> {
             && self.contains_await_recursive(if_stmt.else_statement);
 
         if !cond_has_await && !then_has_await && !else_has_await {
-            // No await anywhere in this if statement -- emit as-is
-            let ir = self.statement_to_ir(idx);
-            current_statements.push(ir);
+            let has_else = if_stmt.else_statement.is_some()
+                && self
+                    .arena
+                    .get(if_stmt.else_statement)
+                    .is_some_and(|n| n.kind != syntax_kind_ext::EMPTY_STATEMENT);
+            current_statements.push(IRNode::IfStatement {
+                condition: Box::new(self.expression_to_ir(if_stmt.expression)),
+                then_branch: Box::new(self.statement_to_hoistable_ir(if_stmt.then_statement)),
+                else_branch: has_else
+                    .then(|| Box::new(self.statement_to_hoistable_ir(if_stmt.else_statement))),
+            });
             return;
         }
 
@@ -4838,14 +4890,23 @@ impl<'a> AsyncES5Transformer<'a> {
             if let Some(catch_node) = self.arena.get(try_data.catch_clause)
                 && let Some(catch_data) = self.arena.get_catch_clause(catch_node)
             {
+                let catch_rename_depth = self.catch_binding_renames.len();
                 if catch_data.variable_declaration.is_some() {
                     let catch_var_name =
                         self.get_catch_variable_name(catch_data.variable_declaration);
                     if !catch_var_name.is_empty() {
+                        let catch_temp =
+                            self.fresh_catch_binding_temp(&catch_var_name, try_data.catch_clause);
+                        current_statements.push(IRNode::VarDecl {
+                            name: catch_temp.clone().into(),
+                            initializer: None,
+                        });
                         // tsc binds the exception via `_a.sent()`, not `_a[1]`.
                         current_statements.push(IRNode::ExpressionStatement(Box::new(
-                            IRNode::assign(IRNode::id(catch_var_name), IRNode::GeneratorSent),
+                            IRNode::assign(IRNode::id(catch_temp.clone()), IRNode::GeneratorSent),
                         )));
+                        self.catch_binding_renames
+                            .push((catch_var_name, catch_temp));
                     }
                 }
                 self.process_block_or_statement_in_async(
@@ -4854,9 +4915,14 @@ impl<'a> AsyncES5Transformer<'a> {
                     current_statements,
                     current_label,
                 );
+                if self.catch_binding_renames.len() > catch_rename_depth {
+                    self.catch_binding_renames.pop();
+                }
             }
 
-            current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            if !Self::async_statements_end_control_flow(current_statements) {
+                current_statements.push(Self::generator_break_statement(placeholders.exit_break));
+            }
             Some(cl)
         } else {
             None
@@ -4923,115 +4989,6 @@ impl<'a> AsyncES5Transformer<'a> {
             });
         }
         *current_label = end_label;
-    }
-
-    /// Extract `VarDecl` names from a `GeneratorBody` IR node and remove them
-    /// from the case statements. Returns variable groups to hoist.
-    ///
-    /// tsc hoists `var` declarations to before the `return __generator(...)` call,
-    /// so they appear at the top of the `__awaiter` wrapper function body.
-    /// Extract leading directive prologues (e.g. `"use strict"`) from the first
-    /// case of a generator body and return them as raw string values (without quotes).
-    ///
-    /// When a directive appears at the top of an async function body, `tsc` places
-    /// it inside the `__awaiter` callback — before any `var` declarations and
-    /// before `__generator` — not inside the switch/case statements.  This helper
-    /// removes those nodes from case 0 and returns their string content so that
-    /// the `AwaiterCall` printer can emit them in the correct position.
-    ///
-    /// Handles `StringLiteral`, `RawStringLiteral`, and `Raw` nodes (the last form
-    /// is emitted when the source text is available and the value is a quoted token).
-    pub fn extract_and_remove_directive_prologue(generator_body: &mut IRNode) -> Vec<String> {
-        let IRNode::GeneratorBody { cases, .. } = generator_body else {
-            return Vec::new();
-        };
-        let Some(first_case) = cases.first_mut() else {
-            return Vec::new();
-        };
-        let mut directives = Vec::new();
-        while let Some(IRNode::ExpressionStatement(expr)) = first_case.statements.first() {
-            let directive = match expr.as_ref() {
-                IRNode::StringLiteral(text) | IRNode::RawStringLiteral(text) => {
-                    // text is already the inner value (no quotes)
-                    text.to_string()
-                }
-                IRNode::Raw(raw) => {
-                    // Raw nodes produced from source tokens include the surrounding quotes.
-                    // Accept quoted string tokens that look like directive prologues.
-                    let trimmed = raw.trim();
-                    if (trimmed.starts_with('"') && trimmed.ends_with('"'))
-                        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-                    {
-                        // Strip quotes to get the inner value
-                        trimmed[1..trimmed.len() - 1].to_string()
-                    } else {
-                        break;
-                    }
-                }
-                _ => break,
-            };
-            directives.push(directive);
-            first_case.statements.remove(0);
-        }
-        directives
-    }
-
-    pub fn extract_and_remove_var_decl_groups(generator_body: &mut IRNode) -> Vec<Vec<String>> {
-        let IRNode::GeneratorBody { cases, .. } = generator_body else {
-            return Vec::new();
-        };
-
-        let mut hoisted = Vec::new();
-        let mut current_group = Vec::new();
-        for case in cases.iter_mut() {
-            let mut i = 0;
-            while i < case.statements.len() {
-                match &case.statements[i] {
-                    IRNode::HoistedVarGroupBreak => {
-                        if !current_group.is_empty() {
-                            hoisted.push(std::mem::take(&mut current_group));
-                        }
-                        case.statements.remove(i);
-                        continue;
-                    }
-                    IRNode::VarDecl { name, initializer } if initializer.is_none() => {
-                        // Pure declaration with no initializer -- hoist and remove.
-                        current_group.push(name.to_string());
-                        case.statements.remove(i);
-                        continue;
-                    }
-                    IRNode::VarDecl { name, initializer } => {
-                        // Has initializer -- hoist the name but keep as assignment.
-                        let var_name = name.clone();
-                        current_group.push(var_name.to_string());
-                        let init = initializer
-                            .clone()
-                            .expect("VarDecl match without guard guarantees initializer is Some");
-                        case.statements[i] =
-                            IRNode::ExpressionStatement(Box::new(IRNode::BinaryExpr {
-                                left: Box::new(IRNode::Identifier(var_name)),
-                                operator: "=".to_string().into(),
-                                right: init,
-                            }));
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-        }
-
-        if !current_group.is_empty() {
-            hoisted.push(current_group);
-        }
-
-        hoisted
-    }
-
-    pub fn extract_and_remove_var_decls(generator_body: &mut IRNode) -> Vec<String> {
-        Self::extract_and_remove_var_decl_groups(generator_body)
-            .into_iter()
-            .flatten()
-            .collect()
     }
 }
 

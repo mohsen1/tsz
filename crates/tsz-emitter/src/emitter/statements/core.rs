@@ -141,7 +141,8 @@ impl<'a> Printer<'a> {
                     self.map_closing_brace(node);
                     self.write_with_end_marker("}");
                 }
-            } else if self.is_single_line(node) {
+            } else if self.is_single_line(node) || (is_function_body_block && node.pos == node.end)
+            {
                 // Single-line empty block: { }
                 self.map_opening_brace(node);
                 self.write("{ }");

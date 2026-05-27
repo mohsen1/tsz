@@ -302,10 +302,20 @@ impl ParserState {
                 continue;
             }
 
+            let in_parameter_binding_pattern = (self.context_flags
+                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
+                != 0;
+
             // Reserved words in the first array-binding position should recover as
             // an invalid destructuring pattern rather than a generic identifier error.
             if elements.is_empty() && self.is_reserved_word() {
                 self.error_array_element_destructuring_pattern_expected();
+                if in_parameter_binding_pattern
+                    && self.recover_reserved_parameter_as_statement_tail_allowed
+                {
+                    self.reserved_parameter_yielded_to_statement = true;
+                    break;
+                }
                 self.next_token();
                 continue;
             }
@@ -313,9 +323,6 @@ impl ParserState {
             // Later reserved words in an array binding should stay on the
             // structural recovery path instead of surfacing a reserved-word
             // identifier diagnostic that tsc does not emit here.
-            let in_parameter_binding_pattern = (self.context_flags
-                & crate::parser::state::CONTEXT_FLAG_PARAMETER_BINDING_PATTERN)
-                != 0;
             let hard_reserved_word = self.is_reserved_word();
             let parameter_future_reserved_word =
                 in_parameter_binding_pattern && self.is_strict_mode_future_reserved_word();
@@ -1557,6 +1564,10 @@ impl ParserState {
             if prop.is_some() {
                 properties.push(prop);
             }
+            if self.abort_object_literal_recovery_once {
+                self.abort_object_literal_recovery_once = false;
+                break;
+            }
 
             // Try to parse comma separator
             if !self.parse_optional(SyntaxKind::CommaToken) {
@@ -2445,20 +2456,11 @@ impl ParserState {
                     diagnostic_messages::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                     diagnostic_codes::UNEXPECTED_KEYWORD_OR_IDENTIFIER,
                 );
-                self.next_token();
             }
-            if self.is_token(SyntaxKind::OpenBraceToken) {
-                let block = self.parse_block();
-                if self.is_token(SyntaxKind::CloseBraceToken) {
-                    self.parse_error_at_current_token(
-                        diagnostic_messages::DECLARATION_OR_STATEMENT_EXPECTED,
-                        diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED,
-                    );
-                }
-                block
-            } else {
-                NodeIndex::NONE
-            }
+            self.abort_object_literal_recovery_once = true;
+            self.pop_label_scope();
+            self.context_flags = saved_flags;
+            return NodeIndex::NONE;
         } else {
             // tsc emits TS1005 "'{' expected." when an object method body is missing
             use tsz_common::diagnostics::diagnostic_codes;
