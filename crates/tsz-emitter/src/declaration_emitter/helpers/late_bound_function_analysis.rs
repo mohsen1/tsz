@@ -564,10 +564,40 @@ impl<'a> DeclarationEmitter<'a> {
                     existing.property_name_text == member.property_name_text
                 })
         {
-            *existing = member;
+            if let Some(type_text) = Self::late_bound_repeated_object_assignment_union_type_text(
+                &existing.type_text,
+                &member.type_text,
+            ) {
+                existing.type_text = type_text;
+            } else {
+                *existing = member;
+            }
         } else {
             members.push(member);
         }
+    }
+
+    fn late_bound_repeated_object_assignment_union_type_text(
+        existing_type_text: &str,
+        next_type_text: &str,
+    ) -> Option<String> {
+        let mut arms = Self::split_top_level_union_type_parts(existing_type_text);
+        arms.push(next_type_text.trim().to_string());
+        if arms.len() < 2
+            || !arms
+                .iter()
+                .all(|arm| Self::is_object_literal_type_text(arm))
+        {
+            return None;
+        }
+
+        Self::expand_object_union_arms_from_sibling_properties(&mut arms);
+        Some(arms.join(" | "))
+    }
+
+    fn is_object_literal_type_text(type_text: &str) -> bool {
+        let trimmed = type_text.trim();
+        trimmed.starts_with('{') && trimmed.ends_with('}')
     }
 
     fn declared_late_bound_namespace_member_names(&self, root_name: &str) -> FxHashSet<String> {
@@ -666,12 +696,31 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_node_symbol(root_name_idx)
                 .or_else(|| binder.file_locals.get(&root_name))
         });
+        let mut members = Vec::new();
+        let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
+        if let Some(scope_idx) = self.containing_module_block_scope(root_name_idx) {
+            self.collect_late_bound_assignment_members_from_node(
+                scope_idx,
+                &root_name,
+                root_symbol,
+                &declared_members,
+                &mut members,
+            );
+            if members.is_empty() && root_symbol.is_some() {
+                self.collect_late_bound_assignment_members_from_node(
+                    scope_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut members,
+                );
+            }
+            return members;
+        }
+
         let Some(source_file) = self.arena.source_files.first() else {
             return Vec::new();
         };
-
-        let mut members = Vec::new();
-        let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         for &stmt_idx in &source_file.statements.nodes {
             if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
                 continue;
@@ -684,7 +733,119 @@ impl<'a> DeclarationEmitter<'a> {
                 &mut members,
             );
         }
+        if members.is_empty() && root_symbol.is_some() {
+            for &stmt_idx in &source_file.statements.nodes {
+                if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
+                    continue;
+                }
+                self.collect_late_bound_assignment_members_from_node(
+                    stmt_idx,
+                    &root_name,
+                    None,
+                    &declared_members,
+                    &mut members,
+                );
+            }
+        }
 
+        members
+    }
+
+    fn containing_module_block_scope(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
+        let mut current = node_idx;
+        while let Some(parent_idx) = self.arena.parent_of(current) {
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                break;
+            };
+            if parent_node.kind == syntax_kind_ext::MODULE_BLOCK {
+                return Some(parent_idx);
+            }
+            current = parent_idx;
+        }
+        None
+    }
+
+    pub(in crate::declaration_emitter) fn returned_late_bound_function_typeof_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        if !self.inside_non_ambient_namespace {
+            return None;
+        }
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        let name = self.get_identifier_text(returned_identifier)?;
+        if !self.returned_identifier_resolves_to_function_declaration(returned_identifier)
+            && !self.containing_module_block_has_function_declaration(returned_identifier, &name)
+        {
+            return None;
+        }
+        Some(format!("typeof {name}"))
+    }
+
+    fn returned_identifier_resolves_to_function_declaration(
+        &self,
+        identifier_idx: NodeIndex,
+    ) -> bool {
+        let Some(sym_id) = self.value_reference_symbol(identifier_idx) else {
+            return false;
+        };
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.declarations.iter().copied().any(|decl_idx| {
+            self.function_declaration_from_symbol_decl(decl_idx)
+                .is_some()
+        })
+    }
+
+    fn containing_module_block_has_function_declaration(
+        &self,
+        node_idx: NodeIndex,
+        name: &str,
+    ) -> bool {
+        let Some(scope_idx) = self.containing_module_block_scope(node_idx) else {
+            return false;
+        };
+        let Some(scope_node) = self.arena.get(scope_idx) else {
+            return false;
+        };
+        let Some(module_block) = self.arena.get_module_block(scope_node) else {
+            return false;
+        };
+        let Some(statements) = module_block.statements.as_ref() else {
+            return false;
+        };
+        statements.nodes.iter().copied().any(|stmt_idx| {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                return false;
+            };
+            let Some(func) = self.arena.get_function(stmt_node) else {
+                return false;
+            };
+            self.get_identifier_text(func.name).as_deref() == Some(name)
+        })
+    }
+
+    pub(in crate::declaration_emitter) fn collect_late_bound_assignment_members_in_node(
+        &self,
+        root_name_idx: NodeIndex,
+        scope_idx: NodeIndex,
+    ) -> Vec<LateBoundAssignmentMember> {
+        let Some(root_name) = self.get_identifier_text(root_name_idx) else {
+            return Vec::new();
+        };
+        let declared_members = FxHashSet::default();
+        let mut members = Vec::new();
+        self.collect_late_bound_assignment_members_from_node(
+            scope_idx,
+            &root_name,
+            None,
+            &declared_members,
+            &mut members,
+        );
         members
     }
 

@@ -5,6 +5,7 @@ use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -129,6 +130,12 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.preferred_expression_type_text(node_id)
             }
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .declaration_summary_primitive_expression_type_text(node_id, depth)
+                .or_else(|| self.preferred_expression_type_text(node_id)),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .declaration_summary_primitive_expression_type_text(node_id, depth)
+                .or_else(|| self.preferred_expression_type_text(node_id)),
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
                 self.infer_object_literal_type_text_at(node_id, depth)
             }
@@ -205,12 +212,513 @@ impl<'a> DeclarationEmitter<'a> {
         node_id: NodeIndex,
         depth: u32,
     ) -> Option<String> {
+        if let Some(text) = self.declaration_summary_primitive_expression_type_text(node_id, depth)
+        {
+            return Some(text);
+        }
         // Try preferred expression first (finds declared types)
-        if let Some(text) = self.preferred_expression_type_text(node_id) {
+        if let Some(text) = self
+            .preferred_expression_type_text(node_id)
+            .filter(|text| text != "any")
+        {
             return Some(text);
         }
         // Then try structural fallback
         self.infer_fallback_type_text_at(node_id, depth)
+    }
+
+    pub(in crate::declaration_emitter) fn declaration_summary_primitive_expression_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        match expr_node.kind {
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => self
+                .short_circuit_expression_type_text(expr_idx)
+                .or_else(|| self.infer_arithmetic_binary_type_text(expr_idx, depth + 1)),
+            k if k == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION => self
+                .late_bound_property_access_type_text(expr_idx)
+                .or_else(|| {
+                    self.value_reference_symbol_type_text(expr_idx)
+                        .filter(|text| text != "any" && text != "unknown")
+                })
+                .or_else(|| {
+                    self.this_property_constructor_assignment_type_text(expr_idx, depth + 1)
+                })
+                .or_else(|| self.namespace_property_access_type_text(expr_idx, depth + 1))
+                .or_else(|| self.length_property_access_type_text(expr_idx, depth + 1))
+                .or_else(|| self.class_instance_property_access_type_text(expr_idx)),
+            k if k == syntax_kind_ext::CALL_EXPRESSION => self
+                .late_bound_call_return_type_text(expr_idx)
+                .or_else(|| self.well_known_method_call_return_type_text(expr_idx))
+                .or_else(|| self.direct_call_primitive_return_type_text(expr_idx, depth + 1))
+                .or_else(|| self.call_expression_source_return_type_text(expr_idx))
+                .or_else(|| {
+                    self.get_node_type_or_names(&[expr_idx])
+                        .filter(|type_id| {
+                            !matches!(
+                                *type_id,
+                                tsz_solver::types::TypeId::ANY
+                                    | tsz_solver::types::TypeId::UNKNOWN
+                                    | tsz_solver::types::TypeId::ERROR
+                            )
+                        })
+                        .map(|type_id| self.print_type_id(type_id))
+                }),
+            k if k == syntax_kind_ext::NEW_EXPRESSION => {
+                self.nameable_new_expression_type_text(expr_idx)
+            }
+            _ => None,
+        }
+    }
+
+    fn length_property_access_type_text(&self, expr_idx: NodeIndex, depth: u32) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("length") {
+            return None;
+        }
+        let receiver_type =
+            self.declaration_summary_primitive_expression_type_text(access.expression, depth)?;
+        matches!(receiver_type.as_str(), "string" | "any[]")
+            .then(|| "number".to_string())
+            .or_else(|| receiver_type.ends_with("[]").then(|| "number".to_string()))
+    }
+
+    fn class_instance_property_access_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        let receiver = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.expression);
+        let class_idx = self
+            .js_new_expression_class_declaration(receiver)
+            .or_else(|| self.class_expression_declaration_for_new_expression(receiver))?;
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+
+        for &member_idx in &class.members.nodes {
+            let Some(info) = self.class_member_info(member_idx) else {
+                continue;
+            };
+            if info.is_static {
+                continue;
+            }
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            let Some(prop) = self.arena.get_property_decl(member_node) else {
+                continue;
+            };
+            if self.get_identifier_text(prop.name).as_deref() != Some(property_name.as_str()) {
+                continue;
+            }
+            if prop.type_annotation.is_some() {
+                return self.emit_type_node_text(prop.type_annotation);
+            }
+            if prop.initializer.is_some() {
+                return self
+                    .declaration_summary_primitive_expression_type_text(prop.initializer, 0)
+                    .or_else(|| self.infer_fallback_type_text_at(prop.initializer, 0))
+                    .or_else(|| {
+                        self.get_node_type_or_names(&[member_idx, prop.name])
+                            .filter(|type_id| {
+                                !matches!(
+                                    *type_id,
+                                    tsz_solver::types::TypeId::ANY
+                                        | tsz_solver::types::TypeId::UNKNOWN
+                                        | tsz_solver::types::TypeId::ERROR
+                                )
+                            })
+                            .map(|type_id| self.print_type_id(type_id))
+                    });
+            }
+        }
+        None
+    }
+
+    fn class_expression_declaration_for_new_expression(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::NEW_EXPRESSION {
+            return None;
+        }
+        let new_expr = self.arena.get_call_expr(expr_node)?;
+        let callee_node = self.arena.get(new_expr.expression)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(new_expr.expression)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let decl_idx = self.variable_declaration_from_symbol_decl(decl_idx)?;
+            let decl_node = self.arena.get(decl_idx)?;
+            let decl = self.arena.get_variable_declaration(decl_node)?;
+            let initializer = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(decl.initializer);
+            let init_node = self.arena.get(initializer)?;
+            if init_node.kind == syntax_kind_ext::CLASS_EXPRESSION {
+                return Some(initializer);
+            }
+        }
+        None
+    }
+
+    fn this_property_constructor_assignment_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_node = self.arena.get(expr_idx)?;
+        let access = self.arena.get_access_expr(expr_node)?;
+        if self
+            .arena
+            .get(access.expression)
+            .is_none_or(|receiver| receiver.kind != SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        let class_idx = self.enclosing_class_for_node(expr_idx)?;
+        let class_node = self.arena.get(class_idx)?;
+        let class = self.arena.get_class(class_node)?;
+        let constructor_idx = class.members.nodes.iter().copied().find(|member_idx| {
+            self.arena
+                .get(*member_idx)
+                .is_some_and(|member| member.kind == syntax_kind_ext::CONSTRUCTOR)
+        })?;
+        let constructor_node = self.arena.get(constructor_idx)?;
+        let constructor = self.arena.get_constructor(constructor_node)?;
+        let body_node = self.arena.get(constructor.body)?;
+        let body = self.arena.get_block(body_node)?;
+
+        for &stmt_idx in &body.statements.nodes {
+            let Some((name_idx, rhs_idx)) = self.js_this_property_assignment(stmt_idx) else {
+                continue;
+            };
+            if self.get_identifier_text(name_idx).as_deref() != Some(property_name.as_str()) {
+                continue;
+            }
+            return self
+                .jsdoc_type_text_for_node(stmt_idx)
+                .or_else(|| {
+                    if self.js_constructor_assignment_rhs_is_jsdoc_null_parameter(
+                        rhs_idx,
+                        &constructor.parameters,
+                    ) {
+                        Some("any".to_string())
+                    } else {
+                        None
+                    }
+                })
+                .or_else(|| self.anonymous_module_exports_class_new_expression_type_text(rhs_idx))
+                .or_else(|| {
+                    self.get_node_type_or_names(&[rhs_idx])
+                        .filter(|type_id| {
+                            !matches!(
+                                *type_id,
+                                tsz_solver::types::TypeId::ANY
+                                    | tsz_solver::types::TypeId::UNKNOWN
+                                    | tsz_solver::types::TypeId::ERROR
+                            )
+                        })
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+                .or_else(|| {
+                    self.js_constructor_assignment_expression_type_text(
+                        rhs_idx,
+                        &constructor.parameters,
+                        depth + 1,
+                    )
+                })
+                .or_else(|| self.infer_fallback_type_text_at(rhs_idx, depth + 1))
+                .or_else(|| self.allowlisted_initializer_type_text(rhs_idx))
+                .or_else(|| self.js_namespace_value_member_type_text(rhs_idx));
+        }
+        None
+    }
+
+    fn late_bound_property_access_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let (root_idx, path) = self.property_access_root_idx_and_path(expr_idx)?;
+        let first = path.first()?;
+        let member_type = self
+            .collect_ts_late_bound_assignment_members(root_idx)
+            .into_iter()
+            .find(|member| member.property_name_text == *first)
+            .map(|member| member.type_text)?;
+
+        Self::nested_object_property_type_text(member_type, &path[1..])
+    }
+
+    fn namespace_property_access_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let (root_idx, path) = self.property_access_root_idx_and_path(expr_idx)?;
+        if path.len() != 1 {
+            return None;
+        }
+        let root_name = self.get_identifier_text(root_idx)?;
+        let property_name = path.first()?;
+        let source_file = self.arena.source_files.first()?;
+
+        for &stmt_idx in &source_file.statements.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            if stmt_node.kind != syntax_kind_ext::MODULE_DECLARATION {
+                continue;
+            }
+            let Some(module) = self.arena.get_module(stmt_node) else {
+                continue;
+            };
+            if self.get_identifier_text(module.name).as_deref() != Some(root_name.as_str()) {
+                continue;
+            }
+            if let Some(type_text) =
+                self.namespace_value_member_type_text(module.body, property_name, 0)
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn namespace_value_member_type_text(
+        &self,
+        node_idx: NodeIndex,
+        member_name: &str,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let node = self.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::FUNCTION_DECLARATION
+            || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+            || node.kind == syntax_kind_ext::ARROW_FUNCTION
+            || node.kind == syntax_kind_ext::CLASS_DECLARATION
+            || node.kind == syntax_kind_ext::CLASS_EXPRESSION
+            || node.kind == syntax_kind_ext::MODULE_DECLARATION
+        {
+            return None;
+        }
+
+        if let Some(var_decl) = self.arena.get_variable_declaration(node)
+            && self.get_identifier_text(var_decl.name).as_deref() == Some(member_name)
+        {
+            if var_decl.type_annotation.is_some() {
+                return self.emit_type_node_text(var_decl.type_annotation);
+            }
+            if var_decl.initializer.is_some() {
+                return self
+                    .declaration_summary_primitive_expression_type_text(
+                        var_decl.initializer,
+                        depth + 1,
+                    )
+                    .or_else(|| self.infer_fallback_type_text_at(var_decl.initializer, depth + 1))
+                    .or_else(|| self.js_namespace_value_member_type_text(var_decl.initializer));
+            }
+            return self
+                .get_node_type_or_names(&[node_idx, var_decl.name])
+                .filter(|type_id| {
+                    !matches!(
+                        *type_id,
+                        tsz_solver::types::TypeId::ANY
+                            | tsz_solver::types::TypeId::UNKNOWN
+                            | tsz_solver::types::TypeId::ERROR
+                    )
+                })
+                .map(|type_id| self.print_type_id(type_id));
+        }
+
+        for child_idx in self.arena.get_children(node_idx) {
+            if let Some(type_text) =
+                self.namespace_value_member_type_text(child_idx, member_name, depth + 1)
+            {
+                return Some(type_text);
+            }
+        }
+        None
+    }
+
+    fn late_bound_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_type = self.late_bound_property_access_type_text(call.expression)?;
+        Self::function_type_return_type_text(&callee_type)
+    }
+
+    fn well_known_method_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_node = self.arena.get(call.expression)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        match self.get_identifier_text(access.name_or_argument)?.as_str() {
+            "toString" => Some("string".to_string()),
+            _ => None,
+        }
+    }
+
+    fn direct_call_primitive_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        if depth > 8 {
+            return None;
+        }
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(call.expression);
+        let callee_node = self.arena.get(callee)?;
+        if callee_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let sym_id = self.value_reference_symbol(callee)?;
+        let binder = self.binder?;
+        let symbol = binder.symbols.get(sym_id)?;
+
+        let mut found = None;
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(func) = self.callable_function_from_symbol_decl(self.arena, decl_idx) else {
+                continue;
+            };
+            let type_text = if func.type_annotation.is_some() {
+                self.emit_type_node_text(func.type_annotation)
+            } else if func.body.is_some() {
+                self.function_body_single_return_expression(func.body)
+                    .and_then(|return_expr| {
+                        self.declaration_summary_primitive_expression_type_text(
+                            return_expr,
+                            depth + 1,
+                        )
+                        .or_else(|| self.infer_fallback_type_text_at(return_expr, depth + 1))
+                    })
+                    .or_else(|| self.function_body_preferred_return_type_text(func.body))
+            } else {
+                None
+            };
+            let Some(type_text) = type_text.filter(|text| !text.is_empty() && text != "any") else {
+                continue;
+            };
+            if found.replace(type_text).is_some() {
+                return None;
+            }
+        }
+        found
+    }
+
+    fn property_access_root_idx_and_path(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<(NodeIndex, Vec<String>)> {
+        let expr_idx = self.skip_parenthesized_expression(expr_idx)?;
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == SyntaxKind::Identifier as u16 {
+            return Some((expr_idx, Vec::new()));
+        }
+        if expr_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+
+        let access = self.arena.get_access_expr(expr_node)?;
+        let (root_idx, mut path) = self.property_access_root_idx_and_path(access.expression)?;
+        path.push(self.get_identifier_text(access.name_or_argument)?);
+        Some((root_idx, path))
+    }
+
+    fn nested_object_property_type_text(type_text: String, path: &[String]) -> Option<String> {
+        let mut current = type_text;
+        for property in path {
+            current = Self::object_union_property_type_text(&current, property)?;
+        }
+        Some(current)
+    }
+
+    fn object_union_property_type_text(type_text: &str, property: &str) -> Option<String> {
+        let mut parts = Vec::new();
+        for arm in Self::split_top_level_union_type_parts(type_text) {
+            for line in arm.lines() {
+                let Some(name) = Self::object_type_property_name_from_line(line) else {
+                    continue;
+                };
+                if name != property {
+                    continue;
+                }
+                let Some(value_type) = Self::object_literal_property_value_type(line) else {
+                    continue;
+                };
+                let value_type = value_type.trim();
+                if !parts.iter().any(|existing: &String| existing == value_type) {
+                    parts.push(value_type.to_string());
+                }
+            }
+        }
+        (!parts.is_empty()).then(|| parts.join(" | "))
+    }
+
+    fn function_type_return_type_text(type_text: &str) -> Option<String> {
+        let arrow = Self::top_level_arrow_index(type_text)?;
+        let return_type = type_text.get(arrow + 2..)?.trim();
+        (!return_type.is_empty()).then(|| return_type.to_string())
+    }
+
+    fn top_level_arrow_index(type_text: &str) -> Option<usize> {
+        let mut paren_depth = 0u32;
+        let mut bracket_depth = 0u32;
+        let mut brace_depth = 0u32;
+        let mut angle_depth = 0u32;
+        let bytes = type_text.as_bytes();
+        let mut idx = 0usize;
+        while idx + 1 < bytes.len() {
+            match bytes[idx] {
+                b'=' if bytes[idx + 1] == b'>'
+                    && paren_depth == 0
+                    && bracket_depth == 0
+                    && brace_depth == 0
+                    && angle_depth == 0 =>
+                {
+                    return Some(idx);
+                }
+                b'(' => paren_depth += 1,
+                b')' => paren_depth = paren_depth.saturating_sub(1),
+                b'[' => bracket_depth += 1,
+                b']' => bracket_depth = bracket_depth.saturating_sub(1),
+                b'{' => brace_depth += 1,
+                b'}' => brace_depth = brace_depth.saturating_sub(1),
+                b'<' => angle_depth += 1,
+                b'>' => angle_depth = angle_depth.saturating_sub(1),
+                _ => {}
+            }
+            idx += 1;
+        }
+        None
     }
 
     pub(crate) fn preferred_expression_type_text(&self, expr_idx: NodeIndex) -> Option<String> {

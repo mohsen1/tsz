@@ -838,6 +838,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.returned_late_bound_function_typeof_text(func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = preferred_return.as_ref()
             && direct_function_return
         {
@@ -866,6 +873,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if func_body.is_some()
             && self.emit_js_returned_define_property_function_type(func_body)
         {
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.returned_late_bound_function_typeof_text(func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             // No explicit return type, try to infer it from the type cache
             let func_type_id = cache
@@ -889,6 +903,13 @@ impl<'a> DeclarationEmitter<'a> {
                         && self.body_returns_void(func_body)
                     {
                         self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| self.returned_late_bound_function_typeof_text(func_body))
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| {
@@ -1706,6 +1727,13 @@ impl<'a> DeclarationEmitter<'a> {
         } else if let Some(return_type_text) = self.jsdoc_return_type_text_for_node(func_idx) {
             self.write(": ");
             self.write(&return_type_text);
+        } else if let Some(type_text) = func_body
+            .is_some()
+            .then(|| self.returned_late_bound_function_typeof_text(func_body))
+            .flatten()
+        {
+            self.write(": ");
+            self.write(&type_text);
         } else if let Some(type_text) = preferred_return.as_ref()
             && direct_function_return
         {
@@ -1757,6 +1785,13 @@ impl<'a> DeclarationEmitter<'a> {
                         && self.body_returns_void(func_body)
                     {
                         self.write(": void");
+                    } else if let Some(type_text) = func_body
+                        .is_some()
+                        .then(|| self.returned_late_bound_function_typeof_text(func_body))
+                        .flatten()
+                    {
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some(type_text) = func_body
                         .is_some()
                         .then(|| {

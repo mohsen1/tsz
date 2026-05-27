@@ -27,6 +27,13 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
+        if let Some(return_expr) = self.function_body_single_return_expression(body_idx)
+            && let Some(type_text) = self
+                .declaration_summary_primitive_expression_type_text(return_expr, 0)
+                .filter(|text| !text.is_empty() && text != "any")
+        {
+            return Some(type_text);
+        }
         let mut preferred = None;
         if self.collect_unique_return_type_text_from_block(&block.statements, &mut preferred) {
             preferred
@@ -46,6 +53,15 @@ impl<'a> DeclarationEmitter<'a> {
             .single_line_mapped_type_annotation_text(type_annotation)
             .or_else(|| self.function_parameter_type_text(func, returned_identifier))?;
         (!type_text.trim().is_empty()).then_some(type_text)
+    }
+
+    pub(in crate::declaration_emitter) fn function_body_local_function_expando_return_type_text(
+        &self,
+        body_idx: NodeIndex,
+    ) -> Option<String> {
+        let returned_identifier = self.function_body_unique_return_identifier(body_idx)?;
+        self.local_variable_function_expando_type_text(returned_identifier)
+            .filter(|text| !text.is_empty())
     }
 
     fn function_parameter_type_annotation(
@@ -1213,6 +1229,11 @@ impl<'a> DeclarationEmitter<'a> {
                     text
                 } else if let Some(text) = self
                     .local_variable_source_indexed_initializer_type_text(ret.expression, stmt_idx)
+                    .filter(|text| !text.is_empty())
+                {
+                    text
+                } else if let Some(text) = self
+                    .local_variable_function_expando_type_text(ret.expression)
                     .filter(|text| !text.is_empty())
                 {
                     text
