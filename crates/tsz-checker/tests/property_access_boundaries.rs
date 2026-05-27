@@ -219,6 +219,8 @@ fn checker_property_access_has_no_ast_interface_recovery_backstop() {
         "resolve_heritage_sym_in_arena",
         "find_named_member_in_iface_decl",
         "resolve_cross_file_type_arg",
+        "AST-recovery",
+        "AST heritage recovery",
     ] {
         assert!(
             !source.contains(retired_helper),
