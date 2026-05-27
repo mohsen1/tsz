@@ -181,6 +181,9 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_check_relation_routing_arch_tests.rs"]
+mod index_signature_check_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
