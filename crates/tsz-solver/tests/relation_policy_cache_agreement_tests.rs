@@ -120,8 +120,8 @@ fn assignability_cache_strict_function_types_matches_uncached_function_variance(
         TypeId::VOID,
     ));
 
-    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES);
-    let loose_policy = RelationPolicy::from_flags(0);
+    let strict_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let loose_policy = RelationPolicy::unflagged_compatibility();
 
     let strict_uncached = query_relation(
         &interner,
@@ -185,8 +185,8 @@ fn subtype_cache_allow_void_return_matches_uncached_function_return_policy() {
     let source = interner.function(FunctionShape::new(vec![], TypeId::STRING));
     let target = interner.function(FunctionShape::new(vec![], TypeId::VOID));
 
-    let strict_policy = RelationPolicy::from_flags(0);
-    let allow_void_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_ALLOW_VOID_RETURN);
+    let strict_policy = RelationPolicy::unflagged_compatibility();
+    let allow_void_policy = RelationPolicy::from_relation_flags(RelationFlags::ALLOW_VOID_RETURN);
 
     let strict_uncached = query_relation(
         &interner,
@@ -251,10 +251,9 @@ fn assignability_cache_exact_optional_matches_uncached_property_policy() {
     let source = interner.object(vec![PropertyInfo::new(x, TypeId::UNDEFINED)]);
     let target = interner.object(vec![PropertyInfo::opt(x, TypeId::NUMBER)]);
 
-    let inexact_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let exact_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+    let inexact_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let exact_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES,
     );
 
     let inexact_uncached = query_relation(
@@ -320,7 +319,7 @@ fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
     let source = interner.object(vec![PropertyInfo::readonly(x, TypeId::NUMBER)]);
     let target = interner.object(vec![PropertyInfo::new(x, TypeId::NUMBER)]);
 
-    let permissive_policy = RelationPolicy::from_flags(0);
+    let permissive_policy = RelationPolicy::unflagged_compatibility();
     let strict_policy =
         RelationPolicy::from_relation_flags(RelationFlags::STRICT_READONLY_IDENTITY);
 
@@ -487,9 +486,9 @@ fn assignability_cache_strict_subtype_checking_matches_uncached_method_policy() 
     let source = interner.object(vec![PropertyInfo::method(run, dog_method)]);
     let target = interner.object(vec![PropertyInfo::method(run, animal_method)]);
 
-    let ordinary = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+    let ordinary = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES)
         .with_strict_subtype_checking(false);
-    let strict = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
+    let strict = RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES)
         .with_strict_subtype_checking(true);
     let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
     let strict_key = RelationCacheKey::for_assignability(source, target, strict.cache_config());

@@ -690,6 +690,10 @@ name = "inline_conditional_generic_ref_infer_false_branch_tests"
 path = "tests/inline_conditional_generic_ref_infer_false_branch_tests.rs"
 
 [[test]]
+name = "conditional_alias_lib_application_tests"
+path = "tests/conditional_alias_lib_application_tests.rs"
+
+[[test]]
 name = "recursive_conditional_mapped_infer_tests"
 path = "tests/recursive_conditional_mapped_infer_tests.rs"
 
