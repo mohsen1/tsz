@@ -247,6 +247,40 @@ assert.deepEqual(
     (() => {
       const row = validRow({
         category: "generated",
+        generated_by: "scripts/tools/generate-example.mjs",
+      });
+      delete row.repo;
+      delete row.repo_env;
+      delete row.ref;
+      delete row.ref_env;
+      return row;
+    })(),
+    (() => {
+      const row = validRow({
+        name: "wrong-extension-project",
+        label: "Wrong Extension",
+        category: "generated",
+        generated_by: "scripts/bench/generate-example-fixture.js",
+        fixture_dir: "wrong-extension-project",
+      });
+      delete row.repo;
+      delete row.repo_env;
+      delete row.ref;
+      delete row.ref_env;
+      return row;
+    })(),
+  ]),
+  [
+    "example-project: generated_by must point to a scripts/bench/*.mjs generator script",
+    "wrong-extension-project: generated_by must point to a scripts/bench/*.mjs generator script",
+  ],
+);
+
+assert.deepEqual(
+  validate([
+    (() => {
+      const row = validRow({
+        category: "generated",
         generated_by: "scripts/bench/generate-missing-fixture.mjs",
       });
       delete row.repo;
