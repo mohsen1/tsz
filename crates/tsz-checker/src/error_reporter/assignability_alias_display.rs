@@ -4,6 +4,7 @@ use crate::diagnostics::{diagnostic_messages, format_message};
 use crate::query_boundaries::assignability_alias_display as alias_display_queries;
 use crate::state::CheckerState;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
@@ -56,6 +57,50 @@ impl<'a> CheckerState<'a> {
         let declared_type = self.get_type_of_symbol(sym_id);
         crate::query_boundaries::common::is_type_parameter(self.ctx.types, declared_type)
             .then(|| annotation.to_string())
+    }
+
+    fn anchor_is_within_object_literal_member(&self, anchor_idx: NodeIndex) -> bool {
+        let mut current = anchor_idx;
+        let mut guard = 0;
+
+        while current.is_some() {
+            guard += 1;
+            if guard > 256 {
+                break;
+            }
+
+            let Some(node) = self.ctx.arena.get(current) else {
+                break;
+            };
+            let Some(ext) = self.ctx.arena.get_extended(current) else {
+                break;
+            };
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT
+                    || k == syntax_kind_ext::METHOD_DECLARATION
+            ) && let Some(parent_node) = self.ctx.arena.get(ext.parent)
+                && parent_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+            {
+                return true;
+            }
+            if matches!(
+                node.kind,
+                k if k == syntax_kind_ext::VARIABLE_DECLARATION
+                    || k == syntax_kind_ext::PARAMETER
+                    || k == syntax_kind_ext::RETURN_STATEMENT
+                    || k == syntax_kind_ext::BINARY_EXPRESSION
+            ) {
+                break;
+            }
+            if ext.parent.is_none() {
+                break;
+            }
+            current = ext.parent;
+        }
+
+        false
     }
 
     pub(in crate::error_reporter) fn declared_generic_alias_source_display_for_target_display(
@@ -119,7 +164,8 @@ impl<'a> CheckerState<'a> {
             return Some((source_display.to_string(), target_display));
         }
         let source_fact = self.alias_display_source_fact_type(anchor_idx, source);
-        if let Some(expr_idx) = self.assignment_target_expression(anchor_idx)
+        if !self.anchor_is_within_object_literal_member(anchor_idx)
+            && let Some(expr_idx) = self.assignment_target_expression(anchor_idx)
             && let Some(annotation_text) =
                 self.declared_type_annotation_text_for_expression(expr_idx)
             && annotation_text.contains('<')
