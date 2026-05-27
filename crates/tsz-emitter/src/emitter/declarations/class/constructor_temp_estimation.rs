@@ -113,12 +113,94 @@ impl<'a> Printer<'a> {
                             | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
                     ) {
                         self.estimate_destructuring_pattern_temps(left_node, right_is_simple)
+                            + self.estimate_private_destructuring_receiver_temps(binary.left)
                     } else {
                         0
                     }
                 } else {
                     0
                 }
+            }
+            _ => 0,
+        }
+    }
+
+    fn estimate_private_destructuring_receiver_temps(&self, node_idx: NodeIndex) -> usize {
+        if node_idx.is_none() {
+            return 0;
+        }
+        if self.private_destructuring_receiver_needs_temp(node_idx) {
+            return 1;
+        }
+
+        let Some(node) = self.arena.get(node_idx) else {
+            return 0;
+        };
+        match node.kind {
+            kind if kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION => {
+                let Some(paren) = self.arena.get_parenthesized(node) else {
+                    return 0;
+                };
+                self.estimate_private_destructuring_receiver_temps(paren.expression)
+            }
+            kind if kind == syntax_kind_ext::TYPE_ASSERTION
+                || kind == syntax_kind_ext::AS_EXPRESSION
+                || kind == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                let Some(assertion) = self.arena.get_type_assertion(node) else {
+                    return 0;
+                };
+                self.estimate_private_destructuring_receiver_temps(assertion.expression)
+            }
+            kind if kind == syntax_kind_ext::BINARY_EXPRESSION => {
+                let Some(binary) = self.arena.get_binary_expr(node) else {
+                    return 0;
+                };
+                if binary.operator_token == SyntaxKind::EqualsToken as u16 {
+                    self.estimate_private_destructuring_receiver_temps(binary.left)
+                } else {
+                    0
+                }
+            }
+            kind if kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                || kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION =>
+            {
+                let Some(literal) = self.arena.get_literal_expr(node) else {
+                    return 0;
+                };
+                literal
+                    .elements
+                    .nodes
+                    .iter()
+                    .map(|&element| self.estimate_private_destructuring_receiver_temps(element))
+                    .sum()
+            }
+            kind if kind == syntax_kind_ext::OBJECT_BINDING_PATTERN
+                || kind == syntax_kind_ext::ARRAY_BINDING_PATTERN =>
+            {
+                let Some(pattern) = self.arena.get_binding_pattern(node) else {
+                    return 0;
+                };
+                pattern
+                    .elements
+                    .nodes
+                    .iter()
+                    .map(|&element| self.estimate_private_destructuring_receiver_temps(element))
+                    .sum()
+            }
+            kind if kind == syntax_kind_ext::PROPERTY_ASSIGNMENT => {
+                let Some(prop) = self.arena.get_property_assignment(node) else {
+                    return 0;
+                };
+                self.estimate_private_destructuring_receiver_temps(prop.initializer)
+            }
+            kind if kind == syntax_kind_ext::SPREAD_ELEMENT
+                || kind == syntax_kind_ext::SPREAD_ASSIGNMENT =>
+            {
+                let Some(spread) = self.arena.get_spread(node) else {
+                    return 0;
+                };
+                self.estimate_private_destructuring_receiver_temps(spread.expression)
             }
             _ => 0,
         }
