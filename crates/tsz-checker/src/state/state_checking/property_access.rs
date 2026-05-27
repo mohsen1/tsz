@@ -572,6 +572,45 @@ impl<'a> CheckerState<'a> {
         )
     }
 
+    /// Re-resolve property access with the checker's `TypeResolver` so the
+    /// solver's `PropertyAccessEvaluator` can resolve a `Lazy(DefId)` interface
+    /// base (and its members) itself, instead of the cached noop-resolver path
+    /// falling back to `any`.
+    ///
+    /// The sole caller gates this on the cached path having already returned the
+    /// degenerate `any` fallback, so in practice it only rescues that case.
+    fn resolve_property_access_via_resolver(
+        &self,
+        object_type: TypeId,
+        prop_name: &str,
+    ) -> tsz_solver::operations::property::PropertyAccessResult {
+        crate::query_boundaries::property_access::resolve_property_access_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            object_type,
+            prop_name,
+            self.ctx.compiler_options.no_unchecked_indexed_access,
+        )
+    }
+
+    /// Whether a property-access result is a concrete member type fit to replace
+    /// a degenerate `any` fallback: a `Success` whose type is neither `any`, a
+    /// type parameter, nor `this`. Generic/`this`-bearing members are left for
+    /// the instantiation paths instead of being committed here.
+    fn is_concrete_member_success(
+        &self,
+        result: &tsz_solver::operations::property::PropertyAccessResult,
+    ) -> bool {
+        let tsz_solver::operations::property::PropertyAccessResult::Success { type_id, .. } =
+            result
+        else {
+            return false;
+        };
+        *type_id != TypeId::ANY
+            && !crate::query_boundaries::common::contains_type_parameters(self.ctx.types, *type_id)
+            && !crate::query_boundaries::common::contains_this_type(self.ctx.types, *type_id)
+    }
+
     /// Resolve property access using `TypeEnvironment` (includes lib.d.ts types).
     ///
     /// This method creates a `PropertyAccessEvaluator` with the `TypeEnvironment` as the resolver,
@@ -631,14 +670,50 @@ impl<'a> CheckerState<'a> {
                 from_index_signature: false,
                 ..
             }
-        ) && let Some(member_type) =
-            self.recover_lazy_interface_member_type(original_object_type, prop_name)
-        {
-            result = tsz_solver::operations::property::PropertyAccessResult::Success {
-                type_id: member_type,
-                write_type: None,
-                from_index_signature: false,
-            };
+        ) {
+            // The cached noop-resolver path fell back to `any` because it could
+            // not resolve a `Lazy(DefId)` interface base. For a bare `Lazy`
+            // reference re-query through the solver evaluator with the checker's
+            // `TypeResolver`, which resolves the alias and looks up the member
+            // structurally. Generic applications are excluded (the `is_lazy_type`
+            // gate) so their type arguments still flow through the post-query
+            // expansion path below.
+            //
+            // A fully-resolved member replaces the fallback: the result must be a
+            // concrete `Success` whose type is not `any`, a type parameter, or
+            // `this`. That keeps this strictly a rescue of the degenerate `any` —
+            // a still-generic or `this`-bearing member is left for the
+            // post-query/AST-recovery paths that instantiate it.
+            let resolver_result =
+                crate::query_boundaries::common::is_lazy_type(self.ctx.types, original_object_type)
+                    .then(|| {
+                        self.resolve_property_access_via_resolver(original_object_type, prop_name)
+                    });
+            if let Some(solver_result) =
+                resolver_result.filter(|result| self.is_concrete_member_success(result))
+            {
+                result = solver_result;
+            } else if let Some(member_type) =
+                self.recover_lazy_interface_member_type(original_object_type, prop_name)
+            {
+                result = tsz_solver::operations::property::PropertyAccessResult::Success {
+                    type_id: member_type,
+                    write_type: None,
+                    from_index_signature: false,
+                };
+            } else if matches!(
+                resolver_result,
+                Some(
+                    tsz_solver::operations::property::PropertyAccessResult::PropertyNotFound { .. }
+                )
+            ) {
+                // Both the solver (with the checker's `TypeResolver`) and the
+                // AST heritage recovery agree the member is absent on the
+                // resolved interface. Surface that absence instead of masking it
+                // with the noop path's `any`, so a genuinely missing cross-file
+                // member still reports TS2339 (the masking this ratchet targets).
+                result = resolver_result.expect("matched Some above");
+            }
         }
 
         self.resolve_property_access_with_env_post_query(object_type, prop_name, result)
