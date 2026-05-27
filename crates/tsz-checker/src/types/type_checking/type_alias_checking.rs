@@ -226,8 +226,9 @@ impl<'a> CheckerState<'a> {
         let is_generic_self_circular =
             alias_sym_id.is_some_and(|sid| self.type_alias_is_generic_self_circular(sid));
 
-        let variance_annotations_supported =
-            self.check_variance_annotations_supported_for_type_alias(alias);
+        let should_check_variance_annotations = self
+            .check_variance_annotations_supported_for_type_alias(alias)
+            && self.type_alias_has_variance_annotation_to_check(alias.type_parameters.as_ref());
 
         // Check variance annotations match actual usage (TS2636).
         // Resolve the alias body type directly so the solver can compute variance.
@@ -247,7 +248,7 @@ impl<'a> CheckerState<'a> {
             } else {
                 self.get_type_from_type_node(alias.type_node)
             };
-            if variance_annotations_supported {
+            if should_check_variance_annotations {
                 self.check_variance_annotations_with_body(
                     node_idx,
                     &alias.type_parameters,
@@ -598,6 +599,39 @@ impl<'a> CheckerState<'a> {
         }
 
         !emitted_unsupported_variance_diagnostic
+    }
+
+    fn type_alias_has_variance_annotation_to_check(
+        &self,
+        type_parameters: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> bool {
+        let Some(type_params) = type_parameters else {
+            return false;
+        };
+
+        type_params.nodes.iter().copied().any(|param_idx| {
+            let Some(param_node) = self.ctx.arena.get(param_idx) else {
+                return false;
+            };
+            let Some(param) = self.ctx.arena.get_type_parameter(param_node) else {
+                return false;
+            };
+            let Some(modifiers) = &param.modifiers else {
+                return false;
+            };
+
+            let mut declared_in = false;
+            let mut declared_out = false;
+            for modifier_idx in modifiers.nodes.iter().copied() {
+                let Some(modifier_node) = self.ctx.arena.get(modifier_idx) else {
+                    continue;
+                };
+                declared_in |= modifier_node.kind == SyntaxKind::InKeyword as u16;
+                declared_out |= modifier_node.kind == SyntaxKind::OutKeyword as u16;
+            }
+
+            declared_in != declared_out
+        })
     }
 
     fn type_alias_body_supports_variance_annotations(
