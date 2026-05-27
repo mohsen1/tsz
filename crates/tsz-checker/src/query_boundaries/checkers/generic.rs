@@ -1,5 +1,5 @@
-use tsz_solver::construction::TypeDatabase;
-use tsz_solver::{DefinitionStore, TypeId};
+use tsz_solver::construction::{QueryDatabase, TypeDatabase};
+use tsz_solver::{DefinitionStore, TypeId, TypeParamInfo};
 
 pub(crate) use super::super::common::{
     callable_shape_for_type, contains_free_type_parameters, contains_generic_type_parameters,
@@ -215,6 +215,63 @@ pub(crate) fn full_conditional_type_components(
         cond.extends_type,
         cond.true_type,
         cond.false_type,
+    ))
+}
+
+pub(crate) fn application_alias_def_and_args(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(tsz_solver::def::DefId, Vec<TypeId>)> {
+    let (base, args) = application_base_and_args(db, type_id)?;
+    let def_id = lazy_def_id(db, base)?;
+    Some((def_id, args))
+}
+
+pub(crate) fn instantiated_alias_body_has_parameterized_conditional(
+    db: &dyn QueryDatabase,
+    body: TypeId,
+    params: &[TypeParamInfo],
+    args: &[TypeId],
+) -> bool {
+    if params.len() != args.len() {
+        return false;
+    }
+    let type_db = db.as_type_database();
+    let instantiated = crate::query_boundaries::common::instantiate_generic(db, body, params, args);
+    full_conditional_type_components(type_db, instantiated).is_some_and(
+        |(check, extends, true_type, false_type)| {
+            [check, extends, true_type, false_type]
+                .into_iter()
+                .any(|ty| contains_type_parameters(type_db, ty))
+        },
+    )
+}
+
+pub(crate) fn conditional_key_filter_candidates(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<[TypeId; 3]> {
+    let (check_type, _extends_type, true_type, false_type) =
+        full_conditional_type_components(db, type_id)?;
+    Some([check_type, true_type, false_type])
+}
+
+pub(crate) fn instantiate_alias_application_body(
+    db: &dyn QueryDatabase,
+    body: TypeId,
+    params: &[TypeParamInfo],
+    args: &[TypeId],
+) -> Option<TypeId> {
+    if params.len() != args.len() {
+        return None;
+    }
+    let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
+        db.as_type_database(),
+        params,
+        args,
+    );
+    Some(crate::query_boundaries::common::instantiate_type(
+        db, body, &subst,
     ))
 }
 

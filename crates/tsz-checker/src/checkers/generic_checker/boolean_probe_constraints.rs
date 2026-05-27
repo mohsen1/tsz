@@ -26,12 +26,9 @@ impl<'a> CheckerState<'a> {
     }
 
     fn application_alias_body_is_deferred_conditional(&mut self, type_id: TypeId) -> bool {
-        let Some((base, args)) =
-            query::application_base_and_args(self.ctx.types.as_type_database(), type_id)
+        let Some((def_id, args)) =
+            query::application_alias_def_and_args(self.ctx.types.as_type_database(), type_id)
         else {
-            return false;
-        };
-        let Some(def_id) = query::lazy_def_id(self.ctx.types.as_type_database(), base) else {
             return false;
         };
         let body_and_params = self.direct_source_alias_body_for_def(def_id).or_else(|| {
@@ -48,20 +45,11 @@ impl<'a> CheckerState<'a> {
         let Some((body, params)) = body_and_params else {
             return false;
         };
-        if params.len() != args.len() {
-            return false;
-        }
-        let instantiated = crate::query_boundaries::common::instantiate_generic(
+        query::instantiated_alias_body_has_parameterized_conditional(
             self.ctx.types,
             body,
             &params,
             &args,
-        );
-        query::full_conditional_type_components(self.ctx.types.as_type_database(), instantiated)
-            .is_some_and(|(check, extends, true_type, false_type)| {
-                [check, extends, true_type, false_type]
-                    .into_iter()
-                    .any(|ty| query::contains_type_parameters(self.ctx.types, ty))
-            })
+        )
     }
 }

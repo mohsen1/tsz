@@ -440,14 +440,14 @@ impl<'a> CheckerState<'a> {
                 return false;
             }
 
-            if let Some((check_type, _extends_type, true_type, false_type)) =
-                crate::query_boundaries::checkers::generic::full_conditional_type_components(
+            if let Some(candidates) =
+                crate::query_boundaries::checkers::generic::conditional_key_filter_candidates(
                     self.ctx.types.as_type_database(),
                     constraint_type,
                 )
             {
                 let keyof_object = self.ctx.types.factory().keyof(object_type);
-                return [check_type, true_type, false_type]
+                return candidates
                     .into_iter()
                     .filter(|&candidate| candidate != TypeId::NEVER)
                     .any(|candidate| {
@@ -529,13 +529,16 @@ impl<'a> CheckerState<'a> {
             if params.len() != app.args.len() {
                 return false;
             };
-            let subst = crate::query_boundaries::common::TypeSubstitution::from_args(
-                self.ctx.types,
-                &params,
-                &app.args,
-            );
-            let instantiated =
-                crate::query_boundaries::common::instantiate_type(self.ctx.types, body, &subst);
+            let Some(instantiated) =
+                crate::query_boundaries::checkers::generic::instantiate_alias_application_body(
+                    self.ctx.types,
+                    body,
+                    &params,
+                    &app.args,
+                )
+            else {
+                return false;
+            };
             if instantiated == constraint_type {
                 return false;
             }
