@@ -445,6 +445,9 @@ mod property_helpers_tests;
 #[path = "caches/query_cache_statistics_test.rs"]
 mod query_cache_statistics_tests;
 #[cfg(test)]
+#[path = "../tests/relation_bivariant_rest_cache_tests.rs"]
+mod relation_bivariant_rest_cache_tests;
+#[cfg(test)]
 #[path = "../tests/relation_cache_config_tests.rs"]
 mod relation_cache_config_tests;
 #[cfg(test)]
