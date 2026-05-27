@@ -44,8 +44,10 @@ impl<'a> CheckerState<'a> {
             }
             let branch = self.resolve_lazy_type(branch);
             let branch_evaluated = self.evaluate_type_for_assignability(branch);
-            self.diagnostic_relation_boolean_guard(branch, constraint)
-                || self.diagnostic_relation_boolean_guard(branch_evaluated, constraint)
+            self.assign_relation_outcome(branch, constraint).related
+                || self
+                    .assign_relation_outcome(branch_evaluated, constraint)
+                    .related
         })
     }
 
