@@ -34,6 +34,24 @@ fn parse_and_emit_strict_es2015(source: &str, file_name: &str) -> String {
     printer.get_output().to_string()
 }
 
+fn parse_and_emit_nodenext_cjs_es2015(source: &str, file_name: &str) -> String {
+    let mut parser = ParserState::new(file_name.to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut printer = EmitterPrinter::with_options(
+        &parser.arena,
+        PrinterOptions {
+            always_strict: true,
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::NodeNext,
+            resolved_node_module_to_cjs: true,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.emit(root);
+    printer.get_output().to_string()
+}
+
 #[test]
 fn expression_statement_arrow_initializer_keeps_trailing_comment_after_semicolon() {
     let output =
@@ -65,6 +83,22 @@ fn hard_reserved_parameter_names_emit_statement_tail_recovery() {
     assert_eq!(
         output.trim_end(),
         "\"use strict\";\nfunction f1() { }\nvar ;\n(function () {\n})( || ( = {}));\n{ }\nfunction f2() { }\nclass {\n}\n{ }\nfunction f3() { }\nfunction () { }\n{ }\nfunction f4() { }\nwhile () { }\nfunction f5() { }\nfor (;;) { }"
+    );
+}
+
+#[test]
+fn invalid_import_attribute_entries_emit_statement_tail_recovery() {
+    let source = r#"export type LocalInterface =
+    & import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface
+    & import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface;
+
+export const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "require"} }).RequireInterface);
+export const b = (null as any as import("pkg", { with: {1234, "resolution-mode": "import"} }).ImportInterface);"#;
+    let output = parse_and_emit_nodenext_cjs_es2015(source, "index.ts");
+
+    assert_eq!(
+        output.trim_end(),
+        "\"use strict\";\nObject.defineProperty(exports, \"__esModule\", { value: true });\nexports.b = exports.a = void 0;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface\n    & import(\"pkg\", { with: { 1234: , \"resolution-mode\": \"import\" } }).ImportInterface;\nexports.a = null;\n1234, \"resolution-mode\";\n\"require\";\nRequireInterface;\n;\nexports.b = null;\n1234, \"resolution-mode\";\n\"import\";\nImportInterface;\n;"
     );
 }
 

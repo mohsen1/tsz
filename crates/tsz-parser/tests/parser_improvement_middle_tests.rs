@@ -1,6 +1,7 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives
 
 use crate::parser::ParserState;
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::{parse_source, parse_source_with_language_version};
 use tsz_common::ScriptTarget;
 use tsz_common::diagnostics::diagnostic_codes;
@@ -581,6 +582,17 @@ const a = (null as any as import("pkg", { with: {1234, "resolution-mode": "requi
         codes.contains(&diagnostic_codes::DECLARATION_OR_STATEMENT_EXPECTED),
         "Expected tail recovery to surface TS1128 diagnostics, got {:?}",
         parser.get_diagnostics()
+    );
+
+    let arena = parser.get_arena();
+    let source_file = arena.get_source_file_at(_root).unwrap();
+    assert!(
+        source_file.statements.nodes.iter().any(|&stmt| {
+            arena
+                .get(stmt)
+                .is_some_and(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+        }),
+        "invalid import-attribute entries should recover as statement tails"
     );
 }
 

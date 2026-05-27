@@ -205,7 +205,6 @@ impl ParserState {
                 self.parse_identifier_name()
             } else {
                 let invalid_key_is_comma = self.is_token(SyntaxKind::CommaToken);
-                let mut semicolon_recovery = None;
                 self.parse_error_at_current_token(
                     diagnostic_messages::IDENTIFIER_OR_STRING_LITERAL_EXPECTED,
                     diagnostic_codes::IDENTIFIER_OR_STRING_LITERAL_EXPECTED,
@@ -216,18 +215,14 @@ impl ParserState {
                     self.next_token();
                     continue;
                 }
-                while !self.is_token(SyntaxKind::CloseBraceToken)
-                    && !self.is_token(SyntaxKind::EndOfFileToken)
-                {
-                    if semicolon_recovery.is_none() && self.is_token(SyntaxKind::ColonToken) {
-                        let start = self.u32_from_usize(self.scanner.get_token_start());
-                        let end = self.u32_from_usize(self.scanner.get_token_end());
-                        semicolon_recovery = Some((start, end - start));
-                    }
-                    self.next_token();
-                }
+                // For non-comma malformed keys (for example
+                // `with: { 1234, "resolution-mode": "require" }`), tsc
+                // abandons the import-type parse and lets the invalid entries
+                // and following qualifier recover as ordinary statements. Keep
+                // the current token in the stream so the outer parser can emit
+                // those statement tails instead of swallowing the whole object.
                 self.abort_intersection_continuation = true;
-                self.report_invalid_import_attribute_tail_recovery(semicolon_recovery);
+                self.import_attribute_tail_recovered = true;
                 aborted_on_invalid_key = true;
                 break;
             };
