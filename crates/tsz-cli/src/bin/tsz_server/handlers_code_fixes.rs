@@ -3922,3 +3922,7 @@ impl Server {
 #[cfg(test)]
 #[path = "handlers_code_fixes_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "handlers_code_fixes_nested_pkg_tests.rs"]
+mod nested_pkg_tests;

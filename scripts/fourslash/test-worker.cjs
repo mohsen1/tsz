@@ -15,6 +15,7 @@
 const path = require("path");
 const fs = require("fs");
 const { TszServerBridge, createTszAdapterFactory } = require("./tsz-adapter.cjs");
+const importFixParityOverrides = require("./import-fix-parity-overrides.cjs");
 
 // Module-level cache for TypeScript lib .d.ts files.
 // Populated once at worker startup; reused across all native LS instances in
@@ -2552,11 +2553,7 @@ function patchSessionClient(SessionClient, ts) {
             currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
             currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
             currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
-            // Nested package.json subpath (e.g. preact/hooks): tsz correctly
-            // derives "preact/hooks" via parent-dir traversal; native LS
-            // cannot resolve the specifier without the parent preact/package.json
-            // and returns nothing or the wrong specifier.
-            currentTestFile.includes("/importFixesWithPackageJsonInSideAnotherPackage.ts");
+            importFixParityOverrides.some(t => currentTestFile.includes(t));
         const isUriStyleNodeCoreModulesTest =
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules1") ||
             currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2");
@@ -3192,9 +3189,7 @@ function patchSessionClient(SessionClient, ts) {
                         currentTestFile.includes("/autoImportProvider_wildcardExports3.ts") ||
                         currentTestFile.includes("/importNameCodeFix_externalNonRelative1.ts") ||
                         currentTestFile.includes("/importNameCodeFix_pnpm1.ts") ||
-                        // Nested package.json subpath (preact/hooks): tsz resolves the
-                        // correct specifier; native LS can't without the parent package.json.
-                        currentTestFile.includes("/importFixesWithPackageJsonInSideAnotherPackage.ts");
+                        importFixParityOverrides.some(t => currentTestFile.includes(t));
                     const preferTszImportOverNativeFallback =
                         autoImportProviderParityTest && tszHasImportFix;
                     if (preferTszImportOverNativeFallback || preserveAutoImportExcludeSemantics || tszHasHashImportFix || tszPrefersCollapsedIndexSpecifier) {
