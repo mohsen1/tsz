@@ -6,6 +6,31 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 impl<'a> CheckerState<'a> {
+    fn missing_name_type_ref_is_bare_scoped_type_parameter(&self, type_idx: NodeIndex) -> bool {
+        let Some(node) = self.ctx.arena.get(type_idx) else {
+            return false;
+        };
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        if type_ref
+            .type_arguments
+            .as_ref()
+            .is_some_and(|args| !args.nodes.is_empty())
+        {
+            return false;
+        }
+        let Some(name_node) = self.ctx.arena.get(type_ref.type_name) else {
+            return false;
+        };
+        let Some(ident) = self.ctx.arena.get_identifier(name_node) else {
+            return false;
+        };
+        self.ctx
+            .type_parameter_scope
+            .contains_key(ident.escaped_text.as_str())
+    }
+
     pub(crate) fn check_async_modifier_on_declaration(
         &mut self,
         modifiers: &Option<tsz_parser::parser::NodeList>,
@@ -396,6 +421,9 @@ impl<'a> CheckerState<'a> {
 
         match node.kind {
             k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                if self.missing_name_type_ref_is_bare_scoped_type_parameter(type_idx) {
+                    return;
+                }
                 if !self.ctx.symbol_resolution_set.is_empty()
                     && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
                     && let Some(sym_id) = self

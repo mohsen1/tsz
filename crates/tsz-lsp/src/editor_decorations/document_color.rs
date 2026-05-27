@@ -25,6 +25,12 @@ pub struct ColorInformation {
     pub color: Color,
 }
 
+/// A textual representation that can replace a color literal.
+#[derive(Clone, Debug)]
+pub struct ColorPresentation {
+    pub label: String,
+}
+
 /// Provider for document colors.
 pub struct DocumentColorProvider<'a> {
     arena: &'a NodeArena,
@@ -75,6 +81,34 @@ impl<'a> DocumentColorProvider<'a> {
         }
 
         colors
+    }
+
+    /// Convert an LSP color value into textual color presentation options.
+    pub fn provide_color_presentations(color: &Color) -> Vec<ColorPresentation> {
+        let ri = (color.red * 255.0).round() as u8;
+        let gi = (color.green * 255.0).round() as u8;
+        let bi = (color.blue * 255.0).round() as u8;
+
+        let mut presentations = vec![ColorPresentation {
+            label: format!("#{ri:02x}{gi:02x}{bi:02x}"),
+        }];
+
+        if (color.alpha - 1.0).abs() > f64::EPSILON {
+            let ai = (color.alpha * 255.0).round() as u8;
+            presentations.push(ColorPresentation {
+                label: format!("#{ri:02x}{gi:02x}{bi:02x}{ai:02x}"),
+            });
+        }
+
+        presentations.push(ColorPresentation {
+            label: if (color.alpha - 1.0).abs() > f64::EPSILON {
+                format!("rgba({ri}, {gi}, {bi}, {:.2})", color.alpha)
+            } else {
+                format!("rgb({ri}, {gi}, {bi})")
+            },
+        });
+
+        presentations
     }
 
     /// Scan text for hex color patterns and add them to the results.

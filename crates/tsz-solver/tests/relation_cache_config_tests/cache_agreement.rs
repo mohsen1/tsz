@@ -15,9 +15,9 @@ fn assignability_cache_strict_function_types_matches_uncached_policy() {
         TypeId::VOID,
     ));
 
-    let legacy_bivariant = RelationPolicy::from_flags(0);
+    let legacy_bivariant = RelationPolicy::unflagged_compatibility();
     let strict_contravariant =
-        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES);
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
     let legacy_key =
         RelationCacheKey::for_assignability(source, target, legacy_bivariant.cache_config());
     let strict_key =
@@ -491,8 +491,8 @@ fn subtype_cache_top_level_only_any_mode_matches_uncached_policy() {
 fn assignability_policy_flip_matches_uncached_relation_query() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
-    let strict = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let loose = RelationPolicy::from_flags(0);
+    let strict = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let loose = RelationPolicy::unflagged_compatibility();
 
     let strict_uncached = query_relation(
         &interner,
@@ -792,15 +792,15 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_policy() {
         }],
         TypeId::VOID,
     ));
-    let strict_without_rest = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+    let strict_without_rest = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::STRICT_NULL_CHECKS,
     )
     .with_strict_any_propagation(true)
     .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
-    let strict_with_rest = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-            | RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST,
+    let strict_with_rest = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES
+            | RelationFlags::STRICT_NULL_CHECKS
+            | RelationFlags::ALLOW_BIVARIANT_REST,
     )
     .with_strict_any_propagation(true)
     .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
@@ -883,8 +883,8 @@ fn assignability_cache_top_rest_any_rejects_never_source_param() {
         vec![ParamInfo::unnamed(TypeId::NEVER)],
         TypeId::VOID,
     ));
-    let compiler_like_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_STRICT_NULL_CHECKS,
+    let compiler_like_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::STRICT_NULL_CHECKS,
     );
 
     let zero_arg_uncached = query_relation(
@@ -942,9 +942,9 @@ fn assignability_cache_allow_bivariant_param_count_matches_uncached_policy() {
         vec![ParamInfo::unnamed(TypeId::STRING)],
         TypeId::VOID,
     ));
-    let strict_count_policy = RelationPolicy::from_flags(0);
+    let strict_count_policy = RelationPolicy::unflagged_compatibility();
     let bivariant_count_policy =
-        RelationPolicy::from_flags(RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT);
+        RelationPolicy::from_relation_flags(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
 
     let strict_count_uncached = query_relation(
         &interner,
@@ -1024,14 +1024,13 @@ fn assignability_cache_bivariant_param_count_respects_disabled_method_bivariance
     target_shape.is_method = true;
     let target = interner.function(target_shape);
 
-    let bivariant_method_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT,
+    let bivariant_method_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT,
     );
-    let disabled_method_policy = RelationPolicy::from_flags(
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-            | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT
-            | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE,
+    let disabled_method_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES
+            | RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT
+            | RelationFlags::DISABLE_METHOD_BIVARIANCE,
     );
 
     let bivariant_method_uncached = query_relation(

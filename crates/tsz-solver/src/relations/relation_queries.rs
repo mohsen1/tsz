@@ -12,9 +12,7 @@ use crate::relations::compat::{
     AssignabilityOverrideProvider, CompatChecker, NoopOverrideProvider,
 };
 use crate::relations::subtype::{AnyPropagationMode, NoopResolver, SubtypeChecker, TypeResolver};
-use crate::types::{
-    CachedAnyMode, RelationCacheConfig, RelationCacheKey, RelationFlags, SymbolRef, TypeId,
-};
+use crate::types::{CachedAnyMode, RelationCacheConfig, RelationFlags, SymbolRef, TypeId};
 
 /// Relation categories supported by the unified query API.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -118,7 +116,7 @@ impl RelationPolicy {
     /// > silently coupled two independent compiler options. See the
     /// > `strict_function_types_does_not_imply_strict_any` regression test.
     pub const fn from_flags(flags: u16) -> Self {
-        let typed_flags = Self::cache_flags_from_packed(flags);
+        let typed_flags = legacy_policy_flags::decode(flags);
         Self::from_relation_flags(typed_flags)
     }
 
@@ -241,8 +239,8 @@ impl RelationPolicy {
     ///
     /// This is the single conversion point from the high-level `RelationPolicy`
     /// bundle to the behavior-complete [`RelationCacheConfig`] used as the
-    /// `config` field of a [`RelationCacheKey`]. Every behavior-affecting field
-    /// on `RelationPolicy` must be reflected here.
+    /// `config` field of a [`crate::types::RelationCacheKey`]. Every
+    /// behavior-affecting field on `RelationPolicy` must be reflected here.
     pub const fn cache_config(self) -> RelationCacheConfig {
         let mut bits = self.flags;
         if self.strict_subtype_checking {
@@ -273,8 +271,18 @@ impl RelationPolicy {
         };
         RelationCacheConfig::new(bits, any_mode)
     }
+}
 
-    const fn cache_flags_from_packed(flags: u16) -> RelationFlags {
+/// Compatibility edge for callers that still receive historical packed `u16`
+/// relation flags.
+///
+/// Keep this module narrow: relation engines and cache keys should consume
+/// typed [`RelationPolicy`](super::RelationPolicy) /
+/// [`RelationFlags`](crate::types::RelationFlags) values after this boundary.
+mod legacy_policy_flags {
+    use crate::types::{RelationCacheKey, RelationFlags};
+
+    pub(super) const fn decode(flags: u16) -> RelationFlags {
         let mut bits = RelationFlags::empty();
         if flags & RelationCacheKey::FLAG_STRICT_NULL_CHECKS != 0 {
             bits = bits.union(RelationFlags::STRICT_NULL_CHECKS);

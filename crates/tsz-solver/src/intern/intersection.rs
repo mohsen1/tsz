@@ -288,6 +288,26 @@ impl TypeInterner {
         // Also check inside union members for constrained type parameters.
         self.merge_same_name_type_params(&mut flat);
 
+        // Re-check length after same-name type-parameter replacement. The merge
+        // may collapse `T & T` where one side carried the constraint.
+        if flat.is_empty() {
+            return TypeId::UNKNOWN;
+        }
+        if flat.len() == 1 {
+            return flat[0];
+        }
+
+        // Intersections made only of type parameters cannot merge concrete
+        // object/callable structure or distribute over unions at declaration
+        // lowering time. Preserve the ordered, deduped form directly.
+        if flat
+            .iter()
+            .all(|&id| matches!(self.lookup(id), Some(TypeData::TypeParameter(_))))
+        {
+            let list_id = self.intern_type_list_from_slice(&flat);
+            return self.intern(TypeData::Intersection(list_id));
+        }
+
         // TS2590: Cross-product union size check for intersections containing unions.
         // When an intersection has union members (e.g., `(A|B) & (C|D) & ...`), the
         // cross-product can grow exponentially.  tsc's checkCrossProductUnion in

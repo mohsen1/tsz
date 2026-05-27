@@ -264,6 +264,41 @@ fn test_project_get_document_colors_hex_literals() {
 }
 
 #[test]
+fn test_project_get_color_presentations_rgb_and_hex() {
+    let presentations = DocumentColorProvider::provide_color_presentations(&Color {
+        red: 0x33 as f64 / 255.0,
+        green: 0x66 as f64 / 255.0,
+        blue: 0x99 as f64 / 255.0,
+        alpha: 1.0,
+    });
+
+    let labels: Vec<&str> = presentations
+        .iter()
+        .map(|presentation| presentation.label.as_str())
+        .collect();
+    assert_eq!(labels, vec!["#336699", "rgb(51, 102, 153)"]);
+}
+
+#[test]
+fn test_project_get_color_presentations_alpha_variants() {
+    let presentations = DocumentColorProvider::provide_color_presentations(&Color {
+        red: 1.0,
+        green: 0.0,
+        blue: 0x80 as f64 / 255.0,
+        alpha: 0x80 as f64 / 255.0,
+    });
+
+    let labels: Vec<&str> = presentations
+        .iter()
+        .map(|presentation| presentation.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        vec!["#ff0080", "#ff008080", "rgba(255, 0, 128, 0.50)"]
+    );
+}
+
+#[test]
 fn test_project_get_linked_editing_ranges_jsx() {
     let mut project = Project::new();
     project.set_file(

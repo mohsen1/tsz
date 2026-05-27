@@ -1,0 +1,1788 @@
+#[test]
+fn test_quickfix_add_missing_import_value_skips_type_only_candidate() {
+    let source = "Foo();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Foo");
+
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'Foo'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let mut candidate =
+        ImportCandidate::named("./foo".to_string(), "Foo".to_string(), "Foo".to_string());
+    candidate.is_type_only = true;
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: vec![candidate],
+        },
+    );
+
+    // No import action should be generated for type-only candidates in value position
+    // (fix_all actions may still appear for code 2304)
+    assert!(
+        !actions.iter().any(|a| a.title.starts_with("Import '")),
+        "should not generate import action for type-only candidate in value position"
+    );
+}
+
+#[test]
+fn test_quickfix_add_missing_import_type_query_uses_value_import() {
+    let source = "type T = typeof Foo;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Foo");
+
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'Foo'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: vec![ImportCandidate::named(
+                "./foo".to_string(),
+                "Foo".to_string(),
+                "Foo".to_string(),
+            )],
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    let updated = apply_text_edits(source, &line_map, edits);
+    assert_eq!(
+        updated,
+        "import { Foo } from \"./foo\";\n\ntype T = typeof Foo;\n"
+    );
+}
+
+#[test]
+fn test_quickfix_add_missing_import_class_extends_uses_value_import() {
+    let source = "class Bar extends Foo {}\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Foo");
+
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'Foo'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: vec![ImportCandidate::named(
+                "./foo".to_string(),
+                "Foo".to_string(),
+                "Foo".to_string(),
+            )],
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    let updated = apply_text_edits(source, &line_map, edits);
+    assert_eq!(
+        updated,
+        "import { Foo } from \"./foo\";\n\nclass Bar extends Foo {}\n"
+    );
+}
+
+#[test]
+fn test_quickfix_add_missing_import_class_implements_uses_import_type() {
+    let source = "class Bar implements Foo {}\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Foo");
+
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'Foo'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: vec![ImportCandidate::named(
+                "./foo".to_string(),
+                "Foo".to_string(),
+                "Foo".to_string(),
+            )],
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    let updated = apply_text_edits(source, &line_map, edits);
+    assert_eq!(
+        updated,
+        "import type { Foo } from \"./foo\";\n\nclass Bar implements Foo {}\n"
+    );
+}
+
+#[test]
+fn test_quickfix_remove_unused_variable_let() {
+    let source = "let x = 1;\nlet y = 2;\nconsole.log(y);\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "x");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'x' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+}
+
+#[test]
+fn test_quickfix_remove_unused_variable_const() {
+    let source = "const unused = 1;\nconst used = 2;\nconsole.log(used);\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+}
+
+#[test]
+fn test_quickfix_remove_unused_function() {
+    let source = "function unused() {}\nfunction used() {}\nused();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    assert_eq!(actions[0].title, "Remove unused declaration 'unused'");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+}
+
+#[test]
+fn test_quickfix_remove_unused_class() {
+    let source = "class Unused {}\nclass Used {}\nnew Used();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'Unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    assert_eq!(actions[0].title, "Remove unused declaration 'Unused'");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+}
+
+// =============================================================================
+// CodeFixRegistry Tests
+// =============================================================================
+
+#[test]
+fn test_codefix_registry_spelling_error_2552() {
+    // Cannot find name '{0}'. Did you mean '{1}'? (2552)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2552);
+    assert!(!fixes.is_empty(), "Should return fixes for error 2552");
+    assert_eq!(fixes[0].0, "spelling");
+    assert_eq!(fixes[0].1, "fixSpelling");
+}
+
+#[test]
+fn test_codefix_registry_spelling_error_2551() {
+    // Property '{0}' does not exist on type '{1}'. Did you mean '{2}'? (2551)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2551);
+    assert!(!fixes.is_empty(), "Should return fixes for error 2551");
+    assert_eq!(fixes[0].0, "spelling");
+    assert_eq!(fixes[0].1, "fixSpelling");
+}
+
+#[test]
+fn test_codefix_registry_import_error_2304() {
+    // Cannot find name '{0}'. (2304)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2304);
+    assert!(!fixes.is_empty(), "Should return fixes for error 2304");
+    let fix_names: Vec<&str> = fixes.iter().map(|f| f.0).collect();
+    assert!(fix_names.contains(&"import"), "Should contain import fix");
+}
+
+#[test]
+fn test_codefix_registry_unused_identifier_6133() {
+    // '{0}' is declared but its value is never read. (6133)
+    let fixes = CodeFixRegistry::fixes_for_error_code(6133);
+    assert!(!fixes.is_empty(), "Should return fixes for error 6133");
+    assert_eq!(fixes[0].0, "unusedIdentifier");
+    assert_eq!(fixes[0].1, "unusedIdentifier_delete");
+}
+
+#[test]
+fn test_codefix_registry_unused_identifier_6196() {
+    // '{0}' is declared but never used. (6196)
+    let fixes = CodeFixRegistry::fixes_for_error_code(6196);
+    assert!(!fixes.is_empty(), "Should return fixes for error 6196");
+    assert_eq!(fixes[0].0, "unusedIdentifier");
+}
+
+#[test]
+fn test_codefix_registry_add_missing_member_2339() {
+    // Property '{0}' does not exist on type '{1}'. (2339)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2339);
+    assert!(!fixes.is_empty(), "Should return fixes for error 2339");
+    let fix_names: Vec<&str> = fixes.iter().map(|f| f.0).collect();
+    assert!(
+        fix_names.contains(&"addMissingMember"),
+        "Should contain addMissingMember fix"
+    );
+}
+
+#[test]
+fn test_codefix_registry_await_in_sync_1308() {
+    // 'await' expressions are only allowed within async functions (1308)
+    let fixes = CodeFixRegistry::fixes_for_error_code(1308);
+    assert!(!fixes.is_empty(), "Should return fixes for error 1308");
+    assert_eq!(fixes[0].0, "fixAwaitInSyncFunction");
+    assert_eq!(fixes[0].1, "fixAwaitInSyncFunction");
+
+    // Also check 1359 variant
+    let fixes_1359 = CodeFixRegistry::fixes_for_error_code(1359);
+    assert!(!fixes_1359.is_empty(), "Should return fixes for error 1359");
+    assert_eq!(fixes_1359[0].0, "fixAwaitInSyncFunction");
+}
+
+#[test]
+fn test_codefix_registry_override_modifier_4114() {
+    // This member cannot have an 'override' modifier (4114)
+    let fixes = CodeFixRegistry::fixes_for_error_code(4114);
+    assert!(!fixes.is_empty(), "Should return fixes for error 4114");
+    assert_eq!(fixes[0].0, "fixOverrideModifier");
+}
+
+#[test]
+fn test_codefix_registry_class_implements_interface_2420() {
+    // Class '{0}' incorrectly implements interface '{1}'. (2420)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2420);
+    assert!(!fixes.is_empty(), "Should return fixes for error 2420");
+    assert_eq!(fixes[0].0, "fixClassIncorrectlyImplementsInterface");
+    assert_eq!(fixes[0].1, "fixClassIncorrectlyImplementsInterface");
+}
+
+#[test]
+fn test_codefix_registry_unreachable_code_7027() {
+    // Unreachable code detected (7027)
+    let fixes = CodeFixRegistry::fixes_for_error_code(7027);
+    assert!(!fixes.is_empty(), "Should return fixes for error 7027");
+    assert_eq!(fixes[0].0, "fixUnreachableCode");
+}
+
+#[test]
+fn test_codefix_registry_unknown_error_returns_empty() {
+    // Unknown error code should return empty
+    let fixes = CodeFixRegistry::fixes_for_error_code(99999);
+    assert!(
+        fixes.is_empty(),
+        "Should return no fixes for unknown error code"
+    );
+}
+
+#[test]
+fn test_codefix_registry_supported_error_codes_not_empty() {
+    let codes = CodeFixRegistry::supported_error_codes();
+    assert!(!codes.is_empty(), "Should return supported error codes");
+    assert!(
+        codes.contains(&2304),
+        "Should contain 2304 (Cannot find name)"
+    );
+    assert!(
+        codes.contains(&2339),
+        "Should contain 2339 (Property does not exist)"
+    );
+    assert!(
+        codes.contains(&6133),
+        "Should contain 6133 (Unused identifier)"
+    );
+    assert!(codes.contains(&2552), "Should contain 2552 (Did you mean)");
+}
+
+#[test]
+fn test_codefix_registry_fix_all_description_present() {
+    // All fixes should have fix_all_description
+    for code in &[2304u32, 2339, 2552, 6133, 1308, 4114, 2420, 7027] {
+        let fixes = CodeFixRegistry::fixes_for_error_code(*code);
+        for (fix_name, fix_id, _desc, fix_all_desc) in &fixes {
+            assert!(
+                !fix_name.is_empty(),
+                "fix_name should not be empty for code {code}"
+            );
+            assert!(
+                !fix_id.is_empty(),
+                "fix_id should not be empty for code {code}"
+            );
+            assert!(
+                !fix_all_desc.is_empty(),
+                "fix_all_description should not be empty for code {code}"
+            );
+        }
+    }
+}
+
+#[test]
+fn test_codefix_registry_strict_class_init_2564() {
+    // Property has no initializer and is not definitely assigned (2564)
+    let fixes = CodeFixRegistry::fixes_for_error_code(2564);
+    assert!(
+        fixes.len() >= 2,
+        "Should return multiple fixes for error 2564"
+    );
+    let fix_names: Vec<&str> = fixes.iter().map(|f| f.0).collect();
+    assert!(fix_names.contains(&"addMissingPropertyDefiniteAssignmentAssertions"));
+    assert!(fix_names.contains(&"addMissingPropertyUndefinedType"));
+}
+
+// =============================================================================
+// Additional Coverage Tests
+// =============================================================================
+
+#[test]
+fn test_extract_variable_call_expression() {
+    // Extract a function call expression
+    let source = "const x = getValue() + 1;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "getValue() + 1");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::RefactorExtract]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::RefactorExtract)
+        .expect("expected extract action");
+    let edit = action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 2);
+    // Declaration should be inserted before the statement
+    assert!(edits[0].new_text.contains("const extracted ="));
+    // Original expression should be replaced with the variable name
+    assert_eq!(edits[1].new_text, "extracted");
+}
+
+#[test]
+fn test_extract_variable_conditional_expression() {
+    // Extract a conditional (ternary) expression
+    let source = "const x = a ? b() : c();";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "a ? b() : c()");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::RefactorExtract]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::RefactorExtract)
+        .expect("expected extract action");
+    let edit = action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 2);
+    assert!(edits[0].new_text.contains("const extracted ="));
+}
+
+#[test]
+fn test_extract_variable_nested_in_function() {
+    // Extract an expression inside a function body
+    let source = "function foo() {\n  const x = a.b + c.d;\n}\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "a.b + c.d");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::RefactorExtract]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::RefactorExtract)
+        .expect("expected extract action");
+    let edit = action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 2);
+    // The declaration should have the same indentation as the inner statement
+    assert!(edits[0].new_text.contains("const extracted = a.b + c.d;"));
+}
+
+#[test]
+fn test_code_actions_empty_file() {
+    // An empty file should produce no code actions for any request
+    let source = "";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        !actions
+            .iter()
+            .any(|a| a.title.starts_with("Extract to constant")),
+        "Empty file should produce no extract variable actions"
+    );
+}
+
+#[test]
+fn test_code_actions_at_file_start() {
+    // Code actions at the very start of the file (offset 0)
+    let source = "import { foo } from \"mod\";\nfoo();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Request at position (0, 0) with empty range (no selection)
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // With no diagnostics and no selection, we may only get organize imports
+    // (if imports are unsorted). For a single import, there's nothing to sort.
+    // The key thing is: no panic at file boundary.
+    for action in &actions {
+        assert!(action.edit.is_some() || action.data.is_some());
+    }
+}
+
+#[test]
+fn test_code_actions_at_file_end() {
+    // Code actions at the very end of the file
+    let source = "const x = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Position at the very end of the file
+    let range = Range::new(Position::new(1, 0), Position::new(1, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // No panic at file end boundary. Actions may or may not exist.
+    let _ = actions;
+}
+
+#[test]
+fn test_quickfix_add_missing_const() {
+    // Trigger add_missing_const_quickfix with error code 2304
+    let source = "x = 42;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "x");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'x'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Should produce an "Add 'const'" quick fix
+    let const_action = actions.iter().find(|a| a.title.contains("const"));
+    assert!(
+        const_action.is_some(),
+        "Should produce an 'Add const' quick fix for 'x = 42'"
+    );
+    let edit = const_action.unwrap().edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "const ");
+}
+
+#[test]
+fn test_quickfix_add_missing_const_skips_existing_declaration() {
+    // Should NOT produce add_missing_const when line already starts with const/let/var
+    let source = "const x = unknownVar;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "unknownVar");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'unknownVar'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // The add_missing_const quickfix should NOT appear because the line starts with "const"
+    let const_action = actions.iter().find(|a| a.title.contains("Add 'const'"));
+    assert!(
+        const_action.is_none(),
+        "Should not produce 'Add const' when line already has a declaration keyword"
+    );
+}
+
+#[test]
+fn test_quickfix_remove_unused_type_alias() {
+    // Test removal of an unused type alias declaration
+    let source = "type Unused = string;\ntype Used = number;\nconst x: Used = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'Unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    assert_eq!(actions[0].title, "Remove unused declaration 'Unused'");
+    let edit = actions[0].edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+}
+
+#[test]
+fn test_quickfix_remove_unused_interface() {
+    // Test removal of an unused interface declaration
+    let source = "interface Unused { x: number; }\nconst y = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "Unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'Unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(!actions.is_empty(), "expected at least one quickfix action");
+    assert_eq!(actions[0].title, "Remove unused declaration 'Unused'");
+}
+
+#[test]
+fn test_multiple_overlapping_diagnostics() {
+    // Multiple diagnostics at the same location should produce multiple quick fixes
+    let source = "import { foo } from \"mod\";\nlet unused = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let import_range = range_for_substring(source, &line_map, "foo");
+    let diag_import = LspDiagnostic {
+        range: import_range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
+        source: None,
+        message: "All imports in import declaration are unused.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let var_range = range_for_substring(source, &line_map, "unused");
+    let diag_var = LspDiagnostic {
+        range: var_range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag_import, diag_var],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Should have at least 2 quick fixes: one for the import, one for the variable
+    assert!(
+        actions.len() >= 2,
+        "Should produce at least 2 quick fixes for 2 diagnostics, got {}",
+        actions.len()
+    );
+
+    let titles: Vec<&str> = actions.iter().map(|a| a.title.as_str()).collect();
+    assert!(
+        titles.iter().any(|t| t.contains("import")),
+        "Should have an import removal action"
+    );
+    assert!(
+        titles.iter().any(|t| t.contains("unused")),
+        "Should have an unused variable removal action"
+    );
+}
+
+#[test]
+fn test_quickfix_add_missing_import_with_type_only_candidate() {
+    // Import a type-only candidate in a type position
+    let source = "const x: MyType = {};\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "MyType");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(CANNOT_FIND_NAME),
+        source: None,
+        message: "Cannot find name 'MyType'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let mut candidate = ImportCandidate::named(
+        "./types".to_string(),
+        "MyType".to_string(),
+        "MyType".to_string(),
+    );
+    candidate.is_type_only = true;
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: vec![candidate],
+        },
+    );
+
+    // Should produce an import action for MyType
+    let import_action = actions.iter().find(|a| a.title.contains("MyType"));
+    assert!(
+        import_action.is_some(),
+        "Should produce an import action for MyType"
+    );
+    let edit = import_action.unwrap().edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert!(!edits.is_empty());
+    // The import text should contain the type import
+    let combined: String = edits.iter().map(|e| e.new_text.as_str()).collect();
+    assert!(
+        combined.contains("import"),
+        "Should generate an import statement"
+    );
+}
+
+#[test]
+fn test_code_action_only_filter_quickfix() {
+    // When `only` is set to QuickFix, no refactoring actions should appear
+    let source = "const x = foo.bar.baz + 1;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    // Select an expression that would normally produce an extract variable action
+    let range = range_for_substring(source, &line_map, "foo.bar.baz");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // No refactoring actions should be returned when only QuickFix is requested
+    for action in &actions {
+        assert_ne!(
+            action.kind,
+            CodeActionKind::RefactorExtract,
+            "Should not return refactoring actions when only QuickFix is requested"
+        );
+    }
+}
+
+#[test]
+fn test_code_action_only_filter_refactor() {
+    // When `only` is set to Refactor, no quickfix actions should appear
+    let source = "import { foo } from \"mod\";\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+
+    let range = range_for_substring(source, &line_map, "foo");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Warning),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
+        source: None,
+        message: "All imports in import declaration are unused.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::Refactor]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // No quickfix actions should be returned when only Refactor is requested
+    for action in &actions {
+        assert_ne!(
+            action.kind,
+            CodeActionKind::QuickFix,
+            "Should not return quickfix actions when only Refactor is requested"
+        );
+    }
+}
+
+#[test]
+fn test_quickfix_no_action_for_irrelevant_diagnostic_code() {
+    // A diagnostic with an unrecognized code should not produce any quick fix
+    let source = "const x = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "x");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(9999),
+        source: None,
+        message: "Some unknown error.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        actions.is_empty(),
+        "Should produce no quick fixes for an unrecognized diagnostic code"
+    );
+}
+
+#[test]
+fn test_quickfix_diagnostic_without_code() {
+    // A diagnostic with no error code should produce no quick fixes
+    let source = "const x = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "x");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: None,
+        source: None,
+        message: "Some error without code.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        actions.is_empty(),
+        "Should produce no quick fixes for a diagnostic without a code"
+    );
+}
+
+#[test]
+fn test_organize_imports_no_action_single_import() {
+    // A single import should not produce an organize imports action
+    // (nothing to sort)
+    let source = "import { foo } from \"mod\";\nfoo();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::SourceOrganizeImports]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // A single import has nothing to sort — no organize imports action expected
+    assert!(
+        !actions
+            .iter()
+            .any(|a| a.kind == CodeActionKind::SourceOrganizeImports),
+        "A single import should not need organize imports"
+    );
+}
+
+#[test]
+fn test_organize_imports_sorts_multiple_imports() {
+    // Multiple imports out of order should produce an organize imports action
+    let source = "import { z } from \"z-mod\";\nimport { a } from \"a-mod\";\na();\nz();\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::SourceOrganizeImports]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let organize_action = actions
+        .iter()
+        .find(|a| a.kind == CodeActionKind::SourceOrganizeImports)
+        .expect("Should offer organize imports action");
+    let edit = organize_action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    assert!(!edits.is_empty());
+    // After applying edits, "a-mod" should come before "z-mod"
+    let result = apply_text_edits(source, &line_map, edits);
+    let a_pos = result.find("a-mod").expect("a-mod should be present");
+    let z_pos = result.find("z-mod").expect("z-mod should be present");
+    assert!(
+        a_pos < z_pos,
+        "After organizing, 'a-mod' should come before 'z-mod'"
+    );
+}
+
+#[test]
+fn test_quickfix_add_missing_property_empty_object_multiline() {
+    // Add a missing property to an empty multi-line object literal
+    let source = "const obj = {\n};\nobj.newProp;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+
+    let line_map = LineMap::build(source);
+    let range = range_for_substring(source, &line_map, "newProp");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(PROPERTY_DOES_NOT_EXIST_ON_TYPE),
+        source: None,
+        message: "Property 'newProp' does not exist on type '{}'.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let empty_range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        empty_range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let prop_action = actions.iter().find(|a| a.title.contains("newProp"));
+    assert!(
+        prop_action.is_some(),
+        "Should produce a quick fix to add 'newProp'"
+    );
+    let edit = prop_action.unwrap().edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    // The edit should insert "newProp: undefined" into the object
+    let combined: String = edits.iter().map(|e| e.new_text.as_str()).collect();
+    assert!(
+        combined.contains("newProp: undefined"),
+        "Should insert 'newProp: undefined'"
+    );
+}
+
+// =========================================================================
+// Additional coverage: extract variable edge cases
+// =========================================================================
+
+#[test]
+fn test_extract_variable_from_binary_expression() {
+    let source = "const result = a + b * c;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "b * c");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for binary expression"
+    );
+}
+
+#[test]
+fn test_extract_variable_from_template_literal() {
+    let source = "const msg = `hello ${name}`;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "`hello ${name}`");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // May or may not extract template literals
+    // Just verify no crash
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_empty_range_no_diagnostics() {
+    let source = "const x = 1;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Empty range with no diagnostics might produce no actions
+    // Just verify no crash
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_only_filter_extract() {
+    let source = "const x = foo.bar;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "foo.bar");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::RefactorExtract]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Should return refactoring actions (extract and surround-with)
+    for action in &actions {
+        assert!(
+            action.kind == CodeActionKind::RefactorExtract
+                || action.kind == CodeActionKind::Refactor,
+            "Only refactoring actions should be returned, got {:?}",
+            action.kind
+        );
+    }
+    // At least one should be an extract action
+    assert!(
+        actions
+            .iter()
+            .any(|a| a.kind == CodeActionKind::RefactorExtract),
+        "expected at least one extract action"
+    );
+}
+
+#[test]
+fn test_code_actions_only_filter_quickfix() {
+    let source = "const x = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 6), Position::new(0, 7));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // QuickFix with no diagnostics should produce no quickfix actions
+    for action in &actions {
+        assert_eq!(action.kind, CodeActionKind::QuickFix);
+    }
+}
+
+#[test]
+fn test_extract_variable_in_function_body() {
+    let source = "function f() {\n  const result = a.b + c.d;\n}\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "a.b");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Should extract within the function scope
+    let extract_action = actions
+        .iter()
+        .find(|a| a.title.contains("Extract"))
+        .expect("Should offer extract action");
+    let edit = extract_action.edit.as_ref().unwrap();
+    let edits = &edit.changes["test.ts"];
+    // The new declaration should be inserted before the line, within the function
+    let new_text = &edits[0].new_text;
+    assert!(new_text.contains("const extracted = a.b;"));
+}
+
+#[test]
+fn test_extract_variable_array_expression() {
+    let source = "const x = [1, 2, 3].map(n => n * 2);";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "[1, 2, 3]");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for array expression"
+    );
+}
+
+#[test]
+fn test_quickfix_unused_import_remove() {
+    let source = "import { foo } from './mod';\nconst x = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let range = range_for_substring(source, &line_map, "import { foo } from './mod';");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
+        source: None,
+        message: "All imports in import declaration are unused.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let action = actions
+        .iter()
+        .find(|a| a.title.starts_with("Remove import from"))
+        .expect("expected a 'Remove import from <module>' quickfix for TS6192");
+    assert_eq!(action.title, "Remove import from './mod'");
+    let edits = &action.edit.as_ref().unwrap().changes["test.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+    let result = apply_text_edits(source, &line_map, edits);
+    assert_eq!(result, "const x = 1;\n");
+}
+
+#[test]
+fn test_quickfix_unused_import_remove_diag_at_decl_start() {
+    // tsserver anchors TS6192 at the start of the import declaration; the
+    // diagnostic does not cover any specifier identifier. Issue #4024.
+    let source = "import { readFile, writeFile } from \"./b\";\nconsole.log(1);\n";
+    let mut parser = ParserState::new("a.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let import_end = source.find(";\n").unwrap() + 1;
+    let range = range_for_offset(source, &line_map, 0, import_end);
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(ALL_IMPORTS_IN_IMPORT_DECLARATION_ARE_UNUSED),
+        source: None,
+        message: "All imports in import declaration are unused.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider = CodeActionProvider::new(arena, &binder, &line_map, "a.ts".to_string(), source);
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    let action = actions
+        .iter()
+        .find(|a| a.title.starts_with("Remove import from"))
+        .expect("expected a 'Remove import from <module>' quickfix for TS6192");
+    assert_eq!(action.title, "Remove import from './b'");
+    let edits = &action.edit.as_ref().unwrap().changes["a.ts"];
+    assert_eq!(edits.len(), 1);
+    assert_eq!(edits[0].new_text, "");
+    let result = apply_text_edits(source, &line_map, edits);
+    assert_eq!(result, "console.log(1);\n");
+}
+
+#[test]
+fn test_quickfix_unused_variable_prefix() {
+    let source = "const unused = 1;\n";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+
+    let range = range_for_substring(source, &line_map, "unused");
+    let diag = LspDiagnostic {
+        range,
+        severity: Some(DiagnosticSeverity::Error),
+        code: Some(ALL_VARIABLES_ARE_UNUSED),
+        source: None,
+        message: "'unused' is declared but its value is never read.".to_string(),
+        related_information: None,
+        reports_unnecessary: None,
+        reports_deprecated: None,
+    };
+
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: vec![diag],
+            only: Some(vec![CodeActionKind::QuickFix]),
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Should produce some quickfix for unused variable
+    // Just verify no crash - exact actions depend on implementation
+    let _ = actions;
+}
+
+#[test]
+fn test_code_actions_on_empty_file() {
+    let source = "";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = Range::new(Position::new(0, 0), Position::new(0, 0));
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        !actions
+            .iter()
+            .any(|a| a.title.starts_with("Extract to constant")),
+        "Empty file should produce no extract variable actions"
+    );
+}
+
+#[test]
+fn test_extract_variable_ternary_full() {
+    let source = "const x = a > b ? a : b;";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "a > b ? a : b");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    assert!(
+        actions.iter().any(|a| a.title.contains("Extract")),
+        "Should offer extract for ternary expression"
+    );
+}
+
+#[test]
+fn test_extract_variable_object_literal() {
+    let source = "const x = { a: 1, b: 2 };";
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider =
+        CodeActionProvider::new(arena, &binder, &line_map, "test.ts".to_string(), source);
+
+    let range = range_for_substring(source, &line_map, "{ a: 1, b: 2 }");
+    let actions = provider.provide_code_actions(
+        root,
+        range,
+        CodeActionContext {
+            diagnostics: Vec::new(),
+            only: None,
+            import_candidates: Vec::new(),
+        },
+    );
+
+    // Just verify no crash - object literals may or may not be extractable
+    let _ = actions;
+}
+
