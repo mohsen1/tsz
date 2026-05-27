@@ -166,6 +166,10 @@ impl<'a> CheckerState<'a> {
             ))
                 && !annotation_text.contains("| undefined"))
             || alias_display_queries::is_literal_for_alias_display(self.ctx.types, source_fact)
+            || alias_display_queries::is_string_intrinsic_for_alias_display(
+                self.ctx.types,
+                source_fact,
+            )
         {
             return None;
         }
