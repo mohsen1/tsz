@@ -496,6 +496,21 @@ impl<'a> Printer<'a> {
         }
     }
 
+    fn emit_private_field_get_close(&mut self, clean_name: &str) {
+        let info = self.private_member_info.get(clean_name).cloned();
+        let kind = info.as_ref().map_or("f", |i| i.kind);
+        self.write(", \"");
+        self.write(kind);
+        self.write("\"");
+        if let Some(ref i) = info
+            && let Some(ref fn_ref) = i.fn_ref
+        {
+            self.write(", ");
+            self.write(fn_ref);
+        }
+        self.write(")");
+    }
+
     /// Emit either `expr` directly or `_a = expr` for temp assignment.
     fn emit_receiver_or_temp_assign(&mut self, expression: NodeIndex, receiver_temp: Option<&str>) {
         if let Some(temp) = receiver_temp {
@@ -531,17 +546,46 @@ impl<'a> Printer<'a> {
         } else {
             self.write(weakmap_name);
         }
-        let kind = info.as_ref().map_or("f", |i| i.kind);
-        self.write(", \"");
-        self.write(kind);
-        self.write("\"");
-        if let Some(ref i) = info
-            && let Some(ref fn_ref) = i.fn_ref
-        {
-            self.write(", ");
-            self.write(fn_ref);
+        self.emit_private_field_get_close(clean_name);
+    }
+
+    pub(in crate::emitter) fn emit_private_field_tagged_template_tag(
+        &mut self,
+        tag: NodeIndex,
+    ) -> bool {
+        let Some(access) = self.try_extract_private_field_access(tag) else {
+            return false;
+        };
+
+        let receiver_temp = if self.private_call_receiver_is_simple(access.expression) {
+            None
+        } else {
+            Some(self.make_unique_name_hoisted())
+        };
+        let receiver_temp = receiver_temp.as_deref();
+
+        self.write_helper("__classPrivateFieldGet");
+        self.write("(");
+        if let Some(temp) = receiver_temp {
+            self.write("(");
+            self.write(temp);
+            self.write(" = ");
+            self.emit_private_receiver(access.expression, &access.clean_name);
+            self.write(")");
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
+        }
+        self.write(", ");
+        self.emit_private_state_var(&access.weakmap_name, &access.clean_name);
+        self.emit_private_field_get_close(&access.clean_name);
+        self.write(".bind(");
+        if let Some(temp) = receiver_temp {
+            self.write(temp);
+        } else {
+            self.emit_private_receiver(access.expression, &access.clean_name);
         }
         self.write(")");
+        true
     }
 
     pub(in crate::emitter) fn emit_binary_expression(&mut self, node: &Node) {
