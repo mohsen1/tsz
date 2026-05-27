@@ -895,6 +895,14 @@ fn test_widen_literal_type_union_maps_each_member() {
 }
 
 #[test]
+fn test_widen_literal_type_union_without_literals_noop() {
+    let interner = TypeInterner::new();
+    let union = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
+
+    assert_eq!(widen_literal_type(&interner, union), union);
+}
+
+#[test]
 fn test_widen_literal_type_object_passthrough() {
     // Unlike get_base_type_for_comparison, widen_literal_type does NOT recurse
     // into objects (returns top-level type unchanged for non-literal/non-union).

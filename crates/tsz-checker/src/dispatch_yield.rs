@@ -30,10 +30,10 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         // This preserves `TYield` exactly as written (e.g. `IterableIterator<number>`
         // => `number`) even if semantic base resolution currently widens it.
         let declared_return_node = self.checker.ctx.arena.get(declared_return_type_node)?;
+        let declared_return_type = self
+            .checker
+            .get_type_from_type_node(declared_return_type_node);
         if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
-            let declared_return_type = self
-                .checker
-                .get_type_from_type_node(declared_return_type_node);
             return self
                 .checker
                 .get_generator_yield_type_argument(declared_return_type);
@@ -46,7 +46,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
             .arena
             .get_identifier(type_name_node)
             .map(|ident| ident.escaped_text.as_str())?;
-        if !matches!(
+        let syntactic_generator_name = matches!(
             type_name,
             "Generator"
                 | "AsyncGenerator"
@@ -54,13 +54,12 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                 | "AsyncIterator"
                 | "IterableIterator"
                 | "AsyncIterableIterator"
-        ) {
-            let declared_return_type = self
-                .checker
-                .get_type_from_type_node(declared_return_type_node);
-            return self
-                .checker
-                .get_generator_yield_type_argument(declared_return_type);
+        );
+        let semantic_yield_type = self
+            .checker
+            .get_generator_yield_type_argument(declared_return_type);
+        if !syntactic_generator_name || semantic_yield_type.is_none() {
+            return semantic_yield_type;
         }
         if let Some(first_arg) = type_ref
             .type_arguments
@@ -69,11 +68,7 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         {
             return Some(self.checker.get_type_from_type_node(first_arg));
         }
-        let declared_return_type = self
-            .checker
-            .get_type_from_type_node(declared_return_type_node);
-        self.checker
-            .get_generator_yield_type_argument(declared_return_type)
+        semantic_yield_type
     }
 
     fn type_node_includes_undefined(&self, idx: NodeIndex) -> bool {
@@ -117,6 +112,9 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         if declared_return_node.kind != syntax_kind_ext::TYPE_REFERENCE {
             return None;
         }
+        let declared_return_type = self
+            .checker
+            .get_type_from_type_node(declared_return_type_node);
         let type_ref = self.checker.ctx.arena.get_type_ref(declared_return_node)?;
         let type_name_node = self.checker.ctx.arena.get(type_ref.type_name)?;
         let type_name = self
@@ -136,6 +134,8 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
         ) {
             return None;
         }
+        self.checker
+            .get_generator_yield_type_argument(declared_return_type)?;
 
         let first_arg = type_ref.type_arguments.as_ref()?.nodes.first().copied()?;
         Some(self.type_node_includes_undefined(first_arg))

@@ -109,6 +109,9 @@ mod async_imported_promise_tests;
 #[path = "../tests/circular_accessor_annotation_tests.rs"]
 mod circular_accessor_annotation_tests;
 #[cfg(test)]
+#[path = "tests/class_extends_index_relation_routing_arch_tests.rs"]
+mod class_extends_index_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "tests/class_implements_index_relation_routing_arch_tests.rs"]
 mod class_implements_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -154,11 +157,17 @@ mod environment_capabilities_tests;
 #[path = "tests/flow_inferred_predicate_boundary_tests.rs"]
 mod flow_inferred_predicate_boundary_tests;
 #[cfg(test)]
+#[path = "tests/flow_promise_identity_tests.rs"]
+mod flow_promise_identity_tests;
+#[cfg(test)]
 #[path = "tests/function_type_return_node_tests.rs"]
 mod function_type_return_node_tests;
 #[cfg(test)]
 #[path = "../tests/generator_union_return_type_tests.rs"]
 mod generator_union_return_type_tests;
+#[cfg(test)]
+#[path = "tests/generator_yield_identity_tests.rs"]
+mod generator_yield_identity_tests;
 #[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
@@ -174,6 +183,9 @@ mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/interface_heritage_property_index_relation_routing_arch_tests.rs"]
+mod interface_heritage_property_index_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/isolated_declarations_unannotated_param_tests.rs"]
 mod isolated_declarations_unannotated_param_tests;
@@ -454,6 +466,9 @@ mod call_context_relation_routing_arch_tests;
 #[path = "tests/call_spread_constructor_parameters_tests.rs"]
 mod call_spread_constructor_parameters_tests;
 #[cfg(test)]
+#[path = "tests/callable_constraint_function_identity_tests.rs"]
+mod callable_constraint_function_identity_tests;
+#[cfg(test)]
 #[path = "tests/callable_interface_assignment_tests.rs"]
 mod callable_interface_assignment_tests;
 #[cfg(test)]
@@ -592,6 +607,9 @@ mod in_narrow_bare_type_param_chained_tests;
 #[path = "tests/in_operator_relation_routing_arch_tests.rs"]
 mod in_operator_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/index_signature_value_relation_routing_arch_tests.rs"]
+mod index_signature_value_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/interface_extends_array_json_tests.rs"]
 mod interface_extends_array_json_tests;
 #[cfg(test)]
@@ -603,6 +621,9 @@ mod intersection_signatures;
 #[cfg(test)]
 #[path = "tests/issue_9762_literal_init_callback_inference.rs"]
 mod issue_9762_literal_init_callback_inference;
+#[cfg(test)]
+#[path = "tests/iterable_next_relation_routing_arch_tests.rs"]
+mod iterable_next_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/js_constructor_property_tests.rs"]
 mod js_constructor_property_tests;
@@ -720,6 +741,9 @@ mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
+#[cfg(test)]
+#[path = "tests/object_literal_relation_architecture_tests.rs"]
+mod object_literal_relation_architecture_tests;
 #[cfg(test)]
 #[path = "tests/object_shorthand_literal_preservation_tests.rs"]
 mod object_shorthand_literal_preservation_tests;

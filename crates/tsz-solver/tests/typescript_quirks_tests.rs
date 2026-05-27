@@ -12,6 +12,7 @@
 //! - Optional property looseness
 
 use super::*;
+use crate::computation::CompatChecker;
 use crate::construction::TypeInterner;
 
 // =============================================================================
@@ -366,19 +367,48 @@ fn test_method_bivariance_disabled() {
         "With method bivariance disabled, methods should be contravariant in strict mode"
     );
 
-    // NOTE: The reverse direction currently also passes due to how method comparison
-    // works (is_method = source.is_method || target.is_method).
-    // This is a known behavior - methods are treated as a group where if either
-    // source or target is a method, both get method handling.
-    // This test documents the current behavior; full contravariance for methods
-    // may require additional solver refinements.
-    //
-    // TODO: Track known limitation - disable_method_bivariance doesn't fully prevent
-    // bivariance because method comparison treats source and target as a group.
-    // Consider tracking as an issue for future solver enhancement.
     assert!(
-        checker.is_subtype_of(obj_with_cat_method, obj_with_animal_method),
-        "Current behavior: reverse also passes (method comparison treats both as methods)"
+        !checker.is_subtype_of(obj_with_cat_method, obj_with_animal_method),
+        "With method bivariance disabled, reverse contravariance should be rejected"
+    );
+}
+
+#[test]
+fn test_method_bivariance_disabled_explain_reports_parameter_mismatch() {
+    let interner = TypeInterner::new();
+    let mut checker = CompatChecker::new(&interner);
+    checker.set_strict_function_types(true);
+    checker.set_disable_method_bivariance(true);
+
+    let animal = animal_type(&interner);
+    let cat = cat_type(&interner);
+    let animal_method = method_type(&interner, animal, TypeId::VOID);
+    let cat_method = method_type(&interner, cat, TypeId::VOID);
+    let source = obj_with_method(&interner, "method", cat_method);
+    let target = obj_with_method(&interner, "method", animal_method);
+
+    assert!(
+        !checker.is_assignable(source, target),
+        "disabled method bivariance should reject a method with a narrower parameter",
+    );
+
+    let reason = checker.explain_failure(source, target);
+    let Some(SubtypeFailureReason::PropertyTypeMismatch {
+        nested_reason: Some(nested),
+        ..
+    }) = reason
+    else {
+        panic!(
+            "disabled method bivariance should explain the property mismatch under strict parameter variance: {reason:?}",
+        );
+    };
+
+    assert!(
+        matches!(
+            *nested,
+            SubtypeFailureReason::ParameterTypeMismatch { param_index: 0, .. }
+        ),
+        "method explanation should preserve the strict parameter mismatch, got {nested:?}",
     );
 }
 

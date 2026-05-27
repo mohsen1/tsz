@@ -33,18 +33,18 @@ Recent local/live evidence on 2026-05-26:
 
 | Surface | Current read |
 | --- | ---: |
-| Open PRs | 2 |
-| Draft PRs | 0 |
+| Open PRs | live query: `gh pr list --state open` |
+| Draft/WIP PRs | live query: `gh pr list --state open` plus WIP labels/titles |
 | PR label hygiene | clean |
 | Diagnostic conformance detail | `12,582 / 12,582` |
-| Accepted-regression list | 30 tests |
+| Accepted-regression list | live query: `python3 scripts/conformance/query-conformance.py --dashboard` |
 | JavaScript emit snapshot | `13,094 / 13,530` |
 | Declaration emit snapshot | `1,606 / 1,669` |
-| Open issues | 134 |
-| Open bug issues | 56 |
-| Open performance issues | 9 |
-| Open tech-debt issues | 64 |
-| Output-surgery audit | red: 4 unallowlisted calls, 1 stale allowlist entry |
+| Open issues | live query: `gh issue list --state open` |
+| Open bug issues | live query: `gh issue list --state open --label bug` |
+| Open performance issues | live query: `gh issue list --state open --label performance` |
+| Open tech-debt issues | live query: `gh issue list --state open --label tech-debt` |
+| Output-surgery audit | live query: `python3 scripts/emit/audit-output-surgery.py` |
 
 Do not copy these numbers into PR bodies as proof. Re-run the commands in the
 owning lane and cite the resulting artifact, issue, or CI URL.
@@ -116,7 +116,10 @@ scripts/agents/show-goal.sh M1-A
 When reviewing or developing a branch that edits a lane goal file, use
 `scripts/agents/show-goal.sh <AgentName> --local` to preview the branch-local
 file. The default command still prefers `origin/main` so launch sessions can be
-redirected without first merging the in-progress branch.
+redirected without first merging the in-progress branch. If the branch-local
+file differs from the printed `origin/main` goal, `show-goal.sh` warns on
+stderr; treat that as a cue to inspect `--local` before acting on branch-local
+coordination.
 
 Then run the remaining commands listed in that lane's `Start Every Cycle`
 section.

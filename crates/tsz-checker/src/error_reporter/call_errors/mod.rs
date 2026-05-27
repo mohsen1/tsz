@@ -7,7 +7,9 @@
 
 mod display_formatting;
 mod display_formatting_boolean;
+mod display_formatting_callback;
 mod display_formatting_generic;
+mod display_formatting_parameters;
 mod display_formatting_variadic;
 mod elaboration;
 mod elaboration_array_mismatch;

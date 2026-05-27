@@ -141,8 +141,9 @@ impl<'a> CheckerState<'a> {
 
         let function_sym_id = self.ctx.binder.lib_symbol_ids.iter().find_map(|&sym_id| {
             self.ctx.binder.get_symbol(sym_id).and_then(|symbol| {
-                (symbol.escaped_name == "Function" && symbol.has_any_flags(symbol_flags::INTERFACE))
-                    .then_some(sym_id)
+                (self.ctx.sym_id_is_lib_function(sym_id)
+                    && symbol.has_any_flags(symbol_flags::INTERFACE))
+                .then_some(sym_id)
             })
         });
 
