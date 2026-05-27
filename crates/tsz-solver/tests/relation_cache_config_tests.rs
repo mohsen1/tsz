@@ -374,6 +374,76 @@ fn assignability_cache_no_unchecked_indexed_access_matches_uncached_policy() {
 }
 
 #[test]
+fn subtype_cache_allow_void_return_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+    let target = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+
+    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let void_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_ALLOW_VOID_RETURN,
+    );
+    let strict_key = RelationCacheKey::for_subtype(source, target, strict_policy.cache_config());
+    let void_key = RelationCacheKey::for_subtype(source, target, void_policy.cache_config());
+
+    assert_ne!(
+        strict_key, void_key,
+        "void-return exception policy must partition subtype cache entries",
+    );
+
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let void_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        void_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !strict_uncached,
+        "without ALLOW_VOID_RETURN, a string-returning source must not satisfy a void-returning target",
+    );
+    assert!(
+        void_uncached,
+        "with ALLOW_VOID_RETURN, a non-void source return should satisfy a void target return",
+    );
+
+    let strict_cached = db.is_subtype_of_with_policy(source, target, strict_policy);
+    let void_cached = db.is_subtype_of_with_policy(source, target, void_policy);
+
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict void-return subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        void_cached, void_uncached,
+        "cached void-exception subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        Some(strict_cached),
+        "strict void-return policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(void_key),
+        Some(void_cached),
+        "void-exception policy result must use its own cache slot",
+    );
+}
+
+#[test]
 fn strict_subtype_checking_partitions_cache_entries() {
     assert_assignability_partitions(
         "strict_subtype_checking",
