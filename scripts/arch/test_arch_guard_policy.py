@@ -210,6 +210,23 @@ class ArchGuardRegexLineCountTests(unittest.TestCase):
         self.assertIn("core.rs:1", hits[2])
         self.assertIn("total matching lines: 3", hits[3])
 
+    def test_solver_internals_do_not_decode_legacy_relation_flags(self):
+        pattern, _max_lines = self._check_by_name("legacy RelationPolicy::from_flags calls")
+        root = self._make_tree(
+            {
+                "crates/tsz-solver/src/caches/query_cache.rs": (
+                    "let policy = RelationPolicy::from_flags(flags);\n"
+                    "let typed = RelationPolicy::from_relation_flags(flags);\n"
+                    "/// RelationPolicy::from_flags(flags) is discussed here.\n"
+                    'let text = "RelationPolicy::from_flags(flags)";\n'
+                ),
+            }
+        )
+        hits = self.arch_guard.scan_regex_line_count([root], pattern, 0)
+        self.assertEqual(len(hits), 2, f"unexpected hits: {hits!r}")
+        self.assertIn("query_cache.rs:1", hits[0])
+        self.assertIn("total matching lines: 1", hits[1])
+
     def test_query_cache_relation_facade_guard(self):
         pattern, _max_lines = self._check_by_name("query cache uses relation facade")
         root = self._make_tree(
