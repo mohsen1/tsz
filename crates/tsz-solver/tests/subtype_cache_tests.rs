@@ -388,11 +388,11 @@ fn cache_key_includes_flags() {
     );
     let entries_default = db.relation_cache_stats().subtype_entries;
 
-    // Check with strict null checks flag (1)
+    // Check with strict null checks policy.
     db.is_subtype_of_with_policy(
         hello,
         TypeId::STRING,
-        RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS),
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS),
     );
     let entries_strict = db.relation_cache_stats().subtype_entries;
 
@@ -566,7 +566,7 @@ fn probe_returns_hit_after_check() {
     let key = RelationCacheKey::for_subtype(
         hello,
         TypeId::STRING,
-        RelationPolicy::from_flags(0).cache_config(),
+        RelationPolicy::unflagged_compatibility().cache_config(),
     );
     assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(true));
 }
@@ -581,7 +581,7 @@ fn probe_negative_hit_after_failed_check() {
     let key = RelationCacheKey::for_subtype(
         TypeId::STRING,
         TypeId::NUMBER,
-        RelationPolicy::from_flags(0).cache_config(),
+        RelationPolicy::unflagged_compatibility().cache_config(),
     );
     assert_eq!(db.probe_subtype_cache(key), RelationCacheProbe::Hit(false));
 }
