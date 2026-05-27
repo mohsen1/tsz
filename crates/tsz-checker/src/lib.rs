@@ -154,6 +154,9 @@ mod environment_capabilities_tests;
 #[path = "tests/flow_inferred_predicate_boundary_tests.rs"]
 mod flow_inferred_predicate_boundary_tests;
 #[cfg(test)]
+#[path = "tests/flow_promise_identity_tests.rs"]
+mod flow_promise_identity_tests;
+#[cfg(test)]
 #[path = "tests/function_type_return_node_tests.rs"]
 mod function_type_return_node_tests;
 #[cfg(test)]
