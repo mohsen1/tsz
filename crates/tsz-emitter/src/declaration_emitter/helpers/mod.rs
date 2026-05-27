@@ -255,6 +255,8 @@ mod function_analysis;
 mod generic_call_literal;
 mod generic_call_mapped_inference;
 mod js_exports;
+mod js_exports_local;
+mod js_exports_namespace;
 mod jsdoc;
 mod jsdoc_function_signature;
 mod late_bound_function_analysis;
