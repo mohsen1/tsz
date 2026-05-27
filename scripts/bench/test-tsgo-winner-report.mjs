@@ -162,6 +162,8 @@ withTempDir((dir) => {
     rows_meeting_target: 1,
     rows_below_target: 3,
     project_rows_below_target: 2,
+    rows_with_attribution: 1,
+    missing_attribution_rows: ["single-file-loss", "vite-vanilla-ts-app"],
     worst_gap: report.target_gaps[0],
   });
   assert.deepEqual(
@@ -276,6 +278,11 @@ withTempDir((dir) => {
     ["BCT candidates=200", "200 classes"],
   );
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, [
+    "200 classes",
+    "BCT candidates=200",
+  ]);
 });
 
 // Duplicate known project rows make the green-tsgo-winner summary non-authoritative.
@@ -368,6 +375,8 @@ withTempDir((dir) => {
   assert.deepEqual(report.totals.missing_attribution_rows, ["complete-project", "single-file-win"]);
   assert.equal(report.two_x_target.eligible_green_rows, 2);
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["complete-project", "single-file-win"]);
   assert.deepEqual(
     report.target_gaps.map((row) => row.name),
     ["complete-project", "single-file-win"],
@@ -406,6 +415,8 @@ withTempDir((dir) => {
   const report = JSON.parse(fs.readFileSync(output, "utf8"));
   assert.equal(report.two_x_target.rows_meeting_target, 1);
   assert.equal(report.two_x_target.rows_below_target, 2);
+  assert.equal(report.two_x_target.rows_with_attribution, 0);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, ["target-short", "tsgo-win"]);
   assert.deepEqual(
     report.target_gaps.map((row) => [row.name, row.tsz_speedup_vs_tsgo]),
     [
@@ -413,6 +424,61 @@ withTempDir((dir) => {
       ["target-short", 15 / 10],
     ],
   );
+});
+
+withTempDir((dir) => {
+  const input = path.join(dir, "bench.json");
+  const output = path.join(dir, "report.json");
+  const perfPath = path.join(dir, "bench.perf.json");
+  writeJson(input, {
+    results: [
+      {
+        name: "ts-essentials-project",
+        winner: "tsz",
+        factor: 1.1,
+        tsz_ms: 100,
+        tsgo_ms: 110,
+        compatibility: {
+          state: "green",
+          exit_class: "exit success",
+          phase: "check",
+          last_successful_phase: "check",
+          diagnostic_status: "none",
+          semantic_owner_family: "utility types plus recursive JSON shapes",
+        },
+      },
+    ],
+  });
+  writeJson(perfPath, {
+    mode: "attribution",
+    delegate: { misses: 0 },
+    checker: { with_parent_cache_constructed: 2 },
+    slow_check_file_timings: [
+      { file: "ts-essentials/lib/xor/index.ts", elapsed_ms: 150, diagnostics: 0 },
+    ],
+  });
+
+  const result = spawnSync(process.execPath, [SCRIPT, input, output], {
+    cwd: ROOT,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.match(result.stdout, /2x target gaps with attribution: 1\/1/);
+
+  const report = JSON.parse(fs.readFileSync(output, "utf8"));
+  assert.equal(report.two_x_target.rows_below_target, 1);
+  assert.equal(report.two_x_target.rows_with_attribution, 1);
+  assert.deepEqual(report.two_x_target.missing_attribution_rows, []);
+  assert.deepEqual(report.target_gaps[0].attribution_status, {
+    present: true,
+    path: path.relative(ROOT, perfPath).split(path.sep).join("/"),
+    url: null,
+    generated_at: report.target_gaps[0].attribution_status.generated_at,
+    mode: "attribution",
+    dominant_subsystem: "checker:semantic-check",
+    warning: null,
+  });
+  assert.match(report.target_gaps[0].attribution_status.generated_at, /^\d{4}-\d{2}-\d{2}T/);
 });
 
 const benchWorkflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
