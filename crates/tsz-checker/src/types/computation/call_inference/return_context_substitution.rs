@@ -1,6 +1,33 @@
 //! Return-context substitution helpers for generic call inference.
 
 use super::*;
+use crate::query_boundaries::common::TypeSubstitution;
+
+struct ReturnContextSubstitutionRequest<'a> {
+    source: TypeId,
+    target: TypeId,
+    tracked_type_params: &'a FxHashSet<Atom>,
+}
+
+impl<'a> ReturnContextSubstitutionRequest<'a> {
+    const fn new(source: TypeId, target: TypeId, tracked_type_params: &'a FxHashSet<Atom>) -> Self {
+        Self {
+            source,
+            target,
+            tracked_type_params,
+        }
+    }
+}
+
+struct ReturnContextSubstitutionSink<'a> {
+    substitution: &'a mut TypeSubstitution,
+    visited: &'a mut FxHashSet<(TypeId, TypeId)>,
+}
+
+struct ReturnContextShapeSubstitutionRequest<'a> {
+    shape: &'a tsz_solver::FunctionShape,
+    contextual_type: Option<TypeId>,
+}
 
 impl<'a> CheckerState<'a> {
     fn array_or_number_index_element_type(&mut self, type_id: TypeId) -> Option<TypeId> {
@@ -103,10 +130,23 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
         tracked_type_params: &FxHashSet<Atom>,
-        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
+        substitution: &mut TypeSubstitution,
         visited: &mut FxHashSet<(TypeId, TypeId)>,
     ) {
-        if !visited.insert((source, target)) {
+        let request = ReturnContextSubstitutionRequest::new(source, target, tracked_type_params);
+        let mut sink = ReturnContextSubstitutionSink {
+            substitution,
+            visited,
+        };
+        self.collect_return_context_substitution_request(request, &mut sink);
+    }
+
+    fn collect_return_context_substitution_request(
+        &mut self,
+        request: ReturnContextSubstitutionRequest<'_>,
+        sink: &mut ReturnContextSubstitutionSink<'_>,
+    ) {
+        if !sink.visited.insert((request.source, request.target)) {
             return;
         }
         // Depth guard: evaluate_type_with_env can produce fresh TypeIds, defeating
@@ -114,24 +154,23 @@ impl<'a> CheckerState<'a> {
         if !self.ctx.enter_recursion() {
             return;
         }
-        self.collect_return_context_substitution_impl(
-            source,
-            target,
-            tracked_type_params,
-            substitution,
-            visited,
-        );
+        self.collect_return_context_substitution_impl(request, sink);
         self.ctx.leave_recursion();
     }
 
     fn collect_return_context_substitution_impl(
         &mut self,
-        source: TypeId,
-        target: TypeId,
-        tracked_type_params: &FxHashSet<Atom>,
-        substitution: &mut crate::query_boundaries::common::TypeSubstitution,
-        visited: &mut FxHashSet<(TypeId, TypeId)>,
+        request: ReturnContextSubstitutionRequest<'_>,
+        sink: &mut ReturnContextSubstitutionSink<'_>,
     ) {
+        let ReturnContextSubstitutionRequest {
+            source,
+            target,
+            tracked_type_params,
+        } = request;
+        let substitution = &mut *sink.substitution;
+        let visited = &mut *sink.visited;
+
         if let Some(tp) = common::type_param_info(self.ctx.types, source)
             && tracked_type_params.contains(&tp.name)
             && target != TypeId::UNKNOWN
@@ -674,17 +713,32 @@ impl<'a> CheckerState<'a> {
         &mut self,
         shape: &tsz_solver::FunctionShape,
         contextual_type: Option<TypeId>,
-    ) -> crate::query_boundaries::common::TypeSubstitution {
+    ) -> TypeSubstitution {
+        let request = ReturnContextShapeSubstitutionRequest {
+            shape,
+            contextual_type,
+        };
+        self.compute_return_context_substitution_from_shape_request(request)
+    }
+
+    fn compute_return_context_substitution_from_shape_request(
+        &mut self,
+        request: ReturnContextShapeSubstitutionRequest<'_>,
+    ) -> TypeSubstitution {
+        let ReturnContextShapeSubstitutionRequest {
+            shape,
+            contextual_type,
+        } = request;
         let Some(contextual_type) = contextual_type else {
-            return crate::query_boundaries::common::TypeSubstitution::new();
+            return TypeSubstitution::new();
         };
         let tracked_type_params: FxHashSet<_> =
             shape.type_params.iter().map(|tp| tp.name).collect();
         if tracked_type_params.is_empty() {
-            return crate::query_boundaries::common::TypeSubstitution::new();
+            return TypeSubstitution::new();
         }
 
-        let mut substitution = crate::query_boundaries::common::TypeSubstitution::new();
+        let mut substitution = TypeSubstitution::new();
         let mut visited = FxHashSet::default();
         self.collect_return_context_substitution(
             shape.return_type,
