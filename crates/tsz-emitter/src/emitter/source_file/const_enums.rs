@@ -710,9 +710,55 @@ impl<'a> Printer<'a> {
                 k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
                     self.variable_statement_declares_name(decl_node, local_name)
                 }
+                k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                    self.import_declaration_declares_namespace_name(decl_node, local_name)
+                }
                 _ => false,
             }
         })
+    }
+
+    fn import_declaration_declares_namespace_name(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+        local_name: &str,
+    ) -> bool {
+        self.collect_import_declaration_namespace_names(node)
+            .iter()
+            .any(|name| name == local_name)
+    }
+
+    fn collect_import_declaration_namespace_names(
+        &self,
+        node: &tsz_parser::parser::node::Node,
+    ) -> Vec<String> {
+        let Some(import) = self.arena.get_import_decl(node) else {
+            return Vec::new();
+        };
+        if import.import_clause.is_none() || import.is_type_only {
+            return Vec::new();
+        }
+        let Some(clause_node) = self.arena.get(import.import_clause) else {
+            return Vec::new();
+        };
+        let Some(clause) = self.arena.get_import_clause(clause_node) else {
+            return Vec::new();
+        };
+        let Some(bindings_node) = self.arena.get(clause.named_bindings) else {
+            return Vec::new();
+        };
+        let Some(named_imports) = self.arena.get_named_imports(bindings_node) else {
+            return Vec::new();
+        };
+        if named_imports.name.is_none() || !named_imports.elements.nodes.is_empty() {
+            return Vec::new();
+        }
+        let name = self.get_identifier_text_idx(named_imports.name);
+        if name.is_empty() {
+            Vec::new()
+        } else {
+            vec![name]
+        }
     }
 
     fn variable_statement_declares_name(
@@ -796,6 +842,9 @@ impl<'a> Printer<'a> {
                         return vec![name];
                     }
                 }
+            }
+            k if k == syntax_kind_ext::IMPORT_DECLARATION => {
+                return self.collect_import_declaration_namespace_names(node);
             }
             _ => {}
         }
