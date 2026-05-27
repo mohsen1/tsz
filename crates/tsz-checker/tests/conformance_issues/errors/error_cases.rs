@@ -927,6 +927,35 @@ const b: 0 | 1 = 5;
 }
 
 #[test]
+fn test_indexed_keyof_target_widens_invalid_literal_source() {
+    // Negative control: `keyof R` where `R` has a string index signature is NOT
+    // a finite unit-literal key set — the key set includes the `string` primitive
+    // base. tsc widens an invalid literal source there (`true` -> `boolean`,
+    // `1n` -> `bigint`), so the concrete-object literal-context rule must exclude
+    // objects with index signatures.
+    let diagnostics = compile_and_get_diagnostics(
+        r#"
+type R = { [key: string]: number; a: number };
+type K = keyof R;
+const k: K = true;
+const k2: K = 1n;
+"#,
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'boolean' is not assignable to type 'keyof R'")
+        }),
+        "Expected indexed keyof target to widen boolean-literal source to 'boolean'.\nActual: {diagnostics:#?}"
+    );
+    assert!(
+        diagnostics.iter().any(|(code, message)| {
+            *code == 2322 && message.contains("Type 'bigint' is not assignable to type 'keyof R'")
+        }),
+        "Expected indexed keyof target to widen bigint-literal source to 'bigint'.\nActual: {diagnostics:#?}"
+    );
+}
+
+#[test]
 fn test_generic_keyof_target_still_widens_source_literal() {
     // Negative control: a generic/deferred `keyof T` provides no literal context,
     // so tsc widens the source literal — this behavior must be preserved.

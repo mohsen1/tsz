@@ -7,12 +7,14 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// True when `ty` is a `keyof X` whose operand `X` resolves to a concrete
-    /// object type (a plain `Object`/`ObjectWithIndex` shape, directly or via a
-    /// non-generic alias). Such a `keyof` reduces to a finite unit-literal key
-    /// set that provides a literal context for an assignment-source literal, so
-    /// the source literal must be displayed as-written (not widened). A `keyof`
-    /// whose operand is a mapped/computed/generic type has no such context.
+    /// True when `ty` is a `keyof X` whose operand `X` resolves to a plain object
+    /// type with no string/number index signature. Only that shape yields a
+    /// finite unit-literal key set (`"a" | "b"`, `0 | 1`), which tsc treats as a
+    /// literal context — the assignment-source literal must then be displayed
+    /// as-written, not widened. An index signature contributes the `string` or
+    /// `number` primitive base to the key set, and a mapped/computed/generic
+    /// operand has no statically-enumerable literal keys; both lack a literal
+    /// context, so tsc widens the source there.
     pub(in crate::error_reporter) fn keyof_target_has_concrete_object_operand(
         &mut self,
         ty: TypeId,
@@ -21,27 +23,32 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        let is_object = |db: &dyn tsz_solver::construction::TypeDatabase, t: TypeId| {
-            matches!(
-                db.lookup(t),
-                Some(tsz_solver::TypeData::Object(_) | tsz_solver::TypeData::ObjectWithIndex(_))
-            )
-        };
-        if is_object(self.ctx.types, operand) {
-            return true;
-        }
-        if let Some(def_id) = crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)
-        {
-            if let Some(body) = self.ctx.type_env.borrow().get_def(def_id) {
-                return is_object(self.ctx.types, body);
-            }
-            if let Some(def) = self.ctx.definition_store.get(def_id)
-                && let Some(body) = def.body
+        // Resolve a non-generic alias operand to its body so the object shape is
+        // visible; a direct object operand already exposes its shape.
+        let resolved =
+            if crate::query_boundaries::common::object_shape_for_type(self.ctx.types, operand)
+                .is_some()
             {
-                return is_object(self.ctx.types, body);
-            }
-        }
-        false
+                operand
+            } else if let Some(def_id) =
+                crate::query_boundaries::common::lazy_def_id(self.ctx.types, operand)
+            {
+                self.ctx
+                    .type_env
+                    .borrow()
+                    .get_def(def_id)
+                    .or_else(|| {
+                        self.ctx
+                            .definition_store
+                            .get(def_id)
+                            .and_then(|def| def.body)
+                    })
+                    .unwrap_or(operand)
+            } else {
+                operand
+            };
+        crate::query_boundaries::common::object_shape_for_type(self.ctx.types, resolved)
+            .is_some_and(|shape| shape.string_index.is_none() && shape.number_index.is_none())
     }
 
     pub(crate) fn keyof_type_alias_body_display(&mut self, ty: TypeId) -> Option<String> {
