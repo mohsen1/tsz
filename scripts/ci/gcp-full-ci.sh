@@ -392,6 +392,10 @@ run_lint() {
   node scripts/ci/test-wip-state-comments.mjs || return $?
   node scripts/ci/test-project-compatibility.mjs || return $?
   node scripts/ci/test-type-challenges-solutions-manifest.mjs || return $?
+  for test_file in scripts/agents/test_*.py scripts/setup/test_*.py; do
+    [[ -f "$test_file" ]] || continue
+    python3 "$test_file" || return $?
+  done
   python3 scripts/ci/test_ci_resources.py || return $?
   python3 scripts/ci/test_gcp_full_ci_conformance_artifacts.py || return $?
   python3 scripts/conformance/test_query_conformance.py || return $?
