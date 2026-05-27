@@ -10,3 +10,28 @@ fn prototype_define_property_uses_global_identity_helper() {
         "`Object.defineProperty` prototype detection must not duplicate Object lib-symbol matching"
     );
 }
+
+#[test]
+fn strict_object_paths_use_proven_global_identity_helper() {
+    let object_literal_source = include_str!("../types/computation/object_literal/mod.rs");
+    assert!(
+        object_literal_source.contains("identifier_resolves_to_proven_lib_global")
+            && object_literal_source.contains("\"Object\""),
+        "`Object.defineProperty` descriptor detection must route through the shared proven-lib global identity helper"
+    );
+    assert!(
+        !object_literal_source.contains("symbol_is_from_actual_or_cloned_lib(sym_id)"),
+        "`Object.defineProperty` descriptor detection must not duplicate Object lib-symbol matching"
+    );
+
+    let object_assign_source = include_str!("../state/variable_checking/variable_helpers/core.rs");
+    assert!(
+        object_assign_source.contains("identifier_resolves_to_proven_lib_global")
+            && object_assign_source.contains("\"Object\""),
+        "`Object.assign` portability detection must route through the shared proven-lib global identity helper"
+    );
+    assert!(
+        !object_assign_source.contains("fn object_assign_receiver_is_lib_object"),
+        "`Object.assign` portability detection must not keep a local Object lib-symbol helper"
+    );
+}
