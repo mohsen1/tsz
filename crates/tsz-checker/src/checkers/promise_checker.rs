@@ -1526,21 +1526,23 @@ impl<'a> CheckerState<'a> {
     /// Iterator, `AsyncIterator`, `IterableIterator`, `AsyncIterableIterator`,
     /// Iterable, `AsyncIterable`).
     fn is_generator_like_base_type(&mut self, type_id: TypeId) -> bool {
-        // Fast path: Check for Lazy types to known Generator-like types
+        if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id)
+            && let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
+            && let Some(symbol) = self.get_symbol_globally(sym_id)
         {
-            if let Some(def_id) = query::lazy_def_id(self.ctx.types, type_id) {
-                // Use def_to_symbol_id to find the symbol
-                if let Some(sym_id) = self.ctx.def_to_symbol_id(def_id)
-                    && let Some(symbol) = self.get_symbol_globally(sym_id)
-                    && Self::is_generator_like_name(&symbol.escaped_name)
-                {
-                    return true;
-                }
+            let name = symbol.escaped_name.as_str();
+            if Self::is_generator_like_name(name)
+                && (!self.ctx.has_lib_loaded()
+                    || self
+                        .ctx
+                        .sym_id_is_actual_or_cloned_lib_global_type_named(sym_id, name))
+            {
+                return true;
             }
         }
 
-        // Robust check: Resolve the global types and compare TypeIds
-        // This handles cases where the type is structural (Object/Callable) rather than a Lazy
+        // Resolve the global protocol types and compare TypeIds. A module-local
+        // alias named `Generator` is not the lib/global generator protocol.
         for name in &[
             "Generator",
             "AsyncGenerator",
