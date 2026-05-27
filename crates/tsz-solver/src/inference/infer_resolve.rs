@@ -872,7 +872,11 @@ impl<'a> InferenceContext<'a> {
         let highest_priority = filtered_no_never.first().map(|c| c.priority);
         let is_contextual_inference = matches!(
             highest_priority,
-            Some(InferencePriority::ReturnType | InferencePriority::LowPriority)
+            Some(
+                InferencePriority::ReturnType
+                    | InferencePriority::LowPriority
+                    | InferencePriority::HomomorphicMappedType
+            )
         );
         let resolved = if !preserve_literals && !is_contextual_inference && !resolved.is_intrinsic()
         {

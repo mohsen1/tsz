@@ -1696,6 +1696,10 @@ impl<'a> CheckerState<'a> {
                     has_local_computed_property_name,
                     suppress_missing_interface_decl_reject:
                         should_suppress_missing_interface_decl_reject,
+                    allow_actual_lib_type_references: self
+                        .ctx
+                        .symbol_is_from_actual_or_cloned_lib(sym_id)
+                        || crate::state_type_analysis::cross_file_direct::is_builtin_lib_declaration_arena(self.ctx.arena),
                 },
             ) {
                 tsz_common::perf_counters::record_compute_type_of_symbol_interface_simple_object_fastpath_hit();

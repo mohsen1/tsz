@@ -555,7 +555,6 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                         // This handles homomorphic mapped types like Boxified<T> =
                         // { [P in keyof T]: Box<T[P]> }. For each source property,
                         // we reverse through the template to reconstruct T.
-                        //
                         // Following tsc's inferToMappedType, we decompose Union and
                         // Intersection constraints to find a `keyof T` member.
                         // E.g., `{ [K in keyof T & keyof Constraint]: T[K] }` has
@@ -566,6 +565,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
                             && self.constrain_reverse_mapped_type(
                                 ctx,
                                 var_map,
+                                source,
                                 &source_obj,
                                 &mapped,
                                 keyof_target,

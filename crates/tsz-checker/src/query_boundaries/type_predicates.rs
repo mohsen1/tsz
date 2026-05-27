@@ -1,6 +1,8 @@
 use tsz_solver::TypeId;
 use tsz_solver::construction::TypeDatabase;
 
+pub(crate) use super::common::is_compiler_managed_type;
+
 pub(crate) fn is_top_level_error_or_error_union_member(
     db: &dyn TypeDatabase,
     type_id: TypeId,
