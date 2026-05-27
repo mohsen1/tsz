@@ -124,8 +124,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\./,
-  "bench gate should let active runs finish and skip duplicate runs",
+  /"\$\{\{ github\.event_name \}\}" == "workflow_run"[\s\S]+Another Bench run is already active; letting it finish even if main has moved, and skipping this duplicate run\./,
+  "bench gate should let active runs finish and skip duplicate automatic runs",
 );
 
 assert.doesNotMatch(
