@@ -7,7 +7,10 @@
 //! could include `symbol` (e.g., an unconstrained type parameter or `keyof T` for
 //! generic `T`).
 
-use tsz_checker::test_utils::check_source_diagnostics;
+use tsz_checker::test_utils::{
+    DEFAULT_LIB_NAMES, check_source_diagnostics, check_source_with_libs, load_lib_files,
+    strict_checker_options,
+};
 
 fn count(diags: &[tsz_checker::diagnostics::Diagnostic], code: u32) -> usize {
     diags.iter().filter(|d| d.code == code).count()
@@ -17,6 +20,15 @@ fn diag_summary(diags: &[tsz_checker::diagnostics::Diagnostic]) -> Vec<(u32, Str
     diags
         .iter()
         .map(|d| (d.code, d.message_text.clone()))
+        .collect()
+}
+
+fn strict_codes_with_libs(source: &str) -> Vec<u32> {
+    let libs = load_lib_files(DEFAULT_LIB_NAMES);
+    check_source_with_libs(source, "test.ts", strict_checker_options(), &libs)
+        .into_iter()
+        .map(|d| d.code)
+        .filter(|code| *code != 2318)
         .collect()
 }
 
@@ -120,6 +132,28 @@ type Snapshot<Arr extends unknown[]> = { [Idx in keyof Arr]: Registry[Idx] };
         0,
         "Registry[Idx in keyof (Arr extends unknown[])] must not emit TS2536; got: {:?}",
         diag_summary(&diags)
+    );
+}
+
+#[test]
+fn strict_mapped_apparent_type_assignment_keeps_only_ts2322() {
+    let source = r#"
+type Obj = {
+    [s: string]: number;
+};
+
+type SourceFn = <T>(target: { [K in keyof T]: T[K] }) => void;
+type TargetFn = <Arr extends string[]>(source: { [Idx in keyof Arr]: Obj[Idx] }) => void;
+
+declare let sourceFn: SourceFn;
+declare let targetFn: TargetFn;
+targetFn = sourceFn;
+"#;
+    let codes = strict_codes_with_libs(source);
+    assert_eq!(
+        codes,
+        vec![2322],
+        "strict function assignment should keep TS2322 but suppress false TS2536; got {codes:?}"
     );
 }
 
