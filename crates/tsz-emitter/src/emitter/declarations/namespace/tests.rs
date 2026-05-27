@@ -51,6 +51,35 @@ fn namespace_recovers_malformed_export_function_arrow_object_literal_body() {
     );
 }
 
+#[test]
+fn namespace_recovers_anonymous_module_without_stealing_next_member() {
+    let source = "namespace Outer {\n    module {\n        export var inner = 1;\n    }\n    export var after = 2;\n}";
+    let (parser, root) = parse_test_source(source);
+
+    let mut printer = Printer::new(
+        &parser.arena,
+        PrintOptions {
+            target: ScriptTarget::ES2015,
+            module: ModuleKind::CommonJS,
+            ..Default::default()
+        },
+    );
+    printer.set_source_text(source);
+    printer.print(root);
+    let output = printer.finish().code;
+
+    assert!(
+        output.contains(
+            "    module;\n    {\n        export var inner = 1;\n    }\n    Outer.after = 2;"
+        ),
+        "Recovered anonymous module should be reindented relative to the namespace body and stop at its closing brace.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("exportOuter") && !output.contains("varvar"),
+        "Recovered anonymous module must not consume the following namespace member token.\nOutput:\n{output}"
+    );
+}
+
 /// Regression test: type-only import-equals inside a namespace must not
 /// leave a phantom blank line. The import `import T = M1.I;` produces no
 /// JS output (type-only alias), but `emit_namespace_body_statements` used
