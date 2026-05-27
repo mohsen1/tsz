@@ -1,4 +1,5 @@
 "use strict";
+const path = require("path");
 
 // Patch completion- and quick-info-related methods on the SessionClient
 // prototype, and build the shared native-LS helpers used by the code-fix
@@ -16,7 +17,6 @@ module.exports = function patchSessionClientCompletions(proto, ts, libFileConten
         const origFileExists = host.fileExists?.bind(host);
         const origGetScriptSnapshot = host.getScriptSnapshot?.bind(host);
         const fs = require("fs");
-        const path = require("path");
         const builtLocal = path.join(process.cwd(), "built/local");
 
         wrapper.readFile = (fileName) => {
