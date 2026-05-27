@@ -4207,22 +4207,7 @@ fn test_shared_def_store_propagated_through_cache_constructor() {
     };
 
     // Create an empty TypeCache.
-    let cache = crate::TypeCache {
-        symbol_types: Default::default(),
-        symbol_instance_types: Default::default(),
-        node_types: Default::default(),
-        symbol_dependencies: Default::default(),
-        def_to_symbol: Default::default(),
-        def_to_name: Default::default(),
-        def_types: Default::default(),
-        def_type_params: Default::default(),
-        flow_analysis_cache: Default::default(),
-        class_instance_type_to_decl: Default::default(),
-        class_instance_type_cache: Default::default(),
-        class_constructor_type_cache: Default::default(),
-        type_only_nodes: Default::default(),
-        namespace_module_names: Default::default(),
-    };
+    let cache = crate::TypeCache::default();
 
     // Create checker with cache + shared def store.
     let checker = crate::state::CheckerState::with_cache_and_shared_def_store(

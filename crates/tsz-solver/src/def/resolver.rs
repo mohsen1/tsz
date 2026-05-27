@@ -863,6 +863,16 @@ impl TypeEnvironment {
         self.def_type_params.clone()
     }
 
+    /// Snapshot boxed primitive interface identities for downstream declaration emit.
+    pub fn snapshot_boxed_types(&self) -> FxHashMap<IntrinsicKind, TypeId> {
+        self.boxed_types.clone()
+    }
+
+    /// Snapshot boxed primitive `DefId` identities for downstream declaration emit.
+    pub fn snapshot_boxed_def_ids(&self) -> FxHashMap<IntrinsicKind, Vec<DefId>> {
+        self.boxed_def_ids.clone()
+    }
+
     // =========================================================================
     // DefKind Storage (Task #32: Graph Isomorphism)
     // =========================================================================

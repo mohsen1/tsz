@@ -1,6 +1,6 @@
 use rustc_hash::FxHashMap;
 use tsz_binder::SymbolId;
-use tsz_solver::types::TypeParamInfo;
+use tsz_solver::types::{IntrinsicKind, TypeParamInfo};
 use tsz_solver::{DefId, TypeId};
 
 /// Emitter-local view of checker-produced type caches.
@@ -20,6 +20,10 @@ pub struct TypeCacheView {
     /// Maps `DefId.0` -> type parameters (from `TypeEnvironment`).
     /// Paired with `def_types` for type alias application evaluation.
     pub def_type_params: FxHashMap<u32, Vec<TypeParamInfo>>,
+    /// Boxed primitive interface identities from checker-owned public summaries.
+    pub boxed_types: FxHashMap<IntrinsicKind, TypeId>,
+    /// Boxed primitive `DefId` identities from checker-owned public summaries.
+    pub boxed_def_ids: FxHashMap<IntrinsicKind, Vec<DefId>>,
     /// Maps `DefId` -> symbol name string.
     /// Fallback for `print_lazy_type` when the symbol lives in a lib binder
     /// that is not merged into the current file's `symbol_arena`.
