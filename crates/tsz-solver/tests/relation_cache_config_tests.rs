@@ -28,15 +28,20 @@
 use super::*;
 use crate::caches::db::QueryDatabase;
 use crate::caches::query_cache::QueryCache;
+use crate::computation::TypeEnvironment;
+use crate::def::{DefId, DefKind};
 use crate::intern::TypeInterner;
 use crate::relations::relation_queries::{
-    RelationContext, RelationKind, RelationPolicy, query_relation,
+    RelationContext, RelationKind, RelationPolicy, query_relation, query_relation_with_resolver,
 };
 use crate::relations::subtype::AnyPropagationMode;
 use crate::types::{
-    CachedAnyMode, FunctionShape, PropertyInfo, RelationCacheConfig, RelationCacheKey,
-    RelationCacheKind, RelationFlags, TypeParamInfo,
+    CachedAnyMode, FunctionShape, ParamInfo, PropertyInfo, RelationCacheConfig, RelationCacheKey,
+    RelationCacheKind, RelationFlags, TypeData, TypeParamInfo,
 };
+
+#[path = "relation_cache_config_tests/cache_agreement.rs"]
+mod cache_agreement;
 
 /// Assert that two `RelationPolicy` configurations produce distinct
 /// assignability cache keys for the same `(STRING, NUMBER)` pair. Centralises
@@ -161,6 +166,85 @@ fn different_relation_kinds_produce_distinct_keys() {
     assert_eq!(sub.relation, RelationCacheKind::Subtype);
     assert_eq!(assign.relation, RelationCacheKind::Assignable);
     assert_eq!(identical.relation, RelationCacheKind::Identical);
+}
+
+#[test]
+fn query_cache_relation_kinds_match_uncached_relation_queries() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let optional = interner.intern_string("relationKindOptional");
+    let unrelated = interner.intern_string("relationKindUnrelated");
+    let source = interner.object(vec![PropertyInfo::new(unrelated, TypeId::BOOLEAN)]);
+    let target = interner.object(vec![PropertyInfo::opt(optional, TypeId::NUMBER)]);
+    let policy = RelationPolicy::default();
+    let subtype_key = RelationCacheKey::for_subtype(source, target, policy.cache_config());
+    let assignability_key =
+        RelationCacheKey::for_assignability(source, target, policy.cache_config());
+
+    assert_ne!(
+        subtype_key, assignability_key,
+        "subtype and assignability must occupy distinct cache slots",
+    );
+
+    let uncached_subtype = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let uncached_assignability = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        uncached_subtype,
+        "structural subtype should accept an object against an all-optional target",
+    );
+    assert!(
+        !uncached_assignability,
+        "assignability should reject the unrelated source as a weak-type violation",
+    );
+
+    let subtype_cached = db.is_subtype_of_with_policy(source, target, policy);
+    assert_eq!(
+        subtype_cached, uncached_subtype,
+        "cached subtype result must match the uncached subtype relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "subtype result must be stored in the subtype cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        None,
+        "assignability lookup must not hit the populated subtype slot",
+    );
+
+    let assignability_cached = db.is_assignable_to_with_policy(source, target, policy);
+    assert_eq!(
+        assignability_cached, uncached_assignability,
+        "cached assignability result must match the uncached assignability relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assignability_key),
+        Some(assignability_cached),
+        "assignability result must be stored in the assignability cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(subtype_key),
+        Some(subtype_cached),
+        "subtype slot must remain intact after the assignability lookup",
+    );
 }
 
 #[test]
@@ -293,6 +377,306 @@ fn erase_generics_partitions_cache_entries() {
 }
 
 #[test]
+fn assignability_cache_no_unchecked_indexed_access_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let array = interner.array(TypeId::STRING);
+    let indexed_read = interner.intern(TypeData::IndexAccess(array, TypeId::NUMBER));
+
+    let checked_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let unchecked_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS,
+    );
+    let checked_key = RelationCacheKey::for_assignability(
+        indexed_read,
+        TypeId::STRING,
+        checked_policy.cache_config(),
+    );
+    let unchecked_key = RelationCacheKey::for_assignability(
+        indexed_read,
+        TypeId::STRING,
+        unchecked_policy.cache_config(),
+    );
+
+    assert_ne!(
+        checked_key, unchecked_key,
+        "indexed-access read policy must partition assignability cache entries",
+    );
+
+    let checked_uncached = query_relation(
+        &interner,
+        indexed_read,
+        TypeId::STRING,
+        RelationKind::Assignable,
+        checked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let unchecked_uncached = query_relation(
+        &interner,
+        indexed_read,
+        TypeId::STRING,
+        RelationKind::Assignable,
+        unchecked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        checked_uncached,
+        "without noUncheckedIndexedAccess, array[number] should read as string",
+    );
+    assert!(
+        !unchecked_uncached,
+        "with noUncheckedIndexedAccess under strict null checks, array[number] should include undefined",
+    );
+
+    let checked_cached =
+        db.is_assignable_to_with_policy(indexed_read, TypeId::STRING, checked_policy);
+    let unchecked_cached =
+        db.is_assignable_to_with_policy(indexed_read, TypeId::STRING, unchecked_policy);
+
+    assert_eq!(
+        checked_cached, checked_uncached,
+        "cached checked indexed-access assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        unchecked_cached, unchecked_uncached,
+        "cached unchecked indexed-access assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(checked_key),
+        Some(checked_cached),
+        "checked indexed-access policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(unchecked_key),
+        Some(unchecked_cached),
+        "unchecked indexed-access policy result must use its own cache slot",
+    );
+}
+
+#[test]
+fn assignability_cache_exact_optional_property_types_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let property = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::new(property, TypeId::UNDEFINED)]);
+    let target = interner.object(vec![PropertyInfo::opt(property, TypeId::NUMBER)]);
+
+    let loose_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let exact_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES,
+    );
+    let loose_key =
+        RelationCacheKey::for_assignability(source, target, loose_policy.cache_config());
+    let exact_key =
+        RelationCacheKey::for_assignability(source, target, exact_policy.cache_config());
+
+    assert_ne!(
+        loose_key, exact_key,
+        "exact optional property policy must partition assignability cache entries",
+    );
+
+    let loose_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        loose_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let exact_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        exact_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        loose_uncached,
+        "without exactOptionalPropertyTypes, a present undefined value should satisfy an optional property",
+    );
+    assert!(
+        !exact_uncached,
+        "with exactOptionalPropertyTypes, a present undefined value must not satisfy an optional number property",
+    );
+
+    let loose_cached = db.is_assignable_to_with_policy(source, target, loose_policy);
+    let exact_cached = db.is_assignable_to_with_policy(source, target, exact_policy);
+
+    assert_eq!(
+        loose_cached, loose_uncached,
+        "cached loose optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        exact_cached, exact_uncached,
+        "cached exact optional-property assignability must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(loose_key),
+        Some(loose_cached),
+        "loose optional-property policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(exact_key),
+        Some(exact_cached),
+        "exact optional-property policy result must use its own cache slot",
+    );
+}
+
+#[test]
+fn subtype_cache_allow_void_return_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(vec![], TypeId::STRING));
+    let target = interner.function(FunctionShape::new(vec![], TypeId::VOID));
+
+    let strict_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let void_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_ALLOW_VOID_RETURN,
+    );
+    let strict_key = RelationCacheKey::for_subtype(source, target, strict_policy.cache_config());
+    let void_key = RelationCacheKey::for_subtype(source, target, void_policy.cache_config());
+
+    assert_ne!(
+        strict_key, void_key,
+        "void-return exception policy must partition subtype cache entries",
+    );
+
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let void_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        void_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !strict_uncached,
+        "without ALLOW_VOID_RETURN, a string-returning source must not satisfy a void-returning target",
+    );
+    assert!(
+        void_uncached,
+        "with ALLOW_VOID_RETURN, a non-void source return should satisfy a void target return",
+    );
+
+    let strict_cached = db.is_subtype_of_with_policy(source, target, strict_policy);
+    let void_cached = db.is_subtype_of_with_policy(source, target, void_policy);
+
+    assert_eq!(
+        strict_cached, strict_uncached,
+        "cached strict void-return subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        void_cached, void_uncached,
+        "cached void-exception subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        Some(strict_cached),
+        "strict void-return policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(void_key),
+        Some(void_cached),
+        "void-exception policy result must use its own cache slot",
+    );
+}
+
+#[test]
+fn subtype_cache_strict_readonly_identity_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let property = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::readonly(property, TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::new(property, TypeId::STRING)]);
+
+    let ordinary_policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
+    let readonly_identity_policy = RelationPolicy::from_flags(
+        RelationCacheKey::FLAG_STRICT_NULL_CHECKS
+            | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+    );
+    let ordinary_key =
+        RelationCacheKey::for_subtype(source, target, ordinary_policy.cache_config());
+    let readonly_identity_key =
+        RelationCacheKey::for_subtype(source, target, readonly_identity_policy.cache_config());
+
+    assert_ne!(
+        ordinary_key, readonly_identity_key,
+        "strict readonly identity policy must partition subtype cache entries",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        ordinary_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let readonly_identity_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        readonly_identity_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary relation mode should allow readonly source properties to satisfy mutable targets",
+    );
+    assert!(
+        !readonly_identity_uncached,
+        "strict readonly identity mode must treat readonly mismatch as relation-significant",
+    );
+
+    let ordinary_cached = db.is_subtype_of_with_policy(source, target, ordinary_policy);
+    let readonly_identity_cached =
+        db.is_subtype_of_with_policy(source, target, readonly_identity_policy);
+
+    assert_eq!(
+        ordinary_cached, ordinary_uncached,
+        "cached ordinary readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        readonly_identity_cached, readonly_identity_uncached,
+        "cached strict-readonly subtype must match the uncached relation facade",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_cached),
+        "ordinary readonly policy result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(readonly_identity_key),
+        Some(readonly_identity_cached),
+        "strict readonly identity policy result must use its own cache slot",
+    );
+}
+
+#[test]
 fn strict_subtype_checking_partitions_cache_entries() {
     assert_assignability_partitions(
         "strict_subtype_checking",
@@ -316,6 +700,126 @@ fn assume_related_on_cycle_partitions_cache_entries() {
         "assume_related_on_cycle",
         RelationPolicy::default().with_assume_related_on_cycle(true),
         RelationPolicy::default().with_assume_related_on_cycle(false),
+    );
+}
+
+#[test]
+fn subtype_cache_assume_related_on_cycle_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let mut env = TypeEnvironment::new();
+
+    let left_def = DefId(9101);
+    let right_def = DefId(9102);
+    let next = interner.intern_string("next");
+
+    let left = interner.lazy(left_def);
+    let right = interner.lazy(right_def);
+    env.insert_def(
+        left_def,
+        interner.object(vec![PropertyInfo::new(next, left)]),
+    );
+    env.insert_def(
+        right_def,
+        interner.object(vec![PropertyInfo::new(next, right)]),
+    );
+    env.insert_def_kind(left_def, DefKind::TypeAlias);
+    env.insert_def_kind(right_def, DefKind::TypeAlias);
+
+    let assume = RelationPolicy::default().with_assume_related_on_cycle(true);
+    let reject = RelationPolicy::default().with_assume_related_on_cycle(false);
+    let context = RelationContext {
+        query_db: Some(&db),
+        ..RelationContext::default()
+    };
+
+    let assume_uncached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        assume,
+        RelationContext::default(),
+    )
+    .is_related();
+    let reject_uncached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        reject,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        assume_uncached,
+        "recursive aliases with the same shape should rely on the cycle assumption",
+    );
+    assert!(
+        !reject_uncached,
+        "disabling the cycle assumption should reject the same recursive alias pair",
+    );
+
+    let reject_key = RelationCacheKey::for_subtype(left, right, reject.cache_config());
+    let assume_key = RelationCacheKey::for_subtype(left, right, assume.cache_config());
+    assert_ne!(
+        reject_key, assume_key,
+        "cycle-assuming and cycle-rejecting policies must occupy distinct cache slots",
+    );
+
+    let reject_cached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        reject,
+        context,
+    )
+    .is_related();
+
+    assert_eq!(
+        reject_cached, reject_uncached,
+        "cached cycle-rejecting policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(reject_key),
+        Some(reject_uncached),
+        "cycle-rejecting result must be stored in the rejecting slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(assume_key),
+        None,
+        "cycle-assuming lookup must not hit the rejecting slot",
+    );
+
+    let assume_cached = query_relation_with_resolver(
+        &interner,
+        &env,
+        left,
+        right,
+        RelationKind::Subtype,
+        assume,
+        context,
+    )
+    .is_related();
+
+    assert_eq!(
+        assume_cached, assume_uncached,
+        "cached cycle-assuming policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(assume_key),
+        Some(assume_uncached),
+        "cycle-assuming result must be stored in the assuming slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(reject_key),
+        Some(reject_uncached),
+        "cycle-rejecting slot must remain intact after the assuming lookup",
     );
 }
 
@@ -359,6 +863,86 @@ fn strict_readonly_identity_partitions_cache_entries() {
     assert_packed_flag_partitions(
         "strict_readonly_identity",
         RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16,
+    );
+}
+
+#[test]
+fn subtype_cache_strict_readonly_identity_policy_matches_uncached_relation_query() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let prop = interner.intern_string("value");
+    let source = interner.object(vec![PropertyInfo::readonly(prop, TypeId::NUMBER)]);
+    let target = interner.object(vec![PropertyInfo::new(prop, TypeId::NUMBER)]);
+
+    let ordinary = RelationPolicy::from_flags(0);
+    let strict_readonly =
+        RelationPolicy::from_flags(RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16);
+    let ordinary_key = RelationCacheKey::for_subtype(source, target, ordinary.cache_config());
+    let strict_key = RelationCacheKey::for_subtype(source, target, strict_readonly.cache_config());
+
+    assert_ne!(
+        ordinary_key, strict_key,
+        "ordinary and strict-readonly identity policies must occupy distinct cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Subtype,
+        strict_readonly,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary structural relation should ignore property readonly",
+    );
+    assert!(
+        !strict_uncached,
+        "identity-style relation should treat property readonly as observable",
+    );
+
+    assert_eq!(
+        db.is_subtype_of_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary readonly policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary readonly result must be stored in the ordinary slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        None,
+        "strict-readonly lookup must not hit the ordinary slot",
+    );
+
+    assert_eq!(
+        db.is_subtype_of_with_policy(source, target, strict_readonly),
+        strict_uncached,
+        "cached strict-readonly policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(strict_key),
+        Some(strict_uncached),
+        "strict-readonly result must be stored in the strict slot",
+    );
+    assert_eq!(
+        db.lookup_subtype_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary slot must remain intact after the strict-readonly lookup",
     );
 }
 
@@ -564,457 +1148,5 @@ fn strict_function_types_and_strict_any_have_distinct_keys() {
     assert_ne!(
         k_sft, k_sap,
         "keys for strict_function_types and strict_any_propagation must be distinct",
-    );
-}
-
-// =============================================================================
-// 3. Typed policy projection preserves stable external bits
-// =============================================================================
-
-#[test]
-fn legacy_flag_constants_match_typed_bitflags() {
-    // External callers still depend on the `FLAG_*` `u16` constants being
-    // numerically stable. Guarantee they line up with the typed layout so
-    // that bridges like `pack_relation_flags()` keep working.
-    assert_eq!(
-        u32::from(RelationCacheKey::FLAG_STRICT_NULL_CHECKS),
-        RelationFlags::STRICT_NULL_CHECKS.bits()
-    );
-    assert_eq!(
-        u32::from(RelationCacheKey::FLAG_NO_ERASE_GENERICS),
-        RelationFlags::NO_ERASE_GENERICS.bits()
-    );
-}
-
-#[test]
-fn policy_cache_config_preserves_packed_extended_bits() {
-    let packed = (RelationFlags::STRICT_SUBTYPE_CHECKING
-        | RelationFlags::STRICT_ANY_PROPAGATION
-        | RelationFlags::SKIP_WEAK_TYPE_CHECKS
-        | RelationFlags::ASSUME_RELATED_ON_CYCLE
-        | RelationFlags::IN_CALLBACK_PARAM_CHECK
-        | RelationFlags::STRICT_READONLY_IDENTITY)
-        .bits() as u16;
-
-    let config = RelationPolicy::from_flags(packed).cache_config();
-
-    assert!(
-        config
-            .flags
-            .contains(RelationFlags::STRICT_SUBTYPE_CHECKING)
-    );
-    assert!(config.flags.contains(RelationFlags::STRICT_ANY_PROPAGATION));
-    assert!(config.flags.contains(RelationFlags::SKIP_WEAK_TYPE_CHECKS));
-    assert!(
-        config
-            .flags
-            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE)
-    );
-    assert!(
-        config
-            .flags
-            .contains(RelationFlags::IN_CALLBACK_PARAM_CHECK)
-    );
-    assert!(
-        config
-            .flags
-            .contains(RelationFlags::STRICT_READONLY_IDENTITY)
-    );
-}
-
-#[test]
-fn policy_cache_config_preserves_all_assigned_packed_bits() {
-    let all_flags = RelationFlags::all();
-    let config = RelationPolicy::from_flags(all_flags.bits() as u16).cache_config();
-
-    assert_eq!(
-        config.flags, all_flags,
-        "explicit packed-bit projection must preserve every assigned relation flag",
-    );
-}
-
-#[test]
-fn relation_policy_typed_accessors_preserve_packed_relation_bits() {
-    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-        | RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-        | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES
-        | RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS
-        | RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE
-        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
-        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST
-        | RelationCacheKey::FLAG_ALLOW_BIVARIANT_PARAM_COUNT
-        | RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY
-        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
-    let enabled = RelationPolicy::from_flags(packed);
-    let disabled = RelationPolicy::from_flags(0);
-
-    assert!(enabled.strict_null_checks());
-    assert!(enabled.strict_function_types());
-    assert!(enabled.exact_optional_property_types());
-    assert!(enabled.no_unchecked_indexed_access());
-    assert!(enabled.disable_method_bivariance());
-    assert!(enabled.allow_void_return());
-    assert!(enabled.allow_bivariant_rest());
-    assert!(enabled.allow_bivariant_param_count());
-    assert!(enabled.allow_erased_generic_signature_retry());
-    assert!(enabled.strict_readonly_identity());
-
-    assert!(!disabled.strict_null_checks());
-    assert!(!disabled.strict_function_types());
-    assert!(!disabled.exact_optional_property_types());
-    assert!(!disabled.no_unchecked_indexed_access());
-    assert!(!disabled.disable_method_bivariance());
-    assert!(!disabled.allow_void_return());
-    assert!(!disabled.allow_bivariant_rest());
-    assert!(!disabled.allow_bivariant_param_count());
-    assert!(!disabled.allow_erased_generic_signature_retry());
-    assert!(!disabled.strict_readonly_identity());
-}
-
-#[test]
-fn relation_policy_legacy_packed_flags_accessor_preserves_input_bits() {
-    let packed = RelationCacheKey::FLAG_STRICT_NULL_CHECKS
-        | RelationCacheKey::FLAG_ALLOW_VOID_RETURN
-        | RelationFlags::STRICT_READONLY_IDENTITY.bits() as u16;
-    let policy = RelationPolicy::from_flags(packed);
-
-    assert_eq!(
-        policy.legacy_packed_flags(),
-        packed,
-        "compatibility edges should observe the exact legacy bit layout",
-    );
-}
-
-#[test]
-fn subtype_flags_entrypoint_uses_relation_policy_cache_config() {
-    let flags =
-        RelationCacheKey::FLAG_STRICT_NULL_CHECKS | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
-
-    let key = RelationCacheKey::for_subtype(
-        TypeId::STRING,
-        TypeId::NUMBER,
-        RelationPolicy::from_flags(flags).cache_config(),
-    );
-
-    assert!(
-        key.config
-            .flags
-            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE),
-        "subtype flags entrypoint must preserve RelationPolicy's cycle default",
-    );
-    assert!(
-        key.config.flags.contains(RelationFlags::NO_ERASE_GENERICS),
-        "subtype flags entrypoint must preserve explicit packed bits",
-    );
-}
-
-#[test]
-fn assignability_flags_entrypoint_uses_relation_policy_cache_config() {
-    let flags = RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES
-        | RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
-
-    let key = RelationCacheKey::for_assignability(
-        TypeId::STRING,
-        TypeId::NUMBER,
-        RelationPolicy::from_flags(flags).cache_config(),
-    );
-
-    assert!(
-        key.config
-            .flags
-            .contains(RelationFlags::ASSUME_RELATED_ON_CYCLE),
-        "assignability flags entrypoint must preserve RelationPolicy's cycle default",
-    );
-    assert!(
-        !key.config
-            .flags
-            .contains(RelationFlags::STRICT_ANY_PROPAGATION),
-        "assignability flags entrypoint must not infer strict-any from strict function types",
-    );
-}
-
-#[test]
-fn query_cache_relation_misses_insert_policy_shaped_keys() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let source = interner.literal_string("policy-key-source");
-    let flags =
-        RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES | RelationCacheKey::FLAG_NO_ERASE_GENERICS;
-    let config = RelationPolicy::from_flags(flags).cache_config();
-
-    assert!(db.is_subtype_of_with_policy(
-        source,
-        TypeId::STRING,
-        RelationPolicy::from_flags(flags),
-    ));
-    assert_eq!(
-        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
-            source,
-            TypeId::STRING,
-            config,
-        )),
-        Some(true),
-        "subtype miss path must insert under the policy-derived cache key",
-    );
-
-    assert!(db.is_assignable_to_with_policy(
-        source,
-        TypeId::STRING,
-        RelationPolicy::from_flags(flags),
-    ));
-    assert_eq!(
-        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
-            source,
-            TypeId::STRING,
-            config,
-        )),
-        Some(true),
-        "assignability miss path must insert under the policy-derived cache key",
-    );
-}
-
-#[test]
-fn query_cache_typed_policy_entrypoints_insert_policy_shaped_keys() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let source = interner.literal_string("typed-policy-key-source");
-    let policy = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES)
-        .with_strict_any_propagation(true)
-        .with_skip_weak_type_checks(true)
-        .with_erase_generics(false);
-    let config = policy.cache_config();
-
-    assert!(db.is_subtype_of_with_policy(source, TypeId::STRING, policy));
-    assert_eq!(
-        db.lookup_subtype_cache(RelationCacheKey::for_subtype(
-            source,
-            TypeId::STRING,
-            config,
-        )),
-        Some(true),
-        "typed subtype policy path must insert under the policy-derived cache key",
-    );
-
-    assert!(db.is_assignable_to_with_policy(source, TypeId::STRING, policy));
-    assert_eq!(
-        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
-            source,
-            TypeId::STRING,
-            config,
-        )),
-        Some(true),
-        "typed assignability policy path must insert under the policy-derived cache key",
-    );
-}
-
-#[test]
-fn assignability_cache_strict_any_policy_matches_uncached_relation_query() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let value = interner.intern_string("value");
-    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
-    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
-    let policy = RelationPolicy::default().with_strict_any_propagation(true);
-
-    let uncached = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        policy,
-        RelationContext::default(),
-    );
-    let cached = db.is_assignable_to_with_policy(source, target, policy);
-    let cached_again = db.is_assignable_to_with_policy(source, target, policy);
-    let stats = db.relation_cache_stats();
-
-    assert_eq!(
-        cached,
-        uncached.is_related(),
-        "cached strict-any assignability must match the uncached relation facade",
-    );
-    assert_eq!(
-        cached_again, cached,
-        "second strict-any lookup should reuse the same policy-shaped answer",
-    );
-    assert!(
-        stats.assignability_hits >= 1,
-        "second strict-any lookup should hit the assignability cache",
-    );
-    assert!(
-        stats.assignability_misses >= 1,
-        "first strict-any lookup should miss before inserting",
-    );
-    assert!(
-        !cached,
-        "strict-any policy must not let nested `any` silence the property mismatch",
-    );
-}
-
-#[test]
-fn assignability_policy_flip_matches_uncached_relation_query() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-    let strict = RelationPolicy::from_flags(RelationCacheKey::FLAG_STRICT_NULL_CHECKS);
-    let loose = RelationPolicy::from_flags(0);
-
-    let strict_uncached = query_relation(
-        &interner,
-        TypeId::NULL,
-        TypeId::NUMBER,
-        RelationKind::Assignable,
-        strict,
-        RelationContext::default(),
-    )
-    .is_related();
-    let strict_cached = db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, strict);
-
-    assert_eq!(
-        strict_cached, strict_uncached,
-        "cached strict-null assignability must match the uncached typed relation query",
-    );
-
-    let loose_uncached = query_relation(
-        &interner,
-        TypeId::NULL,
-        TypeId::NUMBER,
-        RelationKind::Assignable,
-        loose,
-        RelationContext::default(),
-    )
-    .is_related();
-    let loose_cached = db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, loose);
-
-    assert_eq!(
-        loose_cached, loose_uncached,
-        "cached non-strict assignability must match the uncached typed relation query",
-    );
-    assert_ne!(
-        strict_cached, loose_cached,
-        "null assignability should differ across strict-null policy slots",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(TypeId::NULL, TypeId::NUMBER, strict),
-        strict_uncached,
-        "strict slot must remain stable after populating the non-strict slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
-            TypeId::NULL,
-            TypeId::NUMBER,
-            strict.cache_config(),
-        )),
-        Some(strict_uncached),
-        "strict policy result must be stored under the strict policy-derived key",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(RelationCacheKey::for_assignability(
-            TypeId::NULL,
-            TypeId::NUMBER,
-            loose.cache_config(),
-        )),
-        Some(loose_uncached),
-        "non-strict policy result must be stored under the non-strict policy-derived key",
-    );
-}
-
-#[test]
-fn assignability_cache_erase_generics_policy_matches_uncached_relation_query() {
-    let interner = TypeInterner::new();
-    let db = QueryCache::new(&interner);
-
-    let target_t = TypeParamInfo {
-        name: interner.intern_string("Target"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    };
-    let target_t_type = interner.type_param(target_t);
-    let source = interner.function(FunctionShape {
-        type_params: vec![],
-        params: vec![],
-        this_type: None,
-        return_type: target_t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-    let target = interner.function(FunctionShape {
-        type_params: vec![target_t],
-        params: vec![],
-        this_type: None,
-        return_type: target_t_type,
-        type_predicate: None,
-        is_constructor: false,
-        is_method: false,
-    });
-
-    let erased = RelationPolicy::default().with_erase_generics(true);
-    let strict = RelationPolicy::default().with_erase_generics(false);
-    let erased_key = RelationCacheKey::for_assignability(source, target, erased.cache_config());
-    let strict_key = RelationCacheKey::for_assignability(source, target, strict.cache_config());
-
-    assert_ne!(
-        erased_key, strict_key,
-        "erased and strict generic-signature policies must occupy distinct cache slots",
-    );
-
-    let uncached_erased = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        erased,
-        RelationContext::default(),
-    );
-    let uncached_strict = query_relation(
-        &interner,
-        source,
-        target,
-        RelationKind::Assignable,
-        strict,
-        RelationContext::default(),
-    );
-
-    assert!(
-        uncached_erased.is_related(),
-        "erased generic-signature compatibility should allow the relation",
-    );
-    assert!(
-        !uncached_strict.is_related(),
-        "strict member compatibility must not promote an outer type parameter into a generic signature",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, strict),
-        uncached_strict.is_related(),
-        "cached strict generic policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_key),
-        Some(uncached_strict.is_related()),
-        "strict generic result must be stored in the strict slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(erased_key),
-        None,
-        "erased-generic lookup must not hit the strict slot",
-    );
-
-    assert_eq!(
-        db.is_assignable_to_with_policy(source, target, erased),
-        uncached_erased.is_related(),
-        "cached erased generic policy must match direct query_relation",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(erased_key),
-        Some(uncached_erased.is_related()),
-        "erased generic result must be stored in the erased slot",
-    );
-    assert_eq!(
-        db.lookup_assignability_cache(strict_key),
-        Some(uncached_strict.is_related()),
-        "strict generic slot must remain intact after the erased lookup",
     );
 }

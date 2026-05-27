@@ -48,7 +48,9 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             && target_params
                 .last()
                 .is_some_and(|param| self.rest_param_needs_min_arity_guard(param.type_id));
+        let allow_bivariant_param_count = self.allows_bivariant_param_count(is_method);
         if (!target_has_rest || guard_target_rest_arity)
+            && !allow_bivariant_param_count
             && source_required
                 > target_fixed_count
                     + if target_has_rest {
@@ -81,6 +83,13 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             let Some(rest_elem_type) = rest_elem_type else {
                 return SubtypeResult::False;
             };
+            if rest_elem_type.is_any_or_unknown()
+                && self
+                    .first_top_rest_unassignable_source_param(source_params)
+                    .is_some()
+            {
+                return SubtypeResult::False;
+            }
             if rest_is_top {
                 return SubtypeResult::True;
             }

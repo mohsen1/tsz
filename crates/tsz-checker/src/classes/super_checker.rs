@@ -548,6 +548,86 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Returns `true` for the narrow `tsc` diagnostic-priority case where a
+    /// single pre-super `this` reference lives in an expression statement.
+    ///
+    /// `tsc` still reports TS2376 when the pre-super `this` appears in a
+    /// declaration initializer, or when multiple pre-super `this` references
+    /// occur before the first root-level `super()` call.
+    fn constructor_has_single_pre_super_this_expression_statement(
+        &self,
+        ctor_idx: NodeIndex,
+    ) -> bool {
+        use tsz_scanner::SyntaxKind;
+
+        let Some(ctor_node) = self.ctx.arena.get(ctor_idx) else {
+            return false;
+        };
+        let Some(ctor) = self.ctx.arena.get_constructor(ctor_node) else {
+            return false;
+        };
+        if ctor.body.is_none() {
+            return false;
+        }
+        let Some(body_node) = self.ctx.arena.get(ctor.body) else {
+            return false;
+        };
+        let Some(block) = self.ctx.arena.get_block(body_node) else {
+            return false;
+        };
+
+        let Some(first_super_stmt_index) = block
+            .statements
+            .nodes
+            .iter()
+            .position(|&stmt| self.is_super_call_statement(stmt))
+        else {
+            return false;
+        };
+
+        let pre_super_statements = &block.statements.nodes[..first_super_stmt_index];
+        if pre_super_statements.is_empty() {
+            return false;
+        }
+
+        let mut this_reference_count = 0;
+
+        for i in 0..self.ctx.arena.len() {
+            let node_idx = NodeIndex(i as u32);
+            let Some(node) = self.ctx.arena.get(node_idx) else {
+                continue;
+            };
+            if !self.is_directly_in_constructor_body(node_idx, ctor_idx) {
+                continue;
+            }
+            if node.kind == SyntaxKind::ThisKeyword as u16
+                && self.is_this_before_super_in_derived_constructor(node_idx)
+            {
+                let Some(containing_statement) = pre_super_statements
+                    .iter()
+                    .copied()
+                    .find(|&stmt| self.is_descendant_of_node(node_idx, stmt) || node_idx == stmt)
+                else {
+                    continue;
+                };
+
+                let Some(statement_node) = self.ctx.arena.get(containing_statement) else {
+                    return false;
+                };
+                if statement_node.kind != syntax_kind_ext::EXPRESSION_STATEMENT {
+                    return false;
+                }
+
+                this_reference_count += 1;
+                if this_reference_count > 1 {
+                    return false;
+                }
+            }
+        }
+
+        this_reference_count == 1
+    }
+
     fn is_additional_super_call_after_first_root_level_super_statement(
         &self,
         idx: NodeIndex,
@@ -903,10 +983,15 @@ impl<'a> CheckerState<'a> {
             }
 
             if !self.is_super_call_first_statement_in_constructor(idx) {
+                // TS17009 suppresses TS2376 only for the narrow `tsc`
+                // expression-statement case. Declaration initializers and
+                // multiple pre-super `this` references still retain TS2376.
                 let should_emit_ts2376 =
                     self.enclosing_constructor_node(idx)
                         .is_some_and(|ctor_idx| {
                             self.constructor_has_pre_super_this_or_super_property_reference(
+                                ctor_idx,
+                            ) && !self.constructor_has_single_pre_super_this_expression_statement(
                                 ctor_idx,
                             )
                         });

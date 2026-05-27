@@ -103,6 +103,12 @@ mod assertion_overlap_object_primitive_tests;
 #[path = "../tests/assertion_overlap_template_literal_tests.rs"]
 mod assertion_overlap_template_literal_tests;
 #[cfg(test)]
+#[path = "tests/assignability_display_relation_routing_arch_tests.rs"]
+mod assignability_display_relation_routing_arch_tests;
+#[cfg(test)]
+#[path = "tests/assignment_ops_relation_routing_arch_tests.rs"]
+mod assignment_ops_relation_routing_arch_tests;
+#[cfg(test)]
 #[path = "../tests/async_imported_promise_tests.rs"]
 mod async_imported_promise_tests;
 #[cfg(test)]
@@ -181,6 +187,9 @@ mod imported_generator_iterable_tests;
 #[path = "tests/index_sig_param_intersection_validity_tests.rs"]
 mod index_sig_param_intersection_validity_tests;
 #[cfg(test)]
+#[path = "tests/instantiation_expression_lib_display_tests.rs"]
+mod instantiation_expression_lib_display_tests;
+#[cfg(test)]
 #[path = "tests/interface_heritage_index_relation_routing_arch_tests.rs"]
 mod interface_heritage_index_relation_routing_arch_tests;
 #[cfg(test)]
@@ -258,6 +267,9 @@ mod rest_parameter_tests;
 #[cfg(test)]
 #[path = "../tests/rest_tuple_contextual_typing_tests.rs"]
 mod rest_tuple_contextual_typing_tests;
+#[cfg(test)]
+#[path = "tests/return_relation_routing_arch_tests.rs"]
+mod return_relation_routing_arch_tests;
 #[cfg(test)]
 #[path = "../tests/spread_rest_diagnostics_tests.rs"]
 mod spread_rest_diagnostics_tests;
@@ -766,6 +778,9 @@ mod nonunique_symbol_property_access_tests;
 #[path = "tests/nullish_target_relation_routing_arch_tests.rs"]
 mod nullish_target_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "tests/object_define_property_identity_tests.rs"]
+mod object_define_property_identity_tests;
+#[cfg(test)]
 #[path = "tests/object_literal_computed_symbol_member_tests.rs"]
 mod object_literal_computed_symbol_member_tests;
 #[cfg(test)]
@@ -841,6 +856,9 @@ mod strict_null_manual;
 #[path = "tests/string_literal_union_display_order_tests.rs"]
 mod string_literal_union_display_order_tests;
 #[cfg(test)]
+#[path = "tests/super_call_ts2376_ts17009_priority_tests.rs"]
+mod super_call_ts2376_ts17009_priority_tests;
+#[cfg(test)]
 #[path = "../tests/symbol_index_signature_tests.rs"]
 mod symbol_index_signature_tests;
 #[cfg(test)]
@@ -876,6 +894,9 @@ mod ts2339_js_this_function_name_display_tests;
 #[cfg(test)]
 #[path = "tests/ts2341_private_access_via_type_param_constraint_tests.rs"]
 mod ts2341_private_access_via_type_param_constraint_tests;
+#[cfg(test)]
+#[path = "tests/ts2353_generic_constraint_tests.rs"]
+mod ts2353_generic_constraint_tests;
 #[cfg(test)]
 #[path = "tests/ts2565_jsdoc_prototype_type_decl_tests.rs"]
 mod ts2565_jsdoc_prototype_type_decl_tests;

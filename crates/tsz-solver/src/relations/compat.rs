@@ -234,6 +234,7 @@ pub struct CompatChecker<'a, R: TypeResolver = NoopResolver> {
     strict_null_checks: bool,
     no_unchecked_indexed_access: bool,
     exact_optional_property_types: bool,
+    allow_bivariant_rest: bool,
     /// When true, enables additional strict subtype checking rules for lib.d.ts
     strict_subtype_checking: bool,
     /// When true, disables TypeScript's method parameter bivariance exception.
@@ -281,6 +282,7 @@ impl<'a> CompatChecker<'a, NoopResolver> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
+            allow_bivariant_rest: true,
             strict_subtype_checking: false,
             disable_method_bivariance: false,
             skip_weak_type_checks: false,
@@ -652,6 +654,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             strict_null_checks: true,
             no_unchecked_indexed_access: false,
             exact_optional_property_types: false,
+            allow_bivariant_rest: true,
             strict_subtype_checking: false,
             disable_method_bivariance: false,
             skip_weak_type_checks: false,
@@ -705,6 +708,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     pub fn set_exact_optional_property_types(&mut self, exact: bool) {
         if self.exact_optional_property_types != exact {
             self.exact_optional_property_types = exact;
+            self.cache.clear();
+        }
+    }
+
+    pub fn set_allow_bivariant_rest(&mut self, allow: bool) {
+        if self.allow_bivariant_rest != allow {
+            self.allow_bivariant_rest = allow;
             self.cache.clear();
         }
     }
@@ -784,6 +794,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.strict_null_checks = config.strict_null_checks;
         self.exact_optional_property_types = config.exact_optional_property_types;
         self.no_unchecked_indexed_access = config.no_unchecked_indexed_access;
+        self.allow_bivariant_rest = true;
 
         // Propagate to internal SubtypeChecker so explain/failure analysis
         // uses the same strictNullChecks/strictFunctionTypes/exactOptionalPropertyTypes
@@ -1650,7 +1661,7 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
     const fn configure_subtype(&mut self, strict_function_types: bool) {
         self.subtype.strict_function_types = strict_function_types;
         self.subtype.allow_void_return = true;
-        self.subtype.allow_bivariant_rest = true;
+        self.subtype.allow_bivariant_rest = self.allow_bivariant_rest;
         self.subtype.exact_optional_property_types = self.exact_optional_property_types;
         self.subtype.strict_null_checks = self.strict_null_checks;
         self.subtype.no_unchecked_indexed_access = self.no_unchecked_indexed_access;

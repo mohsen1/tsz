@@ -9,6 +9,9 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+#[path = "access/symbol_constructor_index.rs"]
+mod symbol_constructor_index;
+
 pub(crate) fn is_optional_chain(arena: &NodeArena, idx: NodeIndex) -> bool {
     let Some(node) = arena.get(idx) else {
         return false;
@@ -1630,6 +1633,11 @@ impl<'a> CheckerState<'a> {
                 literal_index,
             )
         });
+
+        if self.shadowed_symbol_constructor_member_index(access.name_or_argument) {
+            result_type = TypeId::ANY;
+            use_index_signature_check = false;
+        }
 
         // NOTE: noUncheckedIndexedAccess `| undefined` addition is handled by
         // the solver's evaluate_index_access_with_options (called via

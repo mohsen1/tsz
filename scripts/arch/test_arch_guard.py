@@ -235,6 +235,79 @@ class ArchGuardBinaryEvaluatorBoundaryTests(unittest.TestCase):
         self.assertEqual(comment_hits, [])
 
 
+class ArchGuardCheckerSemanticProofBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def _semantic_proof_check(self):
+        for name, _base, pattern, excludes in self.arch_guard.CHECKS:
+            if name == "Checker boundary: semantic proof helpers stay behind query boundaries (#9673)":
+                return pattern, excludes
+        self.fail("checker semantic proof boundary check is missing from CHECKS")
+
+    def test_rule_exists(self):
+        self._semantic_proof_check()
+
+    def test_rule_flags_checker_local_conditional_and_instantiation_proofs(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "\n".join(
+            [
+                "let components = query::full_conditional_type_components(db, ty);",
+                "let ty = query_boundaries::common::instantiate_generic(db, base, args);",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/checkers/generic_checker/boolean_probe_constraints.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2])
+
+    def test_rule_flags_checker_local_mapped_key_proof_wrappers(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "\n".join(
+            [
+                "fn mapped_key_constraint_filters_current_object_keys(&mut self) -> bool {",
+                "fn generic_index_filters_current_type_param_keys(&mut self) -> bool {",
+                "let candidates = generic::conditional_key_filter_candidates(db, ty);",
+                "let next = generic::instantiate_alias_application_body(db, body, params, args);",
+            ]
+        )
+        hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
+            excludes,
+        )
+        self.assertEqual(hits, [1, 2, 3, 4])
+
+    def test_rule_ignores_query_boundaries_tests_and_comments(self):
+        pattern, excludes = self._semantic_proof_check()
+        text = "let components = query::full_conditional_type_components(db, ty);"
+        query_boundary_hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/src/query_boundaries/checkers/generic.rs",
+            excludes,
+        )
+        test_hits = self.arch_guard.find_matches(
+            text,
+            pattern,
+            "crates/tsz-checker/tests/deferred_conditional_identity_extends_tests.rs",
+            excludes,
+        )
+        comment_hits = self.arch_guard.find_matches(
+            "// let components = query::full_conditional_type_components(db, ty);",
+            pattern,
+            "crates/tsz-checker/src/types/type_checking/indexed_access/mapped_key_check.rs",
+            excludes,
+        )
+        self.assertEqual(query_boundary_hits, [])
+        self.assertEqual(test_hits, [])
+        self.assertEqual(comment_hits, [])
+
+
 class ArchGuardCoreWasmBoundaryTests(unittest.TestCase):
     def setUp(self):
         self.arch_guard = load_arch_guard_module()

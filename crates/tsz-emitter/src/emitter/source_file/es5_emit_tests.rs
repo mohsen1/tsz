@@ -422,6 +422,31 @@ fn class_static_block_await_recovery_matches_native_emit() {
 }
 
 #[test]
+fn static_method_await_recovery_does_not_emit_yield() {
+    // Static methods/accessors must NOT get the await→yield substitution that
+    // only applies inside CLASS_STATIC_BLOCK_DECLARATION IIFEs.
+    let source = "class C {\n    static foo() {\n        ({ [await]: 1 });\n        ({ await });\n        await:\n        break await;\n    }\n    static get bar() {\n        ({ await });\n    }\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        !output.contains("yield"),
+        "Static methods and accessors must not receive the await→yield substitution reserved for static block IIFEs.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn derived_constructor_with_prefix_statements_returns_tail_super_call() {
     let source = "class A {}\nclass B extends A { constructor() { \"ngInject\"; console.log(\"B\"); super(); } }\n";
 

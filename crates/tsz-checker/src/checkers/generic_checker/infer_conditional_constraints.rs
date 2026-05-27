@@ -317,7 +317,7 @@ impl<'a> CheckerState<'a> {
         Some(candidates)
     }
 
-    fn direct_source_alias_body_for_def(
+    pub(super) fn direct_source_alias_body_for_def(
         &mut self,
         def_id: tsz_solver::def::DefId,
     ) -> Option<(TypeId, Vec<tsz_solver::TypeParamInfo>)> {

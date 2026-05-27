@@ -1,8 +1,63 @@
 use super::DeclarationEmitter;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tsz_binder::BinderState;
 use tsz_parser::parser::ParserState;
+use tsz_parser::parser::syntax_kind_ext;
+use tsz_solver::construction::TypeInterner;
 
 static NEXT_TEMP_DIR: AtomicU64 = AtomicU64::new(0);
+
+fn first_function_declared_return_identifier_type_text(source: &str) -> Option<String> {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let emitter = DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+
+    parser.arena.nodes.iter().find_map(|node| {
+        (node.kind == syntax_kind_ext::FUNCTION_DECLARATION)
+            .then(|| parser.arena.get_function(node))
+            .flatten()
+            .and_then(|func| emitter.function_body_declared_return_identifier_type_text(func))
+    })
+}
+
+#[test]
+fn function_return_surface_reuses_returned_identifier_mapped_annotation() {
+    let text = first_function_declared_return_identifier_type_text(
+        r#"
+type PartialProperties<T, K extends keyof T> = Partial<Pick<T, K>>;
+export function sample<T extends { prop: string }>(a: T) {
+    const value: { [K in keyof PartialProperties<T, "prop">]: PartialProperties<T, "prop">[K]; } = null as any;
+    return value;
+}
+"#,
+    )
+    .expect("return identifier type text");
+
+    assert!(text.contains("[K in keyof PartialProperties<T, \"prop\">]"));
+    assert!(text.contains("PartialProperties<T, \"prop\">[K]"));
+}
+
+#[test]
+fn function_return_surface_reuses_renamed_returned_identifier_mapped_annotation() {
+    let text = first_function_declared_return_identifier_type_text(
+        r#"
+type Picked<U, Q extends keyof U> = Pick<U, Q>;
+export function sample<U extends { name: string }>(input: U) {
+    const value: { [Q in keyof Picked<U, "name">]: Picked<U, "name">[Q]; } = null as any;
+    return value;
+}
+"#,
+    )
+    .expect("return identifier type text");
+
+    assert!(text.contains("[Q in keyof Picked<U, \"name\">]"));
+    assert!(text.contains("Picked<U, \"name\">[Q]"));
+}
 
 #[test]
 fn simultaneous_word_replacement_does_not_rewrite_inserted_import_paths() {

@@ -30,6 +30,10 @@ dashmap = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "union_protected_intersection_property_tests"
+path = "tests/union_protected_intersection_property_tests.rs"
+
+[[test]]
 name = "array_element_naked_inference_tests"
 path = "tests/array_element_naked_inference_tests.rs"
 
@@ -468,6 +472,10 @@ path = "tests/conditional_extends_readonly_identity_tests.rs"
 [[test]]
 name = "conditional_extends_readonly_variance_tests"
 path = "tests/conditional_extends_readonly_variance_tests.rs"
+
+[[test]]
+name = "deferred_conditional_identity_extends_tests"
+path = "tests/deferred_conditional_identity_extends_tests.rs"
 
 [[test]]
 name = "ts2322_property_decl_annotation_tests"
@@ -1488,6 +1496,10 @@ path = "tests/nominal_application_call_suppression_tests.rs"
 [[test]]
 name = "bare_alias_display_tests"
 path = "tests/bare_alias_display_tests.rs"
+
+[[test]]
+name = "string_mapping_alias_display_tests"
+path = "tests/string_mapping_alias_display_tests.rs"
 
 [[test]]
 name = "class_arrow_property_type_inference_tests"

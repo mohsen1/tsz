@@ -631,52 +631,17 @@ impl<'a> CheckerState<'a> {
         })
     }
 
+    /// Indexed-access (`(A | B)["k"]`) form of the union restricted-property
+    /// rule. Delegates to the shared
+    /// [`CheckerState::union_restricted_property_is_missing`] so the type-level
+    /// and expression-level (`x.k`) paths stay in lockstep, including the
+    /// intersection-constituent "common declaration" handling.
     pub(super) fn union_restricted_literal_property_is_missing(
         &mut self,
         property_name: &str,
         object_type: TypeId,
     ) -> bool {
-        use crate::query_boundaries::state::checking;
-
-        if self.ctx.enclosing_class.is_some() {
-            return false;
-        }
-
-        let Some(members) = checking::union_members(self.ctx.types, object_type) else {
-            return false;
-        };
-        if members.len() < 2 {
-            return false;
-        }
-
-        let is_static = self.is_constructor_type(object_type);
-        let mut has_restricted = false;
-        let mut has_other = false;
-        let mut first_declaring_class: Option<NodeIndex> = None;
-
-        for member in members {
-            let member = self.resolve_type_for_property_access(member);
-            let Some(class_idx) = self.get_class_decl_from_type(member) else {
-                has_other = true;
-                continue;
-            };
-
-            match self.find_member_access_info(class_idx, property_name, is_static) {
-                Some(access_info) => {
-                    has_restricted = true;
-                    if let Some(first_decl) = first_declaring_class {
-                        if first_decl != access_info.declaring_class_idx {
-                            has_other = true;
-                        }
-                    } else {
-                        first_declaring_class = Some(access_info.declaring_class_idx);
-                    }
-                }
-                None => has_other = true,
-            }
-        }
-
-        has_restricted && has_other
+        self.union_restricted_property_is_missing(property_name, object_type)
     }
 
     pub(super) fn error_at_index_type_span(
@@ -884,6 +849,7 @@ impl<'a> CheckerState<'a> {
         &mut self,
         object_type: TypeId,
         index_type_for_check: TypeId,
+        index_constraint: Option<TypeId>,
     ) -> bool {
         let has_plain_string_index = self
             .ctx
@@ -895,6 +861,46 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let string_or_number = self.ctx.types.union2(TypeId::STRING, TypeId::NUMBER);
-        self.diagnostic_relation_boolean_guard(index_type_for_check, string_or_number)
+        if self
+            .string_index_candidate_is_string_or_number_key(index_type_for_check, string_or_number)
+        {
+            return true;
+        }
+        if let Some(constraint) = index_constraint {
+            let evaluated_constraint = self.evaluate_type_with_env(constraint);
+            return self
+                .string_index_candidate_is_string_or_number_key(constraint, string_or_number)
+                || self.string_index_candidate_is_string_or_number_key(
+                    evaluated_constraint,
+                    string_or_number,
+                );
+        }
+        false
+    }
+
+    fn string_index_candidate_is_string_or_number_key(
+        &mut self,
+        candidate: TypeId,
+        string_or_number: TypeId,
+    ) -> bool {
+        self.diagnostic_relation_boolean_guard(candidate, string_or_number)
+            || self.keyof_candidate_target_is_array_like(candidate)
+    }
+
+    fn keyof_candidate_target_is_array_like(&mut self, candidate: TypeId) -> bool {
+        let Some(target) =
+            crate::query_boundaries::state::checking::keyof_target(self.ctx.types, candidate)
+        else {
+            return false;
+        };
+        self.type_or_constraint_is_array_like(target)
+    }
+
+    fn type_or_constraint_is_array_like(&mut self, type_id: TypeId) -> bool {
+        if self.indexed_access_type_has_array_like_length(type_id) {
+            return true;
+        }
+        let evaluated = self.evaluate_type_with_env(type_id);
+        evaluated != type_id && self.indexed_access_type_has_array_like_length(evaluated)
     }
 }

@@ -340,6 +340,32 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
+    pub(in crate::declaration_emitter) fn function_body_declared_return_identifier_type_text(
+        &self,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> Option<String> {
+        if !func.body.is_some() || func.is_async || func.asterisk_token {
+            return None;
+        }
+        let returned_identifier = self.function_body_unique_return_identifier(func.body)?;
+        let type_text = self
+            .function_parameter_type_text(func, returned_identifier)
+            .or_else(|| self.returned_function_initializer_type_text(func, returned_identifier))
+            .or_else(|| {
+                let type_text =
+                    self.reference_declared_source_type_annotation_text(returned_identifier)?;
+                if let Some(type_id) = self.reference_declared_type_id(returned_identifier)
+                    && self.printed_type_uses_non_emittable_local_alias_root(&type_text)
+                {
+                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                }
+                Some(type_text)
+            })?;
+        let (type_text, _) =
+            self.function_source_return_type_text_for_declaration_scope(func, &type_text);
+        Some(type_text)
+    }
+
     pub(in crate::declaration_emitter) fn function_return_identifier_declared_type_id(
         &self,
         func: &tsz_parser::parser::node::FunctionData,
