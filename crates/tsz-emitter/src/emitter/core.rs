@@ -1736,8 +1736,8 @@ impl<'a> Printer<'a> {
     ) -> R {
         let prev_module = self.ctx.options.module;
         let prev_outer = self.ctx.cjs_export_body_outer_module;
+        self.ctx.cjs_export_body_outer_module = Some(self.ctx.outer_module_kind());
         self.ctx.options.module = ModuleKind::None;
-        self.ctx.cjs_export_body_outer_module = Some(prev_module);
         let result = f(self);
         self.ctx.options.module = prev_module;
         self.ctx.cjs_export_body_outer_module = prev_outer;

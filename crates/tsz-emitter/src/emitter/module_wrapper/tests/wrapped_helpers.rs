@@ -91,3 +91,68 @@ fn amd_es5_async_arrow_dynamic_import_uses_wrapper_runtime() {
         "AMD ES5 async arrows should not leave native dynamic import in the generator body.\nOutput:\n{output}"
     );
 }
+
+#[test]
+fn amd_es5_exported_async_function_dynamic_import_uses_wrapper_runtime() {
+    let output = emit_wrapped(
+        "export async function f() { const req = await import(\"./dep\"); }\n",
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "new Promise(function (resolve_1, reject_1) { require([\"./dep\"], resolve_1, reject_1); }).then(__importStar)"
+        ),
+        "AMD ES5 exported async functions should lower dynamic import through async require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(
+            "Promise.resolve().then(function () { return __importStar(require(\"./dep\")); })"
+        ),
+        "AMD ES5 exported async functions should not use the CommonJS dynamic-import branch.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn amd_es5_exported_async_method_dynamic_import_uses_wrapper_runtime() {
+    let output = emit_wrapped(
+        "export class C { async m() { const req = await import(\"./dep\"); } }\n",
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    assert!(
+        output.contains(
+            "new Promise(function (resolve_1, reject_1) { require([\"./dep\"], resolve_1, reject_1); }).then(__importStar)"
+        ),
+        "AMD ES5 exported async methods should lower dynamic import through async require.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains(
+            "Promise.resolve().then(function () { return __importStar(require(\"./dep\")); })"
+        ),
+        "AMD ES5 exported async methods should not use the CommonJS dynamic-import branch.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn amd_es5_async_dynamic_import_callbacks_are_file_sequenced() {
+    let output = emit_wrapped(
+        r#"export async function f() { const req = await import("./one"); }
+export const obj = { m: async () => { const req = await import("./two"); } };
+"#,
+        ModuleKind::AMD,
+        ScriptTarget::ES5,
+    );
+
+    for (specifier, id) in [("./one", 1), ("./two", 2)] {
+        let expected = format!(
+            "new Promise(function (resolve_{id}, reject_{id}) {{ require([\"{specifier}\"], resolve_{id}, reject_{id}); }}).then(__importStar)"
+        );
+        assert!(
+            output.contains(&expected),
+            "AMD ES5 async dynamic import callback ids should be file-sequenced.\nExpected: {expected}\nOutput:\n{output}"
+        );
+    }
+}

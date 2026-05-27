@@ -150,7 +150,7 @@ pub struct AsyncES5Transformer<'a> {
     /// Module kind for dynamic `import()` lowering inside generator bodies.
     pub(super) module_kind: ModuleKind,
     /// Counter for AMD/UMD dynamic import promise callback identifiers.
-    pub(super) dynamic_import_promise_counter: Cell<u32>,
+    pub(in crate::transforms) dynamic_import_promise_counter: Cell<u32>,
     /// Active async-lowered loop labels and the generator label that implements
     /// `continue <label>` for that loop.
     pub(super) labeled_continue_targets: Vec<(String, u32)>,

@@ -133,6 +133,14 @@ impl<'a> AsyncES5Emitter<'a> {
         self.transformer.set_module_kind(kind);
     }
 
+    pub fn set_dynamic_import_promise_counter(&mut self, next_id: u32) {
+        self.transformer.dynamic_import_promise_counter.set(next_id);
+    }
+
+    pub fn dynamic_import_promise_counter(&self) -> u32 {
+        self.transformer.dynamic_import_promise_counter.get()
+    }
+
     pub const fn set_downlevel_iteration(&mut self, enabled: bool) {
         self.transformer.set_downlevel_iteration(enabled);
     }
