@@ -57,7 +57,7 @@ denominators.
 | JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `23` open `bug` issues in live GitHub orientation |
+| Open bug issues | `40` open `bug` issues in live GitHub orientation |
 | Output-surgery audit | red: `1` unallowlisted call, `0` stale allowlist entries (`#10575`) |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
