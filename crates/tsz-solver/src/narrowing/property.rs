@@ -166,7 +166,7 @@ impl<'a> NarrowingContext<'a> {
 
             let matching: Vec<TypeId> = members
                 .iter()
-                .map(|&member| {
+                .filter_map(|&member| {
                     // CRITICAL: Resolve Lazy types for each member
                     let resolved_member = self.resolve_type(member);
 
@@ -177,34 +177,26 @@ impl<'a> NarrowingContext<'a> {
                             // Property exists: Keep the member as-is
                             // CRITICAL: For union narrowing, we don't modify the member type
                             // We just filter to keep only members that have the property
-                            member
+                            Some(member)
                         } else {
-                            // Property not found: Exclude member (return NEVER)
+                            // Property not found: Exclude member
                             // Per TypeScript: "prop in x" being true means x MUST have the property
                             // If x doesn't have it (and no index signature), narrow to never
-                            TypeId::NEVER
+                            None
                         }
                     } else {
                         // Negative: !("prop" in member)
                         // Exclude member ONLY if property is required
                         if self.is_property_required(resolved_member, property_name) {
-                            return TypeId::NEVER;
+                            return None;
                         }
                         // Keep member (no required property found, or property is optional)
-                        member
+                        Some(member)
                     }
                 })
                 .collect();
 
-            // CRITICAL FIX: Filter out NEVER types before creating the union
-            // When a union member doesn't have the required property, it becomes NEVER
-            // and should be EXCLUDED from the result, not included in the union
-            let matching_non_never: Vec<TypeId> = matching
-                .into_iter()
-                .filter(|&t| t != TypeId::NEVER)
-                .collect();
-
-            if matching_non_never.is_empty() {
+            if matching.is_empty() {
                 // When NO union member has the property, TypeScript narrows to
                 // `Union & Record<prop, unknown>` instead of `never`.
                 // This matches TSC behavior: if the type could structurally have the
@@ -215,15 +207,15 @@ impl<'a> NarrowingContext<'a> {
                 );
                 let record_type = self.make_record_type(property_name);
                 return self.db.intersect_types_raw2(source_type, record_type);
-            } else if matching_non_never.len() == 1 {
+            } else if matching.len() == 1 {
                 trace!(
                     "Found single member after filtering, returning {}",
-                    matching_non_never[0].0
+                    matching[0].0
                 );
-                return matching_non_never[0];
+                return matching[0];
             }
-            trace!("Created union with {} members", matching_non_never.len());
-            return self.db.union(matching_non_never);
+            trace!("Created union with {} members", matching.len());
+            return self.db.union(matching);
         }
 
         // For non-union types, check if the property exists
