@@ -16,6 +16,7 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.call_expression_returned_local_class_constructor_text(expr_idx, false))
             .or_else(|| {
                 self.super_method_call_return_type_text(expr_idx)
+                    .or_else(|| self.generic_call_reverse_mapped_handler_type_text(expr_idx))
                     .or_else(|| self.generic_call_literal_type_text(expr_idx))
                     .or_else(|| self.generic_call_pick_mapped_type_text(expr_idx))
                     .or_else(|| self.generic_call_constrained_mapped_return_type_text(expr_idx))
