@@ -144,6 +144,8 @@ substitutions:
 options:
   pool:
     name: projects/tsz-ci/locations/us-central1/workerPools/tsz-ci-build-pool
-  logging: CLOUD_LOGGING_ONLY
+  logging: GCS_ONLY
+
+logsBucket: gs://tsz-ci_cloudbuild/cloudbuild-logs
 
 timeout: 7200s

@@ -7,8 +7,15 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(SCRIPT_DIR, "..", "..");
 const BENCH_WORKFLOW = path.join(ROOT, ".github", "workflows", "bench.yml");
+const BENCH_SHARD_CLOUDBUILD = path.join(
+  ROOT,
+  "scripts",
+  "cloudbuild",
+  "cloudbuild-bench-shard.yaml",
+);
 
 const workflow = fs.readFileSync(BENCH_WORKFLOW, "utf8");
+const shardCloudbuild = fs.readFileSync(BENCH_SHARD_CLOUDBUILD, "utf8");
 
 const failFastMessages = workflow.match(
   /Cloud Build benchmark prep \$\{cloudbuild_id\} succeeded, but its manifest artifact is for/g,
@@ -113,6 +120,19 @@ assert.match(
   workflow,
   /- name: Trigger benchmark catch-up[\s\S]+steps\.publish\.outputs\.catchup_main_sha != ''[\s\S]+actions\/workflows\/bench\.yml\/dispatches[\s\S]+-d '\{"ref":"main","inputs":\{"publish_latest_pgo":"false"\}\}'/,
   "stale benchmark publishes should dispatch a catch-up benchmark for current main",
+);
+
+const benchJob = workflow.match(/  bench:[\s\S]+?  publish:/)?.[0] ?? "";
+assert.match(
+  benchJob,
+  /- name: Download benchmark prep artifact[\s\S]+actions\/download-artifact@v4[\s\S]+name: bench-prep-ready[\s\S]+- name: Validate source benchmark prep artifact[\s\S]+tar -tf bench-prep\.tar \.target-bench\/dist\/tsz[\s\S]+- id: cloudbuild-submit/,
+  "benchmark shard jobs should include the validated prep artifact in the Cloud Build source archive before submit",
+);
+
+assert.match(
+  shardCloudbuild,
+  /if \[\[ -f bench-prep\.env && -f bench-prep\.tar \]\]; then[\s\S]+Using benchmark prep artifact from the Cloud Build source archive\.[\s\S]+else[\s\S]+gcloud storage cp[\s\S]+bench-prep\/\$\{_BENCH_TARGET_SHA\}\/bench-prep\.env/,
+  "Cloud Build shard prep should prefer source-provided prep artifacts before falling back to GCS",
 );
 
 console.log("bench workflow Cloud Build prep artifact tests passed");
