@@ -318,8 +318,19 @@ impl<'a> ES5ClassTransformer<'a> {
             .map(|_| block.statements.nodes.len() - super_stmt_position - 1)
             .unwrap_or(0);
         let needs_this_capture = self.constructor_needs_this_capture(body_idx);
-        let needs_pre_super_this_capture =
-            self.derived_constructor_needs_pre_super_this_capture(block, super_stmt_position);
+        let needs_materialized_this_after_super = stmts_after_super > 0
+            || !instance_props.is_empty()
+            || has_param_props
+            || has_destructuring_params
+            || has_private_fields
+            || has_auto_accessors
+            || has_private_accessors
+            || needs_this_capture;
+        let needs_pre_super_this_capture = self.derived_constructor_needs_pre_super_this_capture(
+            block,
+            super_stmt_position,
+            needs_materialized_this_after_super,
+        );
         let has_top_level_using = block.statements.nodes.iter().any(|&stmt_idx| {
             self.using_declaration_list_for_statement(stmt_idx)
                 .is_some()
@@ -1157,22 +1168,62 @@ impl<'a> ES5ClassTransformer<'a> {
         &self,
         block: &tsz_parser::parser::node::BlockData,
         super_stmt_position: usize,
+        needs_materialized_this_after_super: bool,
     ) -> bool {
         if super_stmt_position == 0 {
             return false;
         }
-        // A pre-super this capture is only necessary when a statement that runs
-        // before super() actually references `this` or `super.prop` (which
-        // implicitly uses `this`). String literals, console.log() calls, and
-        // other statements that don't touch `this` don't need the capture.
         for &stmt_idx in block.statements.nodes.iter().take(super_stmt_position) {
             if contains_this_reference(self.arena, stmt_idx)
                 || contains_super_reference(self.arena, stmt_idx)
             {
                 return true;
             }
+            if needs_materialized_this_after_super
+                && self.pre_super_statement_requires_materialized_this_capture(stmt_idx)
+            {
+                return true;
+            }
         }
         false
+    }
+
+    fn pre_super_statement_requires_materialized_this_capture(&self, stmt_idx: NodeIndex) -> bool {
+        let Some(stmt) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        if stmt.kind == syntax_kind_ext::VARIABLE_STATEMENT {
+            return self.arena.get_variable(stmt).is_some_and(|vars| {
+                self.variable_declarations_have_initializer(&vars.declarations)
+            });
+        }
+
+        if stmt.kind == syntax_kind_ext::EXPRESSION_STATEMENT {
+            return self
+                .arena
+                .get_expression_statement(stmt)
+                .and_then(|expr_stmt| self.arena.get(expr_stmt.expression))
+                .is_none_or(|expr| expr.kind != SyntaxKind::StringLiteral as u16);
+        }
+
+        true
+    }
+
+    fn variable_declarations_have_initializer(&self, declarations: &NodeList) -> bool {
+        declarations.nodes.iter().any(|&decl_idx| {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                return false;
+            };
+            if decl_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                return self.arena.get_variable(decl_node).is_some_and(|vars| {
+                    self.variable_declarations_have_initializer(&vars.declarations)
+                });
+            }
+            self.arena
+                .get_variable_declaration(decl_node)
+                .is_some_and(|decl| !decl.initializer.is_none())
+        })
     }
 
     /// Emit super(args) as return _super.call(this, args) || this;
