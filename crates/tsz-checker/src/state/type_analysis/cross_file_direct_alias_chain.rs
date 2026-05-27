@@ -216,6 +216,26 @@ impl<'a> CheckerState<'a> {
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
     ) -> bool {
+        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
+            arena,
+            binder,
+            node_idx,
+            type_param_names,
+            seen,
+            proof,
+            false,
+        )
+    }
+
+    fn source_file_type_node_is_generic_local_alias_application_lowerable_with_guard<'b>(
+        arena: &'b NodeArena,
+        binder: &'b BinderState,
+        node_idx: NodeIndex,
+        type_param_names: &[String],
+        seen: &mut Vec<SourceFileAliasProofKey>,
+        proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
+    ) -> bool {
         if Self::source_file_type_node_is_generic_scope_independent(
             arena,
             node_idx,
@@ -259,13 +279,14 @@ impl<'a> CheckerState<'a> {
                 let Some(raw_sym_id) = binder.file_locals.get(name) else {
                     return (proof.global_type_is_lowerable)(binder, name)
                         && args.nodes.iter().copied().all(|arg| {
-                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                                 arena,
                                 binder,
                                 arg,
                                 type_param_names,
                                 seen,
                                 proof,
+                                recursion_guarded,
                             )
                         });
                 };
@@ -274,13 +295,14 @@ impl<'a> CheckerState<'a> {
                 ) {
                     return (proof.global_type_is_lowerable)(binder, name)
                         && args.nodes.iter().copied().all(|arg| {
-                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                                 arena,
                                 binder,
                                 arg,
                                 type_param_names,
                                 seen,
                                 proof,
+                                recursion_guarded,
                             )
                         });
                 }
@@ -292,10 +314,10 @@ impl<'a> CheckerState<'a> {
                 let key = SourceFileAliasProofKey {
                     file_idx: resolved.file_idx,
                     sym_id: resolved.sym_id,
-                    guarded: false,
+                    guarded: recursion_guarded,
                 };
                 if Self::source_file_alias_proof_seen_contains(seen, key) {
-                    return false;
+                    return Self::source_file_alias_proof_cycle_is_guarded(seen, key);
                 }
                 let Some(symbol) = resolved.binder.get_symbol(resolved.sym_id) else {
                     return false;
@@ -306,13 +328,14 @@ impl<'a> CheckerState<'a> {
                         symbol,
                         args.nodes.len(),
                     ) && args.nodes.iter().copied().all(|arg| {
-                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                             arena,
                             binder,
                             arg,
                             type_param_names,
                             seen,
                             proof,
+                            recursion_guarded,
                         )
                     });
                 }
@@ -347,13 +370,14 @@ impl<'a> CheckerState<'a> {
                     return false;
                 };
                 if !args.nodes.iter().copied().all(|arg| {
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         arg,
                         type_param_names,
                         seen,
                         proof,
+                        recursion_guarded,
                     )
                 }) {
                     return false;
@@ -369,13 +393,14 @@ impl<'a> CheckerState<'a> {
                     return false;
                 }
                 let result =
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         resolved.arena,
                         resolved.binder,
                         type_alias.type_node,
                         &target_param_names,
                         seen,
                         &resolved_proof,
+                        false,
                     );
                 Self::source_file_alias_proof_seen_pop(seen, key);
                 result
@@ -388,69 +413,76 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_branch_names,
                     );
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         conditional.check_type,
                         type_param_names,
                         seen,
                         proof,
-                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        recursion_guarded,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         conditional.extends_type,
                         type_param_names,
                         seen,
                         proof,
-                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        recursion_guarded,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         conditional.true_type,
                         &true_branch_names,
                         seen,
                         proof,
-                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        recursion_guarded,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         conditional.false_type,
                         type_param_names,
                         seen,
                         proof,
+                        recursion_guarded,
                     )
                 })
             }
             k if k == syntax_kind_ext::ARRAY_TYPE => arena.get_array_type(node).is_some_and(|array| {
-                Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     array.element_type,
                     type_param_names,
                     seen,
                     proof,
+                    true,
                 )
             }),
             k if k == syntax_kind_ext::TUPLE_TYPE => arena.get_tuple_type(node).is_some_and(|tuple| {
                 tuple.elements.nodes.iter().copied().all(|element| {
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         element,
                         type_param_names,
                         seen,
                         proof,
+                        true,
                     )
                 })
             }),
             k if k == syntax_kind_ext::UNION_TYPE || k == syntax_kind_ext::INTERSECTION_TYPE => {
                 arena.get_composite_type(node).is_some_and(|composite| {
                     composite.types.nodes.iter().copied().all(|member| {
-                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                             arena,
                             binder,
                             member,
                             type_param_names,
                             seen,
                             proof,
+                            recursion_guarded,
                         )
                     })
                 })
@@ -460,25 +492,27 @@ impl<'a> CheckerState<'a> {
                 || k == syntax_kind_ext::REST_TYPE =>
             {
                 arena.get_wrapped_type(node).is_some_and(|wrapped| {
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         wrapped.type_node,
                         type_param_names,
                         seen,
                         proof,
+                        recursion_guarded,
                     )
                 })
             }
             k if k == syntax_kind_ext::TYPE_OPERATOR => {
                 arena.get_type_operator(node).is_some_and(|operator| {
-                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                    Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         operator.type_node,
                         type_param_names,
                         seen,
                         proof,
+                        recursion_guarded,
                     )
                 })
             }
@@ -491,13 +525,15 @@ impl<'a> CheckerState<'a> {
                         type_param_names,
                         seen,
                         proof,
-                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                        recursion_guarded,
+                    ) && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
                         binder,
                         indexed.index_type,
                         type_param_names,
                         seen,
                         proof,
+                        recursion_guarded,
                     )
                 })
             }
@@ -509,6 +545,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             k if k == syntax_kind_ext::TYPE_LITERAL => {
@@ -519,6 +556,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             k if k == syntax_kind_ext::TEMPLATE_LITERAL_TYPE => {
@@ -529,6 +567,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -539,6 +578,7 @@ impl<'a> CheckerState<'a> {
                     type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             _ => false,
@@ -872,6 +912,7 @@ impl<'a> CheckerState<'a> {
                     &[],
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             k if k == syntax_kind_ext::FUNCTION_TYPE || k == syntax_kind_ext::CONSTRUCTOR_TYPE => {
@@ -882,6 +923,7 @@ impl<'a> CheckerState<'a> {
                     &[],
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             }
             _ => false,
@@ -1085,6 +1127,7 @@ impl<'a> CheckerState<'a> {
         type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
     ) -> bool {
         let Some(mapped) = arena.get_mapped_type(node) else {
             return false;
@@ -1110,25 +1153,27 @@ impl<'a> CheckerState<'a> {
         };
 
         if !type_param.constraint.is_none()
-            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                 arena,
                 binder,
                 type_param.constraint,
                 type_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             )
         {
             return false;
         }
         if !type_param.default.is_none()
-            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                 arena,
                 binder,
                 type_param.default,
                 type_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             )
         {
             return false;
@@ -1143,22 +1188,24 @@ impl<'a> CheckerState<'a> {
         }
 
         (mapped.name_type.is_none()
-            || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                 arena,
                 binder,
                 mapped.name_type,
                 &mapped_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             ))
             && (mapped.type_node.is_none()
-                || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                || Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     mapped.type_node,
                     &mapped_param_names,
                     seen,
                     proof,
+                    true,
                 ))
     }
 
@@ -1239,6 +1286,7 @@ impl<'a> CheckerState<'a> {
         type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
     ) -> bool {
         if let Some(node) = arena.get(node_idx)
             && node.kind == syntax_kind_ext::TYPE_LITERAL
@@ -1250,15 +1298,17 @@ impl<'a> CheckerState<'a> {
                 type_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             );
         }
-        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+        Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
             arena,
             binder,
             node_idx,
             type_param_names,
             seen,
             proof,
+            recursion_guarded,
         )
     }
 
@@ -1308,15 +1358,17 @@ impl<'a> CheckerState<'a> {
         type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        _recursion_guarded: bool,
     ) -> bool {
         Self::source_file_type_literal_properties_are_lowerable(arena, node, |type_node| {
-            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                 arena,
                 binder,
                 type_node,
                 type_param_names,
                 seen,
                 proof,
+                true,
             )
         })
     }
@@ -1342,6 +1394,7 @@ impl<'a> CheckerState<'a> {
         type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
     ) -> bool {
         let Some(template) = arena.get_template_literal_type(node) else {
             return false;
@@ -1357,13 +1410,14 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             arena.get(span.literal).is_some()
-                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     span.expression,
                     type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
         })
     }
@@ -1375,6 +1429,7 @@ impl<'a> CheckerState<'a> {
         type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
     ) -> bool {
         let Some(function_type) = arena.get_function_type(node) else {
             return false;
@@ -1387,6 +1442,7 @@ impl<'a> CheckerState<'a> {
                 type_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             )
         else {
             return false;
@@ -1404,22 +1460,24 @@ impl<'a> CheckerState<'a> {
                 return false;
             };
             param.type_annotation.is_some()
-                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     param.type_annotation,
                     &active_type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
         }) && function_type.type_annotation.is_some()
-            && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+            && Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                 arena,
                 binder,
                 function_type.type_annotation,
                 &active_type_param_names,
                 seen,
                 proof,
+                recursion_guarded,
             )
     }
 
@@ -1430,6 +1488,7 @@ impl<'a> CheckerState<'a> {
         outer_type_param_names: &[String],
         seen: &mut Vec<SourceFileAliasProofKey>,
         proof: &SourceFileAliasProofContext<'b>,
+        recursion_guarded: bool,
     ) -> Option<Vec<String>> {
         let Some(params) = params else {
             return Some(Vec::new());
@@ -1452,25 +1511,27 @@ impl<'a> CheckerState<'a> {
 
         for param in param_data {
             if param.constraint.is_some()
-                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     param.constraint,
                     &active_type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             {
                 return None;
             }
             if param.default.is_some()
-                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_seen(
+                && !Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                     arena,
                     binder,
                     param.default,
                     &active_type_param_names,
                     seen,
                     proof,
+                    recursion_guarded,
                 )
             {
                 return None;

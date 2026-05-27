@@ -1227,6 +1227,57 @@ fn direct_source_file_type_alias_lowers_guarded_direct_self_array_alias() {
 }
 
 #[test]
+fn direct_source_file_type_alias_lowers_guarded_generic_self_object_alias() {
+    with_two_file_state(
+        "export type Link<Value> = { value: Value; next?: Link<Value> };",
+        "import { Link } from './target';",
+        |state, target_binder| {
+            let link_sym = target_binder.file_locals.get("Link").expect("Link");
+            let (link_ty, link_params) = state
+                .direct_source_file_type_alias_result(link_sym, Some(1), true)
+                .expect("object members structurally guard generic self aliases");
+            assert_ne!(link_ty, TypeId::UNKNOWN);
+            assert_ne!(link_ty, TypeId::ERROR);
+            assert_eq!(link_params.len(), 1, "Link should expose Value");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_guarded_generic_self_array_alias() {
+    with_two_file_state(
+        "export type Nested<Element> = Element | Nested<Element>[];",
+        "import { Nested } from './target';",
+        |state, target_binder| {
+            let nested_sym = target_binder.file_locals.get("Nested").expect("Nested");
+            let (nested_ty, nested_params) = state
+                .direct_source_file_type_alias_result(nested_sym, Some(1), true)
+                .expect("array elements structurally guard generic self aliases");
+            assert_ne!(nested_ty, TypeId::UNKNOWN);
+            assert_ne!(nested_ty, TypeId::ERROR);
+            assert_eq!(nested_params.len(), 1, "Nested should expose Element");
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_lowers_guarded_generic_mapped_helper_cycle() {
+    with_two_file_state(
+        "type DeepObject<Input> = { [Field in keyof Input]: Deep<Input[Field]> };\nexport type Deep<Subject> = Subject extends object ? DeepObject<Subject> : Subject;",
+        "import { Deep } from './target';",
+        |state, target_binder| {
+            let deep_sym = target_binder.file_locals.get("Deep").expect("Deep");
+            let (deep_ty, deep_params) = state
+                .direct_source_file_type_alias_result(deep_sym, Some(1), true)
+                .expect("mapped outputs structurally guard generic helper cycles");
+            assert_ne!(deep_ty, TypeId::UNKNOWN);
+            assert_ne!(deep_ty, TypeId::ERROR);
+            assert_eq!(deep_params.len(), 1, "Deep should expose Subject");
+        },
+    );
+}
+
+#[test]
 fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
     with_two_file_state(
         "export type Loop = Loop | string;",
@@ -1238,6 +1289,23 @@ fn direct_source_file_type_alias_rejects_unguarded_direct_self_alias() {
                     .direct_source_file_type_alias_result(loop_sym, Some(1), true)
                     .is_none(),
                 "unguarded direct self aliases must stay on the child-checker path",
+            );
+        },
+    );
+}
+
+#[test]
+fn direct_source_file_type_alias_rejects_unguarded_generic_self_alias() {
+    with_two_file_state(
+        "export type Loop<Item> = Loop<Item> | Item;",
+        "import { Loop } from './target';",
+        |state, target_binder| {
+            let loop_sym = target_binder.file_locals.get("Loop").expect("Loop");
+            assert!(
+                state
+                    .direct_source_file_type_alias_result(loop_sym, Some(1), true)
+                    .is_none(),
+                "unguarded generic self aliases must stay on the child-checker path",
             );
         },
     );
