@@ -108,22 +108,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_unshadowed_global_object_identifier(&self, idx: NodeIndex) -> bool {
-        let Some(base_ident) = self.ctx.arena.get_identifier_at(idx) else {
-            return false;
-        };
-        if base_ident.escaped_text != "Object" {
-            return false;
-        }
-        let Some(sym_id) = self.resolve_identifier_symbol_without_tracking(idx) else {
-            return true;
-        };
-        if self.known_global_value_has_local_shadow(idx, "Object") {
-            return false;
-        }
-        self.ctx.symbol_is_from_actual_lib(sym_id) || self.ctx.symbol_is_from_lib(sym_id)
-    }
-
     fn should_suppress_excess_property_for_target(&mut self, target: TypeId) -> bool {
         [target, self.evaluate_type_for_assignability(target)]
             .into_iter()
@@ -1418,7 +1402,7 @@ impl<'a> CheckerState<'a> {
             && parent_node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
             && let Some(access) = self.ctx.arena.get_access_expr(parent_node)
             && access.name_or_argument == idx
-            && self.is_unshadowed_global_object_identifier(access.expression)
+            && self.identifier_resolves_to_unshadowed_global(access.expression, "Object")
         {
             return;
         }
