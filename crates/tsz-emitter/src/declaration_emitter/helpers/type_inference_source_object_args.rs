@@ -340,7 +340,6 @@ impl<'a> DeclarationEmitter<'a> {
             else {
                 continue;
             };
-            let searchable = Self::type_text_without_this_type_markers(&member_type_text);
             for type_param_name in type_param_names {
                 if !Self::type_node_exposes_direct_type_param(
                     source_arena,
@@ -352,12 +351,14 @@ impl<'a> DeclarationEmitter<'a> {
                 ) {
                     continue;
                 }
-                let mentions_param =
-                    Self::contains_whole_word_in_text(&searchable, type_param_name)
-                        || aliases.iter().any(|(alias, mapped)| {
-                            mapped == type_param_name
-                                && Self::contains_whole_word_in_text(&searchable, alias)
-                        });
+                let mentions_param = Self::type_node_mentions_mapped_name_outside_this_type(
+                    source_arena,
+                    signature.type_annotation,
+                    type_param_name,
+                    type_param_names,
+                    aliases,
+                    0,
+                );
                 if !mentions_param
                     || substitutions
                         .iter()
@@ -367,7 +368,7 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 if let Some(value_text) = self.object_member_public_type_text_for_annotation(
                     arg_member_idx,
-                    &searchable,
+                    &member_type_text,
                     Some(arg_idx),
                     substitutions,
                 ) {
@@ -449,6 +450,119 @@ impl<'a> DeclarationEmitter<'a> {
                         })
                     })
             }
+            _ => false,
+        }
+    }
+
+    fn type_node_mentions_mapped_name_outside_this_type(
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+        type_param_name: &str,
+        type_param_names: &[String],
+        aliases: &[(String, String)],
+        depth: u8,
+    ) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let Some(type_node) = source_arena.get(type_idx) else {
+            return false;
+        };
+        match type_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                identifier_text(source_arena, type_idx)
+                    .and_then(|name| Self::mapped_type_param_name(&name, type_param_names, aliases))
+                    .as_deref()
+                    == Some(type_param_name)
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                    return false;
+                };
+                let Some(type_name) = identifier_text(source_arena, type_ref.type_name) else {
+                    return false;
+                };
+                if type_name == "ThisType" {
+                    return false;
+                }
+                if Self::mapped_type_param_name(&type_name, type_param_names, aliases).as_deref()
+                    == Some(type_param_name)
+                {
+                    return true;
+                }
+                type_ref.type_arguments.as_ref().is_some_and(|type_args| {
+                    type_args.nodes.iter().copied().any(|arg_idx| {
+                        Self::type_node_mentions_mapped_name_outside_this_type(
+                            source_arena,
+                            arg_idx,
+                            type_param_name,
+                            type_param_names,
+                            aliases,
+                            depth + 1,
+                        )
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => source_arena
+                .get_wrapped_type(type_node)
+                .is_some_and(|wrapped| {
+                    Self::type_node_mentions_mapped_name_outside_this_type(
+                        source_arena,
+                        wrapped.type_node,
+                        type_param_name,
+                        type_param_names,
+                        aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::INTERSECTION_TYPE || k == syntax_kind_ext::UNION_TYPE => {
+                source_arena
+                    .get_composite_type(type_node)
+                    .is_some_and(|composite| {
+                        composite.types.nodes.iter().copied().any(|part_idx| {
+                            Self::type_node_mentions_mapped_name_outside_this_type(
+                                source_arena,
+                                part_idx,
+                                type_param_name,
+                                type_param_names,
+                                aliases,
+                                depth + 1,
+                            )
+                        })
+                    })
+            }
+            k if k == syntax_kind_ext::TYPE_LITERAL => source_arena
+                .get_type_literal(type_node)
+                .is_some_and(|literal| {
+                    literal.members.nodes.iter().copied().any(|member_idx| {
+                        let Some(member_node) = source_arena.get(member_idx) else {
+                            return false;
+                        };
+                        let Some(signature) = source_arena.get_signature(member_node) else {
+                            return false;
+                        };
+                        Self::type_node_mentions_mapped_name_outside_this_type(
+                            source_arena,
+                            signature.type_annotation,
+                            type_param_name,
+                            type_param_names,
+                            aliases,
+                            depth + 1,
+                        )
+                    })
+                }),
+            k if k == syntax_kind_ext::MAPPED_TYPE => source_arena
+                .get_mapped_type(type_node)
+                .is_some_and(|mapped| {
+                    Self::type_node_mentions_mapped_name_outside_this_type(
+                        source_arena,
+                        mapped.type_node,
+                        type_param_name,
+                        type_param_names,
+                        aliases,
+                        depth + 1,
+                    )
+                }),
             _ => false,
         }
     }
@@ -1107,32 +1221,6 @@ impl<'a> DeclarationEmitter<'a> {
         }
         None
     }
-
-    fn type_text_without_this_type_markers(type_text: &str) -> String {
-        let mut text = type_text.to_string();
-        while let Some(start) = text.find("ThisType<") {
-            let mut depth = 0usize;
-            let mut end = None;
-            for (offset, ch) in text[start + "ThisType".len()..].char_indices() {
-                match ch {
-                    '<' => depth += 1,
-                    '>' => {
-                        depth = depth.saturating_sub(1);
-                        if depth == 0 {
-                            end = Some(start + "ThisType".len() + offset + ch.len_utf8());
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            let Some(end) = end else {
-                break;
-            };
-            text.replace_range(start..end, "");
-        }
-        text
-    }
 }
 
 fn identifier_text(source_arena: &NodeArena, idx: NodeIndex) -> Option<String> {
@@ -1268,6 +1356,67 @@ let arg = {
                 "{\n    a: number;\n    b: string;\n    f(): number;\n    d: number;\n    e: string;\n}"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn this_type_context_marker_is_not_a_value_map_inference_mention() {
+        let mut parser = ParserState::new(
+            "this-type-context-marker.ts".to_string(),
+            r#"
+type ContextOnly<Model> = ThisType<Model>;
+type ValueAndContext<Model> = Model & ThisType<{ current: Model }>;
+type AliasAndContext<Model> = ValueAlias & ThisType<Model>;
+"#
+            .to_string(),
+        );
+        parser.parse_source_file();
+        let arena = parser.get_arena();
+        let emitter = DeclarationEmitter::new(arena);
+        let context_only_type = emitter
+            .find_type_alias_type_node_in_arena(arena, "ContextOnly")
+            .expect("context-only alias type");
+        let value_and_context_type = emitter
+            .find_type_alias_type_node_in_arena(arena, "ValueAndContext")
+            .expect("value-and-context alias type");
+        let alias_and_context_type = emitter
+            .find_type_alias_type_node_in_arena(arena, "AliasAndContext")
+            .expect("alias-and-context alias type");
+        let type_params = ["Model".to_string()];
+        let aliases = [("ValueAlias".to_string(), "Model".to_string())];
+
+        assert!(
+            !DeclarationEmitter::type_node_mentions_mapped_name_outside_this_type(
+                arena,
+                context_only_type,
+                "Model",
+                &type_params,
+                &aliases,
+                0,
+            ),
+            "`ThisType<Model>` is only contextual and must not infer Model"
+        );
+        assert!(
+            DeclarationEmitter::type_node_mentions_mapped_name_outside_this_type(
+                arena,
+                value_and_context_type,
+                "Model",
+                &type_params,
+                &aliases,
+                0,
+            ),
+            "Model outside `ThisType` should still infer"
+        );
+        assert!(
+            DeclarationEmitter::type_node_mentions_mapped_name_outside_this_type(
+                arena,
+                alias_and_context_type,
+                "Model",
+                &type_params,
+                &aliases,
+                0,
+            ),
+            "aliases outside `ThisType` should still infer"
         );
     }
 
