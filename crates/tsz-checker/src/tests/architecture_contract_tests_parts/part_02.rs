@@ -1777,4 +1777,3 @@ fn test_reference_helpers_expose_stable_identity_helper() {
          the stable-identity helper for DefId + type-param + body priming."
     );
 }
-

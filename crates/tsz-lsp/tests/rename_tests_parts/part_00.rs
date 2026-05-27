@@ -1782,4 +1782,3 @@ fn test_rename_var_in_switch_case() {
         assert!(edits.len() >= 2, "Should rename in declaration and switch");
     }
 }
-

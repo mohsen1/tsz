@@ -1793,4 +1793,3 @@ fn test_type_definition_at_boolean_literal() {
     // Boolean literal has no type definition location
     let _ = result;
 }
-

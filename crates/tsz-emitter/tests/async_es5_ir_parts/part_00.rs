@@ -1792,4 +1792,3 @@ fn transform_async_generator_inner_and_print(source: &str) -> String {
     printer.emit(&ir);
     printer.take_output()
 }
-

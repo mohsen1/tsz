@@ -1792,4 +1792,3 @@ export class Model {
         "Should not emit TS2304 for 'extends Backbone.Model' with import = require, got: {ts2304_errors:?}"
     );
 }
-

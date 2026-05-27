@@ -1785,4 +1785,3 @@ fn test_readonly_array_slice_accessible() {
         "slice should be accessible on readonly string[]. Got: {result:?}"
     );
 }
-

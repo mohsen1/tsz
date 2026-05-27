@@ -1795,4 +1795,3 @@ do {
         "'doVar' should NOT be in file_locals (block-scoped inside do-while)"
     );
 }
-

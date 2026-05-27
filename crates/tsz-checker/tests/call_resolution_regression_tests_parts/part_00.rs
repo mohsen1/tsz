@@ -1797,4 +1797,3 @@ let a: number = test("hello");
 "#;
     assert!(no_errors(source), "Should match first overload with 1 arg");
 }
-

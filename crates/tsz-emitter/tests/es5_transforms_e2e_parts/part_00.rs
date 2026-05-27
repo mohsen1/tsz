@@ -1785,4 +1785,3 @@ fn async_arrow_hoisted_locals_share_var_statement() {
         "Async arrow hoisted locals should not split ordinary declarations.\nOutput:\n{output}"
     );
 }
-

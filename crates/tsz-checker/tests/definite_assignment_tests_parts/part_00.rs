@@ -1770,4 +1770,3 @@ fn test_super_with_type_argument3_no_ts2564_without_strict_property_initializati
         "TS2564 should stay off when strict property initialization is disabled, got: {diags:?}"
     );
 }
-

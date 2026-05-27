@@ -1788,4 +1788,3 @@ fn test_export_interface_member_addition_changes_signature() {
         "Adding a new exported interface should change the signature"
     );
 }
-

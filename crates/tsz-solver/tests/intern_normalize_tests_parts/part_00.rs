@@ -1790,4 +1790,3 @@ fn bigint_hex_normalized() {
     let b = i.literal_bigint("255");
     assert_eq!(a, b, "0xFF and 255 should normalize to same bigint");
 }
-

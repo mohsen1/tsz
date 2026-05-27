@@ -1797,4 +1797,3 @@ fn make_constructor_with_has_instance(
         ..CallableShape::default()
     })
 }
-

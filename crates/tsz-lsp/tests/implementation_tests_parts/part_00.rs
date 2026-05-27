@@ -1789,4 +1789,3 @@ fn test_abstract_class_with_property() {
     assert_eq!(locs.len(), 1);
     assert_eq!(locs[0].range.start.line, 3);
 }
-

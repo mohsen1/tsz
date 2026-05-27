@@ -1714,4 +1714,3 @@ fn test_callable_shadowed_type_param_no_cache_leak() {
         panic!("Expected callable type, got {:?}", interner.lookup(result));
     }
 }
-

@@ -1789,4 +1789,3 @@ fn test_lower_type_literal_nested_object() {
         _ => panic!("Expected Object type, got {key:?}"),
     }
 }
-

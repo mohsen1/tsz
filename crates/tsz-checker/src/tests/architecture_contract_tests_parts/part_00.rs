@@ -1763,4 +1763,3 @@ fn checker_files_stay_under_loc_limit() {
         violations.join("\n")
     );
 }
-

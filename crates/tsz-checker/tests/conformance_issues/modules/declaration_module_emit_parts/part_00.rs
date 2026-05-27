@@ -1787,4 +1787,3 @@ fn test_ts7005_emitted_for_plain_const_without_initializer() {
         "Plain `const` declarations without initializers should still report TS7005, got: {diagnostics:?}"
     );
 }
-

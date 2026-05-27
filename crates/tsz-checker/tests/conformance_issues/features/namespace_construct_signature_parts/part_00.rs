@@ -1049,7 +1049,7 @@ const x = (a) => a + 1;
 #[test]
 fn test_jsdoc_unwrapped_multiline_typedef_reports_ts1110() {
     let source = r#"
-/** 
+/**
    Multiline type expressions in comments without leading * are not supported.
    @typedef {{
      foo:
@@ -1797,4 +1797,3 @@ function g(x) {
         "Did not expect TS7006 for function declaration typed from JSDoc callback typedef. Actual diagnostics: {diagnostics:#?}"
     );
 }
-

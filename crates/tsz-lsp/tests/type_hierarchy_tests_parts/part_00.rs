@@ -1786,4 +1786,3 @@ fn test_prepare_on_interface_with_optional_members() {
     assert_eq!(item.name, "Config");
     assert_eq!(item.kind, SymbolKind::Interface);
 }
-

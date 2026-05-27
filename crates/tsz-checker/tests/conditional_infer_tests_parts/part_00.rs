@@ -1784,4 +1784,3 @@ const user: Depth2 = { name: "Grandson" };
         "Generic object index should select numeric literal key, got: {diagnostics:?}"
     );
 }
-

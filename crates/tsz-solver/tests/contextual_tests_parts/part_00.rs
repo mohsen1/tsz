@@ -1742,4 +1742,3 @@ fn test_contextual_rest_param_from_mixed_params() {
 // =============================================================================
 // Rest Element Contextual Type Extraction (tuple rest → element type)
 // =============================================================================
-

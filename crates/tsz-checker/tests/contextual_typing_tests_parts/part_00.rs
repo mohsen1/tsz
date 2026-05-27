@@ -1775,4 +1775,3 @@ let xx: DooDad = invoke(() => 'ELSE');
         "invoke(() => 'ELSE') should infer T = 'ELSE' (subtype of DooDad), got: {diagnostics:?}"
     );
 }
-

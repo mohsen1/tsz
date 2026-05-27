@@ -1787,4 +1787,3 @@ fn test_find_references_const_enum_name() {
         refs.len()
     );
 }
-

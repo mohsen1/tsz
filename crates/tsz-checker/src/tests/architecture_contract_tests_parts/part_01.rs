@@ -1782,4 +1782,3 @@ fn test_relation_failure_covers_semantic_families() {
         );
     }
 }
-

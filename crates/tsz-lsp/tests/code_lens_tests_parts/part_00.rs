@@ -1791,4 +1791,3 @@ fn test_code_lens_class_with_abstract_property() {
         "Abstract class with abstract members should produce lenses"
     );
 }
-

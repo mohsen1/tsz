@@ -1794,4 +1794,3 @@ var n = lib.name;
         "Expected no TS2339 for basic import-side value/name lookup, got: {ts2339:#?}"
     );
 }
-

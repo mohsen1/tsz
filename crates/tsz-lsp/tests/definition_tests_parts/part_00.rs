@@ -1797,4 +1797,3 @@ fn test_goto_definition_arrow_function_param() {
         assert_eq!(defs[0].range.start.line, 0, "Param should be on line 0");
     }
 }
-

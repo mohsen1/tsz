@@ -1780,4 +1780,3 @@ fn test_await_label_in_static_block_emits_ts1109() {
         "Expected TS1109 for 'await' as label in static block, got codes: {codes:?}"
     );
 }
-

@@ -1786,4 +1786,3 @@ async function f(): Foo { return "" as any; }
         "AMD wrapper should not keep `lib` import when the only use of `Foo` is as a type alias.\nOutput:\n{output}"
     );
 }
-

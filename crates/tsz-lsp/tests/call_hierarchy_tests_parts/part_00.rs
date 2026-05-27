@@ -1793,4 +1793,3 @@ fn test_prepare_on_empty_source() {
         "Empty source should yield no hierarchy item"
     );
 }
-

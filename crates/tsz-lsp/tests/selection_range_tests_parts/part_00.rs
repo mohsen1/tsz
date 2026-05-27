@@ -1768,4 +1768,3 @@ fn test_selection_range_nested_if_else() {
         "Should have deep nesting for nested if-else, got {depth}"
     );
 }
-
