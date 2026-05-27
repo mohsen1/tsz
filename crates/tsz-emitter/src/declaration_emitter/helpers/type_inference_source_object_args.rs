@@ -166,6 +166,7 @@ impl<'a> DeclarationEmitter<'a> {
                         arg_idx,
                         type_param_names,
                         aliases,
+                        &[],
                     )
                     && !substitutions
                         .iter()
@@ -240,6 +241,7 @@ impl<'a> DeclarationEmitter<'a> {
         arg_idx: NodeIndex,
         type_param_names: &[String],
         aliases: &[(String, String)],
+        this_contexts: &[(String, String)],
     ) -> Option<(String, String)> {
         let type_node = source_arena.get(type_idx)?;
         let type_ref = source_arena.get_type_ref(type_node)?;
@@ -270,7 +272,8 @@ impl<'a> DeclarationEmitter<'a> {
         if !symbol_alias_is_mapped && !local_alias_is_mapped {
             return None;
         }
-        let value_text = self.object_literal_property_value_map_type_text(arg_idx)?;
+        let value_text =
+            self.object_literal_property_value_map_type_text_with_context(arg_idx, this_contexts)?;
         Some((type_param_name, value_text))
     }
 
@@ -331,11 +334,6 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             }
 
-            let raw_member_type_text = self
-                .source_slice_from_arena(source_arena, signature.type_annotation)
-                .or_else(|| {
-                    self.emit_type_node_text_from_arena(source_arena, signature.type_annotation)
-                });
             let Some(member_type_text) = self
                 .emit_type_node_text_from_arena(source_arena, signature.type_annotation)
                 .or_else(|| self.source_slice_from_arena(source_arena, signature.type_annotation))
@@ -343,32 +341,17 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             let searchable = Self::type_text_without_this_type_markers(&member_type_text);
-            if let Some(raw_member_type_text) = raw_member_type_text.as_deref()
-                && let Some((type_param_name, value_text)) = self
-                    .infer_object_map_substitution_from_annotation_text(
-                        raw_member_type_text,
-                        arg_member_idx,
-                        type_param_names,
-                        aliases,
-                        &[],
-                    )
-            {
-                Self::replace_or_push_substitution(substitutions, type_param_name, value_text);
-                continue;
-            }
-            if let Some((type_param_name, value_text)) = self
-                .infer_object_map_substitution_from_annotation_text(
-                    &searchable,
-                    arg_member_idx,
+            for type_param_name in type_param_names {
+                if !Self::type_node_exposes_direct_type_param(
+                    source_arena,
+                    signature.type_annotation,
+                    type_param_name,
                     type_param_names,
                     aliases,
-                    &[],
-                )
-            {
-                Self::replace_or_push_substitution(substitutions, type_param_name, value_text);
-                continue;
-            }
-            for type_param_name in type_param_names {
+                    0,
+                ) {
+                    continue;
+                }
                 let mentions_param =
                     Self::contains_whole_word_in_text(&searchable, type_param_name)
                         || aliases.iter().any(|(alias, mapped)| {
@@ -382,9 +365,12 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     continue;
                 }
-                if let Some(value_text) =
-                    self.object_member_public_type_text_for_annotation(arg_member_idx, &searchable)
-                {
+                if let Some(value_text) = self.object_member_public_type_text_for_annotation(
+                    arg_member_idx,
+                    &searchable,
+                    Some(arg_idx),
+                    substitutions,
+                ) {
                     substitutions.push((type_param_name.clone(), value_text));
                     break;
                 }
@@ -399,6 +385,71 @@ impl<'a> DeclarationEmitter<'a> {
                 substitutions,
                 depth + 1,
             );
+        }
+    }
+
+    fn type_node_exposes_direct_type_param(
+        source_arena: &NodeArena,
+        type_idx: NodeIndex,
+        type_param_name: &str,
+        type_param_names: &[String],
+        aliases: &[(String, String)],
+        depth: u8,
+    ) -> bool {
+        if depth > 16 {
+            return false;
+        }
+        let Some(type_node) = source_arena.get(type_idx) else {
+            return false;
+        };
+        match type_node.kind {
+            k if k == SyntaxKind::Identifier as u16 => {
+                identifier_text(source_arena, type_idx)
+                    .and_then(|name| Self::mapped_type_param_name(&name, type_param_names, aliases))
+                    .as_deref()
+                    == Some(type_param_name)
+            }
+            k if k == syntax_kind_ext::TYPE_REFERENCE => {
+                let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                    return false;
+                };
+                if let Some(name) = identifier_text(source_arena, type_ref.type_name)
+                    && Self::mapped_type_param_name(&name, type_param_names, aliases).as_deref()
+                        == Some(type_param_name)
+                {
+                    return true;
+                }
+                false
+            }
+            k if k == syntax_kind_ext::PARENTHESIZED_TYPE => source_arena
+                .get_wrapped_type(type_node)
+                .is_some_and(|wrapped| {
+                    Self::type_node_exposes_direct_type_param(
+                        source_arena,
+                        wrapped.type_node,
+                        type_param_name,
+                        type_param_names,
+                        aliases,
+                        depth + 1,
+                    )
+                }),
+            k if k == syntax_kind_ext::INTERSECTION_TYPE || k == syntax_kind_ext::UNION_TYPE => {
+                source_arena
+                    .get_composite_type(type_node)
+                    .is_some_and(|composite| {
+                        composite.types.nodes.iter().copied().any(|part_idx| {
+                            Self::type_node_exposes_direct_type_param(
+                                source_arena,
+                                part_idx,
+                                type_param_name,
+                                type_param_names,
+                                aliases,
+                                depth + 1,
+                            )
+                        })
+                    })
+            }
+            _ => false,
         }
     }
 
@@ -480,7 +531,13 @@ impl<'a> DeclarationEmitter<'a> {
                         initializer,
                     )
                 })
-                .or_else(|| self.object_member_public_type_text(member_idx));
+                .or_else(|| {
+                    self.object_member_public_type_text_with_context(
+                        member_idx,
+                        Some(arg_idx),
+                        substitutions,
+                    )
+                });
             let Some(value_text) = value_text else {
                 continue;
             };
@@ -629,11 +686,18 @@ impl<'a> DeclarationEmitter<'a> {
         let [type_param_name] = mentioned.as_slice() else {
             return None;
         };
-        let object_text = self.object_literal_property_value_map_type_text(arg_idx)?;
+        let object_text = self.object_literal_property_value_map_type_text_with_context(
+            arg_idx,
+            existing_substitutions,
+        )?;
         Some((type_param_name.clone(), object_text))
     }
 
-    fn object_literal_property_value_map_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+    fn object_literal_property_value_map_type_text_with_context(
+        &self,
+        arg_idx: NodeIndex,
+        this_contexts: &[(String, String)],
+    ) -> Option<String> {
         let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
         let arg_node = self.arena.get(arg_idx)?;
         let arg_idx = if arg_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
@@ -652,24 +716,46 @@ impl<'a> DeclarationEmitter<'a> {
                 return None;
             }
             let value_text = self
-                .descriptor_like_object_member_value_type_text(member_idx)
-                .or_else(|| self.object_member_public_type_text(member_idx))?;
+                .descriptor_like_object_member_value_type_text_with_context(
+                    member_idx,
+                    this_contexts,
+                )
+                .or_else(|| {
+                    self.object_member_public_type_text_with_context(
+                        member_idx,
+                        Some(arg_idx),
+                        this_contexts,
+                    )
+                })?;
             lines.push(format!("    {name_text}: {value_text};"));
         }
         (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
     }
 
-    fn descriptor_like_object_member_value_type_text(
+    fn descriptor_like_object_member_value_type_text_with_context(
         &self,
         member_idx: NodeIndex,
+        this_contexts: &[(String, String)],
     ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         let initializer = self.object_literal_member_initializer(member_node)?;
         self.object_literal_member_by_name(initializer, "value")
-            .and_then(|value_member| self.object_member_public_type_text(value_member))
+            .and_then(|value_member| {
+                self.object_member_public_type_text_with_context(
+                    value_member,
+                    Some(initializer),
+                    this_contexts,
+                )
+            })
             .or_else(|| {
                 self.object_literal_member_by_name(initializer, "get")
-                    .and_then(|get_member| self.object_member_public_type_text(get_member))
+                    .and_then(|get_member| {
+                        self.object_member_public_type_text_with_context(
+                            get_member,
+                            Some(initializer),
+                            this_contexts,
+                        )
+                    })
             })
             .or_else(|| {
                 self.object_literal_member_by_name(initializer, "set")
@@ -688,13 +774,34 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn object_member_public_type_text(&self, member_idx: NodeIndex) -> Option<String> {
+        self.object_member_public_type_text_with_context(member_idx, None, &[])
+    }
+
+    fn object_member_public_type_text_with_context(
+        &self,
+        member_idx: NodeIndex,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
+    ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         if let Some(initializer) = self.object_literal_member_initializer(member_node) {
-            return self.call_argument_public_type_text(initializer);
+            return self.call_argument_public_type_text_with_context(
+                initializer,
+                None,
+                this_contexts,
+            );
         }
         if let Some(method) = self.arena.get_method_decl(member_node) {
             return self
                 .emit_type_node_text(method.type_annotation)
+                .or_else(|| {
+                    self.function_body_this_property_type_text(
+                        method.body,
+                        this_object_idx,
+                        this_contexts,
+                        Some(member_idx),
+                    )
+                })
                 .or_else(|| self.function_body_preferred_return_type_text(method.body))
                 .or_else(|| self.infer_fallback_type_text_at(method.body, 0))
                 .map(|text| Self::widen_public_literal_type_text(&text));
@@ -704,6 +811,14 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return self
                 .emit_type_node_text(accessor.type_annotation)
+                .or_else(|| {
+                    self.function_body_this_property_type_text(
+                        accessor.body,
+                        this_object_idx,
+                        this_contexts,
+                        Some(member_idx),
+                    )
+                })
                 .or_else(|| self.function_body_preferred_return_type_text(accessor.body))
                 .or_else(|| self.infer_fallback_type_text_at(accessor.body, 0))
                 .map(|text| Self::widen_public_literal_type_text(&text));
@@ -715,6 +830,8 @@ impl<'a> DeclarationEmitter<'a> {
         &self,
         member_idx: NodeIndex,
         annotation_text: &str,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
     ) -> Option<String> {
         let member_node = self.arena.get(member_idx)?;
         if annotation_text.contains("=>")
@@ -723,12 +840,27 @@ impl<'a> DeclarationEmitter<'a> {
         {
             return Some(type_text);
         }
-        self.object_member_public_type_text(member_idx)
+        self.object_member_public_type_text_with_context(member_idx, this_object_idx, this_contexts)
     }
 
     fn call_argument_public_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+        self.call_argument_public_type_text_with_context(arg_idx, None, &[])
+    }
+
+    fn call_argument_public_type_text_with_context(
+        &self,
+        arg_idx: NodeIndex,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
+    ) -> Option<String> {
         self.primitive_literal_argument_widened_type_text(arg_idx)
-            .or_else(|| self.object_literal_public_type_text(arg_idx))
+            .or_else(|| {
+                self.object_literal_public_type_text_with_context(
+                    arg_idx,
+                    this_object_idx,
+                    this_contexts,
+                )
+            })
             .or_else(|| self.function_expression_public_return_type_text(arg_idx))
             .or_else(|| self.call_argument_type_text_for_substitution(arg_idx, None))
     }
@@ -755,17 +887,28 @@ impl<'a> DeclarationEmitter<'a> {
             .map(|text| Self::widen_public_literal_type_text(&text))
     }
 
-    fn object_literal_public_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
+    fn object_literal_public_type_text_with_context(
+        &self,
+        arg_idx: NodeIndex,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
+    ) -> Option<String> {
         let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
         let arg_node = self.arena.get(arg_idx)?;
         if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
             return None;
         }
+        let this_object_idx = this_object_idx.or(Some(arg_idx));
         let object = self.arena.get_literal_expr(arg_node)?;
         let mut lines = Vec::new();
         for member_idx in object.elements.nodes.iter().copied() {
             let member_node = self.arena.get(member_idx)?;
-            if let Some(method_text) = self.object_method_public_signature_text(member_node) {
+            if let Some(method_text) = self.object_method_public_signature_text_with_context(
+                Some(member_idx),
+                member_node,
+                this_object_idx,
+                this_contexts,
+            ) {
                 lines.push(method_text);
                 continue;
             }
@@ -774,15 +917,22 @@ impl<'a> DeclarationEmitter<'a> {
             if !Self::is_simple_identifier_text(&name_text) {
                 return None;
             }
-            let value_text = self.object_member_public_type_text(member_idx)?;
+            let value_text = self.object_member_public_type_text_with_context(
+                member_idx,
+                this_object_idx,
+                this_contexts,
+            )?;
             lines.push(format!("    {name_text}: {value_text};"));
         }
         (!lines.is_empty()).then(|| format!("{{\n{}\n}}", lines.join("\n")))
     }
 
-    fn object_method_public_signature_text(
+    fn object_method_public_signature_text_with_context(
         &self,
+        member_idx: Option<NodeIndex>,
         member_node: &tsz_parser::parser::node::Node,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
     ) -> Option<String> {
         let method = self.arena.get_method_decl(member_node)?;
         let name = self.object_literal_member_name_text(method.name)?;
@@ -806,11 +956,73 @@ impl<'a> DeclarationEmitter<'a> {
             .collect::<Option<Vec<_>>>()?;
         let return_text = self
             .emit_type_node_text(method.type_annotation)
+            .or_else(|| {
+                self.function_body_this_property_type_text(
+                    method.body,
+                    this_object_idx,
+                    this_contexts,
+                    member_idx,
+                )
+            })
             .or_else(|| self.function_body_preferred_return_type_text(method.body))
             .or_else(|| self.infer_fallback_type_text_at(method.body, 0))
             .map(|text| Self::widen_public_literal_type_text(&text))
             .unwrap_or_else(|| "void".to_string());
         Some(format!("    {name}({}): {return_text};", params.join(", ")))
+    }
+
+    fn function_body_this_property_type_text(
+        &self,
+        body_idx: NodeIndex,
+        this_object_idx: Option<NodeIndex>,
+        this_contexts: &[(String, String)],
+        current_member_idx: Option<NodeIndex>,
+    ) -> Option<String> {
+        if body_idx.is_none() {
+            return None;
+        }
+        let return_expr = self.function_body_single_return_expression(body_idx)?;
+        let return_node = self.arena.get(return_expr)?;
+        if return_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(return_node)?;
+        if self
+            .arena
+            .get(access.expression)
+            .is_none_or(|node| node.kind != SyntaxKind::ThisKeyword as u16)
+        {
+            return None;
+        }
+
+        let property_name = self.get_identifier_text(access.name_or_argument)?;
+        if let Some(object_idx) = this_object_idx
+            && let Some(member_idx) = self.object_literal_member_by_name(object_idx, &property_name)
+            && Some(member_idx) != current_member_idx
+            && let Some(type_text) = self.object_member_public_type_text_with_context(
+                member_idx,
+                Some(object_idx),
+                this_contexts,
+            )
+        {
+            return Some(type_text);
+        }
+
+        this_contexts.iter().find_map(|(_, context_text)| {
+            Self::object_property_type_from_public_summary(context_text, &property_name)
+                .map(Self::widen_public_literal_type_text)
+        })
+    }
+
+    fn object_property_type_from_public_summary<'b>(
+        summary_text: &'b str,
+        property_name: &str,
+    ) -> Option<&'b str> {
+        summary_text.lines().find_map(|line| {
+            (Self::object_type_property_name_from_line(line).as_deref() == Some(property_name))
+                .then(|| Self::object_literal_property_value_type(line))
+                .flatten()
+        })
     }
 
     fn primitive_literal_argument_widened_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
@@ -889,21 +1101,6 @@ impl<'a> DeclarationEmitter<'a> {
         aliases
             .iter()
             .find_map(|(alias, mapped)| (alias == trimmed).then(|| mapped.clone()))
-    }
-
-    fn replace_or_push_substitution(
-        substitutions: &mut Vec<(String, String)>,
-        type_param_name: String,
-        value_text: String,
-    ) {
-        if let Some((_, existing_value)) = substitutions
-            .iter_mut()
-            .find(|(existing, _)| existing == &type_param_name)
-        {
-            *existing_value = value_text;
-        } else {
-            substitutions.push((type_param_name, value_text));
-        }
     }
 
     fn type_reference_application_parts(type_text: &str) -> Option<(&str, Vec<String>)> {
@@ -1038,7 +1235,8 @@ let arg = {
             .object_literal_member_by_name(arg_idx, "computed")
             .expect("computed member");
         assert_eq!(
-            emitter.object_literal_property_value_map_type_text(computed_member_idx),
+            emitter
+                .object_literal_property_value_map_type_text_with_context(computed_member_idx, &[]),
             Some("{\n    total: number;\n    label: string;\n}".to_string())
         );
         let mut substitutions = Vec::new();
@@ -1058,6 +1256,111 @@ let arg = {
                 "S".to_string(),
                 "{\n    total: number;\n    label: string;\n}".to_string()
             )]
+        );
+    }
+
+    #[test]
+    fn object_literal_method_and_accessor_this_property_returns_use_sibling_public_types() {
+        let mut parser = ParserState::new(
+            "this-property-public-type.ts".to_string(),
+            r#"
+let arg = {
+    a: 1,
+    b: "ready",
+    f() {
+        return this.a;
+    },
+    get d() {
+        return this.a;
+    },
+    get e() {
+        return this.b;
+    }
+};
+"#
+            .to_string(),
+        );
+        parser.parse_source_file();
+        let arena = parser.get_arena();
+        let emitter = DeclarationEmitter::new(arena);
+        let arg_idx = arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| {
+                let node_idx = NodeIndex(idx as u32);
+                (node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && emitter
+                        .object_literal_member_by_name(node_idx, "f")
+                        .is_some())
+                .then_some(node_idx)
+            })
+            .expect("argument object literal");
+
+        assert_eq!(
+            emitter.object_literal_public_type_text_with_context(arg_idx, None, &[]),
+            Some(
+                "{\n    a: number;\n    b: string;\n    f(): number;\n    d: number;\n    e: string;\n}"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn non_mapped_generic_member_alias_does_not_infer_object_value_map() {
+        let mut parser = ParserState::new(
+            "non-mapped-wrapper.ts".to_string(),
+            r#"
+type Wrapper<V> = { value: V };
+type Options<S> = { computed?: Wrapper<S> };
+let arg = {
+    computed: {
+        total(): number {
+            return 1;
+        },
+        label: {
+            get() {
+                return "ready";
+            }
+        }
+    }
+};
+"#
+            .to_string(),
+        );
+        parser.parse_source_file();
+        let arena = parser.get_arena();
+        let emitter = DeclarationEmitter::new(arena);
+        let options_type = emitter
+            .find_type_alias_type_node_in_arena(arena, "Options")
+            .expect("options alias type");
+        let arg_idx = arena
+            .nodes
+            .iter()
+            .enumerate()
+            .find_map(|(idx, node)| {
+                let node_idx = NodeIndex(idx as u32);
+                (node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+                    && emitter
+                        .object_literal_member_by_name(node_idx, "computed")
+                        .is_some())
+                .then_some(node_idx)
+            })
+            .expect("argument object literal");
+        let mut substitutions = Vec::new();
+        emitter.infer_object_argument_substitutions_from_type_node(
+            arena,
+            options_type,
+            arg_idx,
+            &["S".to_string()],
+            &[],
+            &mut substitutions,
+            0,
+        );
+
+        assert!(
+            substitutions.is_empty(),
+            "non-mapped wrappers must not infer object value maps: {substitutions:?}"
         );
     }
 }
