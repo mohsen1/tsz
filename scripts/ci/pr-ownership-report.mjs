@@ -2,6 +2,11 @@
 import fs from "node:fs";
 import { spawnSync } from "node:child_process";
 
+const QUEUE_LABEL = "merge-queue";
+const REQUIRED_PR_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
+const DEFAULT_DRAFT_STALE_HOURS = 24;
+const DEFAULT_UNSTACKED_DRAFT_BUDGET = 2;
+
 function fail(message) {
   console.error(`error: ${message}`);
   process.exit(1);
@@ -32,6 +37,9 @@ function normalizePr(raw) {
   const labels = Array.isArray(raw.labels)
     ? raw.labels.map((label) => (typeof label === "string" ? label : label?.name)).filter(Boolean)
     : [];
+  const statusCheckRollup = Array.isArray(raw.statusCheckRollup)
+    ? raw.statusCheckRollup.map(normalizeCheck).filter(Boolean)
+    : [];
   return {
     number: Number(raw.number),
     title: String(raw.title ?? ""),
@@ -43,7 +51,18 @@ function normalizePr(raw) {
     mergeable: String(raw.mergeable || "UNKNOWN"),
     autoMergeArmed: Boolean(raw.autoMergeRequest),
     labels,
+    statusCheckRollup,
     body: String(raw.body ?? ""),
+  };
+}
+
+function normalizeCheck(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  return {
+    name: String(raw.name || raw.context || ""),
+    state: raw.state ? String(raw.state).toUpperCase() : "",
+    status: raw.status ? String(raw.status).toUpperCase() : "",
+    conclusion: raw.conclusion ? String(raw.conclusion).toUpperCase() : "",
   };
 }
 
@@ -70,6 +89,47 @@ function loadPulls(fixture) {
     fail(result.stderr.trim() || "gh pr list failed");
   }
   return JSON.parse(result.stdout).map(normalizePr);
+}
+
+function shouldHydrateRequiredChecks(pr) {
+  return (
+    !pr.isDraft &&
+    pr.baseRefName === "main" &&
+    !pr.labels.includes(QUEUE_LABEL) &&
+    !isWipPr({ labels: pr.labels, title: pr.title })
+  );
+}
+
+function loadRequiredChecks(number) {
+  const result = spawnSync(
+    "gh",
+    ["pr", "view", String(number), "--json", "statusCheckRollup"],
+    { encoding: "utf8" },
+  );
+  if (result.status !== 0) {
+    console.error(
+      `warning: could not load status checks for PR #${number}: ${result.stderr.trim() || "gh pr view failed"}`,
+    );
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return Array.isArray(parsed.statusCheckRollup)
+      ? parsed.statusCheckRollup.map(normalizeCheck).filter(Boolean)
+      : [];
+  } catch (error) {
+    console.error(`warning: could not parse status checks for PR #${number}: ${error.message}`);
+    return [];
+  }
+}
+
+function hydrateRequiredChecks(pulls) {
+  for (const pr of pulls) {
+    if (shouldHydrateRequiredChecks(pr)) {
+      pr.statusCheckRollup = loadRequiredChecks(pr.number);
+    }
+  }
+  return pulls;
 }
 
 function agentNameFrom(body) {
@@ -232,7 +292,48 @@ function ownerCountSummary(entry, now) {
   return `${entry.owner}: ${entry.count}${oldest}`;
 }
 
+function ageHours(updatedAt, now) {
+  const updatedMs = Date.parse(updatedAt || "");
+  const nowMs = Date.parse(now || "");
+  if (!Number.isFinite(updatedMs) || !Number.isFinite(nowMs)) return null;
+  return Math.max(0, Math.floor((nowMs - updatedMs) / 3_600_000));
+}
+
+function checkBucket(check) {
+  if (!check) return "missing";
+  if (check.state) {
+    if (check.state === "SUCCESS") return "pass";
+    if (["PENDING", "EXPECTED"].includes(check.state)) return "pending";
+    return "fail";
+  }
+  if (check.status && check.status !== "COMPLETED") return "pending";
+  if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(check.conclusion)) return "pass";
+  if (!check.conclusion) return "pending";
+  return "fail";
+}
+
+function requiredCheckSummary(pr) {
+  const buckets = REQUIRED_PR_CHECKS.map((name) => {
+    const check = pr.statusCheckRollup.find((candidate) => candidate.name === name);
+    return { name, bucket: checkBucket(check) };
+  });
+  return {
+    buckets,
+    allPassed: buckets.every((bucket) => bucket.bucket === "pass"),
+    text: buckets.map((bucket) => `${bucket.name}=${bucket.bucket}`).join(", "),
+  };
+}
+
 function makeReport(pulls) {
+  const now = reportNow();
+  const staleDraftHours = Number.parseInt(
+    process.env.TSZ_PR_DRAFT_STALE_HOURS || String(DEFAULT_DRAFT_STALE_HOURS),
+    10,
+  );
+  const unstackedDraftBudget = Number.parseInt(
+    process.env.TSZ_PR_UNSTACKED_DRAFT_BUDGET || String(DEFAULT_UNSTACKED_DRAFT_BUDGET),
+    10,
+  );
   const normalized = pulls.map((pr) => ({
     number: pr.number,
     title: pr.title,
@@ -244,6 +345,7 @@ function makeReport(pulls) {
     mergeable: pr.mergeable,
     autoMergeArmed: pr.autoMergeArmed,
     labels: pr.labels.sort(),
+    statusCheckRollup: pr.statusCheckRollup,
     agentName: agentNameFrom(pr.body),
     agentLabels: agentLabelsFrom(pr.labels),
     issueRefs: uniqueIssueRefs(issueRefsFrom(`${pr.title}\n${pr.body}`), pr.number),
@@ -432,6 +534,86 @@ function makeReport(pulls) {
     .values()]
     .sort((a, b) => b.open - a.open || a.owner.localeCompare(b.owner));
 
+  const draftRunwayByOwner = [...normalized
+    .filter((pr) => pr.draft)
+    .reduce((summaries, pr) => {
+      const owner = ownerOf(pr);
+      if (!summaries.has(owner)) {
+        summaries.set(owner, {
+          owner,
+          draft: 0,
+          unstackedDraft: 0,
+          staleDraft: 0,
+          oldestUpdatedAt: null,
+        });
+      }
+      const summary = summaries.get(owner);
+      summary.draft += 1;
+      if (pr.stackRole !== "stack child" && pr.stackRole !== "stack middle") {
+        summary.unstackedDraft += 1;
+      }
+      const age = ageHours(pr.updatedAt, now);
+      if (age !== null && age >= staleDraftHours) {
+        summary.staleDraft += 1;
+      }
+      if (pr.updatedAt && (!summary.oldestUpdatedAt || pr.updatedAt < summary.oldestUpdatedAt)) {
+        summary.oldestUpdatedAt = pr.updatedAt;
+      }
+      return summaries;
+    }, new Map())
+    .values()]
+    .map((entry) => ({
+      ...entry,
+      overBudget: entry.unstackedDraft > unstackedDraftBudget,
+    }))
+    .sort(
+      (a, b) =>
+        b.unstackedDraft - a.unstackedDraft ||
+        b.staleDraft - a.staleDraft ||
+        a.owner.localeCompare(b.owner),
+    );
+
+  const draftParkingOwners = draftRunwayByOwner.filter((entry) => entry.overBudget || entry.staleDraft > 0);
+  const staleDraftPrs = normalized
+    .filter((pr) => pr.draft && !isWipPr(pr))
+    .map((pr) => ({
+      number: pr.number,
+      agentName: pr.agentName,
+      agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+      updatedAt: pr.updatedAt,
+      ageHours: ageHours(pr.updatedAt, now),
+      stackRole: pr.stackRole,
+      title: pr.title,
+    }))
+    .filter((pr) => pr.ageHours !== null && pr.ageHours >= staleDraftHours)
+    .sort((a, b) => (a.agentName || "").localeCompare(b.agentName || "") || a.number - b.number);
+
+  const readyMainMissingQueueLabelPrs = normalized
+    .filter((pr) => (
+      !pr.draft
+      && pr.base === "main"
+      && !isWipPr(pr)
+      && !pr.labels.includes(QUEUE_LABEL)
+    ))
+    .map((pr) => {
+      const checks = requiredCheckSummary(pr);
+      return {
+        number: pr.number,
+        agentName: pr.agentName,
+        agentLabel: pr.agentLabels.length === 1 ? `agent:${pr.agentLabels[0]}` : null,
+        updatedAt: pr.updatedAt,
+        mergeStateStatus: pr.mergeStateStatus,
+        mergeable: pr.mergeable,
+        checks: checks.buckets,
+        checkSummary: checks.text,
+        queueCandidate: checks.allPassed
+          && pr.mergeStateStatus !== "DIRTY"
+          && pr.mergeable !== "CONFLICTING",
+        title: pr.title,
+      };
+    })
+    .sort((a, b) => Number(b.queueCandidate) - Number(a.queueCandidate) || a.number - b.number);
+
   return {
     generatedAt: new Date().toISOString(),
     counts: {
@@ -441,11 +623,20 @@ function makeReport(pulls) {
       stacked: stacks.reduce((sum, stack) => sum + stack.children.length, 0),
       missingAgentName: normalized.filter((pr) => pr.agentName === null).length,
       agentLabelMismatches: agentLabelMismatches.length,
+      mergeQueued: normalized.filter((pr) => pr.labels.includes(QUEUE_LABEL)).length,
+      readyMissingQueueLabel: readyMainMissingQueueLabelPrs.length,
+      queueCandidates: readyMainMissingQueueLabelPrs.filter((pr) => pr.queueCandidate).length,
+      draftParkingOwners: draftParkingOwners.length,
+      staleDraftPrs: staleDraftPrs.length,
     },
     byBase: [...byBase.entries()]
       .map(([base, prs]) => ({ base, prs: prs.sort((a, b) => a - b) }))
       .sort((a, b) => a.base.localeCompare(b.base)),
     ownerSummaries,
+    draftRunwayByOwner,
+    draftParkingOwners,
+    staleDraftPrs,
+    readyMainMissingQueueLabelPrs,
     stacks,
     duplicateTitleScopes,
     duplicateIssueRefs,
@@ -468,7 +659,7 @@ function printMarkdown(report) {
   console.log("# Open PR Ownership Report");
   console.log("");
   console.log(
-    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
+    `Open: ${report.counts.open}; draft: ${report.counts.draft}; ready: ${report.counts.ready}; merge-queued: ${report.counts.mergeQueued}; ready missing queue label: ${report.counts.readyMissingQueueLabel}; queue candidates: ${report.counts.queueCandidates}; draft parking owners: ${report.counts.draftParkingOwners}; stale drafts: ${report.counts.staleDraftPrs}; stacked children: ${report.counts.stacked}; missing AgentName: ${report.counts.missingAgentName}; AgentName/label mismatches: ${report.counts.agentLabelMismatches}`,
   );
   console.log("");
   console.log("## Owner Summary");
@@ -486,6 +677,49 @@ function printMarkdown(report) {
       console.log(
         `| ${owner.owner} | ${owner.open} | ${owner.ready} | ${owner.draft} | ${owner.wip} | ${owner.stackedChildren} | ${owner.blockedReadyMain} | ${owner.conflictingReadyMain} | ${owner.conflictingMain} | ${owner.autoMergeArmed} |`,
       );
+    }
+  }
+  console.log("");
+  console.log("## Queue Admission");
+  if (report.readyMainMissingQueueLabelPrs.length === 0) {
+    console.log("- none");
+  } else {
+    console.log("");
+    console.log("| PR | Owner | Queue candidate | Merge state | Checks | Title |");
+    console.log("|----|-------|-----------------|-------------|--------|-------|");
+    for (const pr of report.readyMainMissingQueueLabelPrs) {
+      const owner = ownerOf(pr);
+      const candidate = pr.queueCandidate ? "yes" : "no";
+      console.log(
+        `| #${pr.number} | ${owner} | ${candidate} | ${pr.mergeStateStatus}/${pr.mergeable} | ${pr.checkSummary.replace(/\|/g, "\\|")} | ${pr.title.replace(/\|/g, "\\|")} |`,
+      );
+    }
+  }
+  console.log("");
+  console.log("## Draft Parking Risks");
+  if (report.draftParkingOwners.length === 0 && report.staleDraftPrs.length === 0) {
+    console.log("- none");
+  } else {
+    if (report.draftParkingOwners.length) {
+      console.log("");
+      console.log("Owners over draft budget or carrying stale drafts:");
+      for (const owner of report.draftParkingOwners) {
+        const budget = owner.overBudget ? "over budget" : "within budget";
+        console.log(
+          `- ${owner.owner}: drafts ${owner.draft}; unstacked ${owner.unstackedDraft}; stale ${owner.staleDraft}; ${budget}; oldest updated ${shortDate(owner.oldestUpdatedAt)} (${elapsedAge(owner.oldestUpdatedAt, now)})`,
+        );
+      }
+    }
+    if (report.staleDraftPrs.length) {
+      console.log("");
+      console.log("Stale draft PRs:");
+      for (const pr of report.staleDraftPrs) {
+        const owner = ownerOf(pr);
+        const stack = pr.stackRole ? `; ${pr.stackRole}` : "";
+        console.log(
+          `- #${pr.number}: ${owner}; updated ${shortDate(pr.updatedAt)}; age ${pr.ageHours}h${stack}; ${pr.title}`,
+        );
+      }
     }
   }
   console.log("");
@@ -629,7 +863,11 @@ function printMarkdown(report) {
 }
 
 const args = parseArgs(process.argv.slice(2));
-const report = makeReport(loadPulls(args.fixture));
+const pulls = loadPulls(args.fixture);
+if (!args.fixture) {
+  hydrateRequiredChecks(pulls);
+}
+const report = makeReport(pulls);
 if (args.outputJson) {
   fs.writeFileSync(args.outputJson, `${JSON.stringify(report, null, 2)}\n`);
 }
