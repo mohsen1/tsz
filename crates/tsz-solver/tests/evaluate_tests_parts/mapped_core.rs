@@ -445,12 +445,7 @@ fn test_mapped_type_with_template_substitution() {
     let keys = interner.union(vec![key_x, key_y]);
 
     // Template is the type parameter K itself
-    let type_param_k = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: interner.intern_string("K"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let type_param_k = test_type_param(&interner, "K").1;
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -541,12 +536,7 @@ fn test_mapped_type_deferred() {
 
     // { [K in T]: number } where T is a type parameter
     // Should remain as mapped type (deferred)
-    let type_param_t = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: interner.intern_string("T"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let type_param_t = test_type_param(&interner, "T").1;
 
     let mapped = MappedType {
         type_param: TypeParamInfo {

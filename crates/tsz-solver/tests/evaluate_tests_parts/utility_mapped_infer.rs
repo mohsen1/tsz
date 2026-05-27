@@ -42,13 +42,7 @@ fn test_exclude_basic_union() {
     let _union = interner.union(vec![TypeId::STRING, TypeId::NUMBER, TypeId::BOOLEAN]);
 
     // Exclude pattern: T extends string ? never : T
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     let cond = ConditionalType {
         check_type: t_param,
@@ -108,13 +102,7 @@ fn test_extract_basic_union() {
     // Extract<T, U> = T extends U ? T : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     let string_or_number = interner.union(vec![TypeId::STRING, TypeId::NUMBER]);
 
@@ -285,13 +273,7 @@ fn test_distributive_conditional_with_type_param() {
     // Distributive: T extends U ? X : Y distributes when T is type param
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     // T extends string ? "yes" : "no"
     let yes = interner.literal_string("yes");
@@ -315,13 +297,7 @@ fn test_non_distributive_conditional() {
     // [T] extends [U] ? X : Y is non-distributive (wrapped in tuple)
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     // Wrap in tuple to make non-distributive
     let tuple_t = interner.tuple(vec![TupleElement {
@@ -629,12 +605,7 @@ fn test_noinfer_in_function_param_position() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
     let hello_lit = interner.literal_string("hello");
     let number_type = TypeId::NUMBER;
@@ -668,12 +639,7 @@ fn test_noinfer_inference_priority() {
 
     let var_t = ctx.fresh_type_param(t_name, false);
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
     let lit_hello = interner.literal_string("hello");
     let lit_123 = interner.literal_number(123.0);
@@ -897,19 +863,9 @@ fn test_noinfer_multiple_type_params() {
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let u_param = test_type_param_from_name(&interner, u_name);
 
     let result_tuple = interner.tuple(vec![
         TupleElement {
@@ -997,13 +953,7 @@ fn test_noinfer_in_return_position() {
     // Return type NoInfer<T> = T, but doesn't contribute to inference from return
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let func = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
@@ -1040,13 +990,7 @@ fn test_noinfer_conditional_true_branch() {
     // In true branch, NoInfer<T> = T
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, t_param) = test_type_param(&interner, "T");
 
     // When check passes, return NoInfer<T> = T
     let cond = ConditionalType {
@@ -1072,13 +1016,7 @@ fn test_noinfer_with_infer_keyword() {
     // T extends NoInfer<infer U> ? U : never
     let interner = TypeInterner::new();
 
-    let u_name = interner.intern_string("U");
-    let infer_u = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_u_name, infer_u) = test_infer_param(&interner, "U");
 
     // Pattern: NoInfer<infer U> = infer U for matching purposes
     // Test that infer still works within NoInfer context

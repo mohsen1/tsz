@@ -105,13 +105,7 @@ fn test_template_infer_prefix_extraction() {
     // Input: "prefixSuffix" -> Rest = "Suffix"
     let interner = TypeInterner::new();
 
-    let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_rest_name, infer_rest) = test_infer_param(&interner, "Rest");
 
     // Pattern: `prefix${infer Rest}`
     let pattern = interner.template_literal(vec![
@@ -140,13 +134,7 @@ fn test_template_infer_suffix_extraction() {
     // Input: "PrefixSuffix" where suffix is "Suffix" -> Start = "Prefix"
     let interner = TypeInterner::new();
 
-    let infer_start_name = interner.intern_string("Start");
-    let infer_start = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_start_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_start_name, infer_start) = test_infer_param(&interner, "Start");
 
     // Pattern: `${infer Start}Suffix`
     let pattern = interner.template_literal(vec![
@@ -174,13 +162,7 @@ fn test_template_infer_middle_extraction() {
     // T extends `start${infer Middle}end` ? Middle : never
     let interner = TypeInterner::new();
 
-    let infer_middle_name = interner.intern_string("Middle");
-    let infer_middle = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_middle_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_middle_name, infer_middle) = test_infer_param(&interner, "Middle");
 
     // Pattern: `start${infer Middle}end`
     let pattern = interner.template_literal(vec![
@@ -210,13 +192,7 @@ fn test_template_infer_no_match() {
     // Input: "wrongStart" doesn't match -> never
     let interner = TypeInterner::new();
 
-    let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_rest_name, infer_rest) = test_infer_param(&interner, "Rest");
 
     // Pattern: `prefix${infer Rest}`
     let pattern = interner.template_literal(vec![
@@ -244,21 +220,9 @@ fn test_template_multiple_infers() {
     // Input: "hello-world" -> [A="hello", B="world"]
     let interner = TypeInterner::new();
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_b_name, infer_b) = test_infer_param(&interner, "B");
 
     // Pattern: `${infer A}-${infer B}`
     let pattern = interner.template_literal(vec![
@@ -304,29 +268,11 @@ fn test_template_three_infers() {
     // Input: "a/b/c" -> ["a", "b", "c"]
     let interner = TypeInterner::new();
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_b_name, infer_b) = test_infer_param(&interner, "B");
 
-    let infer_c_name = interner.intern_string("C");
-    let infer_c = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_c_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_c_name, infer_c) = test_infer_param(&interner, "C");
 
     // Pattern: `${infer A}/${infer B}/${infer C}`
     let pattern = interner.template_literal(vec![
@@ -377,13 +323,7 @@ fn test_template_union_distribution_simple() {
     // T extends `${infer X}` ? X : never  (distributive over "a" | "b")
     let interner = TypeInterner::new();
 
-    let infer_x_name = interner.intern_string("X");
-    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_x_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_x_name, infer_x) = test_infer_param(&interner, "X");
 
     // Pattern: just `${infer X}` (matches any string)
     let pattern = interner.template_literal(vec![TemplateSpan::Type(infer_x)]);
@@ -411,13 +351,7 @@ fn test_template_union_prefix_distribution() {
     // Distributive over "getName" | "getValue" | "other"
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("Name");
-    let infer_name_type = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_name_type) = test_infer_param(&interner, "Name");
 
     // Pattern: `get${infer Name}`
     let pattern = interner.template_literal(vec![
@@ -449,13 +383,7 @@ fn test_template_union_all_match() {
     // Distributive over "onClick" | "onHover" | "onFocus"
     let interner = TypeInterner::new();
 
-    let infer_event_name = interner.intern_string("Event");
-    let infer_event = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_event_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_event_name, infer_event) = test_infer_param(&interner, "Event");
 
     // Pattern: `on${infer Event}`
     let pattern = interner.template_literal(vec![
@@ -717,14 +645,7 @@ fn test_omit_this_preserves_generics() {
     let interner = TypeInterner::new();
 
     let t_name = interner.intern_string("T");
-    let u_name = interner.intern_string("U");
-
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (u_name, u_param) = test_type_param(&interner, "U");
 
     // After OmitThisParameter, type params remain
     let fn_result = interner.function(FunctionShape {
@@ -1105,13 +1026,7 @@ fn test_instance_type_with_generics() {
     // InstanceType<new <T>(x: T) => Container<T>> = Container<T>
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let container = interner.object(vec![PropertyInfo::new(
         interner.intern_string("value"),
@@ -1300,13 +1215,7 @@ fn test_distributive_large_union_15_members() {
     let large_union = interner.union(members);
 
     // Type parameter T for check type
-    let t_name = interner.intern_string("T");
-    let _t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, _t_param) = test_type_param(&interner, "T");
 
     let cond = ConditionalType {
         check_type: large_union,
@@ -1462,13 +1371,7 @@ fn test_nested_distributive_with_infer() {
     // T extends { a: infer A } ? (A extends string ? A : never) : never
     let interner = TypeInterner::new();
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
     // Pattern: { a: infer A }
     let pattern = interner.object(vec![PropertyInfo::new(
@@ -1674,13 +1577,7 @@ fn test_never_filtering_exclude_pattern() {
     let union_abc = interner.union(vec![lit_a, lit_b, lit_c]);
 
     // T param for distributive check
-    let t_name = interner.intern_string("T");
-    let _t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_t_name, _t_param) = test_type_param(&interner, "T");
 
     let cond = ConditionalType {
         check_type: union_abc,

@@ -888,21 +888,9 @@ fn test_keyof_union_of_template_literals() {
 fn test_conditional_infer_template_with_keyof_result() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_k) = test_infer_param(&interner, "K");
 
     // Pattern: `get${infer K}Done`
     let pattern = interner.template_literal(vec![
@@ -975,29 +963,11 @@ fn test_template_literal_with_uppercase_intrinsic_pattern() {
 fn test_nested_conditional_template_literal_infer() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_r_name, infer_r) = test_infer_param(&interner, "R");
 
-    let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_s_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_s_name, infer_s) = test_infer_param(&interner, "S");
 
     // Outer pattern: `prefix${infer R}`
     let outer_pattern = interner.template_literal(vec![
@@ -1062,20 +1032,8 @@ fn test_recursive_template_literal_application_with_string_intrinsics() {
     };
     let s_param = interner.intern(TypeData::TypeParameter(s_param_info));
 
-    let l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: l_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_l_name, infer_l) = test_infer_param(&interner, "L");
+    let (_r_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.template_literal(vec![
         TemplateSpan::Type(infer_l),
@@ -1120,13 +1078,7 @@ fn test_recursive_template_literal_application_with_string_intrinsics() {
 fn test_template_literal_conditional_extends_template() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: `prefix${infer R}`
     let pattern = interner.template_literal(vec![
@@ -1186,13 +1138,7 @@ fn test_template_literal_escape_sequences() {
 fn test_template_literal_infer_with_special_chars() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern with special character
     let pattern = interner.template_literal(vec![
@@ -1222,21 +1168,9 @@ fn test_template_literal_infer_with_special_chars() {
 fn test_complex_keyof_template_infer_composition() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_k_name = interner.intern_string("K");
-    let infer_k = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_k_name, infer_k) = test_infer_param(&interner, "K");
 
     // Pattern: `get${infer K}`
     let pattern = interner.template_literal(vec![
@@ -1305,29 +1239,11 @@ fn test_template_literal_with_number_interpolation() {
 fn test_template_literal_two_infers_union_input() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_b_name, infer_b) = test_infer_param(&interner, "B");
 
     // Pattern: `${infer A}-${infer B}`
     let pattern = interner.template_literal(vec![
@@ -1377,13 +1293,7 @@ fn test_template_literal_two_infers_union_input() {
 fn test_template_literal_constrained_infer() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     let infer_name = interner.intern_string("R");
     let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
@@ -1527,13 +1437,7 @@ fn test_template_literal_only_type_interpolation() {
 fn test_distributive_conditional_template_union() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: `${infer R}x`
     let pattern = interner.template_literal(vec![
@@ -1572,13 +1476,7 @@ fn test_distributive_conditional_template_union() {
 fn test_non_distributive_conditional_template_union() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: `${infer R}x`
     let pattern = interner.template_literal(vec![
@@ -1692,13 +1590,7 @@ fn test_template_literal_index_access_scenario() {
 fn test_template_literal_mapped_type_pattern() {
     let interner = TypeInterner::new();
 
-    let infer_s_name = interner.intern_string("S");
-    let infer_s = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_s_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_s_name, infer_s) = test_infer_param(&interner, "S");
 
     // Create a template literal pattern like `get${infer S}`
     let pattern_template = interner.template_literal(vec![
@@ -1721,29 +1613,11 @@ fn test_template_literal_mapped_type_pattern() {
 fn test_template_literal_multiple_infers_complex_pattern() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_a_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_a_name, infer_a) = test_infer_param(&interner, "A");
 
-    let infer_b_name = interner.intern_string("B");
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_b_name, infer_b) = test_infer_param(&interner, "B");
 
     // Pattern: `start${infer A}-middle${infer B}-end`
     let pattern = interner.template_literal(vec![

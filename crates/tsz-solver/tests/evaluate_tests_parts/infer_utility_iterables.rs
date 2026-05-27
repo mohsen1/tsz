@@ -4,13 +4,7 @@ fn test_infer_contravariant_callback_param() {
     // Extracting the parameter type from a callback
     let interner = TypeInterner::new();
 
-    let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_t_name, infer_t) = test_infer_param(&interner, "T");
 
     // Inner callback pattern: (x: infer T) => void
     let callback_pattern = interner.function(FunctionShape {
@@ -102,18 +96,8 @@ fn test_tuple_spread_infer_first_rest() {
     let infer_f_name = interner.intern_string("F");
     let infer_r_name = interner.intern_string("R");
 
-    let infer_f = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_f_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_f = test_infer_param_from_name(&interner, infer_f_name);
+    let infer_r = test_infer_param_from_name(&interner, infer_r_name);
 
     // Pattern: [infer F, ...infer R]
     let pattern = interner.tuple(vec![
@@ -236,13 +220,7 @@ fn test_tuple_spread_length_check() {
     // Testing tuple length extraction pattern
     let interner = TypeInterner::new();
 
-    let infer_l_name = interner.intern_string("L");
-    let infer_l = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_l_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_l_name, infer_l) = test_infer_param(&interner, "L");
 
     // Pattern: { length: infer L }
     let pattern = interner.object(vec![PropertyInfo::new(
@@ -517,13 +495,7 @@ fn test_readonly_nested_object_top_level_only() {
     // Readonly: { readonly [K in keyof T]: T[K] }
     let keyof_outer = interner.intern(TypeData::KeyOf(outer_obj));
 
-    let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k_name, k_param) = test_type_param(&interner, "K");
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -585,13 +557,7 @@ fn test_readonly_multiple_properties_nested() {
 
     // Readonly mapped type
     let keyof_outer = interner.intern(TypeData::KeyOf(outer));
-    let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k_name, k_param) = test_type_param(&interner, "K");
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -650,13 +616,7 @@ fn test_deep_readonly_pattern_structure() {
 
     // Apply Readonly (single level) - simulating DeepReadonly on leaf
     let keyof_obj = interner.intern(TypeData::KeyOf(simple_obj));
-    let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k_name, k_param) = test_type_param(&interner, "K");
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -703,13 +663,7 @@ fn test_deep_readonly_manual_nested_application() {
 
     // Apply Readonly to inner
     let keyof_inner = interner.intern(TypeData::KeyOf(inner));
-    let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k_name, k_param) = test_type_param(&interner, "K");
 
     let inner_mapped = MappedType {
         type_param: TypeParamInfo {
@@ -735,13 +689,7 @@ fn test_deep_readonly_manual_nested_application() {
 
     // Apply Readonly to outer
     let keyof_outer = interner.intern(TypeData::KeyOf(outer_with_readonly_inner));
-    let k2_name = interner.intern_string("K2");
-    let k2_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k2_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k2_name, k2_param) = test_type_param(&interner, "K2");
 
     let outer_mapped = MappedType {
         type_param: TypeParamInfo {
@@ -797,13 +745,7 @@ fn test_deep_readonly_with_array_property() {
 
     // Apply Readonly
     let keyof_obj = interner.intern(TypeData::KeyOf(obj));
-    let k_name = interner.intern_string("K");
-    let k_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: k_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (k_name, k_param) = test_type_param(&interner, "K");
 
     let mapped = MappedType {
         type_param: TypeParamInfo {
@@ -854,13 +796,7 @@ fn test_awaited_simple_promise() {
     let promise_string = interner.object(vec![PropertyInfo::readonly(then_name, TypeId::STRING)]);
 
     // Awaited pattern: T extends { then: infer R } ? R : T
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: { then: infer R }
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
@@ -894,13 +830,7 @@ fn test_awaited_nested_promise_one_level() {
     let outer_promise = interner.object(vec![PropertyInfo::readonly(then_name, inner_promise)]);
 
     // Awaited pattern: T extends { then: infer R } ? R : T
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
 
@@ -950,13 +880,7 @@ fn test_awaited_union_of_promises() {
     let union_promises = interner.union(vec![promise_string, promise_number]);
 
     // Awaited pattern with distributive conditional
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
 
@@ -985,13 +909,7 @@ fn test_awaited_non_promise_passthrough() {
     let then_name = interner.intern_string("then");
 
     // Awaited pattern: T extends { then: infer R } ? R : T
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
 
@@ -1024,13 +942,7 @@ fn test_awaited_mixed_union() {
     let mixed_union = interner.union(vec![promise_boolean, TypeId::NUMBER]);
 
     // Awaited pattern with distributive conditional
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     let pattern = interner.object(vec![PropertyInfo::readonly(then_name, infer_r)]);
 
@@ -1063,13 +975,7 @@ fn test_infer_mapped_type_value_extraction() {
     // Extracting value types from mapped type
     let interner = TypeInterner::new();
 
-    let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_v_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_v_name, infer_v) = test_infer_param(&interner, "V");
 
     // Pattern: object with infer V as value type
     // { x: infer V, y: infer V }
@@ -1102,13 +1008,7 @@ fn test_infer_mapped_type_mixed_values() {
     // When values differ, should infer union
     let interner = TypeInterner::new();
 
-    let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_v_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_v_name, infer_v) = test_infer_param(&interner, "V");
 
     // Pattern: { a: infer V, b: infer V }
     let pattern = interner.object(vec![
@@ -1147,13 +1047,7 @@ fn test_infer_mapped_type_key_and_value() {
     // Extract value type from object with specific key
     let interner = TypeInterner::new();
 
-    let infer_v_name = interner.intern_string("V");
-    let infer_v = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_v_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_v_name, infer_v) = test_infer_param(&interner, "V");
 
     // Pattern with infer in value position
     let pattern = interner.object(vec![PropertyInfo::new(
@@ -1306,13 +1200,7 @@ fn test_infer_multiple_same_name_covariant() {
     // Same infer variable in covariant position (return type)
     let interner = TypeInterner::new();
 
-    let infer_r_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_r_name, infer_r) = test_infer_param(&interner, "R");
 
     // Getter method returning infer R
     let getter = interner.function(FunctionShape {
@@ -1369,13 +1257,7 @@ fn test_infer_template_literal_prefix() {
     // T extends `prefix${infer Rest}` ? Rest : never
     let interner = TypeInterner::new();
 
-    let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_rest_name, infer_rest) = test_infer_param(&interner, "Rest");
 
     // Pattern: `prefix${infer Rest}`
     let pattern = interner.template_literal(vec![
@@ -1406,13 +1288,7 @@ fn test_infer_template_literal_suffix() {
     // T extends `${infer Prefix}Suffix` ? Prefix : never
     let interner = TypeInterner::new();
 
-    let infer_prefix_name = interner.intern_string("Prefix");
-    let infer_prefix = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_prefix_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_prefix_name, infer_prefix) = test_infer_param(&interner, "Prefix");
 
     // Pattern: `${infer Prefix}Suffix`
     let pattern = interner.template_literal(vec![
@@ -1442,13 +1318,7 @@ fn test_infer_template_literal_middle() {
     // T extends `start${infer Middle}end` ? Middle : never
     let interner = TypeInterner::new();
 
-    let infer_middle_name = interner.intern_string("Middle");
-    let infer_middle = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_middle_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_middle_name, infer_middle) = test_infer_param(&interner, "Middle");
 
     // Pattern: `start${infer Middle}end`
     let pattern = interner.template_literal(vec![
@@ -1480,13 +1350,7 @@ fn test_infer_template_literal_no_match() {
     // When input doesn't match prefix
     let interner = TypeInterner::new();
 
-    let infer_rest_name = interner.intern_string("Rest");
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_rest_name, infer_rest) = test_infer_param(&interner, "Rest");
 
     // Pattern: `prefix${infer Rest}`
     let pattern = interner.template_literal(vec![

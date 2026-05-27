@@ -3,21 +3,9 @@ fn test_array_covariance_element_extraction() {
     // Test: T extends Array<infer E> ? E : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: Array<infer E> - using array type
     let extends_array = interner.array(infer_e);
@@ -49,21 +37,9 @@ fn test_array_covariance_union_element() {
     // Test: Array with union element type
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: Array<infer E>
     let extends_array = interner.array(infer_e);
@@ -96,21 +72,9 @@ fn test_array_covariance_readonly() {
     // Test: Readonly array covariance
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: readonly E[] represented as array
     let extends_array = interner.array(infer_e);
@@ -142,21 +106,9 @@ fn test_array_covariance_nested() {
     // T extends Array<Array<infer E>> ? E : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: Array<Array<infer E>>
     let inner_array = interner.array(infer_e);
@@ -190,21 +142,9 @@ fn test_array_covariance_non_array() {
     // Test: Non-array doesn't match array pattern
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: Array<infer E>
     let extends_array = interner.array(infer_e);
@@ -243,13 +183,7 @@ fn test_array_covariance_non_array() {
 fn test_return_type_generic_function() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
@@ -268,13 +202,7 @@ fn test_return_type_generic_function() {
     });
 
     // Source: generic function <U>(x: U) => U
-    let u_name = interner.intern_string("U");
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (u_name, u_param) = test_type_param(&interner, "U");
     let generic_fn = interner.function(FunctionShape {
         type_params: vec![TypeParamInfo {
             name: u_name,
@@ -314,13 +242,7 @@ fn test_return_type_generic_function() {
 fn test_return_type_overloaded_function() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
@@ -396,13 +318,7 @@ fn test_return_type_overloaded_function() {
 fn test_return_type_type_predicate_function() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: (...args: any[]) => infer R
     let extends_fn = interner.function(FunctionShape {
@@ -457,13 +373,7 @@ fn test_return_type_type_predicate_function() {
 fn test_parameters_rest_param_function() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern for Parameters: T extends (...args: infer P) => any ? P : never
     let extends_fn = interner.function(FunctionShape {
@@ -518,13 +428,7 @@ fn test_parameters_rest_param_function() {
 fn test_parameters_optional_and_rest_combination() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: (...args: infer P) => any
     let extends_fn = interner.function(FunctionShape {
@@ -604,13 +508,7 @@ fn test_parameters_optional_and_rest_combination() {
 fn test_parameters_generic_function_extracts_parameter_tuple() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     let extends_fn = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -629,18 +527,8 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
 
     let t_name = interner.intern_string("T");
     let u_name = interner.intern_string("U");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let u_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: u_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
+    let u_param = test_type_param_from_name(&interner, u_name);
 
     let source_fn = interner.function(FunctionShape {
         type_params: vec![
@@ -702,13 +590,7 @@ fn test_parameters_generic_function_extracts_parameter_tuple() {
 fn test_constructor_parameters_basic() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern for ConstructorParameters: T extends new (...args: infer P) => any ? P : never
     let extends_ctor = interner.function(FunctionShape {
@@ -776,13 +658,7 @@ fn test_constructor_parameters_basic() {
 fn test_constructor_parameters_callable_construct_signature() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: new (...args: infer P) => any
     let extends_ctor = interner.function(FunctionShape {
@@ -849,13 +725,7 @@ fn test_constructor_parameters_callable_construct_signature() {
 fn test_constructor_parameters_callable_construct_signature_with_properties() {
     let interner = TypeInterner::new();
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     let extends_ctor = interner.function(FunctionShape {
         params: vec![ParamInfo {
@@ -923,21 +793,9 @@ fn test_constructor_parameters_callable_construct_signature_with_properties() {
 fn test_return_type_union_distributive() {
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: T extends (...args: any[]) => infer R ? R : never
     let extends_fn = interner.function(FunctionShape {
@@ -1183,18 +1041,8 @@ fn test_infer_tuple_swap_pattern() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_a = test_infer_param_from_name(&interner, infer_a_name);
+    let infer_b = test_infer_param_from_name(&interner, infer_b_name);
 
     // Pattern: [infer A, infer B]
     let pattern = interner.tuple(vec![
@@ -1251,18 +1099,8 @@ fn test_infer_tuple_swap_second_position() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_a = test_infer_param_from_name(&interner, infer_a_name);
+    let infer_b = test_infer_param_from_name(&interner, infer_b_name);
 
     // Pattern: [infer A, infer B]
     let pattern = interner.tuple(vec![
@@ -1319,18 +1157,8 @@ fn test_infer_function_signature_param_and_return() {
     let infer_p_name = interner.intern_string("P");
     let infer_r_name = interner.intern_string("R");
 
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_p = test_infer_param_from_name(&interner, infer_p_name);
+    let infer_r = test_infer_param_from_name(&interner, infer_r_name);
 
     // Pattern: (x: infer P) => infer R
     let pattern_fn = interner.function(FunctionShape {
@@ -1395,18 +1223,8 @@ fn test_infer_function_multiple_params() {
     let infer_a_name = interner.intern_string("A");
     let infer_b_name = interner.intern_string("B");
 
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_a_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_b = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_b_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_a = test_infer_param_from_name(&interner, infer_a_name);
+    let infer_b = test_infer_param_from_name(&interner, infer_b_name);
 
     // Pattern: (a: infer A, b: infer B) => any
     let pattern_fn = interner.function(FunctionShape {
@@ -1649,13 +1467,7 @@ fn test_infer_contravariant_single_param() {
     // Function parameter positions are contravariant
     let interner = TypeInterner::new();
 
-    let infer_p_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_p_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_p_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: (x: infer P) => any
     let pattern_fn = interner.function(FunctionShape {
@@ -1710,13 +1522,7 @@ fn test_infer_contravariant_intersection_from_multiple_candidates() {
     // This tests the contravariant inference behavior
     let interner = TypeInterner::new();
 
-    let infer_t_name = interner.intern_string("T");
-    let infer_t = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_t_name, infer_t) = test_infer_param(&interner, "T");
 
     // Pattern: (a: infer T, b: infer T) => any
     // Same infer variable in two contravariant positions

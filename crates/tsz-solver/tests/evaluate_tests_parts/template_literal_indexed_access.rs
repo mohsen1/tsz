@@ -6,21 +6,9 @@ fn test_template_literal_prefix_infer_suffix_multiple_hyphens() {
     // Input: "api-user-profile-handler" => Route = "user-profile"
     // The infer captures everything between "api-" and "-handler"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("Route");
-    let infer_route = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_route) = test_infer_param(&interner, "Route");
 
     // T extends `api-${infer Route}-handler` ? Route : never
     let extends_template = interner.template_literal(vec![
@@ -56,21 +44,9 @@ fn test_template_literal_prefix_infer_suffix_distributive() {
     // Pattern: T extends `on-${infer E}-event` ? E : never (distributive)
     // Input: "on-click-event" | "on-load-event" => "click" | "load"
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // T extends `on-${infer E}-event` ? E : never
     let extends_template = interner.template_literal(vec![
@@ -116,21 +92,9 @@ fn test_template_literal_extract_numeric_id() {
     // Input: "user-42" => Id = "42"
     // Common pattern for extracting numeric IDs from string keys
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("Id");
-    let infer_id = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_id) = test_infer_param(&interner, "Id");
 
     // T extends `user-${infer Id}` ? Id : never
     let extends_template = interner.template_literal(vec![
@@ -166,26 +130,10 @@ fn test_template_literal_extract_version_numbers() {
     // Input: "v1.2" => [Major, Minor] = ["1", "2"]
     // Common pattern for parsing version strings
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_major = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("Major"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_minor = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("Minor"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_major = test_infer_param(&interner, "Major").1;
+    let infer_minor = test_infer_param(&interner, "Minor").1;
 
     // T extends `v${infer Major}.${infer Minor}` ? [Major, Minor] : never
     let extends_template = interner.template_literal(vec![
@@ -251,21 +199,9 @@ fn test_template_literal_extract_index_from_array_key() {
     // Input: "item[0]" | "item[1]" | "item[2]" => "0" | "1" | "2"
     // Common pattern for extracting array indices from bracket notation
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("Index");
-    let infer_index = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_index) = test_infer_param(&interner, "Index");
 
     // T extends `item[${infer Index}]` ? Index : never
     let extends_template = interner.template_literal(vec![
@@ -309,21 +245,9 @@ fn test_template_literal_extract_port_number() {
     // Input: "localhost:3000" => Port = "3000"
     // Common pattern for extracting port numbers from host strings
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("Port");
-    let infer_port = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_port) = test_infer_param(&interner, "Port");
 
     // T extends `localhost:${infer Port}` ? Port : never
     let extends_template = interner.template_literal(vec![
@@ -358,26 +282,10 @@ fn test_template_literal_extract_coordinates() {
     // Input: "(10,20)" => [X, Y] = ["10", "20"]
     // Common pattern for parsing coordinate pairs
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_x = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("X"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
-    let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: interner.intern_string("Y"),
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_x = test_infer_param(&interner, "X").1;
+    let infer_y = test_infer_param(&interner, "Y").1;
 
     // T extends `(${infer X},${infer Y})` ? [X, Y] : never
     let extends_template = interner.template_literal(vec![
@@ -509,19 +417,9 @@ fn test_variadic_tuple_infer_rest_elements() {
     let t_name = interner.intern_string("T");
     let rest_name = interner.intern_string("Rest");
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_rest = test_infer_param_from_name(&interner, rest_name);
 
     // Pattern: [string, ...infer Rest]
     let extends_tuple = interner.tuple(vec![
@@ -604,26 +502,11 @@ fn test_variadic_tuple_infer_first_element() {
     let first_name = interner.intern_string("First");
     let rest_name = interner.intern_string("Rest");
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
-    let infer_first = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: first_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_first = test_infer_param_from_name(&interner, first_name);
 
-    let infer_rest = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: rest_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_rest = test_infer_param_from_name(&interner, rest_name);
 
     // Pattern: [infer First, ...infer Rest]
     let extends_tuple = interner.tuple(vec![
@@ -691,19 +574,9 @@ fn test_variadic_tuple_empty_rest() {
     let t_name = interner.intern_string("T");
     let r_name = interner.intern_string("R");
 
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let t_param = test_type_param_from_name(&interner, t_name);
 
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: r_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let infer_r = test_infer_param_from_name(&interner, r_name);
 
     // Pattern: [string, ...infer R]
     let extends_tuple = interner.tuple(vec![
@@ -1169,21 +1042,9 @@ fn test_generator_function_return_type_extraction() {
     // T extends () => infer R ? R : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: () => infer R
     let extends_fn = interner.function(FunctionShape {
@@ -1232,21 +1093,9 @@ fn test_generator_function_yield_type_simulation() {
     // Generator<T, TReturn, TNext> - extract T
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("Y");
-    let infer_y = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_y) = test_infer_param(&interner, "Y");
 
     // Pattern function returning: { value: infer Y; done: boolean }
     let value_prop = interner.intern_string("value");
@@ -1287,21 +1136,9 @@ fn test_generator_function_async_return() {
     // T extends () => Promise<infer R> ? R : never (simulated with object)
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: { then: (resolve: (value: infer R) => void) => void }
     let then_prop = interner.intern_string("then");
@@ -1363,21 +1200,9 @@ fn test_generator_function_next_param_type() {
     // T extends (arg: infer A) => any ? A : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("A");
-    let infer_a = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_a) = test_infer_param(&interner, "A");
 
     // Pattern: (arg: infer A) => any
     let arg_name = interner.intern_string("arg");
@@ -1428,21 +1253,9 @@ fn test_generator_function_multiple_params() {
     // T extends (...args: infer P) => any ? P : never
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("P");
-    let infer_p = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_p) = test_infer_param(&interner, "P");
 
     // Pattern: (...args: infer P) => any
     let args_name = interner.intern_string("args");
@@ -1510,13 +1323,7 @@ fn test_module_augmentation_object_merge() {
     // interface A { x: string } merged with interface A { y: number }
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     // First object: { x: string }
     let x_prop = interner.intern_string("x");
@@ -1560,21 +1367,9 @@ fn test_module_augmentation_function_overload() {
     // Test: Merged function signatures (callable with multiple overloads)
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("R");
-    let infer_r = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_r) = test_infer_param(&interner, "R");
 
     // Pattern: () => infer R
     let extends_fn = interner.function(FunctionShape {
@@ -1664,13 +1459,7 @@ fn test_module_augmentation_class_extension() {
     // Test: Class with augmented static members
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
     // Class static: { new (): Instance }
     let instance_type = interner.object(vec![]);
@@ -1726,21 +1515,9 @@ fn test_module_augmentation_global_interface() {
     // Test: Global interface augmentation (like adding to Array prototype)
     let interner = TypeInterner::new();
 
-    let t_name = interner.intern_string("T");
-    let t_param = interner.intern(TypeData::TypeParameter(TypeParamInfo {
-        name: t_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (t_name, t_param) = test_type_param(&interner, "T");
 
-    let infer_name = interner.intern_string("E");
-    let infer_e = interner.intern(TypeData::Infer(TypeParamInfo {
-        name: infer_name,
-        constraint: None,
-        default: None,
-        is_const: false,
-    }));
+    let (_infer_name, infer_e) = test_infer_param(&interner, "E");
 
     // Pattern: Array-like with custom method
     // { myMethod: () => infer E }
