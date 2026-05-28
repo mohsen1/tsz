@@ -263,6 +263,26 @@ impl<'a> CheckerState<'a> {
                 .union_preserve_members(vec![when_true, when_false]);
         }
 
+        // tsc computes a conditional expression's type via
+        // `getUnionType([whenTrue, whenFalse], UnionReduction.Subtype)`, which
+        // drops a branch whose type is a subtype of the other branch. The
+        // solver's interner-level union cannot subtype-reduce members that need
+        // type-environment resolution (`Lazy`/`Application`/class refs), so a
+        // `cond ? sub : super` expression survives as a 2-member union (e.g.
+        // `{} | Record<string, unknown>` or `Sub | Super`). That stray subtype
+        // member then breaks downstream index/property checks (false TS7053 on
+        // `{}`). Apply the binary subtype reduction here, where the resolver is
+        // available, keeping the surviving branch's original id so its alias
+        // display is preserved. Skip it for `any`/`never` conditions so the
+        // solver keeps its dedicated handling (plain union for `any`,
+        // unreachable `never`).
+        if condition_type != TypeId::ANY
+            && condition_type != TypeId::NEVER
+            && let Some(reduced) = self.reduce_conditional_subtype_branches(when_true, when_false)
+        {
+            return reduced;
+        }
+
         // Use Solver API for type computation (Solver-First architecture)
         expr_ops::compute_conditional_expression_type(
             self.ctx.types,
@@ -270,6 +290,80 @@ impl<'a> CheckerState<'a> {
             when_true,
             when_false,
         )
+    }
+
+    /// Mirror tsc's `UnionReduction.Subtype` for the two branches of a
+    /// conditional expression: when one branch type is a subtype of the other,
+    /// the union collapses to the supertype. Returns the surviving branch's
+    /// original `TypeId` (preserving alias display), or `None` when neither
+    /// branch subsumes the other and the normal union should be built.
+    ///
+    /// Both-fresh-object-literal pairs are intentionally excluded: tsc keeps
+    /// those as a complement union (e.g. `{ a: number; b?: undefined } | { a:
+    /// number; b: number }`), which the solver's
+    /// `compute_conditional_expression_type` already reproduces.
+    fn reduce_conditional_subtype_branches(
+        &mut self,
+        when_true: TypeId,
+        when_false: TypeId,
+    ) -> Option<TypeId> {
+        if when_true == when_false {
+            return None;
+        }
+        // `any`/`unknown`/`error`/`never` have dedicated union semantics
+        // (absorption, propagation, removal) handled by the solver union.
+        for ty in [when_true, when_false] {
+            if ty == TypeId::ANY
+                || ty == TypeId::UNKNOWN
+                || ty == TypeId::ERROR
+                || ty == TypeId::NEVER
+            {
+                return None;
+            }
+        }
+        if crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, when_true)
+            && crate::query_boundaries::common::is_fresh_object_type(self.ctx.types, when_false)
+        {
+            return None;
+        }
+        let resolved_true = self.evaluate_type_for_assignability(when_true);
+        let resolved_false = self.evaluate_type_for_assignability(when_false);
+        let true_sub_false = crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            resolved_true,
+            resolved_false,
+        );
+        let false_sub_true = crate::query_boundaries::assignability::is_fresh_subtype_of(
+            self.ctx.types,
+            resolved_false,
+            resolved_true,
+        );
+        match (true_sub_false, false_sub_true) {
+            // Proper subtype: drop it, keep the supertype branch.
+            (true, false) => Some(when_false),
+            (false, true) => Some(when_true),
+            // Mutual subtypes (e.g. `{}` vs `{ [k: string]: V }`, which are
+            // assignable both ways): tsc keeps the structured member and drops
+            // the contentless empty object type. When both or neither side is
+            // an empty object, the branches are interchangeable, so leave the
+            // union for the solver to build rather than guessing a winner.
+            (true, true) => {
+                let true_empty = crate::query_boundaries::common::is_empty_object_type(
+                    self.ctx.types,
+                    resolved_true,
+                );
+                let false_empty = crate::query_boundaries::common::is_empty_object_type(
+                    self.ctx.types,
+                    resolved_false,
+                );
+                match (true_empty, false_empty) {
+                    (true, false) => Some(when_false),
+                    (false, true) => Some(when_true),
+                    _ => None,
+                }
+            }
+            (false, false) => None,
+        }
     }
 
     /// Get type of prefix unary expression.

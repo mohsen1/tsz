@@ -523,6 +523,9 @@ mod conditional_break_narrowing_tests;
 #[path = "tests/conditional_constraint_relation_routing_arch_tests.rs"]
 mod conditional_constraint_relation_routing_arch_tests;
 #[cfg(test)]
+#[path = "../tests/conditional_expression_subtype_reduction_tests.rs"]
+mod conditional_expression_subtype_reduction_tests;
+#[cfg(test)]
 #[path = "../tests/conditional_keyof_test.rs"]
 mod conditional_keyof_test;
 #[cfg(test)]
