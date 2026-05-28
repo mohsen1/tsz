@@ -743,6 +743,9 @@ impl<'a> Printer<'a> {
             && static_initializer_alias_source_nodes
                 .iter()
                 .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_directly_uses_private_name = static_initializer_alias_source_nodes
+            .iter()
+            .any(|idx| self.expression_directly_contains_private_identifier(*idx));
         let static_initializer_needs_class_alias = static_initializer_contains_class_name
             && (static_initializer_needs_this_alias
                 || has_static_privates
@@ -2865,7 +2868,9 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && (static_initializer_class_alias.is_some() || has_static_privates)
+            && (static_initializer_class_alias.is_some()
+                || has_static_privates
+                || static_initializer_directly_uses_private_name)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {

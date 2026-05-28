@@ -99,6 +99,34 @@ class Widget {
 }
 
 #[test]
+fn private_state_initializes_before_static_fields_that_read_private_names() {
+    let source = r#"
+class Widget {
+    static fromMethod = new Widget().#run();
+    static fromGetter = new Widget().#value;
+    #run() { return 1; }
+    get #value() { return 2; }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    let private_state_pos = output
+        .find("_Widget_instances = new WeakSet(), _Widget_run = function _Widget_run()")
+        .expect("expected private method/accessor setup");
+    let static_method_pos = output
+        .find("Widget.fromMethod = __classPrivateFieldGet")
+        .expect("expected lowered static method-read field");
+    let static_getter_pos = output
+        .find("Widget.fromGetter = __classPrivateFieldGet")
+        .expect("expected lowered static getter-read field");
+
+    assert!(
+        private_state_pos < static_method_pos && private_state_pos < static_getter_pos,
+        "Private state setup should precede static field initializers that directly evaluate private names.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn optional_private_field_call_uses_lowered_get_as_callee() {
     let source = r#"
 class Widget {
