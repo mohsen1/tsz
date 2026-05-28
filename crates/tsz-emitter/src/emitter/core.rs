@@ -847,6 +847,7 @@ pub struct Printer<'a> {
     pub(crate) private_members_to_skip: FxHashSet<String>,
 
     pub(crate) private_static_class_alias: Option<(String, String)>,
+    pub(crate) private_static_class_alias_shadow_depth: u32,
 
     /// When true, class emitter defers static block IIFEs.
     pub(crate) defer_class_static_blocks: bool,

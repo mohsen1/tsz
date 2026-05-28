@@ -179,6 +179,13 @@ impl<'a> Printer<'a> {
             && self.pending_object_rest_param_defaults.is_empty();
 
         if should_emit_single_line {
+            let private_static_shadow = self.block_shadows_private_static_class_alias(
+                &block.statements.nodes,
+                is_function_body_block,
+            );
+            if private_static_shadow {
+                self.private_static_class_alias_shadow_depth += 1;
+            }
             if is_function_body_block {
                 self.ctx.block_scope_state.enter_function_scope();
                 self.register_pending_function_body_parameters();
@@ -212,10 +219,20 @@ impl<'a> Printer<'a> {
             self.map_closing_brace(node);
             self.write(" }");
             self.ctx.block_scope_state.exit_scope();
+            if private_static_shadow {
+                self.private_static_class_alias_shadow_depth -= 1;
+            }
             // Trailing comments are handled by the calling context
             return;
         }
 
+        let private_static_shadow = self.block_shadows_private_static_class_alias(
+            &block.statements.nodes,
+            is_function_body_block,
+        );
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth += 1;
+        }
         if is_function_body_block {
             self.ctx.block_scope_state.enter_function_scope();
             self.register_pending_function_body_parameters();
@@ -637,6 +654,9 @@ impl<'a> Printer<'a> {
         self.map_closing_brace(node);
         self.write_with_end_marker("}");
         self.ctx.block_scope_state.exit_scope();
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth -= 1;
+        }
         // Restore declared_namespace_names for non-function blocks to prevent
         // block-scoped let declarations from leaking to sibling blocks.
         if let Some(prev) = prev_declared_ns {
