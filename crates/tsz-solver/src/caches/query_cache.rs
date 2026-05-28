@@ -816,15 +816,10 @@ impl<'a> QueryCache<'a> {
 
         let trace_enabled = query_trace::enabled();
         let trace_op = relation.trace_op();
+        let cache_config = policy.cache_config();
         let trace_query_id = trace_enabled.then(|| {
             let query_id = query_trace::next_query_id();
-            query_trace::relation_start(
-                query_id,
-                trace_op,
-                source,
-                target,
-                policy.cache_config().flags,
-            );
+            query_trace::relation_start(query_id, trace_op, source, target, cache_config);
             query_id
         });
         let key = relation.cache_key(source, target, policy);
