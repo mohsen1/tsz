@@ -62,7 +62,8 @@ impl<'a> DeclarationEmitter<'a> {
         let predicate_surface = self.evaluate_type_for_predicate_alias(predicate_type);
         let param_surface = self.evaluate_type_for_predicate_alias(param_type);
         let interner = self.type_interner?;
-        let union_members = tsz_solver::type_queries::get_union_members(interner, param_surface)?;
+        let union_members = tsz_solver::type_queries::get_union_members(interner, param_type)
+            .or_else(|| tsz_solver::type_queries::get_union_members(interner, param_surface))?;
 
         union_members
             .iter()
@@ -87,7 +88,8 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(self.print_type_id_for_inferred_predicate_declaration(type_id));
         }
 
-        self.nameable_alias_text_for_predicate_surface(type_id)
+        let surface = self.evaluate_type_for_predicate_alias(type_id);
+        self.nameable_alias_text_for_predicate_surface(surface, type_id)
     }
 
     fn predicate_alias_candidate_is_nameable_type(
@@ -112,6 +114,7 @@ impl<'a> DeclarationEmitter<'a> {
     fn nameable_alias_text_for_predicate_surface(
         &self,
         type_id: tsz_solver::types::TypeId,
+        source_surface: tsz_solver::types::TypeId,
     ) -> Option<String> {
         let (Some(interner), Some(cache)) = (self.type_interner, self.type_cache.as_ref()) else {
             return None;
@@ -124,15 +127,29 @@ impl<'a> DeclarationEmitter<'a> {
         // Inferred predicate narrowing can return the structural union member
         // after alias identity is lost. Re-anchor it to a public alias body
         // before printing so declaration emit keeps the source API surface.
+        // Prefer aliases still reachable from the source union member; otherwise
+        // only re-anchor when the structural body has a single public alias.
         let resolver = super::DtsStructuralResolver { cache };
-        let mut matches: Vec<_> = cache
-            .def_types
+        let source_defs = tsz_solver::visitor::collect_lazy_def_ids(interner, source_surface);
+        let search_defs: Vec<_> = if source_defs.is_empty() {
+            cache
+                .def_types
+                .keys()
+                .copied()
+                .map(tsz_solver::DefId)
+                .collect()
+        } else {
+            source_defs
+        };
+
+        let mut matches: Vec<_> = search_defs
             .iter()
-            .filter_map(|(&raw_def_id, &body)| {
-                let def_id = tsz_solver::DefId(raw_def_id);
+            .copied()
+            .filter_map(|def_id| {
                 if !self.predicate_alias_def_is_nameable(def_id) {
                     return None;
                 }
+                let body = cache.def_types.get(&def_id.0).copied()?;
                 (body == type_id
                     || tsz_solver::computation::are_types_structurally_identical(
                         interner, &resolver, body, type_id,
@@ -142,12 +159,10 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         matches.sort_by_key(|def_id| def_id.0);
 
-        matches
-            .into_iter()
-            .map(|def_id| {
-                self.print_type_id_for_inferred_predicate_declaration(interner.lazy(def_id))
-            })
-            .next()
+        let [def_id] = matches.as_slice() else {
+            return None;
+        };
+        Some(self.print_type_id_for_inferred_predicate_declaration(interner.lazy(*def_id)))
     }
 
     fn predicate_alias_def_is_nameable(&self, def_id: tsz_solver::DefId) -> bool {
