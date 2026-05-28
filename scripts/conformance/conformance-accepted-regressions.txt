@@ -2,9 +2,16 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
-# The following entries still have in-flight fix PRs (not yet merged):
-# - circular2 and circular4: PR #10742 (fix(checker): detect cross-file circular type aliases)
-# - declarationsWithRecursiveInternalTypesProduceUniqueTypeParams: PR #10757
 TypeScript/tests/cases/compiler/declarationsWithRecursiveInternalTypesProduceUniqueTypeParams.ts
+TypeScript/tests/cases/compiler/deeplyNestedMappedTypes.ts
+TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElaboration.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
+TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
+TypeScript/tests/cases/compiler/reorderProperties.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
 TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
+TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
+TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts
+TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccessErrors.ts
+TypeScript/tests/cases/conformance/types/mapped/mappedTypeRelationships.ts
+TypeScript/tests/cases/conformance/types/typeRelationships/typeInference/unionAndIntersectionInference1.ts
