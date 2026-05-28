@@ -12,6 +12,8 @@ const DEFAULT_PR_REQUIRED_CHECKS = ["CI Summary", "GitGuardian Security Checks"]
 const DEFAULT_MERGE_REQUIRED_CHECKS = ["CI Summary"];
 const DEFAULT_WAIT_ATTEMPTS = 90;
 const DEFAULT_WAIT_INTERVAL_MS = 20_000;
+const GH_API_RETRY_ATTEMPTS = 4;
+const GH_API_RETRY_DELAY_MS = 1_500;
 const GH_MAX_BUFFER_BYTES = 24 * 1024 * 1024;
 const SUCCESSFUL_CHECK_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const SUCCESSFUL_STATUS_STATES = new Set(["SUCCESS"]);
@@ -160,8 +162,42 @@ function run(command, args, options = {}) {
   return result.stdout || "";
 }
 
+export function ghApiCallIsReadOnly(args) {
+  if (!Array.isArray(args) || args[0] !== "api") return false;
+  for (let index = 1; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "-X" || arg === "--method") {
+      const method = String(args[index + 1] || "").toUpperCase();
+      return method === "GET";
+    }
+    if (String(arg).startsWith("--method=")) {
+      const method = String(arg).slice("--method=".length).toUpperCase();
+      return method === "GET";
+    }
+    if (["-f", "-F", "--field", "--raw-field", "--input"].includes(arg)) return false;
+  }
+  return true;
+}
+
+function runWithRetry(command, args, { attempts, delayMs }) {
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return run(command, args);
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) break;
+      console.warn(`${command} ${args.join(" ")} failed; retrying ${attempt}/${attempts - 1}`);
+      sleep(delayMs);
+    }
+  }
+  throw lastError;
+}
+
 function runGh(args) {
-  return run("gh", args);
+  return ghApiCallIsReadOnly(args)
+    ? runWithRetry("gh", args, { attempts: GH_API_RETRY_ATTEMPTS, delayMs: GH_API_RETRY_DELAY_MS })
+    : run("gh", args);
 }
 
 function runGhJson(args) {
