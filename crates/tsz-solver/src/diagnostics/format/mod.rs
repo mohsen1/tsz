@@ -297,6 +297,25 @@ impl<'a> TypeFormatter<'a> {
     ) -> Option<String> {
         let mapped_id = match self.interner.lookup(obj) {
             Some(TypeData::Mapped(id)) => id,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+                    return None;
+                };
+                let def_store = self.def_store?;
+                let def = def_store.get(def_id)?;
+                let body = def.body?;
+                let instantiated = crate::computation::instantiate_generic(
+                    self.interner,
+                    body,
+                    &def.type_params,
+                    &app.args,
+                );
+                match self.interner.lookup(instantiated) {
+                    Some(TypeData::Mapped(id)) => id,
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         let mapped = self.interner.mapped_type(mapped_id);

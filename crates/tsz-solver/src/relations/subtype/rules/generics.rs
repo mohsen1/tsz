@@ -8,6 +8,7 @@
 //! - Type expansion and instantiation
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+pub(crate) use super::mapped_chain::flatten_mapped_chain;
 use crate::def::DefId;
 use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo};
@@ -1879,85 +1880,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             instantiated
         })
     }
-}
-
-/// Result of flattening a chain of nested homomorphic mapped types.
-pub(crate) struct FlattenedMapped {
-    /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
-    pub source: TypeId,
-    /// The outer mapped key constraint (e.g., `keyof T` or `K`).
-    pub key_constraint: TypeId,
-    /// Whether any mapped type in the chain adds optional (?)
-    pub has_optional: bool,
-    /// Whether any mapped type in the chain adds readonly
-    pub has_readonly: bool,
-}
-
-/// Flatten a chain of nested homomorphic mapped types into a single descriptor.
-///
-/// For `Partial<Readonly<T>>`, this produces:
-///   source=T, `has_optional=true` (from Partial), `has_readonly=true` (from Readonly)
-///
-/// For `Required<Partial<T>>`, this produces:
-///   source=T, `has_optional=false` (Remove cancels Add), `has_readonly=false`
-///
-/// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
-/// or template isn't `X[K]` where K is the iteration param).
-pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::construction::TypeDatabase,
-    mapped_id: MappedTypeId,
-) -> Option<FlattenedMapped> {
-    use crate::types::MappedModifier;
-
-    let mapped = interner.mapped_type(mapped_id);
-
-    // Can't flatten mapped types with name remapping (as clause)
-    if mapped.name_type.is_some() {
-        return None;
-    }
-
-    let has_optional = mapped.optional_modifier == Some(MappedModifier::Add);
-    let has_readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
-    let removes_optional = mapped.optional_modifier == Some(MappedModifier::Remove);
-    let removes_readonly = mapped.readonly_modifier == Some(MappedModifier::Remove);
-
-    // Check if template is X[K] where K is the iteration param (homomorphic form)
-    let (obj, idx) = index_access_parts(interner, mapped.template)?;
-    let param = type_param_info(interner, idx)?;
-    if param.name != mapped.type_param.name {
-        return None;
-    }
-
-    // Try to flatten through the source object if it's itself a mapped type.
-    // Evaluate first to normalize Application types (e.g. Application(Partial, [T]))
-    // to their Mapped form, so nested chains like Readonly<Partial<T>> flatten correctly.
-    let obj_eval = crate::evaluation::evaluate::evaluate_type(interner, obj);
-    if let Some(inner_mapped_id) = mapped_type_id(interner, obj_eval)
-        && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id)
-    {
-        return Some(FlattenedMapped {
-            source: inner.source,
-            key_constraint: mapped.constraint,
-            has_optional: if removes_optional {
-                false
-            } else {
-                has_optional || inner.has_optional
-            },
-            has_readonly: if removes_readonly {
-                false
-            } else {
-                has_readonly || inner.has_readonly
-            },
-        });
-    }
-
-    // Base case: source object is not a mapped type
-    Some(FlattenedMapped {
-        source: obj,
-        key_constraint: mapped.constraint,
-        has_optional,
-        has_readonly,
-    })
 }
 
 /// Check if a mapped type's `name_type` (as-clause) is a "filtering" conditional.
