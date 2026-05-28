@@ -151,3 +151,31 @@ fn contextual_return_substitution_uses_env_relation_outcome_boundary() {
         "contextual return substitution should not regress to raw env boolean assignability"
     );
 }
+
+#[test]
+fn contextual_callback_return_retyping_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call/inner_argument_collection.rs")
+        .expect("failed to read call argument collection source");
+    let start = source
+        .find("let ctx_return = refreshed_contextual_types")
+        .expect("missing contextual callback return block");
+    let end = source[start..]
+        .find("refreshed_args")
+        .map(|offset| start + offset)
+        .expect("missing contextual callback return block end marker");
+    let helper = &source[start..end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "contextual callback return retyping should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "contextual callback return retyping should use the relation outcome decision"
+    );
+    assert!(
+        !helper.contains("is_assignable_to_with_env("),
+        "contextual callback return retyping should not regress to raw env boolean assignability"
+    );
+}
