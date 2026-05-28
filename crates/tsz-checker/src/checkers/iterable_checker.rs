@@ -336,6 +336,21 @@ impl<'a> CheckerState<'a> {
             AsyncIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
             }
+            AsyncIterableTypeKind::Intersection(members) => {
+                // An intersection is async iterable if at least one member is,
+                // mirroring the sync `is_iterable_type` intersection rule.
+                members.iter().any(|&m| self.is_async_iterable_type(m))
+            }
+            AsyncIterableTypeKind::TypeParameter { constraint } => {
+                // `for await ... of` resolves a type parameter to its apparent
+                // type (the constraint). Recurse into the constraint instead of
+                // probing `[Symbol.asyncIterator]` on the bare parameter, which
+                // cannot see through a generic `Application` constraint such as
+                // `AsyncIterableIterator<T>`. An unconstrained parameter is not
+                // async iterable here; the caller still falls back to the sync
+                // iterable check before reporting TS2504.
+                constraint.is_some_and(|c| self.is_async_iterable_type(c))
+            }
             AsyncIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.asyncIterator] method or callable property.
                 // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
