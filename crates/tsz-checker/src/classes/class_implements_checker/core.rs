@@ -160,6 +160,14 @@ impl<'a> CheckerState<'a> {
             (Vec::new(), false)
         };
 
+        // Track interface method-signature names already rebuilt from the AST in
+        // this loop. The first declaration of a name replaces the object-shape
+        // property (which only stores the return type for methods); subsequent
+        // declarations of the same name are overload signatures and must be
+        // *combined* into one callable rather than overwriting each other.
+        let mut method_sig_rebuilt: rustc_hash::FxHashSet<tsz_common::interner::Atom> =
+            rustc_hash::FxHashSet::default();
+
         for &decl_idx in interface_declarations {
             let Some(decl_node) = self.ctx.arena.get(decl_idx) else {
                 continue;
@@ -237,9 +245,67 @@ impl<'a> CheckerState<'a> {
                     single_quoted_name: false,
                 };
                 if let Some(existing) = properties.iter_mut().find(|p| p.name == member_atom) {
-                    *existing = property_info;
+                    if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE
+                        && existing.is_method
+                        && method_sig_rebuilt.contains(&member_atom)
+                    {
+                        // Overloaded interface method: this is a second (or later)
+                        // overload of an already-rebuilt method. Combine the
+                        // accumulated signature(s) with this declaration's
+                        // signature(s) into one callable so the implements-compat
+                        // check relates the class member against the FULL overload
+                        // set. tsc's `signaturesRelatedTo` erases type parameters
+                        // for the multi-signature (N×M) case; comparing the class
+                        // member against a single overload in isolation produces a
+                        // false TS2416 when the overload's return type depends on
+                        // the method type parameter.
+                        let mut sigs = crate::query_boundaries::class::member_call_signatures(
+                            self.ctx.types,
+                            existing.type_id,
+                        );
+                        sigs.extend(crate::query_boundaries::class::member_call_signatures(
+                            self.ctx.types,
+                            member_type,
+                        ));
+                        if sigs.is_empty() {
+                            // Defensive: if neither declaration yielded a call
+                            // signature, an empty callable would print as `{}` and
+                            // accept anything. Fall back to the single-declaration
+                            // type rather than silently dropping the check.
+                            *existing = property_info;
+                        } else {
+                            // Relate the overload set as a plain call-signature list
+                            // (`is_method = false`). tsc compares a class member
+                            // against an overloaded target with contravariant
+                            // parameters and type-parameter erasure (the N×M
+                            // `signaturesRelatedTo` path), not the bivariant
+                            // single-method parameter rule. Keeping `is_method =
+                            // true` would over-accept — e.g. a narrower impl
+                            // parameter would pass bivariantly — and miss real
+                            // TS2416s.
+                            for sig in &mut sigs {
+                                sig.is_method = false;
+                            }
+                            let combined =
+                                self.ctx
+                                    .types
+                                    .factory()
+                                    .callable(tsz_solver::CallableShape {
+                                        call_signatures: sigs,
+                                        ..tsz_solver::CallableShape::default()
+                                    });
+                            existing.type_id = combined;
+                            existing.write_type = combined;
+                            existing.is_method = false;
+                        }
+                    } else {
+                        *existing = property_info;
+                    }
                 } else {
                     properties.push(property_info);
+                }
+                if member_node.kind == syntax_kind_ext::METHOD_SIGNATURE {
+                    method_sig_rebuilt.insert(member_atom);
                 }
             }
         }
