@@ -346,6 +346,9 @@ impl<'a> CheckerState<'a> {
         // Set when the heritage clause resolves to a class symbol. The actual TS2417
         // check only fires when the *derived* class has a merged namespace.
         let mut base_sym_for_ns_static_check: Option<tsz_binder::SymbolId> = None;
+        // The symbol the `extends` target resolves to, used to gate TS4112 when no
+        // base type could be resolved structurally (e.g. cross-file generic base).
+        let mut base_heritage_sym: Option<tsz_binder::SymbolId> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
             let Some(clause_node) = self.ctx.arena.get(clause_idx) else {
@@ -444,6 +447,7 @@ impl<'a> CheckerState<'a> {
                         // derived class's namespace introduces conflicting static members
                         // even if the base class has no namespace at all.
                         base_sym_for_ns_static_check = Some(sym_id);
+                        base_heritage_sym = Some(sym_id);
                         // Resolve to an in-arena class declaration when possible.
                         // Cross-file/module heritage often resolves to symbols whose
                         // declaration nodes live in another arena; returning `None`
@@ -556,12 +560,23 @@ impl<'a> CheckerState<'a> {
                 }
             }
 
-            // True fallback: no extends clause resolved at all — emit TS4112
-            self.report_overrides_without_base(
-                class_data,
-                &derived_class_name,
-                no_implicit_override,
-            );
+            // True fallback: no base type could be resolved structurally. Emit
+            // TS4112 only when the class does not actually extend another class.
+            // A present `extends` clause whose target resolves to a real class —
+            // even one whose full instance type tsz could not resolve here, e.g.
+            // a cross-file generic base — still means the class extends another
+            // class, so TS4112 must not fire. This matches tsc, which reports
+            // TS4112 only when there is no class base at all (no `extends`
+            // clause, an interface base, or an unresolved name).
+            let extends_a_class = base_heritage_sym
+                .is_some_and(|sym| self.ctx.heritage_symbol_resolves_to_class(sym));
+            if !extends_a_class {
+                self.report_overrides_without_base(
+                    class_data,
+                    &derived_class_name,
+                    no_implicit_override,
+                );
+            }
 
             return;
         };

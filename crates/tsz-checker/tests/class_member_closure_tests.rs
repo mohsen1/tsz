@@ -330,6 +330,69 @@ fn override_valid_no_error() {
 }
 
 #[test]
+fn override_extends_interface_still_ts4112() {
+    // TS4112 must still fire when the `extends` target is an interface — an
+    // interface is not a class, so the class does not extend another class.
+    // tsc emits TS4112 (and TS2689) here.
+    let source = r#"
+        interface I { z: number }
+        class C extends I {
+            override z: number = 0;
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 4112),
+        "Expected TS4112 when extending an interface, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn override_implements_only_still_ts4112() {
+    // TS4112 must still fire when the class only `implements` an interface and
+    // has no `extends` clause — implementing an interface is not extending a
+    // class.
+    let source = r#"
+        interface I { z: number }
+        class C implements I {
+            override z: number = 0;
+        }
+    "#;
+    let diags = check_default(source);
+    assert!(
+        has_code(&diags, 4112),
+        "Expected TS4112 for implements-only class, got: {:?}",
+        codes(&diags)
+    );
+}
+
+#[test]
+fn override_generic_base_no_ts4112() {
+    // A generic class base resolves to a real class, so override members on the
+    // derived generic class must not emit TS4112 regardless of the type
+    // parameter name chosen (the rule is structural, not name-based).
+    for (base_param, derived_param) in [("T", "U"), ("DB", "X")] {
+        let source = format!(
+            r#"
+            class Base<{base_param}> {{
+                greet(): string {{ return "hi"; }}
+            }}
+            class Derived<{derived_param}> extends Base<{derived_param}> {{
+                override greet(): string {{ return "yo"; }}
+            }}
+            "#
+        );
+        let diags = check_default(&source);
+        assert!(
+            !has_code(&diags, 4112),
+            "Generic base should not emit TS4112 (params {base_param}/{derived_param}), got: {:?}",
+            codes(&diags)
+        );
+    }
+}
+
+#[test]
 fn no_implicit_override_missing_ts4114() {
     // TS4114: member overrides base without 'override' keyword
     let source = r#"
