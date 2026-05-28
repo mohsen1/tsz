@@ -45,6 +45,7 @@ mod complex_contextual_application;
 mod complex_contextual_new;
 pub(crate) mod complex_js_constructor;
 pub(crate) mod complex_new_target;
+pub(crate) mod conditional_expr;
 pub(crate) mod contextual;
 pub(crate) mod expression_guards;
 pub(crate) mod generic_new_inference;
