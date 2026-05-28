@@ -2691,7 +2691,19 @@ impl<'a> CheckerState<'a> {
         wants_string: bool,
         wants_number: bool,
     ) -> bool {
-        match query::classify_element_indexable(self.ctx.types, object_type) {
+        // Use the resolver-aware classifier so that `Application(Lazy(DefId), args)`
+        // wrappers — including those nested inside intersection / union members —
+        // are expanded through the checker's `TypeEnvironment` before classification.
+        // Without this, an intersection like `{ a: number } & Record<string, V>`
+        // keeps the `Record` member opaque (classifier returns `Other`), which
+        // causes a false TS7053 for indexed accesses on a type parameter
+        // constrained to that intersection. The recursive call below stays on the
+        // same path, so the resolver is threaded into every member as well.
+        match query::classify_element_indexable_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            object_type,
+        ) {
             query::ElementIndexableKind::Array
             | query::ElementIndexableKind::Tuple
             | query::ElementIndexableKind::StringLike => wants_number,
