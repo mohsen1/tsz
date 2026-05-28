@@ -7,6 +7,7 @@ import {
   failureCommentBody,
   forceWithLeaseArgForOid,
   formatResult,
+  ghApiCallIsReadOnly,
   hasPendingPlaceholderQueueStatus,
   normalizePullRequestState,
   normalizeRestPullRequest,
@@ -141,6 +142,12 @@ assert.deepEqual(
     "-f", "ref=automation/merge-queue/pr-123",
   ],
 );
+assert.equal(ghApiCallIsReadOnly(["api", "repos/owner/repo/pulls?state=open", "--jq", "."]), true);
+assert.equal(ghApiCallIsReadOnly(["api", "-X", "GET", "repos/owner/repo/pulls"]), true);
+assert.equal(ghApiCallIsReadOnly(["api", "--method=GET", "repos/owner/repo/pulls"]), true);
+assert.equal(ghApiCallIsReadOnly(["api", "-X", "POST", "repos/owner/repo/statuses/abc"]), false);
+assert.equal(ghApiCallIsReadOnly(["api", "repos/owner/repo/actions/workflows/ci.yml/dispatches", "-f", "ref=main"]), false);
+assert.equal(ghApiCallIsReadOnly(["pr", "view", "1"]), false);
 
 const paginatedObjectArrayUrls = [];
 assert.deepEqual(
