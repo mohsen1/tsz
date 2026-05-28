@@ -417,6 +417,280 @@ fn fix_predicate_pattern2_does_not_rewrite_unrelated_union_shapes() {
     );
 }
 
+#[test]
+fn fix_inferred_predicate_return_prefers_nameable_alias() {
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{
+        FunctionShape, ParamInfo, TypeId,
+        types::{ObjectFlags, ObjectShape, TypePredicate, TypePredicateTarget},
+    };
+
+    let mut parser = tsz_parser::ParserState::new(
+        "test.ts".to_string(),
+        r#"
+type Foo = {
+    foo: string;
+};
+type Bar = Foo & {
+    bar: string;
+};
+"#
+        .to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let bar_sym = binder.file_locals.get("Bar").expect("missing Bar symbol");
+
+    let interner = TypeInterner::new();
+    let bar_def = tsz_solver::DefId(94_501);
+    let foo_surface = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let bar_surface = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let param_type = interner.union(vec![foo_surface, bar_surface, TypeId::NULL]);
+
+    let x_atom = interner.intern_string("x");
+    let func_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_atom),
+            type_id: Some(bar_surface),
+            parameter_index: None,
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache.def_to_symbol.insert(bar_def, bar_sym);
+    type_cache.def_types.insert(bar_def.0, bar_surface);
+    let emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+    let output = emitter
+        .function_type_predicate_text(func_type, None)
+        .unwrap_or_default();
+
+    assert!(
+        output == "x is Bar",
+        "expected inferred predicate return to preserve the public alias: {output}"
+    );
+    assert!(
+        !output.contains("x is {"),
+        "predicate return should not expand the nameable alias structurally: {output}"
+    );
+}
+
+#[test]
+fn fix_inferred_predicate_return_does_not_pick_unrelated_duplicate_alias() {
+    use crate::type_cache_view::TypeCacheView;
+    use tsz_solver::construction::TypeInterner;
+    use tsz_solver::{
+        FunctionShape, ParamInfo, TypeId,
+        types::{ObjectFlags, ObjectShape, TypePredicate, TypePredicateTarget},
+    };
+
+    let mut parser = tsz_parser::ParserState::new(
+        "test.ts".to_string(),
+        r#"
+type Unrelated = {
+    value: string;
+};
+type Bar = {
+    value: string;
+};
+"#
+        .to_string(),
+    );
+    let root = parser.parse_source_file();
+    let mut binder = tsz_binder::BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let unrelated_sym = binder
+        .file_locals
+        .get("Unrelated")
+        .expect("missing Unrelated symbol");
+    let bar_sym = binder.file_locals.get("Bar").expect("missing Bar symbol");
+
+    let interner = TypeInterner::new();
+    let unrelated_def = tsz_solver::DefId(94_500);
+    let bar_def = tsz_solver::DefId(94_501);
+    let shared_surface = interner.object_with_index(ObjectShape {
+        flags: ObjectFlags::default(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+    });
+    let param_type = interner.union(vec![shared_surface, TypeId::NULL]);
+
+    let x_atom = interner.intern_string("x");
+    let func_type = interner.function(FunctionShape {
+        type_params: Vec::new(),
+        params: vec![ParamInfo {
+            name: Some(x_atom),
+            type_id: param_type,
+            optional: false,
+            rest: false,
+        }],
+        this_type: None,
+        return_type: TypeId::BOOLEAN,
+        type_predicate: Some(TypePredicate {
+            asserts: false,
+            target: TypePredicateTarget::Identifier(x_atom),
+            type_id: Some(shared_surface),
+            parameter_index: None,
+        }),
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mut type_cache = TypeCacheView::default();
+    type_cache
+        .def_to_symbol
+        .insert(unrelated_def, unrelated_sym);
+    type_cache.def_to_symbol.insert(bar_def, bar_sym);
+    type_cache.def_types.insert(unrelated_def.0, shared_surface);
+    type_cache.def_types.insert(bar_def.0, shared_surface);
+    let emitter = crate::declaration_emitter::DeclarationEmitter::with_type_info(
+        &parser.arena,
+        type_cache,
+        &interner,
+        &binder,
+    );
+    let output = emitter
+        .function_type_predicate_text(func_type, None)
+        .unwrap_or_default();
+
+    assert!(
+        !output.contains("Unrelated") && !output.contains("Bar"),
+        "ambiguous structural aliases must not select an arbitrary public alias: {output}"
+    );
+}
+
+#[test]
+fn fix_element_access_decl_uses_source_array_element_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Foo = {
+    foo: string;
+};
+type Bar = Foo & {
+    bar: string;
+};
+
+const list: (Foo | Bar)[] = [];
+const fooOrBar = list[0];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const fooOrBar: Foo | Bar;"),
+        "element access over a source array annotation should print the element type: {output}"
+    );
+}
+
+#[test]
+fn fix_array_filter_typeof_decl_uses_narrowed_primitive_array() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const strings = [1, "foo", 2, "bar"].filter(x => typeof x === "string");
+const numbers = ["a", 1, "b", 2].filter(x => "number" === typeof x);
+const impossible = [1, 2].filter(x => typeof x === "string");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const strings: string[];"),
+        "typeof string filter should print string[]: {output}"
+    );
+    assert!(
+        output.contains("declare const numbers: number[];"),
+        "reversed typeof number filter should print number[]: {output}"
+    );
+    assert!(
+        !output.contains("declare const impossible: string[];"),
+        "impossible typeof string filter should not be overstated as string[]: {output}"
+    );
+}
+
+#[test]
+fn fix_array_map_callback_decl_uses_return_array_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type MyObj = { data?: string };
+type MyArray = { list?: MyObj[] }[];
+const myArray: MyArray = [];
+
+const result = myArray
+  .map((arr) => arr.list)
+  .filter((arr) => arr && arr.length)
+  .map((arr) => arr
+    .filter((obj) => obj && obj.data)
+    .map(obj => JSON.parse(obj.data))
+  );
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: any[][];"),
+        "map callback return arrays should compose into the declaration type: {output}"
+    );
+}
+
+#[test]
+fn fix_source_predicate_decl_uses_truthy_union_and_negated_local_guard() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const numOrBoolean = (x: number | boolean) => typeof x === "number" || x;
+
+type Animal = { breath: true };
+type Rock = { breath: false };
+type Something = Animal | Rock;
+
+function isAnimal(something: Something): something is Animal {
+  return something.breath;
+}
+
+function negative(t: Something) {
+  return !isAnimal(t);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const numOrBoolean: (x: number | boolean) => x is number | true;"),
+        "truthy boolean plus typeof guard should print the inferred predicate: {output}"
+    );
+    assert!(
+        output.contains("declare function negative(t: Something): t is Rock;"),
+        "negated local predicate over a union alias should print the complement arm: {output}"
+    );
+}
+
 // Tests for returned-function-expression recursive unrolling (issue #8683)
 
 #[test]

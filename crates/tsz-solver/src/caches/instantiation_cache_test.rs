@@ -308,43 +308,45 @@ fn mode_bits_isolate_preserving_from_default() {
 
 #[test]
 fn depth_exceeded_result_is_not_cached() {
-    // Build a self-referential mapped-like body that should trip the
-    // MAX_INSTANTIATION_DEPTH guard. The TypeId::ERROR returned in that
-    // case must NOT poison the cache so that a later, well-bounded call
-    // on the same input would still recompute.
-    //
-    // Construction trick: a TypeParameter substituted to itself many
-    // levels deep is contrived; instead we measure the simpler invariant
-    // that the cache does NOT grow when depth_exceeded fires.
-    //
-    // We build N nested ReadonlyType wrappers (well below MAX_DEPTH so
-    // the walk succeeds) and verify the cache populates normally. This
-    // mainly guards the *insert* discipline for the success path; the
-    // depth_exceeded branch is exercised by the existing instantiator
-    // tests in tests/instantiate_tests.rs and the unit assertion below
-    // is structural.
+    // A depth-overflow walk returns TypeId::ERROR, but that recovery value
+    // must not poison the cross-call cache. Repeating the same request should
+    // miss again and recompute instead of hitting a cached ERROR.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
     let (t_atom, t_id) = type_param(&interner, "T");
 
-    // Wrap T many times: ReadonlyType<ReadonlyType<...<T>...>>
-    let depth = (MAX_INSTANTIATION_DEPTH as usize).saturating_sub(2);
+    // Wrap T many times: Array<Array<...<T>...>>
+    let depth = (MAX_INSTANTIATION_DEPTH as usize) + 2;
     let mut body = t_id;
     for _ in 0..depth {
-        body = interner.readonly_type(body);
+        body = interner.array(body);
     }
 
     let mut subst = TypeSubstitution::new();
     subst.insert(t_atom, TypeId::STRING);
 
-    let r = instantiate_type_cached(&interner, Some(&db), body, &subst);
+    let stats0 = db.statistics();
 
-    // Bounded depth -> success. Cache must contain the entry.
-    assert_ne!(r, TypeId::ERROR);
-    assert!(
-        db.statistics().instantiation_cache_entries >= 1,
-        "successful instantiation at MAX_DEPTH-2 must be cached"
+    let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst);
+    let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst);
+
+    assert_eq!(r1, TypeId::ERROR);
+    assert_eq!(r2, TypeId::ERROR);
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "depth-overflow results must not populate the instantiation cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
+        "a repeated depth-overflow request must not hit a cached ERROR"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses,
+        stats0.instantiation_cache_misses + 2,
+        "both depth-overflow requests should probe and miss independently"
     );
 }
 

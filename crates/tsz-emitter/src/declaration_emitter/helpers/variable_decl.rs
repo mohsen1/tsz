@@ -739,6 +739,21 @@ impl<'a> DeclarationEmitter<'a> {
             {
                 self.write(": ");
                 self.write(&type_text);
+            } else if has_initializer
+                && self.arena.get(initializer).is_some_and(|node| {
+                    node.kind == syntax_kind_ext::ARROW_FUNCTION
+                        || node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                })
+                && let Some(func) = self
+                    .arena
+                    .get(initializer)
+                    .and_then(|node| self.arena.get_function(node))
+                && self.function_source_type_predicate_text(func).is_some()
+                && {
+                    self.maybe_emit_non_portable_function_return_diagnostic(decl_name, initializer);
+                    self.emit_function_initializer_type_annotation(decl_idx, decl_name, initializer)
+                }
+            {
             } else if !has_initializer
                 && keyword == "let"
                 && self
