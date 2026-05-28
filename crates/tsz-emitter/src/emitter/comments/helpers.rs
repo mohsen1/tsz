@@ -1,6 +1,105 @@
 use crate::emitter::Printer;
 use tsz_parser::parser::node::Node;
 
+/// Scan `bytes[start_pos..end_pos]` and return two boundary markers for the
+/// last non-trivia content seen at brace depth 0:
+///
+/// - `last_token_end`: position after the last `}`, `]`, `)`, or `;`.
+/// - `last_non_trivia_at_depth0`: position after any non-whitespace character,
+///   including string literals, identifiers, and operators but not comments.
+///
+/// Both are `None` when the range contains no non-whitespace content at depth 0.
+fn scan_depth0_token_bounds(
+    bytes: &[u8],
+    start_pos: usize,
+    end_pos: usize,
+) -> (Option<usize>, Option<usize>) {
+    let mut depth: i32 = 0;
+    let mut last_token_end: Option<usize> = None;
+    let mut last_non_trivia_at_depth0: Option<usize> = None;
+    let mut i = start_pos;
+
+    while i < end_pos {
+        let ch = bytes[i];
+        match ch {
+            b'{' | b'[' | b'(' => {
+                depth += 1;
+                i += 1;
+            }
+            b'}' | b']' | b')' => {
+                depth -= 1;
+                if depth < 0 {
+                    // Gone past our scope into a parent — stop.
+                    break;
+                }
+                if depth == 0 {
+                    // This is the closing bracket/brace/paren at the top
+                    // level of this node — a real terminator for the
+                    // value expression. Tracking `]` and `)` (not just
+                    // `}`) lets us pick the right end for property
+                    // values like `items: [...]` whose last inner `}`
+                    // sits at the same depth-0 boundary as the closing
+                    // `]`.
+                    last_token_end = Some(i + 1);
+                    last_non_trivia_at_depth0 = Some(i + 1);
+                }
+                i += 1;
+            }
+            b';' => {
+                if depth == 0 {
+                    last_token_end = Some(i + 1);
+                    last_non_trivia_at_depth0 = Some(i + 1);
+                }
+                i += 1;
+            }
+            b'\'' | b'"' | b'`' => {
+                let quote = ch;
+                i += 1;
+                while i < end_pos {
+                    if bytes[i] == b'\\' {
+                        i += 2;
+                    } else if bytes[i] == quote {
+                        i += 1;
+                        break;
+                    } else {
+                        i += 1;
+                    }
+                }
+                // Track end of string as a non-trivia position so that
+                // standalone string expression statements (ASI, no `;`)
+                // get the correct token_end for trailing comment detection.
+                if depth == 0 {
+                    last_non_trivia_at_depth0 = Some(i);
+                }
+            }
+            b'/' if i + 1 < end_pos && bytes[i + 1] == b'/' => {
+                i += 2;
+                while i < end_pos && bytes[i] != b'\n' && bytes[i] != b'\r' {
+                    i += 1;
+                }
+            }
+            b'/' if i + 1 < end_pos && bytes[i + 1] == b'*' => {
+                i += 2;
+                while i + 1 < end_pos {
+                    if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            _ => {
+                if depth == 0 && !matches!(ch, b' ' | b'\t' | b'\r' | b'\n') {
+                    last_non_trivia_at_depth0 = Some(i + 1);
+                }
+                i += 1;
+            }
+        }
+    }
+
+    (last_token_end, last_non_trivia_at_depth0)
+}
+
 impl<'a> Printer<'a> {
     // =========================================================================
     // Comment Emission Helpers
@@ -174,11 +273,15 @@ impl<'a> Printer<'a> {
 
     /// Find the position right after the node's actual code content ends.
     /// This gives us the position where trailing comments begin. Our parser's
-    /// node.end extends past trailing trivia into the next token's position,
+    /// `node.end` extends past trailing trivia into the next token's position,
     /// so we need to find the actual end of the node's code.
     ///
     /// Uses forward scanning with brace depth tracking to find the correct
     /// closing `}` at depth 0, avoiding confusion with parent scope braces.
+    ///
+    /// Prefers `last_token_end` (closing bracket/semicolon) over
+    /// `last_non_trivia_at_depth0`. Use `find_last_expr_end_before_trivia`
+    /// instead when the expression body may end with a non-bracket token.
     pub(in crate::emitter) fn find_token_end_before_trivia(&self, pos: u32, end: u32) -> u32 {
         let Some(text) = self.source_text else {
             return end;
@@ -191,97 +294,10 @@ impl<'a> Printer<'a> {
             return end;
         }
 
-        // Forward scan: track the last `}` or `;` at brace depth 0.
-        // This correctly identifies the node's own closing token without
-        // accidentally matching a parent scope's closing brace.
-        let mut depth: i32 = 0;
-        let mut last_token_end: Option<usize> = None;
-        let mut last_non_trivia_at_depth0: Option<usize> = None;
-        let mut i = start_pos;
+        let (last_token_end, last_non_trivia_at_depth0) =
+            scan_depth0_token_bounds(bytes, start_pos, end_pos);
 
-        while i < end_pos {
-            let ch = bytes[i];
-            match ch {
-                b'{' | b'[' | b'(' => {
-                    depth += 1;
-                    i += 1;
-                }
-                b'}' | b']' | b')' => {
-                    depth -= 1;
-                    if depth < 0 {
-                        // We've gone past our scope into a parent - stop
-                        break;
-                    }
-                    if depth == 0 {
-                        // This is the closing bracket/brace/paren at the top
-                        // level of this node — a real terminator for the
-                        // value expression. Tracking `]` and `)` (not just
-                        // `}`) lets us pick the right end for property
-                        // values like `items: [...]` whose last inner `}`
-                        // sits at the same depth-0 boundary as the closing
-                        // `]`. Without this, comma scans started inside the
-                        // array and falsely matched the array's own trailing
-                        // comma as a property-level trailing comma.
-                        last_token_end = Some(i + 1);
-                        last_non_trivia_at_depth0 = Some(i + 1);
-                    }
-                    i += 1;
-                }
-                b';' => {
-                    if depth == 0 {
-                        last_token_end = Some(i + 1);
-                        last_non_trivia_at_depth0 = Some(i + 1);
-                    }
-                    i += 1;
-                }
-                b'\'' | b'"' | b'`' => {
-                    // Skip string literals to avoid false matches
-                    let quote = ch;
-                    i += 1;
-                    while i < end_pos {
-                        if bytes[i] == b'\\' {
-                            i += 2; // skip escaped char
-                        } else if bytes[i] == quote {
-                            i += 1;
-                            break;
-                        } else {
-                            i += 1;
-                        }
-                    }
-                    // Track end of string as a non-trivia position so that
-                    // standalone string expression statements (ASI, no `;`)
-                    // get the correct token_end for trailing comment detection.
-                    if depth == 0 {
-                        last_non_trivia_at_depth0 = Some(i);
-                    }
-                }
-                b'/' if i + 1 < end_pos && bytes[i + 1] == b'/' => {
-                    // Skip single-line comments
-                    i += 2;
-                    while i < end_pos && bytes[i] != b'\n' && bytes[i] != b'\r' {
-                        i += 1;
-                    }
-                }
-                b'/' if i + 1 < end_pos && bytes[i + 1] == b'*' => {
-                    // Skip multi-line comments
-                    i += 2;
-                    while i + 1 < end_pos {
-                        if bytes[i] == b'*' && bytes[i + 1] == b'/' {
-                            i += 2;
-                            break;
-                        }
-                        i += 1;
-                    }
-                }
-                _ => {
-                    if depth == 0 && !matches!(ch, b' ' | b'\t' | b'\r' | b'\n') {
-                        last_non_trivia_at_depth0 = Some(i + 1);
-                    }
-                    i += 1;
-                }
-            }
-        }
-
+        // Prefer last_token_end (closing bracket/semicolon) over last_non_trivia.
         let mut token_end = last_token_end
             .or(last_non_trivia_at_depth0)
             .map_or(end, |e| e as u32);
@@ -294,6 +310,54 @@ impl<'a> Printer<'a> {
         // located the correct boundary and the suffix scan would overshoot
         // into parent closing braces (e.g., `}` of an object literal after
         // the last property).
+        if last_token_end.is_none() && last_non_trivia_at_depth0.is_none() && token_end <= end {
+            let mut j = end_pos;
+            while j < bytes.len() {
+                match bytes[j] {
+                    b' ' | b'\t' => j += 1,
+                    b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'/' => break,
+                    b'/' if j + 1 < bytes.len() && bytes[j + 1] == b'*' => break,
+                    b';' | b'}' => {
+                        token_end = (j + 1) as u32;
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
+
+        token_end
+    }
+
+    /// Like `find_token_end_before_trivia` but prefers `last_non_trivia_at_depth0`
+    /// over `last_token_end`.
+    ///
+    /// Use this for concise arrow body expressions where the body may end with a
+    /// non-bracket token — for example the else-branch of a ternary
+    /// `x ? foo() : '-'`. There `last_token_end` would point to `foo()`'s `)`,
+    /// while `last_non_trivia_at_depth0` correctly points to the end of `'-'`.
+    pub(in crate::emitter) fn find_last_expr_end_before_trivia(&self, pos: u32, end: u32) -> u32 {
+        let Some(text) = self.source_text else {
+            return end;
+        };
+        let bytes = text.as_bytes();
+        let end_pos = std::cmp::min(end as usize, bytes.len());
+        let start_pos = pos as usize;
+
+        if start_pos >= end_pos {
+            return end;
+        }
+
+        let (last_token_end, last_non_trivia_at_depth0) =
+            scan_depth0_token_bounds(bytes, start_pos, end_pos);
+
+        // Prefer last_non_trivia_at_depth0: for expression bodies the very last
+        // non-whitespace character is always the correct end boundary, even when
+        // an intermediate closing bracket is present.
+        let mut token_end = last_non_trivia_at_depth0
+            .or(last_token_end)
+            .map_or(end, |e| e as u32);
+
         if last_token_end.is_none() && last_non_trivia_at_depth0.is_none() && token_end <= end {
             let mut j = end_pos;
             while j < bytes.len() {
