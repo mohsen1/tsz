@@ -7,33 +7,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
-use tsz_solver::construction::TypeDatabase;
-
-/// Classify a member type as callable and report whether any of its call
-/// signatures carry method-local type parameters.
-///
-/// Returns `None` when the type is not callable (so callers fall back to the
-/// strict relation). Handles both the bare `Function` representation (a derived
-/// member computed from its AST) and the `Callable` representation (a base
-/// member resolved from a lowered interface type), which the raw
-/// `get_call_signatures` query does not unify.
-fn callable_generic_flag(db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
-    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, type_id) {
-        return Some(!shape.type_params.is_empty());
-    }
-    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {
-        if shape.call_signatures.is_empty() {
-            return None;
-        }
-        return Some(
-            shape
-                .call_signatures
-                .iter()
-                .any(|sig| !sig.type_params.is_empty()),
-        );
-    }
-    None
-}
+use tsz_solver::TypeParamInfo;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
@@ -78,45 +52,75 @@ impl<'a> CheckerState<'a> {
         self.type_base_def_id(source_return) == Some(current_iface_def_id)
     }
 
-    /// Combine several single-signature method types (one per overload) into a
-    /// single `Callable` carrying all of their call signatures. Returns `None`
-    /// unless at least two signatures were gathered, so callers only use the
-    /// combined form for genuinely overloaded members.
-    pub(super) fn build_overload_callable(&self, fn_types: &[TypeId]) -> Option<TypeId> {
-        use tsz_solver::types::{CallSignature, CallableShape};
-        let mut call_signatures: Vec<CallSignature> = Vec::new();
-        for &ty in fn_types {
-            if let Some(shape) =
-                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+    /// Build a combined callable per overloaded derived method name so the
+    /// cross-file interface heritage path can compare an overloaded override as
+    /// a whole rather than signature-by-signature (the strict relation rejects a
+    /// single derived overload against the base's combined overload set even for
+    /// valid specializations). Names with a single signature are skipped.
+    pub(super) fn collect_overloaded_derived_method_callables(
+        &self,
+        derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
+        derived_method_counts: &rustc_hash::FxHashMap<String, usize>,
+    ) -> rustc_hash::FxHashMap<String, TypeId> {
+        let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
+            rustc_hash::FxHashMap::default();
+        for (name, member_type, _, kind, _, _) in derived_members {
+            if *kind == syntax_kind_ext::METHOD_SIGNATURE
+                && derived_method_counts.get(name).copied().unwrap_or(0) > 1
             {
-                call_signatures.push(CallSignature {
-                    type_params: shape.type_params.clone(),
-                    params: shape.params.clone(),
-                    this_type: shape.this_type,
-                    return_type: shape.return_type,
-                    type_predicate: shape.type_predicate,
-                    is_method: shape.is_method,
-                });
-            } else if let Some(shape) =
-                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
-            {
-                call_signatures.extend(shape.call_signatures.iter().cloned());
-            } else {
-                return None;
+                by_name.entry(name.clone()).or_default().push(*member_type);
             }
         }
-        if call_signatures.len() < 2 {
+        let mut result: rustc_hash::FxHashMap<String, TypeId> = rustc_hash::FxHashMap::default();
+        for (name, object_types) in by_name {
+            if let Some(callable) =
+                crate::query_boundaries::class::combine_overloaded_method_callable(
+                    self.ctx.types,
+                    &object_types,
+                    &name,
+                )
+            {
+                result.insert(name, callable);
+            }
+        }
+        result
+    }
+
+    /// Resolve the base interface's type parameters and the heritage clause's
+    /// type arguments, padding with defaults/constraints to the base arity. The
+    /// cross-file interface heritage path uses these to instantiate base member
+    /// types that still reference the base's own parameters. Returns `None` when
+    /// there are no type arguments or the base is non-generic.
+    pub(super) fn base_heritage_params_and_args(
+        &mut self,
+        base_sym_id: SymbolId,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> Option<(Vec<TypeParamInfo>, Vec<TypeId>)> {
+        let args = type_arguments?;
+        let mut arg_ids: Vec<TypeId> = args
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+        if arg_ids.is_empty() {
             return None;
         }
-        Some(self.ctx.types.factory().callable(CallableShape {
-            call_signatures,
-            construct_signatures: Vec::new(),
-            properties: Vec::new(),
-            string_index: None,
-            number_index: None,
-            symbol: None,
-            is_abstract: false,
-        }))
+        let base_params = self.get_type_params_for_symbol(base_sym_id);
+        if base_params.is_empty() {
+            return None;
+        }
+        if arg_ids.len() < base_params.len() {
+            for param in base_params.iter().skip(arg_ids.len()) {
+                arg_ids.push(
+                    param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN),
+                );
+            }
+        }
+        arg_ids.truncate(base_params.len());
+        Some((base_params, arg_ids))
     }
 
     /// For interface heritage (TS2430), the strict no-erase-generics relation
@@ -139,10 +143,14 @@ impl<'a> CheckerState<'a> {
         derived: TypeId,
         base: TypeId,
     ) -> bool {
-        let Some(derived_generic) = callable_generic_flag(self.ctx.types, derived) else {
+        let Some(derived_generic) =
+            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, derived)
+        else {
             return false;
         };
-        let Some(base_generic) = callable_generic_flag(self.ctx.types, base) else {
+        let Some(base_generic) =
+            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, base)
+        else {
             return false;
         };
         if !derived_generic && !base_generic {
