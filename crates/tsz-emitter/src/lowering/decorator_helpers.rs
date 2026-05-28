@@ -31,9 +31,8 @@ impl<'a> LoweringPass<'a> {
     pub(super) fn mark_tc39_decorator_helpers(&mut self, class_data: &ClassData) {
         let needs_prop_key = self.class_has_computed_decorated_member(class_data);
         let needs_set_function_name = self.class_has_private_decorated_member(class_data);
-        let has_decorated_member = self.class_has_decorated_member(class_data);
-        let has_decorated_field_and_auto_accessor =
-            self.class_has_decorated_field_and_auto_accessor(class_data);
+        let has_decorated_method_or_accessor =
+            self.class_has_decorated_method_or_accessor(class_data);
         let private_helper_needs = self.decorated_static_private_member_helper_needs(class_data);
         let has_class_decorators = class_data.modifiers.as_ref().is_some_and(|mods| {
             mods.nodes.iter().any(|&mod_idx| {
@@ -53,8 +52,14 @@ impl<'a> LoweringPass<'a> {
         let helpers = self.transforms.helpers_mut();
         helpers.es_decorate = true;
         helpers.run_initializers = true;
-        if has_decorated_member && (!has_decorated_field_and_auto_accessor || has_class_decorators)
-        {
+        // tsc emits `__runInitializers` before `__esDecorate` (both priority 2,
+        // so request order decides) exactly when the class has a decorated
+        // method, getter, or setter: those request the method extra-initializers
+        // `__runInitializers` while the class element is processed, before the
+        // class-level `__esDecorate` call is built. Decorated fields,
+        // auto-accessors, and bare class decorators do not, so they keep
+        // `__esDecorate` first.
+        if has_decorated_method_or_accessor {
             helpers.run_initializers_before_es_decorate = true;
         }
         if needs_prop_key {
@@ -80,45 +85,22 @@ impl<'a> LoweringPass<'a> {
         }
     }
 
-    fn class_has_decorated_member(&self, class_data: &ClassData) -> bool {
+    /// True when the class has a decorated method, getter, or setter (but not
+    /// an auto-accessor, which is a `PROPERTY_DECLARATION` with the `accessor`
+    /// modifier). These members request the method extra-initializers
+    /// `__runInitializers` helper before the class-level `__esDecorate`, which
+    /// is what makes tsc emit `__runInitializers` first.
+    fn class_has_decorated_method_or_accessor(&self, class_data: &ClassData) -> bool {
         class_data.members.nodes.iter().any(|&member_idx| {
             let Some(member_node) = self.arena.get(member_idx) else {
                 return false;
             };
-            self.member_has_decorator(member_node)
+            let kind = member_node.kind;
+            (kind == syntax_kind_ext::METHOD_DECLARATION
+                || kind == syntax_kind_ext::GET_ACCESSOR
+                || kind == syntax_kind_ext::SET_ACCESSOR)
+                && self.member_has_decorator(member_node)
         })
-    }
-
-    fn class_has_decorated_field_and_auto_accessor(&self, class_data: &ClassData) -> bool {
-        let mut has_decorated_field = false;
-        let mut has_decorated_auto_accessor = false;
-
-        for &member_idx in &class_data.members.nodes {
-            let Some(member_node) = self.arena.get(member_idx) else {
-                continue;
-            };
-            if member_node.kind != syntax_kind_ext::PROPERTY_DECLARATION
-                || !self.member_has_decorator(member_node)
-            {
-                continue;
-            }
-            let Some(property) = self.arena.get_property_decl(member_node) else {
-                continue;
-            };
-            if self
-                .arena
-                .has_modifier(&property.modifiers, SyntaxKind::AccessorKeyword)
-            {
-                has_decorated_auto_accessor = true;
-            } else {
-                has_decorated_field = true;
-            }
-            if has_decorated_field && has_decorated_auto_accessor {
-                return true;
-            }
-        }
-
-        false
     }
 
     fn member_has_decorator(&self, member_node: &tsz_parser::parser::node::Node) -> bool {
