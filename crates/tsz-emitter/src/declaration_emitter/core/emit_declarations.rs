@@ -993,7 +993,13 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                     return;
                 }
-                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+                if func_body.is_some()
+                    && let Some(predicate_text) = self.function_source_type_predicate_text(func)
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, func_type_id)
                 {
                     let effective_return_type_id = if func_body.is_some() {
                         self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
@@ -1297,6 +1303,12 @@ impl<'a> DeclarationEmitter<'a> {
         func_body: NodeIndex,
         func_name: NodeIndex,
     ) -> bool {
+        if let Some(predicate_text) = self.function_source_type_predicate_text(func) {
+            self.write(": ");
+            self.write(&predicate_text);
+            return true;
+        }
+
         if self.body_returns_void(func_body) {
             self.write(": void");
             return true;
