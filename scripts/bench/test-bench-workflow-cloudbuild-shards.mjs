@@ -2,6 +2,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 
+import { REQUIRED_PROJECT_ROWS } from "./project-rows.mjs";
+
 const workflow = fs.readFileSync(".github/workflows/bench.yml", "utf8");
 const shardCloudbuild = fs.readFileSync(
   "scripts/cloudbuild/cloudbuild-bench-shard.yaml",
@@ -60,6 +62,16 @@ assert.doesNotMatch(
   workflow,
   /source "bench-status-\$\{\{ matrix\.label \}\}\.env"/,
   "bench shard waits must not source status env files because BENCH_SHARD_FILTER can contain spaces or shell metacharacters",
+);
+
+const shardFilters = [...workflow.matchAll(/^\s+filter: '([^']+)'/gm)]
+  .map((match) => new RegExp(match[1]));
+const missingRequiredProjectRows = REQUIRED_PROJECT_ROWS
+  .filter((row) => !shardFilters.some((filter) => filter.test(row)));
+assert.deepEqual(
+  missingRequiredProjectRows,
+  [],
+  "bench matrix filters should select every required project row so publish does not fail on missing compatibility rows",
 );
 
 assert.match(
