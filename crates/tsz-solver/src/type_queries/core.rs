@@ -884,7 +884,9 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
     }
 
     match db.lookup(resolved) {
-        // Primitives, null/undefined/void, literals, template literals, string intrinsics:
+        // Primitives, null/undefined/void, literals, template literals, string
+        // intrinsics, and `keyof T` (which is structurally a property-key
+        // primitive `string | number | symbol` whether evaluated or deferred):
         // not spreadable on their own.
         // (Definitely-falsy members are filtered out in the union branch instead.)
         Some(
@@ -902,7 +904,8 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
             | TypeData::Literal(_)
             | TypeData::TemplateLiteral(_)
             | TypeData::StringIntrinsic { .. }
-            | TypeData::Enum(_, _),
+            | TypeData::Enum(_, _)
+            | TypeData::KeyOf(_),
         ) => false,
         // Union: remove definitely-falsy members, then check remaining.
         // Matches tsc's removeDefinitelyFalsyTypes before checking.
@@ -931,16 +934,26 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
                 .all(|&m| is_valid_spread_type_impl(db, m, depth + 1))
         }
         Some(TypeData::ReadonlyType(inner)) => is_valid_spread_type_impl(db, inner, depth + 1),
-        // tsc applies `getBaseConstraintOrType` before checking spread flags.
-        // For type operators that can evaluate against a concrete constraint
-        // (for example `T["x"]` where `T extends { x: Obj }`), validate the
-        // evaluated constraint. If evaluation cannot reduce the operator, do
-        // not assume it is object-like. For `keyof T`, evaluation yields
-        // property-key primitives, which the recursive primitive handling
-        // rejects.
-        Some(TypeData::IndexAccess(_, _) | TypeData::KeyOf(_)) => {
+        // Mirrors tsc's `isValidSpreadType`:
+        //   if (type.flags & Instantiable) {
+        //       const constraint = getBaseConstraintOfType(type);
+        //       if (constraint !== undefined) return isValidSpreadType(constraint);
+        //   }
+        //   return !!(type.flags & (Any | NonPrimitive | Object | InstantiableNonPrimitive) | …);
+        //
+        // For an `IndexAccess` we first try to reduce through any usable
+        // constraint by asking the evaluator. If reduction succeeds the
+        // result is validated like any other type. If it does not, the
+        // deferred form is itself `InstantiableNonPrimitive` (an indexed
+        // access could be an object at runtime), so the flag-check arm
+        // accepts the spread.
+        Some(TypeData::IndexAccess(_, _)) => {
             let evaluated = evaluate_type(db, resolved);
-            evaluated != resolved && is_valid_spread_type_impl(db, evaluated, depth + 1)
+            if evaluated != resolved {
+                is_valid_spread_type_impl(db, evaluated, depth + 1)
+            } else {
+                true
+            }
         }
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters (unconstrained ones reach here
