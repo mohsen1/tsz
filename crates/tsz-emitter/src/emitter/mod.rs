@@ -32,6 +32,7 @@ mod binding_patterns;
 mod class_temp_reservations;
 mod comments;
 mod core;
+mod core_setup;
 mod declarations;
 mod es5;
 mod expressions;
