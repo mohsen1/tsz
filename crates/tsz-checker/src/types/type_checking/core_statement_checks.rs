@@ -203,7 +203,9 @@ impl<'a> CheckerState<'a> {
                                 contextual_type,
                             )
                         })))
-                && self.diagnostic_relation_boolean_guard(contextual_type, expected_type)
+                && self
+                    .return_relation_outcome(contextual_type, expected_type)
+                    .related
             {
                 return_type = contextual_type;
             }
@@ -971,10 +973,11 @@ impl<'a> CheckerState<'a> {
                         index_type,
                     )
                     .is_none_or(|constraint| {
-                        self.diagnostic_relation_boolean_guard(
+                        self.assign_relation_outcome(
                             constraint,
                             self.ctx.types.evaluate_keyof(object_type),
                         )
+                        .related
                     })
                 });
 
@@ -993,7 +996,9 @@ impl<'a> CheckerState<'a> {
                     )
                     .is_some_and(|constraint| {
                         let keyof_object = self.ctx.types.evaluate_keyof(object_type);
-                        !self.diagnostic_relation_boolean_guard(constraint, keyof_object)
+                        !self
+                            .assign_relation_outcome(constraint, keyof_object)
+                            .related
                     })
                 });
 
