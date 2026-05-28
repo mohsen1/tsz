@@ -73,11 +73,12 @@ const fn unpack_fuel(state: u64) -> u32 {
     (state >> 32) as u32
 }
 
-/// Reset subtype depth and fuel counters.
+/// Reset subtype depth, fuel, and unresolved-`Lazy`-failure counters.
 /// Called between compilation sessions to prevent stale state from a previous
 /// compilation (e.g., if it panicked and left counters dirty).
 pub fn reset_subtype_thread_local_state() {
     GLOBAL_SUBTYPE_STATE.with(|s| s.set(0));
+    LAZY_RESOLVE_FAILURES.with(|c| c.set(0));
 }
 
 // Maximum number of non-trivial subtype checks per top-level call chain.

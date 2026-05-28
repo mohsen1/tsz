@@ -586,6 +586,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     // The def body is not registered yet (re-entrant lib
                     // resolution). Any False derived from comparing the
                     // still-Lazy ref is undetermined and must not be cached.
+                    tracing::trace!(
+                        def_id = def_id.0,
+                        "resolve_lazy_type: body unregistered, recording undetermined-result event"
+                    );
                     super::cache::note_lazy_resolve_failure();
                     type_id
                 }
