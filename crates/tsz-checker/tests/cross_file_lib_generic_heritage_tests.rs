@@ -20,9 +20,7 @@
 use std::sync::Arc;
 use tsz_binder::lib_loader::LibFile;
 use tsz_checker::context::{CheckerOptions, ScriptTarget};
-use tsz_checker::test_utils::{
-    check_multi_file_libs_via_contexts, check_multi_file_with_libs, load_default_lib_files,
-};
+use tsz_checker::test_utils::{check_multi_file_with_libs, load_default_lib_files};
 use tsz_common::diagnostics::Diagnostic;
 
 fn js_options() -> CheckerOptions {
@@ -43,11 +41,7 @@ fn ts_options() -> CheckerOptions {
 
 fn check(files: &[(&str, &str)], entry: &str, options: CheckerOptions) -> Vec<Diagnostic> {
     let libs = load_default_lib_files();
-    // Use the CLI-faithful helper: lib symbols come from lib contexts, not from
-    // each file's merged `file_locals`. This is the setup under which the
-    // cross-file heritage drop reproduces; the merged-`file_locals` helper
-    // masks it.
-    check_multi_file_libs_via_contexts(files, entry, options, &libs)
+    check_multi_file_with_libs(files, entry, options, &libs)
 }
 
 fn codes(diags: &[Diagnostic]) -> Vec<u32> {
