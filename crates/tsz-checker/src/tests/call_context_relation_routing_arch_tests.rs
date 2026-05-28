@@ -29,6 +29,34 @@ fn explicit_callback_param_conflict_uses_relation_outcome_boundary() {
 }
 
 #[test]
+fn source_constraint_substitution_fallback_uses_env_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call_inference.rs")
+        .expect("failed to read call inference source");
+    let start = source
+        .find("fn substitution_with_source_constraint_fallbacks")
+        .expect("missing source constraint substitution fallback helper");
+    let end = source[start..]
+        .find("pub(crate) fn resolve_signature_parameter_type_queries")
+        .map(|offset| start + offset)
+        .expect("missing source constraint substitution fallback end marker");
+    let helper = &source[start..end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome_with_env(").count(),
+        1,
+        "source constraint substitution fallback should route env-aware relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.contains(".related"),
+        "source constraint substitution fallback should use the relation outcome decision"
+    );
+    assert!(
+        !helper.contains("is_assignable_to_with_env("),
+        "source constraint substitution fallback should not regress to raw env boolean assignability"
+    );
+}
+
+#[test]
 fn round2_argument_recheck_uses_env_relation_outcome_boundary() {
     let source = fs::read_to_string("src/types/computation/call_inference/argument_context.rs")
         .expect("failed to read call inference argument context source");
