@@ -1,3 +1,4 @@
+use super::*;
 use crate::tsc_results::{DiagnosticFingerprint, FileMetadata, TscResult};
 use std::sync::{Mutex, OnceLock};
 
