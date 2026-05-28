@@ -2195,7 +2195,7 @@ impl<'a> CheckerState<'a> {
         // Check if the init return type is Promise<T> where T is assignable
         // to the declared return type.
         if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
-            self.diagnostic_relation_boolean_guard(unwrapped, decl_ret)
+            self.assign_relation_outcome(unwrapped, decl_ret).related
         } else {
             false
         }
