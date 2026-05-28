@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import {
+  renderReadmePerfPng,
+  renderReadmePerfSvg,
+} from "../../scripts/bench/readme-perf-svg.mjs";
 import { createTsgoWinnerReport } from "../../scripts/bench/tsgo-winner-report.mjs";
 
 export default function (eleventyConfig) {
@@ -21,6 +25,8 @@ export default function (eleventyConfig) {
   });
 
   eleventyConfig.addWatchTarget("../../artifacts");
+  eleventyConfig.addWatchTarget("../../scripts/bench/readme-perf-svg.mjs");
+  eleventyConfig.addWatchTarget("bench-snapshot.json");
   eleventyConfig.addWatchTarget("../../scripts/install.sh");
   eleventyConfig.addWatchTarget("../../scripts/install.ps1");
 
@@ -45,12 +51,30 @@ export default function (eleventyConfig) {
       [latestWinnerArtifact]: "benchmark-data/latest.tsgo-winners.json",
     });
   }
-  eleventyConfig.on("eleventy.after", ({ dir }) => {
+  eleventyConfig.on("eleventy.after", async ({ dir }) => {
     if (!latestBenchmarkArtifact) return;
 
     const output = path.join(dir.output, "benchmark-data", "latest.json");
     fs.mkdirSync(path.dirname(output), { recursive: true });
     fs.copyFileSync(latestBenchmarkArtifact, output);
+
+    const benchmarkData = JSON.parse(fs.readFileSync(latestBenchmarkArtifact, "utf8"));
+    fs.writeFileSync(
+      path.join(dir.output, "benchmark-data", "readme-perf.svg"),
+      renderReadmePerfSvg(benchmarkData),
+    );
+    fs.writeFileSync(
+      path.join(dir.output, "benchmark-data", "readme-perf.png"),
+      await renderReadmePerfPng(benchmarkData),
+    );
+    fs.writeFileSync(
+      path.join(dir.output, "benchmark-data", "readme-perf-light.png"),
+      await renderReadmePerfPng(benchmarkData, { theme: "light" }),
+    );
+    fs.writeFileSync(
+      path.join(dir.output, "benchmark-data", "readme-perf-dark.png"),
+      await renderReadmePerfPng(benchmarkData, { theme: "dark" }),
+    );
 
     if (latestWinnerArtifact && fs.existsSync(latestWinnerArtifact)) {
       fs.copyFileSync(
