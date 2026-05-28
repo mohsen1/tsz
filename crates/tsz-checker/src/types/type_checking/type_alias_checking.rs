@@ -543,7 +543,9 @@ impl<'a> CheckerState<'a> {
             }
         } else {
             self.check_type_node(alias.type_node);
-            self.check_type_for_missing_names(alias.type_node);
+            if !self.type_alias_body_missing_names_covered_by_type_node_checking(alias.type_node) {
+                self.check_type_for_missing_names(alias.type_node);
+            }
         }
         record_type_alias_phase_timing(
             &self.ctx.file_name,
