@@ -306,6 +306,85 @@ FILE_LINE_LIMIT_CHECKS = [
         / "async_es5_ir.rs",
         5150,
     ),
+    # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
+    # splitting into option-domain submodules. Ratchet down as domains land.
+    (
+        "Core boundary: tsconfig/config monolith size ratchet (#8280)",
+        ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
+        8206,
+    ),
+    # LSP signature-help: carries TypeData and direct lookup() baseline debt
+    # (see arch_guard_policy.toml exclusions). Ratchet down per §19 splitting
+    # and arch-debt burn-down in Track 10.
+    (
+        "LSP boundary: signature_help monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "signature_help.rs",
+        4808,
+    ),
+    # Scanner main loop: issue #9431 tracks splitting by token family.
+    (
+        "Scanner boundary: scanner_impl monolith size ratchet (#9431)",
+        ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
+        4173,
+    ),
+    # CLI driver resolution: source/module-resolution and program build setup.
+    # Ratchet down as resolution phases are extracted per §19.
+    (
+        "CLI boundary: driver/resolution monolith size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "resolution.rs",
+        4109,
+    ),
+    # Emitter class declarations: split by emit feature family per §19.
+    (
+        "Emitter boundary: class declaration emitter size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "declarations"
+        / "class"
+        / "emit_es6.rs",
+        4105,
+    ),
+    # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
+    # extracting the source-resolution phase.
+    (
+        "CLI boundary: driver/check_utils monolith size ratchet (#9412)",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "check_utils.rs",
+        3949,
+    ),
+    # LSP module-specifier resolution: split by resolution family per §19.
+    (
+        "LSP boundary: module_specifiers monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "module_specifiers.rs",
+        3669,
+    ),
+    # LSP import candidate collection: issue #9420 tracks splitting collection
+    # from ranking and rendering.
+    (
+        "LSP boundary: project/imports monolith size ratchet (#9420)",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
+        3384,
+    ),
+    # Binder declaration binding: split by declaration family per §19.
+    (
+        "Binder boundary: binder/declaration monolith size ratchet",
+        ROOT / "crates" / "tsz-binder" / "src" / "binding" / "declaration.rs",
+        3038,
+    ),
+    # Emitter class ES5 AST-to-IR: issue #10638 tracks splitting alongside
+    # async_es5_ir.rs.
+    (
+        "Emitter boundary: class ES5 AST-to-IR engine size ratchet (#10638)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "transforms"
+        / "class_es5_ast_to_ir.rs",
+        2985,
+    ),
 ]
 
 # Pin field counts on giant coordination structs so workstream-4 (Checker
