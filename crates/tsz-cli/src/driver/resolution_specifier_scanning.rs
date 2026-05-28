@@ -82,7 +82,7 @@ struct DiscoveryToken {
     text: Option<String>,
 }
 
-fn collect_simple_module_requests_from_text(
+pub(super) fn collect_simple_module_requests_from_text(
     text: &str,
 ) -> Option<Vec<SourceDiscoveryModuleRequest>> {
     if text.contains("@import") {

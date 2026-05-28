@@ -553,7 +553,7 @@ pub(crate) fn resolve_type_package_entry_with_cache(
         // Use restricted resolution: only types/typings/main + index.d.ts fallback
         let mut candidates = Vec::new();
         if let Some(ref pj) = package_json {
-            candidates = collect_package_entry_candidates(&pj);
+            candidates = collect_package_entry_candidates(pj);
         }
         if !candidates
             .iter()
@@ -682,6 +682,10 @@ pub(crate) fn default_type_roots(base_dir: &Path) -> Vec<PathBuf> {
 mod specifier_scanning;
 #[cfg(test)]
 pub(crate) use specifier_scanning::collect_module_specifiers;
+#[cfg(test)]
+use specifier_scanning::collect_module_specifiers_from_text;
+#[cfg(test)]
+use specifier_scanning::collect_simple_module_requests_from_text;
 pub(crate) use specifier_scanning::{
     collect_export_binding_nodes, collect_import_bindings, collect_module_requests_from_text,
     collect_module_specifiers_for_check, collect_star_export_specifiers,
