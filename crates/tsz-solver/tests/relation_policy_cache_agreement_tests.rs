@@ -935,3 +935,121 @@ fn assignability_cache_erase_generics_matches_uncached_relation_policy() {
         "strict generic slot must remain intact after the erased lookup",
     );
 }
+
+#[test]
+fn assignability_cache_erased_generic_retry_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let source_s = TypeParamInfo {
+        name: interner.intern_string("Source"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let source_s_type = interner.type_param(source_s);
+    let source = interner.function(FunctionShape {
+        type_params: vec![source_s],
+        params: vec![ParamInfo::unnamed(source_s_type)],
+        this_type: None,
+        return_type: source_s_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let target_t = TypeParamInfo {
+        name: interner.intern_string("TargetT"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let target_u = TypeParamInfo {
+        name: interner.intern_string("TargetU"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let target_t_type = interner.type_param(target_t);
+    let target_u_type = interner.type_param(target_u);
+    let target = interner.function(FunctionShape {
+        type_params: vec![target_t, target_u],
+        params: vec![ParamInfo::unnamed(target_t_type)],
+        this_type: None,
+        return_type: target_u_type,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let no_retry = RelationPolicy::default();
+    let retry =
+        RelationPolicy::from_relation_flags(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY);
+    let no_retry_key = RelationCacheKey::for_assignability(source, target, no_retry.cache_config());
+    let retry_key = RelationCacheKey::for_assignability(source, target, retry.cache_config());
+
+    assert_ne!(
+        no_retry_key, retry_key,
+        "erased generic retry policy must occupy a distinct assignability cache slot",
+    );
+
+    let no_retry_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        no_retry,
+        RelationContext::default(),
+    )
+    .is_related();
+    let retry_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        retry,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !no_retry_uncached,
+        "contextual inference should reject the unequal-arity generic signatures before retry",
+    );
+    assert!(
+        retry_uncached,
+        "erased generic retry should allow the unequal-arity signatures",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, no_retry),
+        no_retry_uncached,
+        "cached no-retry policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(no_retry_key),
+        Some(no_retry_uncached),
+        "no-retry result must be stored in the no-retry assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(retry_key),
+        None,
+        "retry lookup must not hit the no-retry slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, retry),
+        retry_uncached,
+        "cached retry policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(retry_key),
+        Some(retry_uncached),
+        "retry result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(no_retry_key),
+        Some(no_retry_uncached),
+        "no-retry slot must remain intact after the retry lookup",
+    );
+}
