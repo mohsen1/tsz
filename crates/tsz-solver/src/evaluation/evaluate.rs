@@ -1866,6 +1866,16 @@ pub fn evaluate_type(interner: &dyn TypeDatabase, type_id: TypeId) -> TypeId {
     evaluate_type_with_request(interner, EvaluationRequest::new(type_id))
 }
 
+/// Convenience function for full type evaluation with an explicit resolver.
+pub fn evaluate_type_with_resolver(
+    interner: &dyn TypeDatabase,
+    resolver: &impl TypeResolver,
+    type_id: TypeId,
+) -> TypeId {
+    let mut evaluator = TypeEvaluator::with_resolver(interner, resolver);
+    evaluator.evaluate(type_id)
+}
+
 /// Convenience function for full type evaluation with explicit request options.
 pub fn evaluate_type_with_request(
     interner: &dyn TypeDatabase,
