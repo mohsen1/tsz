@@ -1139,6 +1139,25 @@ jobs:
               END { print value }
             ' "bench-status-${{ matrix.label }}.env"
           }
+          shard_published_complete_results() {
+            local results_file="bench-results-${{ matrix.label }}.json"
+            local run_log="bench-run-${{ matrix.label }}.log"
+            [[ -s "$results_file" ]] || return 1
+            [[ -s "$run_log" ]] || return 1
+            grep -q "Results Summary" "$run_log" || return 1
+            grep -q "JSON results written:" "$run_log" || return 1
+            node - "$results_file" <<'NODE'
+          const fs = require("node:fs");
+
+          const file = process.argv[2];
+          const data = JSON.parse(fs.readFileSync(file, "utf8"));
+          const results = Array.isArray(data.results) ? data.results : [];
+          if (data.error) process.exit(1);
+          if (results.length === 0) process.exit(1);
+          if (data.totals && Number(data.totals.rows) !== results.length) process.exit(1);
+          process.exit(0);
+          NODE
+          }
 
           deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
           while true; do
@@ -1162,6 +1181,10 @@ jobs:
                 echo "Cloud Build shard status did not include numeric BENCH_SHARD_STATUS."
                 cat "bench-status-${{ matrix.label }}.env"
                 exit 1
+              fi
+              if [[ "${status_exit}" != "0" ]] && shard_published_complete_results; then
+                echo "Cloud Build shard reported BENCH_SHARD_STATUS=${status_exit}, but it published complete benchmark results for ${{ matrix.label }}; allowing publish to merge the artifact."
+                exit 0
               fi
               exit "${status_exit}"
             fi
@@ -1192,6 +1215,7 @@ jobs:
           name: bench-results-${{ matrix.label }}
           path: |
             bench-results-${{ matrix.label }}.json
+            bench-status-${{ matrix.label }}.env
             bench-run-${{ matrix.label }}.log
             bench-postmortem-${{ matrix.label }}.log
             bench-prep-fetch-${{ matrix.label }}.log
