@@ -100,13 +100,7 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let resolving_defs: rustc_hash::FxHashSet<_> = self
-            .ctx
-            .symbol_resolution_set
-            .iter()
-            .filter_map(|sid| self.ctx.get_existing_def_id(*sid))
-            .collect();
-        if resolving_defs.is_empty() {
+        if self.ctx.symbol_resolution_set.is_empty() {
             return false;
         }
 
@@ -121,7 +115,12 @@ impl<'a> CheckerState<'a> {
                 if !visited.insert(def_id) {
                     continue;
                 }
-                if resolving_defs.contains(&def_id) {
+                if self
+                    .ctx
+                    .symbol_resolution_set
+                    .iter()
+                    .any(|sid| self.ctx.get_existing_def_id(*sid) == Some(def_id))
+                {
                     return true;
                 }
                 let Some(body) = self.ctx.definition_store.get_body(def_id) else {
