@@ -51,196 +51,6 @@ impl<'a> DeclarationEmitter<'a> {
             })
     }
 
-    fn generic_variadic_tuple_call_return_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
-        let expr_node = self.arena.get(expr_idx)?;
-        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
-            return None;
-        }
-        let call = self.arena.get_call_expr(expr_node)?;
-        let args = call.arguments.as_ref()?;
-        let binder = self.binder?;
-        let raw_sym_id = self.value_reference_symbol(call.expression)?;
-        let sym_id = self
-            .resolve_portability_import_alias(raw_sym_id, binder)
-            .unwrap_or_else(|| self.resolve_portability_symbol(raw_sym_id, binder));
-        let symbol = binder.symbols.get(sym_id)?;
-
-        for decl_idx in symbol.declarations.iter().copied() {
-            let Some(decl_node) = self.arena.get(decl_idx) else {
-                continue;
-            };
-            let Some(callable) = Self::callable_decl_parts_from_node(self.arena, decl_node) else {
-                continue;
-            };
-            let [param_idx] = callable.parameters.nodes.as_slice() else {
-                continue;
-            };
-            let Some(param_node) = self.arena.get(*param_idx) else {
-                continue;
-            };
-            let Some(param) = self.arena.get_parameter(param_node) else {
-                continue;
-            };
-            if !param.dot_dot_dot_token || !callable.type_annotation.is_some() {
-                continue;
-            }
-
-            let return_text = self
-                .emit_type_node_text(callable.type_annotation)
-                .or_else(|| self.source_slice_from_arena(self.arena, callable.type_annotation))?;
-            let Some((type_param_name, return_tail)) =
-                Self::variadic_tuple_return_parts(&return_text)
-            else {
-                continue;
-            };
-            let param_text = self
-                .emit_type_node_text(param.type_annotation)
-                .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))?;
-            let Some(fixed_tail_count) =
-                Self::variadic_tuple_param_tail_count(&param_text, &type_param_name)
-            else {
-                continue;
-            };
-            let constraint_text =
-                self.type_parameter_constraint_text(callable.type_parameters, &type_param_name)?;
-            let constraint_elements = Self::tuple_type_elements_text(&constraint_text)?;
-            let prefix_args_len = args.nodes.len().saturating_sub(fixed_tail_count);
-            let prefix_args = &args.nodes[..prefix_args_len];
-            let prefix_elements = self
-                .variadic_tuple_literal_prefix_elements(prefix_args, &constraint_elements)
-                .unwrap_or(constraint_elements);
-            let mut elements = prefix_elements;
-            elements.extend(return_tail);
-            return Some(format!("[{}]", elements.join(", ")));
-        }
-
-        None
-    }
-
-    fn variadic_tuple_return_parts(type_text: &str) -> Option<(String, Vec<String>)> {
-        let elements = Self::tuple_type_elements_text(type_text)?;
-        let first = elements.first()?.trim();
-        let type_param_name = first.strip_prefix("...")?.trim();
-        if !Self::is_simple_identifier_text(type_param_name) {
-            return None;
-        }
-        Some((
-            type_param_name.to_string(),
-            elements.into_iter().skip(1).collect(),
-        ))
-    }
-
-    fn variadic_tuple_param_tail_count(type_text: &str, type_param_name: &str) -> Option<usize> {
-        let elements = Self::tuple_type_elements_text(type_text)?;
-        let spread_text = format!("...{type_param_name}");
-        let spread_index = elements
-            .iter()
-            .position(|element| element.trim() == spread_text)?;
-        Some(elements.len().saturating_sub(spread_index + 1))
-    }
-
-    fn tuple_type_elements_text(type_text: &str) -> Option<Vec<String>> {
-        let trimmed = type_text
-            .trim()
-            .strip_prefix("readonly ")
-            .unwrap_or(type_text.trim());
-        let inner = trimmed.strip_prefix('[')?.strip_suffix(']')?;
-        Some(
-            Self::split_top_level_commas(inner)
-                .into_iter()
-                .map(str::trim)
-                .filter(|part| !part.is_empty())
-                .map(str::to_string)
-                .collect(),
-        )
-    }
-
-    fn type_parameter_constraint_text(
-        &self,
-        type_parameters: Option<&NodeList>,
-        type_param_name: &str,
-    ) -> Option<String> {
-        let type_parameters = type_parameters?;
-        for &param_idx in &type_parameters.nodes {
-            let param_node = self.arena.get(param_idx)?;
-            let param = self.arena.get_type_parameter(param_node)?;
-            if self.get_identifier_text(param.name).as_deref() != Some(type_param_name) {
-                continue;
-            }
-            return self
-                .emit_type_node_text(param.constraint)
-                .or_else(|| self.source_slice_from_arena(self.arena, param.constraint));
-        }
-        None
-    }
-
-    fn variadic_tuple_literal_prefix_elements(
-        &self,
-        args: &[NodeIndex],
-        constraint_elements: &[String],
-    ) -> Option<Vec<String>> {
-        let required_prefix = constraint_elements
-            .iter()
-            .take_while(|element| !element.trim_start().starts_with("..."))
-            .count();
-        if args.len() < required_prefix {
-            return None;
-        }
-        let rest_constraint = constraint_elements
-            .iter()
-            .find_map(|element| element.trim().strip_prefix("..."))
-            .and_then(|rest| rest.trim().strip_suffix("[]"))
-            .map(str::trim);
-        args.iter()
-            .enumerate()
-            .map(|(index, arg_idx)| {
-                let expected = if index < required_prefix {
-                    constraint_elements
-                        .get(index)
-                        .map(|element| element.trim())?
-                } else {
-                    rest_constraint?
-                };
-                let actual = self.literal_argument_type_text(*arg_idx)?;
-                self.literal_type_matches_constraint(&actual, expected)
-                    .then_some(actual)
-            })
-            .collect()
-    }
-
-    fn literal_argument_type_text(&self, arg_idx: NodeIndex) -> Option<String> {
-        let arg_idx = self
-            .arena
-            .skip_parenthesized_and_assertions_and_comma(arg_idx);
-        let node = self.arena.get(arg_idx)?;
-        match node.kind {
-            k if k == SyntaxKind::StringLiteral as u16
-                || k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 =>
-            {
-                let lit = self.arena.get_literal(node)?;
-                Some(format!(
-                    "\"{}\"",
-                    super::escape_string_for_double_quote(&lit.text)
-                ))
-            }
-            k if k == SyntaxKind::NumericLiteral as u16 => self
-                .get_source_slice(node.pos, node.end)
-                .map(|text| text.trim().to_string()),
-            k if k == SyntaxKind::TrueKeyword as u16 => Some("true".to_string()),
-            k if k == SyntaxKind::FalseKeyword as u16 => Some("false".to_string()),
-            _ => None,
-        }
-    }
-
-    fn literal_type_matches_constraint(&self, literal_type: &str, constraint: &str) -> bool {
-        match constraint {
-            "string" => literal_type.starts_with('"') && literal_type.ends_with('"'),
-            "number" => literal_type.parse::<f64>().is_ok(),
-            "boolean" => matches!(literal_type, "true" | "false"),
-            _ => literal_type == constraint,
-        }
-    }
-
     pub(in crate::declaration_emitter) fn unwrap_return_type_zero_arg_import_type(
         type_text: &str,
     ) -> Option<String> {
@@ -1108,6 +918,10 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(type_text);
         }
 
+        if let Some(type_text) = self.generic_rest_identity_object_union_type_text(expr_idx) {
+            return Some(type_text);
+        }
+
         if let Some(type_text) = self.generic_call_object_property_literal_type_text(expr_idx) {
             return Some(type_text);
         }
@@ -1172,6 +986,109 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         changed.then(|| format!("[{}]", tuple_elements.join(", ")))
+    }
+
+    fn generic_rest_identity_object_union_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_node = self.arena.get(expr_idx)?;
+        let call = self.arena.get_call_expr(expr_node)?;
+        let arguments = call.arguments.as_ref()?;
+        if arguments.nodes.is_empty() {
+            return None;
+        }
+
+        if self.function_expression_has_type_parameters(call.expression) {
+            let callee_idx = self.skip_parenthesized_expression(call.expression)?;
+            let callee_node = self.arena.get(callee_idx)?;
+            let func = self.arena.get_function(callee_node)?;
+            return self.generic_rest_identity_object_union_type_text_for_function(
+                self.arena, func, arguments,
+            );
+        }
+
+        let sym_id = self.value_reference_symbol(call.expression)?;
+        let binder = self.binder?;
+        let sym_id = self
+            .resolve_portability_import_alias(sym_id, binder)
+            .unwrap_or_else(|| self.resolve_portability_symbol(sym_id, binder));
+        self.with_symbol_declarations(sym_id, |source_arena, decl_idx| {
+            let func = callable_function_from_symbol_decl(source_arena, decl_idx)?;
+            self.generic_rest_identity_object_union_type_text_for_function(
+                source_arena,
+                func,
+                arguments,
+            )
+        })
+    }
+
+    fn generic_rest_identity_object_union_type_text_for_function(
+        &self,
+        source_arena: &NodeArena,
+        func: &FunctionData,
+        arguments: &NodeList,
+    ) -> Option<String> {
+        let return_type_param =
+            function_return_type_parameter_name(source_arena, func).filter(|type_param| {
+                func.type_parameters.as_ref().is_some_and(|type_params| {
+                    type_params.nodes.iter().copied().any(|param_idx| {
+                        source_arena
+                            .get(param_idx)
+                            .and_then(|node| source_arena.get_type_parameter(node))
+                            .and_then(|param| identifier_text(source_arena, param.name))
+                            .is_some_and(|name| name == *type_param)
+                    })
+                })
+            })?;
+        if !function_has_rest_array_parameter_for_type_param(source_arena, func, &return_type_param)
+        {
+            return None;
+        }
+
+        let mut argument_arms = Vec::<String>::new();
+        let mut declared_arms = Vec::<String>::new();
+        for &arg_idx in &arguments.nodes {
+            let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
+            if let Some(arms) = self.reference_declared_object_type_literal_arm_texts(arg_idx) {
+                for arm in arms {
+                    if !declared_arms.iter().any(|existing| existing == &arm) {
+                        declared_arms.push(arm.clone());
+                    }
+                    argument_arms.push(arm);
+                }
+                continue;
+            }
+
+            let arg_node = self.arena.get(arg_idx)?;
+            if arg_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+                return None;
+            }
+            let arm = self.infer_object_literal_type_text_at(arg_idx, 0)?;
+            argument_arms.push(arm);
+        }
+
+        if argument_arms.is_empty() {
+            return None;
+        }
+
+        if declared_arms.len() == 1
+            && argument_arms.iter().all(|arm| {
+                arm == &declared_arms[0]
+                    || Self::object_type_members_are_subset(arm, &declared_arms[0])
+            })
+        {
+            return Some(declared_arms.remove(0));
+        }
+
+        Self::normalized_object_literal_union_text(argument_arms)
+    }
+
+    fn object_type_members_are_subset(source: &str, target: &str) -> bool {
+        let source_names = Self::object_type_top_level_member_names(source, true);
+        let target_names = Self::object_type_top_level_member_names(target, true);
+        !source_names.is_empty()
+            && !target_names.is_empty()
+            && source_names
+                .iter()
+                .all(|name| target_names.iter().any(|target_name| target_name == name))
     }
 
     fn conditional_function_property_tuple_replacements(
@@ -1615,6 +1532,45 @@ fn function_declares_type_parameter(
                 .is_some_and(|name| name == type_param_name)
         })
     })
+}
+
+fn function_has_rest_array_parameter_for_type_param(
+    source_arena: &NodeArena,
+    func: &FunctionData,
+    type_param_name: &str,
+) -> bool {
+    func.parameters.nodes.iter().copied().any(|param_idx| {
+        let Some(param_node) = source_arena.get(param_idx) else {
+            return false;
+        };
+        let Some(param) = source_arena.get_parameter(param_node) else {
+            return false;
+        };
+        if !param.dot_dot_dot_token {
+            return false;
+        }
+        rest_array_element_type_parameter_name(source_arena, param.type_annotation).as_deref()
+            == Some(type_param_name)
+    })
+}
+
+fn rest_array_element_type_parameter_name(
+    source_arena: &NodeArena,
+    type_idx: NodeIndex,
+) -> Option<String> {
+    let type_node = source_arena.get(type_idx)?;
+    if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
+        let array = source_arena.get_array_type(type_node)?;
+        return type_reference_identifier_name(source_arena, array.element_type);
+    }
+    if type_node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+        || type_node.kind == syntax_kind_ext::OPTIONAL_TYPE
+        || type_node.kind == syntax_kind_ext::REST_TYPE
+    {
+        let wrapped = source_arena.get_wrapped_type(type_node)?;
+        return rest_array_element_type_parameter_name(source_arena, wrapped.type_node);
+    }
+    None
 }
 
 fn function_return_tuple_type_parameter_names(

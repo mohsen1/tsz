@@ -1008,11 +1008,12 @@ impl<'a> DeclarationEmitter<'a> {
             k if k == syntax_kind_ext::NEW_EXPRESSION => {
                 self.nameable_new_expression_type_text(expr_idx)
             }
-            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => {
-                self.conditional_unique_symbol_union_type_text(expr_idx)
-            }
+            k if k == syntax_kind_ext::CONDITIONAL_EXPRESSION => self
+                .conditional_object_literal_union_type_text(expr_idx, self.indent_level)
+                .or_else(|| self.conditional_unique_symbol_union_type_text(expr_idx)),
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self
-                .template_index_signature_element_access_type_text(expr_idx)
+                .array_literal_element_access_type_text(expr_idx)
+                .or_else(|| self.template_index_signature_element_access_type_text(expr_idx))
                 .or_else(|| self.class_static_computed_index_access_type_text(expr_idx)),
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
                 let ast_type_text = self.class_expression_constructor_type_text_from_ast(expr_idx);

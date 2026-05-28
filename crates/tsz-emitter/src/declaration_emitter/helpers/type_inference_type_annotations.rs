@@ -108,6 +108,43 @@ impl<'a> DeclarationEmitter<'a> {
         self.declared_non_nullish_type_annotation_text_for_symbol(sym_id)
     }
 
+    pub(in crate::declaration_emitter) fn reference_declared_object_type_literal_arm_texts(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let sym_id = self.reference_declared_type_symbol(expr_idx)?;
+        self.with_declared_type_annotation_for_symbol(sym_id, |source_arena, type_annotation| {
+            self.object_type_literal_arm_texts_from_type_annotation(source_arena, type_annotation)
+        })
+    }
+
+    fn object_type_literal_arm_texts_from_type_annotation(
+        &self,
+        source_arena: &NodeArena,
+        type_annotation: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let type_node = source_arena.get(type_annotation)?;
+        if type_node.kind == syntax_kind_ext::TYPE_LITERAL {
+            let type_text = self.emit_type_node_text_from_arena(source_arena, type_annotation)?;
+            return Some(vec![type_text.trim().to_string()]);
+        }
+        if type_node.kind != syntax_kind_ext::UNION_TYPE {
+            return None;
+        }
+
+        let union = source_arena.get_composite_type(type_node)?;
+        let mut arms = Vec::with_capacity(union.types.nodes.len());
+        for &part_idx in &union.types.nodes {
+            let part_node = source_arena.get(part_idx)?;
+            if part_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                return None;
+            }
+            let type_text = self.emit_type_node_text_from_arena(source_arena, part_idx)?;
+            arms.push(type_text.trim().to_string());
+        }
+        (!arms.is_empty()).then_some(arms)
+    }
+
     fn reference_declared_type_symbol(&self, expr_idx: NodeIndex) -> Option<SymbolId> {
         let binder = self.binder?;
         let raw_sym_id = self
