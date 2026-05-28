@@ -995,7 +995,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
@@ -1758,7 +1769,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
