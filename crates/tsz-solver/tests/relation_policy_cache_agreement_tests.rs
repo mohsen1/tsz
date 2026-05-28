@@ -640,3 +640,107 @@ fn assignability_cache_strict_subtype_checking_matches_uncached_method_policy() 
         "ordinary assignability slot must remain intact after the strict lookup",
     );
 }
+
+#[test]
+fn assignability_cache_allow_bivariant_rest_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    ));
+    let rest_any = interner.array(TypeId::ANY);
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo {
+            name: None,
+            type_id: rest_any,
+            optional: false,
+            rest: true,
+        }],
+        TypeId::VOID,
+    ));
+
+    let ordinary = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::STRICT_NULL_CHECKS,
+    )
+    .with_strict_any_propagation(true)
+    .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
+    let bivariant_rest = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES
+            | RelationFlags::STRICT_NULL_CHECKS
+            | RelationFlags::ALLOW_BIVARIANT_REST,
+    )
+    .with_strict_any_propagation(true)
+    .with_any_propagation_mode(AnyPropagationMode::TopLevelOnly);
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let bivariant_rest_key =
+        RelationCacheKey::for_assignability(source, target, bivariant_rest.cache_config());
+
+    assert_ne!(
+        ordinary_key, bivariant_rest_key,
+        "ordinary and bivariant-rest policies must occupy distinct assignability cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let bivariant_rest_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_rest,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !ordinary_uncached,
+        "ordinary strict-any assignability should compare extra parameters normally",
+    );
+    assert!(
+        bivariant_rest_uncached,
+        "bivariant-rest assignability should accept fixed arguments against a rest-`any` target",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary rest policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary rest result must be stored in the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_rest_key),
+        None,
+        "bivariant-rest lookup must not hit the ordinary slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, bivariant_rest),
+        bivariant_rest_uncached,
+        "cached bivariant-rest policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_rest_key),
+        Some(bivariant_rest_uncached),
+        "bivariant-rest result must be stored in the bivariant-rest assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary rest slot must remain intact after the bivariant-rest lookup",
+    );
+}
