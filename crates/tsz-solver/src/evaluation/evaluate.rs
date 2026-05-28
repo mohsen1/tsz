@@ -893,6 +893,33 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             if resolved == TypeId::UNKNOWN {
                 return ApplicationEvalOutcome::Computed(original_type_id);
             }
+
+            // The same situation arises when the body resolves to the alias's
+            // own self-lazy wrapper `Lazy(def_id)`: the structural body (e.g. a
+            // mapped type registered on demand in the type environment) is not
+            // available on this query, so substituting `Args` into
+            // `Lazy(def_id)` yields bare `Lazy(def_id)` — dropping the type
+            // arguments. Caching that degenerate result poisons every later
+            // use: a nested `Partial<X>` first evaluated while `Partial`'s body
+            // is still self-lazy makes the enclosing `Omit<Partial<X>, K>`
+            // collapse to `{}`, producing a false `TS2345` against a fresh
+            // object literal with a valid optional subset (see #10682). Keep
+            // the application opaque so a later pass (with the populated body)
+            // expands it correctly.
+            //
+            // Gate on the outermost (non-recursive) expansion of this def:
+            // `increment_def_depth` has already run for this entry, so depth 1
+            // is the first expansion. For a genuinely recursive alias the
+            // self-lazy wrapper is the legitimate cycle breaker at deeper
+            // entries, where bailing must not interfere.
+            if self.def_depth.get(&def_id).copied().unwrap_or(0) <= 1
+                && matches!(
+                    self.interner.lookup(resolved),
+                    Some(TypeData::Lazy(body_def_id)) if body_def_id == def_id
+                )
+            {
+                return ApplicationEvalOutcome::Computed(original_type_id);
+            }
             self.evaluate_application_with_known_params(
                 def_id,
                 original_type_id,
