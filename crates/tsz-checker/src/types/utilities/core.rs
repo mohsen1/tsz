@@ -2512,47 +2512,36 @@ impl<'a> CheckerState<'a> {
         // constraint — both for a constraint that lacks the needed index
         // signature (`T extends Item`) and for an unconstrained `T`, whose base
         // constraint `unknown` has no index signatures at all.
-        let check_type =
-            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type) {
-                if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type) {
+        let is_type_param =
+            crate::query_boundaries::common::is_type_parameter(self.ctx.types, object_type);
+        let check_type = if is_type_param {
+            if crate::query_boundaries::common::is_type_parameter(self.ctx.types, index_type) {
+                return false;
+            }
+            match crate::query_boundaries::common::type_parameter_constraint(
+                self.ctx.types,
+                object_type,
+            ) {
+                // A constraint that still mentions type parameters (e.g.
+                // `Record<K, number>`) can't be resolved until instantiation.
+                Some(constraint)
+                    if crate::query_boundaries::common::contains_type_parameters(
+                        self.ctx.types,
+                        constraint,
+                    ) =>
+                {
                     return false;
                 }
-                match crate::query_boundaries::common::type_parameter_constraint(
-                    self.ctx.types,
-                    object_type,
-                ) {
-                    // A constraint that still mentions type parameters (e.g.
-                    // `Record<K, number>`) can't be resolved until instantiation.
-                    Some(constraint)
-                        if crate::query_boundaries::common::contains_type_parameters(
-                            self.ctx.types,
-                            constraint,
-                        ) =>
-                    {
-                        return false;
-                    }
-                    // A concrete constraint may still be an unevaluated wrapper
-                    // (e.g. `T extends Record<string, V>`, where the constraint
-                    // is an `Application` of a mapped type). Resolve it to its
-                    // apparent type through the checker environment so the
-                    // index-signature queries below inspect the structural shape
-                    // (`{ [k: string]: V }`) rather than an opaque application
-                    // node — otherwise a resolver-less evaluation leaves the
-                    // wrapper intact and the constraint looks unindexable.
-                    Some(constraint) => {
-                        crate::query_boundaries::dispatch::evaluate_type_with_resolver(
-                            self.ctx.types,
-                            &self.ctx,
-                            constraint,
-                        )
-                    }
-                    // Unconstrained: the base constraint is `unknown`, which has
-                    // no index signatures, so a concrete key can't index it.
-                    None => TypeId::UNKNOWN,
-                }
-            } else {
-                object_type
-            };
+                // Keep the raw constraint; it is resolved to its apparent type
+                // below (intersections are handled member-by-member there).
+                Some(constraint) => constraint,
+                // Unconstrained: the base constraint is `unknown`, which has
+                // no index signatures, so a concrete key can't index it.
+                None => TypeId::UNKNOWN,
+            }
+        } else {
+            object_type
+        };
 
         if check_type == TypeId::ANY || check_type == TypeId::ERROR {
             return false;
@@ -2578,7 +2567,76 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, check_type);
+        // A type parameter is indexed against the *apparent type* of its
+        // constraint. The constraint may be an unevaluated application/alias/
+        // mapped type whose head is a `Lazy(DefId)` (e.g. `Record<string, V>`,
+        // `Partial<Record<…>>`, a user mapped alias). The downstream
+        // index-signature queries evaluate with a resolver-less pass that cannot
+        // expand a `Lazy(DefId)`, so resolve through the checker environment here —
+        // matching tsc's `getApparentType` of the constraint.
+        if is_type_param {
+            // An intersection constraint is indexable when *any* member supplies a
+            // usable index signature (tsc's apparent-type lookup over the
+            // constituents). Resolve each member separately: merging the whole
+            // intersection drops member index signatures, which would re-introduce
+            // the false positive.
+            if let Some(members) =
+                crate::query_boundaries::common::intersection_members(self.ctx.types, check_type)
+            {
+                return members.iter().all(|&member| {
+                    self.constraint_member_reports_no_index_signature(
+                        member,
+                        index_type,
+                        wants_string,
+                        wants_number,
+                    )
+                });
+            }
+            return self.constraint_member_reports_no_index_signature(
+                check_type,
+                index_type,
+                wants_string,
+                wants_number,
+            );
+        }
+
+        self.object_reports_no_index_signature(check_type, index_type, wants_string, wants_number)
+    }
+
+    /// Resolve a single type-parameter-constraint member to its apparent type
+    /// through the checker environment, then decide whether it lacks the needed
+    /// index signature. A member that resolves to `any`/error is treated as
+    /// indexable (no report), matching tsc.
+    fn constraint_member_reports_no_index_signature(
+        &self,
+        member: TypeId,
+        index_type: TypeId,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        let resolved =
+            crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                self.ctx.types,
+                &self.ctx,
+                member,
+            );
+        if resolved == TypeId::ANY || resolved == TypeId::ERROR {
+            return false;
+        }
+        self.object_reports_no_index_signature(resolved, index_type, wants_string, wants_number)
+    }
+
+    /// Decide whether a concrete (non-type-parameter, non-intersection) object
+    /// type lacks the index signature needed for the requested key kind. Returns
+    /// `true` when tsc would report TS7053 for this receiver.
+    fn object_reports_no_index_signature(
+        &self,
+        object_type: TypeId,
+        index_type: TypeId,
+        wants_string: bool,
+        wants_number: bool,
+    ) -> bool {
+        let unwrapped_type = query::unwrap_readonly_for_lookup(self.ctx.types, object_type);
 
         if wants_string
             && let Some(string_index) =
