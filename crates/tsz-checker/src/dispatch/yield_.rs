@@ -1,7 +1,7 @@
 //! Yield and generator expression type computation for the expression dispatcher.
 
+use super::ExpressionDispatcher;
 use crate::context::TypingRequest;
-use crate::dispatch::ExpressionDispatcher;
 use crate::query_boundaries::common::ContextualTypeContext;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;

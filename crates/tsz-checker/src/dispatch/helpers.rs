@@ -9,7 +9,7 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-use super::dispatch::ExpressionDispatcher;
+use super::ExpressionDispatcher;
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     pub(crate) fn dispatch_regular_expression_literal(&mut self, idx: NodeIndex) -> TypeId {

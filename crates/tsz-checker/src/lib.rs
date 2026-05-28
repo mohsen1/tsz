@@ -2,6 +2,7 @@
 //!
 //! This module is organized into several submodules:
 //! - `context` - `CheckerContext` for shared state
+//! - `dispatch` - Expression type computation dispatcher (with companion submodules)
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
 //! - `declarations` - Declaration type checking
@@ -19,8 +20,6 @@ extern crate self as tsz_checker;
 
 pub mod context;
 pub mod dispatch;
-mod dispatch_helpers;
-mod dispatch_yield;
 pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
