@@ -1,4 +1,5 @@
 use super::DeclarationEmitter;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tsz_binder::BinderState;
 use tsz_parser::parser::NodeIndex;
@@ -24,6 +25,21 @@ fn first_function_declared_return_identifier_type_text(source: &str) -> Option<S
             .flatten()
             .and_then(|func| emitter.function_body_declared_return_identifier_type_text(func))
     })
+}
+
+fn emit_test_dts_with_binding(source: &str) -> String {
+    let mut parser = ParserState::new("test.ts".to_string(), source.to_string());
+    let root = parser.parse_source_file();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(&parser.arena, root);
+    let interner = TypeInterner::new();
+    let type_cache = crate::type_cache_view::TypeCacheView::default();
+    let current_arena = Arc::new(parser.arena.clone());
+
+    let mut emitter =
+        DeclarationEmitter::with_type_info(&parser.arena, type_cache, &interner, &binder);
+    emitter.set_current_arena(current_arena, "test.ts".to_string());
+    emitter.emit(root)
 }
 
 #[test]
@@ -397,6 +413,143 @@ fn object_union_empty_arm_and_property_arms_all_cross_normalize() {
             "{\n    a: string;\n    b?: undefined;\n}".to_string(),
             "{\n    a?: undefined;\n    b?: undefined;\n}".to_string(),
         ]
+    );
+}
+
+#[test]
+fn conditional_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+        "{}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a: number;\n    b: number;\n} | {\n    a?: undefined;\n    b?: undefined;\n}"
+    );
+}
+
+#[test]
+fn conditional_empty_then_object_literal_union_preserves_branch_order() {
+    let types = vec![
+        "{}".to_string(),
+        "{\n    a: number;\n    b: number;\n}".to_string(),
+    ];
+
+    let normalized = DeclarationEmitter::normalized_object_literal_union_text(types)
+        .expect("object literal arms should normalize");
+
+    assert_eq!(
+        normalized,
+        "{\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n}"
+    );
+}
+
+#[test]
+fn nested_object_union_member_properties_cross_normalize_from_source_arms() {
+    let source = r#"
+declare const flag: boolean;
+let result = [
+    { kind: "first", pos: { x: 1, y: 2 } },
+    { kind: "second", pos: flag ? { a: "value" } : { b: 3 } },
+];
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("x: number;")
+            && output.contains("y: number;")
+            && output.contains("a?: undefined;")
+            && output.contains("b?: undefined;"),
+        "expected first nested source arm to gain sibling optional members: {output}"
+    );
+    assert!(
+        output.contains("a: string;")
+            && output.contains("b: number;")
+            && output.contains("x?: undefined;")
+            && output.contains("y?: undefined;"),
+        "expected conditional nested source arms to stay structured through normalization: {output}"
+    );
+}
+
+#[test]
+fn conditional_object_literal_union_widens_member_literals() {
+    let source = r#"
+declare const flag: boolean;
+let result = flag ? { a: "x", b: 0, c: true } : {};
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains("a: string;"),
+        "expected string literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("b: number;"),
+        "expected numeric literal member to widen through source arm summary: {output}"
+    );
+    assert!(
+        output.contains("c: boolean;"),
+        "expected boolean literal member to widen through source arm summary: {output}"
+    );
+}
+
+#[test]
+fn generic_rest_identity_object_literal_union_preserves_argument_order() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+let result = f({}, { a: "abc" }, { a: 1, b: 2 });
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    assert!(
+        output.contains(
+            "declare let result: {\n    a?: undefined;\n    b?: undefined;\n} | {\n    a: string;\n    b?: undefined;\n} | {\n    a: number;\n    b: number;\n};"
+        ),
+        "expected generic rest identity object union in argument order: {output}"
+    );
+}
+
+#[test]
+fn generic_rest_identity_prefers_declared_object_literal_surface() {
+    let source = r#"
+declare function f<T>(...items: T[]): T;
+declare let data: { a: 1, b: "abc", c: true };
+let first = f(data, { a: 2 });
+let second = f({ a: 2 }, data);
+"#;
+
+    let output = emit_test_dts_with_binding(source);
+
+    for name in ["first", "second"] {
+        let expected =
+            format!("declare let {name}: {{\n    a: 1;\n    b: \"abc\";\n    c: true;\n}};");
+        assert!(
+            output.contains(&expected),
+            "expected `{name}` to reuse declared literal object surface: {output}"
+        );
+    }
+}
+
+#[test]
+fn object_spread_projection_prepends_own_members_to_declared_union_arms() {
+    let own_members = vec!["z: number".to_string()];
+
+    let projected = DeclarationEmitter::prepend_object_members_to_type_literal_text(
+        "{\n    a: string;\n    b: string;\n}",
+        &own_members,
+        0,
+    );
+
+    assert_eq!(
+        projected,
+        Some("{\n    z: number;\n    a: string;\n    b: string;\n}".to_string())
     );
 }
 

@@ -345,6 +345,10 @@ impl<'a> DeclarationEmitter<'a> {
                 .function_expression_type_text_from_ast_at(initializer, depth + 1)
                 .or_else(|| self.infer_fallback_type_text_at(initializer, depth));
         }
+        if let Some(type_text) = self.conditional_object_literal_union_type_text(initializer, depth)
+        {
+            return Some(type_text);
+        }
         self.preferred_expression_type_text(initializer)
             .or_else(|| self.infer_fallback_type_text_at(initializer, depth))
     }
