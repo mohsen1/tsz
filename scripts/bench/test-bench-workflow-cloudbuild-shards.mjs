@@ -34,8 +34,8 @@ assert.match(
 
 assert.match(
   workflow,
-  /bench-postmortem-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-prep-fetch-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-cloudbuild-\$\{\{ matrix\.label \}\}\.log\s*\n\s*retention-days: 7/,
-  "bench shard artifacts should include the captured Cloud Build log",
+  /bench-results-\$\{\{ matrix\.label \}\}\.json\s*\n\s*bench-status-\$\{\{ matrix\.label \}\}\.env\s*\n\s*bench-run-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-postmortem-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-prep-fetch-\$\{\{ matrix\.label \}\}\.log\s*\n\s*bench-cloudbuild-\$\{\{ matrix\.label \}\}\.log\s*\n\s*retention-days: 7/,
+  "bench shard artifacts should include status, result, and captured Cloud Build logs",
 );
 
 assert.match(
@@ -54,6 +54,12 @@ assert.match(
   workflow,
   /shard_status_value\(\)[\s\S]+index\(\$0, key "="\) == 1[\s\S]+status_target_sha="\$\(shard_status_value BENCH_TARGET_SHA\)"[\s\S]+status_shard_label="\$\(shard_status_value BENCH_SHARD_LABEL\)"[\s\S]+status_exit="\$\(shard_status_value BENCH_SHARD_STATUS\)"[\s\S]+exit "\$\{status_exit\}"/,
   "bench shard waits should parse status env files without sourcing unquoted filter values",
+);
+
+assert.match(
+  workflow,
+  /shard_published_complete_results\(\)[\s\S]+grep -q "Results Summary" "\$run_log"[\s\S]+grep -q "JSON results written:" "\$run_log"[\s\S]+Number\(data\.totals\.rows\) !== results\.length[\s\S]+if \[\[ "\$\{status_exit\}" != "0" \]\] && shard_published_complete_results; then[\s\S]+allowing publish to merge the artifact\.[\s\S]+exit 0/,
+  "bench shard waits should allow a nonzero shard status when the runner produced a complete benchmark artifact",
 );
 
 assert.doesNotMatch(
