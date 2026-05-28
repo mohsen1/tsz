@@ -1218,34 +1218,6 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    /// Check if a return type annotation syntactically looks like `Promise<T>` or `PromiseLike<T>`.
-    ///
-    /// Syntactic fallback used when the type can't yet be resolved (e.g. during implicit
-    /// return-type checks). Matches only the two canonical lib names; user-chosen names
-    /// containing "Promise" are intentionally excluded.
-    pub fn return_type_annotation_looks_like_promise(&self, type_annotation: NodeIndex) -> bool {
-        let Some(node) = self.ctx.arena.get(type_annotation) else {
-            return false;
-        };
-
-        if let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-            && let Some(name_node) = self.ctx.arena.get(type_ref.type_name)
-        {
-            if let Some(ident) = self.ctx.arena.get_identifier(name_node) {
-                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
-            }
-            // Qualified name like `SomeModule.Promise` — check the rightmost identifier.
-            if let Some(qualified) = self.ctx.arena.get_qualified_name(name_node)
-                && let Some(right_node) = self.ctx.arena.get(qualified.right)
-                && let Some(ident) = self.ctx.arena.get_identifier(right_node)
-            {
-                return matches!(ident.escaped_text.as_str(), "Promise" | "PromiseLike");
-            }
-        }
-
-        false
-    }
-
     /// Check if a type is an Application (generic instantiation) whose base is definitively
     /// NOT the global Promise type.
     ///

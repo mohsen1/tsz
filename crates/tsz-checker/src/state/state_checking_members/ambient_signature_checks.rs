@@ -945,7 +945,7 @@ impl<'a> CheckerState<'a> {
             if is_async
                 && check_return_type == return_type
                 && has_type_annotation
-                && self.return_type_annotation_looks_like_promise(method.type_annotation)
+                && self.return_type_annotation_is_exactly_promise(method.type_annotation)
             {
                 check_return_type = TypeId::VOID;
             }
@@ -1783,7 +1783,7 @@ impl<'a> CheckerState<'a> {
                 if is_async
                     && check_return_type == return_type
                     && has_type_annotation
-                    && self.return_type_annotation_looks_like_promise(accessor.type_annotation)
+                    && self.return_type_annotation_is_exactly_promise(accessor.type_annotation)
                 {
                     check_return_type = TypeId::VOID;
                 }
