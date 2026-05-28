@@ -1225,3 +1225,101 @@ fn assignability_cache_bivariant_param_count_respects_disabled_method_bivariance
         "disabled-method-bivariance result must use its own cache slot",
     );
 }
+
+#[test]
+fn assignability_cache_in_callback_param_check_matches_uncached_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let name = interner.intern_string("name");
+    let breed = interner.intern_string("breed");
+
+    let animal = interner.object(vec![PropertyInfo::new(name, TypeId::STRING)]);
+    let dog = interner.object(vec![
+        PropertyInfo::new(name, TypeId::STRING),
+        PropertyInfo::new(breed, TypeId::STRING),
+    ]);
+
+    let mut dog_method_shape = FunctionShape::new(vec![ParamInfo::unnamed(dog)], TypeId::VOID);
+    dog_method_shape.is_method = true;
+    let source = interner.function(dog_method_shape);
+
+    let mut animal_method_shape =
+        FunctionShape::new(vec![ParamInfo::unnamed(animal)], TypeId::VOID);
+    animal_method_shape.is_method = true;
+    let target = interner.function(animal_method_shape);
+
+    let ordinary_method_policy =
+        RelationPolicy::from_relation_flags(RelationFlags::STRICT_FUNCTION_TYPES);
+    let callback_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_FUNCTION_TYPES | RelationFlags::IN_CALLBACK_PARAM_CHECK,
+    );
+    let ordinary_key =
+        RelationCacheKey::for_assignability(source, target, ordinary_method_policy.cache_config());
+    let callback_key =
+        RelationCacheKey::for_assignability(source, target, callback_policy.cache_config());
+
+    assert_ne!(
+        ordinary_key, callback_key,
+        "callback parameter mode must occupy a distinct assignability cache slot",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary_method_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let callback_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        callback_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary strict-function method comparison keeps method parameters bivariant",
+    );
+    assert!(
+        !callback_uncached,
+        "callback parameter mode must disable method bivariance for the immediate signature comparison",
+    );
+
+    let ordinary_cached = db.is_assignable_to_with_policy(source, target, ordinary_method_policy);
+    assert_eq!(
+        ordinary_cached, ordinary_uncached,
+        "cached ordinary method policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_cached),
+        "ordinary method result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(callback_key),
+        None,
+        "callback-mode lookup must not hit the ordinary method slot",
+    );
+
+    let callback_cached = db.is_assignable_to_with_policy(source, target, callback_policy);
+    assert_eq!(
+        callback_cached, callback_uncached,
+        "cached callback-mode policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(callback_key),
+        Some(callback_cached),
+        "callback-mode result must use its own cache slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_cached),
+        "ordinary method slot must remain intact after the callback-mode lookup",
+    );
+}
