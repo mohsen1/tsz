@@ -977,7 +977,7 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-    pub(super) fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
+    pub(crate) fn import_binding_is_type_only(&self, module_name: &str, import_name: &str) -> bool {
         if self.is_import_specifier_type_only(module_name, import_name)
             || self.is_export_type_only_across_binders(module_name, import_name)
             || (import_name == "default" && self.module_default_export_is_type_only(module_name))
@@ -1189,6 +1189,8 @@ impl<'a> CheckerState<'a> {
             || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                 && !self.symbol_has_runtime_value_in_binder(target_binder, sym_id))
             || self.declaration_file_direct_export_is_type_only(target_idx, import_name)
+            || ((flags & symbol_flags::CONST_ENUM) != 0
+                && !self.ctx.compiler_options.preserve_const_enums)
     }
 
     fn declaration_file_direct_export_is_type_only(
@@ -1376,6 +1378,10 @@ impl<'a> CheckerState<'a> {
             || ((flags & PURE_TYPE) != 0 && (flags & VALUE) == 0)
             || ((flags & (symbol_flags::NAMESPACE_MODULE | symbol_flags::VALUE_MODULE)) != 0
                 && !self.symbol_has_runtime_value_in_binder(binder, sym_id))
+            // Const enums are type-only for emit unless --preserveConstEnums is set:
+            // `import { ConstEnum }` should be elided when const enum values are inlined.
+            || ((flags & symbol_flags::CONST_ENUM) != 0
+                && !self.ctx.compiler_options.preserve_const_enums)
     }
 
     fn module_default_export_is_type_only(&self, module_name: &str) -> bool {
