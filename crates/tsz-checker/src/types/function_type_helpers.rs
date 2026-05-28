@@ -1685,11 +1685,9 @@ impl<'a> CheckerState<'a> {
 
     fn jsdoc_comment_declares_promise_typedef(comment: &str) -> bool {
         comment.contains("@typedef")
-            && comment.split_whitespace().any(|token| {
-                token.trim_matches(|c: char| {
-                    matches!(c, '*' | '/' | '{' | '}' | '(' | ')' | '[' | ']' | ',')
-                }) == "Promise"
-            })
+            && Self::parse_jsdoc_typedefs(comment)
+                .iter()
+                .any(|(name, _)| name == "Promise")
     }
 
     fn jsdoc_return_type_is_exact_promise_reference(trimmed: &str) -> bool {
