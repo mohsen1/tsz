@@ -24,15 +24,17 @@ engine on top to match TypeScript behavior while preserving correctness where po
 
 ## Performance
 
-`tsz` is **2.21x faster** across the current successful micro benchmark
-snapshot. Large-project performance work is still underway; the release target
-is for eligible green project rows to be at least **2x faster than `tsgo`** in
-the canonical benchmark artifact.
-
-```
-tsz:  [█████████░░░░░░░░░░░] 3s
-tsgo: [████████████████████] 7s
-```
+<!-- PERFORMANCE_START -->
+<p align="left">
+  <a href="https://tsz.dev/benchmarks/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-light.png">
+      <img src="crates/tsz-website/static/benchmark-data/readme-perf-light.png" alt="Latest tsz vs tsgo benchmark performance" width="760">
+    </picture>
+  </a>
+</p>
+<!-- PERFORMANCE_END -->
 
 ## Install
 
