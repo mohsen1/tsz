@@ -1121,10 +1121,13 @@ impl<'a> DeclarationEmitter<'a> {
                 ']' => bracket_depth = bracket_depth.saturating_sub(1),
                 '(' => paren_depth += 1,
                 ')' => paren_depth = paren_depth.saturating_sub(1),
-                ';' if angle_depth == 0
-                    && brace_depth == 0
-                    && bracket_depth == 0
-                    && paren_depth == 0 =>
+                // TypeScript object type literals allow both `;` (DTS style) and `,`
+                // (source style) as property separators. Accept both at the top level.
+                ';' | ','
+                    if angle_depth == 0
+                        && brace_depth == 0
+                        && bracket_depth == 0
+                        && paren_depth == 0 =>
                 {
                     parts.push(&text[start..idx]);
                     start = idx + 1;
@@ -1560,6 +1563,68 @@ impl<'a> DeclarationEmitter<'a> {
 mod tests {
     use super::*;
     use tsz_parser::parser::ParserState;
+
+    #[test]
+    fn infer_unwrapped_isomorphic_single_property_semicolon() {
+        // DTS-style semicolons: { a: Box<number>; }
+        let result = DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "{ a: Box<number>; }",
+            "Box",
+        );
+        assert_eq!(result.as_deref(), Some("{\n    a: number;\n}"));
+    }
+
+    #[test]
+    fn infer_unwrapped_isomorphic_multi_property_semicolon() {
+        // DTS-style semicolons with multiple properties
+        let result = DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "{ a: Box<number>; b: Box<string> }",
+            "Box",
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("{\n    a: number;\n    b: string;\n}")
+        );
+    }
+
+    #[test]
+    fn infer_unwrapped_isomorphic_multi_property_comma() {
+        // Source-style commas: { a: Box<number>, b: Box<string> }
+        let result = DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "{ a: Box<number>, b: Box<string> }",
+            "Box",
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("{\n    a: number;\n    b: string;\n}")
+        );
+    }
+
+    #[test]
+    fn infer_unwrapped_isomorphic_multi_property_comma_generic_value() {
+        // Source-style commas with generic value types: { a: Box<number>, b: Box<string[]> }
+        let result = DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "{ a: Box<number>, b: Box<string[]> }",
+            "Box",
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("{\n    a: number;\n    b: string[];\n}")
+        );
+    }
+
+    #[test]
+    fn infer_unwrapped_isomorphic_three_properties_comma() {
+        // Three comma-separated properties with different type param names
+        let result = DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+            "{ x: Wrap<boolean>, y: Wrap<number[]>, z: Wrap<string> }",
+            "Wrap",
+        );
+        assert_eq!(
+            result.as_deref(),
+            Some("{\n    x: boolean;\n    y: number[];\n    z: string;\n}")
+        );
+    }
 
     #[test]
     fn correlated_alias_shape_detects_renamed_discriminant_and_callback() {
