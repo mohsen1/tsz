@@ -119,7 +119,14 @@ impl<'a> CheckerContext<'a> {
         resolution_mode_override: Option<ResolutionModeOverride>,
         request_kind: ResolutionRequestKind,
     ) -> Option<usize> {
-        if let Some(paths) = self.resolved_module_request_paths.as_ref() {
+        // Only use the driver-supplied request map when it is non-empty.  An
+        // empty map means the driver did not perform pre-resolution (e.g. the
+        // server builds a bare ProgramContext without running tsc's resolver),
+        // so we must fall through to the file-based resolver instead of
+        // returning None and blocking every dynamic-import resolution.
+        if let Some(paths) = self.resolved_module_request_paths.as_ref()
+            && !paths.is_empty()
+        {
             for candidate in module_specifier_candidates(specifier) {
                 if let Some(target_idx) = paths.get(&(
                     source_file_idx,

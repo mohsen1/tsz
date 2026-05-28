@@ -236,6 +236,7 @@ impl Server {
                 checker_options.clone(),
             );
 
+            checker.ctx.report_unresolved_imports = true;
             program_context.apply_to(&mut checker.ctx);
             checker
                 .ctx
@@ -571,7 +572,35 @@ impl Server {
         &mut self,
         options: &CheckOptions,
     ) -> Result<Vec<Arc<LibFile>>> {
-        let mut lib_names = self.determine_libs(options);
+        if options.no_lib {
+            return Ok(vec![]);
+        }
+        // Resolve lib names using the same strategy as load_libs_for_binding:
+        // resolve_default_lib_files_from_dir / resolve_lib_files_from_dir use
+        // build_lib_map which includes source-tree aliases like "lib" → es5.full.
+        // determine_libs returns bare logical names ("lib", "es6") that
+        // load_lib_recursive cannot resolve when lib.d.ts / lib.es6.d.ts don't
+        // exist in the source-tree lib directory.
+        let mut lib_names: Vec<String> = if let Some(ref libs) = options.lib {
+            match resolve_lib_files_from_dir(libs, &self.lib_dir) {
+                Ok(paths) => paths
+                    .into_iter()
+                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+                    .collect(),
+                Err(_) => self.determine_libs(options),
+            }
+        } else {
+            match resolve_default_lib_files_from_dir(
+                Self::parse_target(&options.target),
+                &self.lib_dir,
+            ) {
+                Ok(paths) => paths
+                    .into_iter()
+                    .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(str::to_string))
+                    .collect(),
+                Err(_) => self.determine_libs(options),
+            }
+        };
         if lib_names.is_empty() {
             return Ok(vec![]);
         }
@@ -697,11 +726,20 @@ impl Server {
             return Ok(());
         }
 
-        let candidates = [
-            self.lib_dir.join(format!("{normalized}.d.ts")),
-            self.lib_dir.join(format!("lib.{normalized}.d.ts")),
-            self.tests_lib_dir.join(format!("{normalized}.d.ts")),
-        ];
+        let candidates: [std::path::PathBuf; 3] = if normalized.ends_with(".d.ts") {
+            // Already a full filename — do not append another .d.ts extension.
+            [
+                self.lib_dir.join(&normalized),
+                self.lib_dir.join(format!("lib.{normalized}")),
+                self.tests_lib_dir.join(&normalized),
+            ]
+        } else {
+            [
+                self.lib_dir.join(format!("{normalized}.d.ts")),
+                self.lib_dir.join(format!("lib.{normalized}.d.ts")),
+                self.tests_lib_dir.join(format!("{normalized}.d.ts")),
+            ]
+        };
 
         for candidate in &candidates {
             if candidate.exists() {

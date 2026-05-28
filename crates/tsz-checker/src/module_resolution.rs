@@ -852,6 +852,7 @@ pub fn resolve_specifier_via_file_index(
     // test harness) has no src_dir. Treat it as the "current directory" so
     // relative specifiers like `./types` still resolve against siblings.
     let src_dir = match src_norm.rfind('/') {
+        Some(0) => "/",
         Some(slash) => &src_norm[..slash],
         None => "",
     };

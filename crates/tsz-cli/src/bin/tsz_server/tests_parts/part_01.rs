@@ -354,7 +354,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
         .as_array()
         .expect("semanticDiagnosticsSync body should be an array")
         .clone();
-    assert_eq!(diagnostics.len(), 1, "expected one diagnostic before edit");
+    assert_eq!(diagnostics.len(), 1, "expected one diagnostic before edit, got: {diagnostics:?}");
 
     let resp = server.handle_tsserver_request(make_request(
         "change",
