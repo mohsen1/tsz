@@ -1,5 +1,7 @@
 use super::*;
+use crate::DefId;
 use crate::intern::TypeInterner;
+use crate::relations::subtype::TypeResolver;
 use crate::types::{
     CallableShape, MappedType, ObjectFlags, ObjectShape, TupleElement, TypeParamInfo,
 };
@@ -93,6 +95,70 @@ fn test_resolve_number_index_from_mapped_record() {
         Some(TypeId::STRING),
         "Record<number, string>-shaped mapped types should expose their number index"
     );
+}
+
+#[test]
+fn test_resolve_string_index_from_application_mapped_record() {
+    struct AliasResolver {
+        def_id: DefId,
+        body: TypeId,
+        params: Vec<TypeParamInfo>,
+    }
+
+    impl TypeResolver for AliasResolver {
+        fn resolve_ref(
+            &self,
+            _symbol: crate::types::SymbolRef,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            None
+        }
+
+        fn resolve_lazy(
+            &self,
+            def_id: DefId,
+            _interner: &dyn crate::construction::TypeDatabase,
+        ) -> Option<TypeId> {
+            (def_id == self.def_id).then_some(self.body)
+        }
+
+        fn get_lazy_type_params(&self, def_id: DefId) -> Option<Vec<TypeParamInfo>> {
+            (def_id == self.def_id).then(|| self.params.clone())
+        }
+    }
+
+    let db = TypeInterner::new();
+    let key_param = TypeParamInfo {
+        name: db.intern_string("Key"),
+        constraint: Some(TypeId::STRING),
+        default: None,
+        is_const: false,
+    };
+    let value_param = TypeParamInfo {
+        name: db.intern_string("Value"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let key_type = db.type_param(key_param);
+    let value_type = db.type_param(value_param);
+    let body = mapped_record(&db, key_type, value_type);
+    let def_id = DefId(94);
+    let alias = db.lazy(def_id);
+    let applied_record = db.application(alias, vec![TypeId::STRING, TypeId::UNKNOWN]);
+    let alias_resolver = AliasResolver {
+        def_id,
+        body,
+        params: vec![key_param, value_param],
+    };
+
+    let resolver = IndexSignatureResolver::with_resolver(&db, &alias_resolver);
+    assert_eq!(
+        resolver.resolve_string_index(applied_record),
+        Some(TypeId::UNKNOWN),
+        "application-wrapped Record<string, unknown> aliases should expose their string index"
+    );
+    assert_eq!(resolver.resolve_number_index(applied_record), None);
 }
 
 #[test]
