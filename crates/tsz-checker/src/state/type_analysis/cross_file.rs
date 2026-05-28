@@ -872,6 +872,36 @@ impl<'a> CheckerState<'a> {
                 miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
             );
 
+            // Cross-file type-alias cycle guard. A direct cross-file type-alias
+            // cycle (`type A = B` in one module, `type B = A` in another) is
+            // resolved through a chain of nested child `CheckerState`s on this
+            // thread, each delegated here. The delegated alias is not added to
+            // the delegating context's `symbol_resolution_set` (it is resolved
+            // "locally" inside the child), so that set does not carry the cycle
+            // across the delegation boundary. Track the active delegation chain
+            // by `DefId` instead: if the alias we are about to delegate is
+            // already on the chain, re-entering it would recurse until the
+            // depth/fuel guards collapse the alias to `ERROR`. That `ERROR` body
+            // silently erased the circular-type-alias diagnostic (TS2456),
+            // because both the inline and post-pass detectors need a resolvable
+            // `Lazy` chain or a circular-def marker, neither of which survives
+            // `ERROR`. Mirror the same-file guard in `get_type_of_symbol`: hand
+            // back a `Lazy(def_id)` placeholder so the body remains a walkable
+            // reference and the existing detectors fire.
+            let cross_file_alias_cycle_def = (needs_cross_file_delegation
+                && self
+                    .get_cross_file_symbol(sym_id)
+                    .is_some_and(|symbol| symbol.has_any_flags(symbol_flags::TYPE_ALIAS)))
+            .then(|| self.ctx.get_or_create_def_id(sym_id));
+            if let Some(def_id) = cross_file_alias_cycle_def
+                && Self::cross_arena_delegation_in_progress(def_id)
+            {
+                let lazy = self.ctx.types.factory().lazy(def_id);
+                // Do not cache the placeholder — the cycle is broken once the
+                // chain unwinds and the alias is resolved with a real body.
+                return Some((lazy, Vec::new()));
+            }
+
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
             if !Self::enter_cross_arena_delegation() {
@@ -890,6 +920,13 @@ impl<'a> CheckerState<'a> {
             // The parent pre-caches ERROR as a cycle-detection marker and we don't
             // want the child checker to observe that placeholder.
             self.ctx.symbol_types.remove(&sym_id);
+
+            // Mark this alias as on the active cross-arena delegation chain so a
+            // re-entrant delegation from the cycle partner's body is detected
+            // above instead of recursing into `ERROR`.
+            if let Some(def_id) = cross_file_alias_cycle_def {
+                Self::push_cross_arena_delegation_def(def_id);
+            }
 
             // Re-fetch the arena reference after mutable operations above.
             // For cross-file symbols, use the target file's arena and binder.
@@ -1130,6 +1167,9 @@ impl<'a> CheckerState<'a> {
                 );
             }
 
+            if cross_file_alias_cycle_def.is_some() {
+                Self::pop_cross_arena_delegation_def();
+            }
             self.ctx.leave_recursion();
             Self::leave_cross_arena_delegation();
             return Some((result, result_params));

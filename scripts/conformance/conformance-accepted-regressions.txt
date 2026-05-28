@@ -8,7 +8,12 @@ TypeScript/tests/cases/compiler/errorInfoForRelatedIndexTypesNoConstraintElabora
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions.ts
 TypeScript/tests/cases/compiler/intersectionsOfLargeUnions2.ts
 TypeScript/tests/cases/compiler/reorderProperties.ts
-TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
+# circular4 is the remaining namespace-qualified cross-file type-alias cycle
+# (`export namespace ns { export type T = other.ns.T }`). Its body resolves
+# through the direct source-file alias-lowering fast path rather than
+# delegate_cross_arena_symbol_resolution, so the cross-file cycle guard added
+# for the direct `type A = B` / `type B = A` family (circular2) does not yet
+# reach it. Tracked by #5303.
 TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
 TypeScript/tests/cases/conformance/nonjsExtensions/declarationFileForHtmlImport.ts
 TypeScript/tests/cases/conformance/types/keyof/keyofAndIndexedAccess.ts

@@ -1201,3 +1201,101 @@ interface Node {
             "expected no TS6504 when allowJs is enabled, got: {diagnostics:?}"
         );
     }
+
+    // ───────── Cross-file circular type-only-import alias cycles (#5303) ─────────
+    //
+    // Structural rule: when a type alias's body is a bare reference (directly or
+    // through `import type` re-exports) that, after following simple-reference
+    // alias hops across module boundaries, returns to the alias itself, `tsc`
+    // reports TS2456 ("circularly references itself") at *each* alias in the
+    // cycle. tsz previously resolved the cross-file leg by delegating into a
+    // child checker that re-resolved the partner alias without carrying the
+    // resolution cycle across the delegation boundary, so the recursion bottomed
+    // out at the depth/fuel guard and collapsed the alias to the error type —
+    // erasing the diagnostic. These tests vary the alias names and the import
+    // form so the fix is structural rather than shape-matched.
+
+    #[test]
+    fn cross_file_type_only_alias_cycle_reports_2456_in_both_files() {
+        // Reported repro: conformance externalModules/typeOnly/circular2.
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "import type { B } from './b';\nexport type A = B;\n"),
+            ("/b.ts", "import type { A } from './a';\nexport type B = A;\n"),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/a.ts" && d.code == 2456),
+            "expected TS2456 on /a.ts for cross-file alias cycle, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/b.ts" && d.code == 2456),
+            "expected TS2456 on /b.ts for cross-file alias cycle, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_alias_cycle_independent_of_alias_names() {
+        // Same shape with different identifiers: the fix must not key on `A`/`B`.
+        let diagnostics = collect_test_diagnostics(&[
+            (
+                "/left.ts",
+                "import type { Bar } from './right';\nexport type Foo = Bar;\n",
+            ),
+            (
+                "/right.ts",
+                "import type { Foo } from './left';\nexport type Bar = Foo;\n",
+            ),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/left.ts" && d.code == 2456),
+            "expected TS2456 on /left.ts, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/right.ts" && d.code == 2456),
+            "expected TS2456 on /right.ts, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn cross_file_alias_cycle_with_value_imports_also_reports_2456() {
+        // Plain (non-`import type`) imports exercise the same cross-file alias
+        // cycle; the rule is about the alias bodies, not the import keyword.
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "import { B } from './b';\nexport type A = B;\n"),
+            ("/b.ts", "import { A } from './a';\nexport type B = A;\n"),
+        ]);
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/a.ts" && d.code == 2456),
+            "expected TS2456 on /a.ts, got: {diagnostics:?}"
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.file == "/b.ts" && d.code == 2456),
+            "expected TS2456 on /b.ts, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn non_circular_cross_file_alias_chain_does_not_report_2456() {
+        // Negative case: a cross-file alias chain that terminates at a primitive
+        // is not circular and must not report TS2456.
+        let diagnostics = collect_test_diagnostics(&[
+            ("/a.ts", "import type { B } from './b';\nexport type A = B;\n"),
+            ("/b.ts", "export type B = string;\n"),
+        ]);
+        assert_eq!(
+            diagnostics.iter().filter(|d| d.code == 2456).count(),
+            0,
+            "non-circular cross-file alias chain must not report TS2456, got: {diagnostics:?}"
+        );
+    }

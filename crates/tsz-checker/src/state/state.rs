@@ -37,6 +37,16 @@ thread_local! {
     /// Shared depth counter for all cross-arena delegation points.
     /// Prevents stack overflow from deeply nested CheckerState creation.
     static CROSS_ARENA_DEPTH: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+
+    /// `DefId`s of type aliases currently being resolved through cross-arena
+    /// symbol delegation, in delegation order. The delegation chain spans files
+    /// via nested child `CheckerState`s on a single thread, and the delegated
+    /// alias is resolved "locally" inside the child rather than being added to
+    /// the delegating context's `symbol_resolution_set`, so that set does not
+    /// carry the cycle across the delegation boundary. Re-entering a `DefId`
+    /// already on this stack is a cross-file type-alias cycle.
+    static CROSS_ARENA_DELEGATION_DEFS: std::cell::RefCell<Vec<u32>> =
+        const { std::cell::RefCell::new(Vec::new()) };
 }
 
 // =============================================================================
@@ -327,6 +337,27 @@ impl<'a> CheckerState<'a> {
     /// Decrement the cross-arena delegation depth counter.
     pub(crate) fn leave_cross_arena_delegation() {
         CROSS_ARENA_DEPTH.with(|c| c.set(c.get().saturating_sub(1)));
+    }
+
+    /// True when `def_id` is already on the active cross-arena delegation chain,
+    /// i.e. resolving it again would re-enter an in-progress resolution. This is
+    /// a cross-file circular reference.
+    pub(crate) fn cross_arena_delegation_in_progress(def_id: tsz_solver::def::DefId) -> bool {
+        CROSS_ARENA_DELEGATION_DEFS.with(|s| s.borrow().contains(&def_id.0))
+    }
+
+    /// Push `def_id` onto the active cross-arena delegation chain. Pair with
+    /// [`Self::pop_cross_arena_delegation_def`] once the delegated resolution
+    /// has returned.
+    pub(crate) fn push_cross_arena_delegation_def(def_id: tsz_solver::def::DefId) {
+        CROSS_ARENA_DELEGATION_DEFS.with(|s| s.borrow_mut().push(def_id.0));
+    }
+
+    /// Pop the most recently pushed cross-arena delegation `DefId`.
+    pub(crate) fn pop_cross_arena_delegation_def() {
+        CROSS_ARENA_DELEGATION_DEFS.with(|s| {
+            s.borrow_mut().pop();
+        });
     }
 
     pub(crate) fn is_require_call_bound_identifier(&self, idx: NodeIndex) -> bool {
