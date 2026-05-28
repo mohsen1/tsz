@@ -536,6 +536,155 @@ fn spread_intersection_with_undefined_is_invalid_on_its_own() {
     assert!(!is_valid_spread_type(&db, intersection));
 }
 
+// =============================================================================
+// Deferred IndexAccess — tsc's InstantiableNonPrimitive rule
+//
+// tsc's `isValidSpreadType`:
+//   if (type.flags & TypeFlags.Instantiable) {
+//       const constraint = getBaseConstraintOfType(type);
+//       if (constraint !== undefined) return isValidSpreadType(constraint);
+//   }
+//   return !!(type.flags & (Any | NonPrimitive | Object | InstantiableNonPrimitive) | …);
+//
+// `TypeFlags.InstantiableNonPrimitive` covers `IndexedAccess`. When the
+// indexed-access expression cannot be reduced (no usable base constraint),
+// the flag check itself accepts the spread — tsc treats deferred `T[K]` as
+// "could be an object at runtime, allow `{ ...x }`".
+//
+// tsz must mirror this. `keyof T` stays invalid: it is semantically a
+// property-key primitive even when deferred.
+// =============================================================================
+
+/// Build a type parameter with the standard `default=None, is_const=false`
+/// defaults so the new IndexAccess-spread coverage reads as the *shape* under
+/// test instead of `TypeParamInfo` boilerplate.
+fn tp(db: &TypeInterner, name: &str, constraint: Option<TypeId>) -> TypeId {
+    db.type_param(TypeParamInfo {
+        name: db.intern_string(name),
+        constraint,
+        default: None,
+        is_const: false,
+    })
+}
+
+/// Build a single-property object with `Public` visibility for use as a
+/// generic constraint. The new spread tests only vary by the property's
+/// value type, so the rest of the `PropertyInfo` flags stay at their
+/// minimal defaults.
+fn obj_with_prop(db: &TypeInterner, name: &str, type_id: TypeId) -> TypeId {
+    let prop_name = db.intern_string(name);
+    db.object(vec![PropertyInfo {
+        name: prop_name,
+        type_id,
+        write_type: type_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: false,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    }])
+}
+
+#[test]
+fn spread_deferred_index_access_unconstrained_both_sides_is_valid() {
+    // `<T, K>(x: T[K]) { ...{ ...x } }` — both type parameters unconstrained.
+    // tsc: deferred IndexAccess has `InstantiableNonPrimitive` flag and the
+    // base-constraint lookup yields nothing useful, so the flag-check arm
+    // accepts the spread.
+    let db = TypeInterner::new();
+    let access = db.index_access(tp(&db, "T", None), tp(&db, "K", None));
+    assert!(is_valid_spread_type(&db, access));
+}
+
+#[test]
+fn spread_deferred_index_access_renamed_params_is_valid() {
+    // Same structural rule as above with renamed type parameters — confirms
+    // the fix is keyed on the structural shape, not the parameter spelling.
+    let db = TypeInterner::new();
+    let access = db.index_access(tp(&db, "Alpha", None), tp(&db, "Beta", None));
+    assert!(is_valid_spread_type(&db, access));
+}
+
+#[test]
+fn spread_deferred_index_access_object_constraint_generic_key_is_valid() {
+    // `<T extends Obj, K extends keyof T>(x: T[K]) { ...{ ...x } }`
+    // The object's constraint is an object type and the key's constraint
+    // is `keyof T`. tsc accepts the spread.
+    let db = TypeInterner::new();
+    let t = tp(&db, "T", Some(db.object(vec![])));
+    let k = tp(&db, "K", Some(db.keyof(t)));
+    let access = db.index_access(t, k);
+    assert!(is_valid_spread_type(&db, access));
+}
+
+#[test]
+fn spread_deferred_index_access_into_record_value_is_valid() {
+    // `<T extends Record<string, { x: number }>, K extends keyof T>(x: T[K])`
+    // — the indexed value is structurally an object; tsc accepts the spread.
+    // Modeled directly with an object constraint having an object-typed
+    // property since we cannot synthesize `Record<…>` at the solver-internal
+    // layer without a binder.
+    let db = TypeInterner::new();
+    let inner_obj = db.object(vec![]);
+    let t = tp(&db, "T", Some(obj_with_prop(&db, "prop", inner_obj)));
+    let k = tp(&db, "K", Some(db.keyof(t)));
+    let access = db.index_access(t, k);
+    assert!(is_valid_spread_type(&db, access));
+}
+
+#[test]
+fn spread_deferred_index_access_into_primitive_record_is_invalid() {
+    // Negative case proving the fix is not "deferred IndexAccess is always
+    // valid". When T's constraint is an object whose property values are
+    // primitives (`{prop: number}`), `T[K]` with `K extends keyof T` would
+    // index into `number`. tsc rejects the spread. tsz must still reject.
+    let db = TypeInterner::new();
+    let t = tp(&db, "T", Some(obj_with_prop(&db, "prop", TypeId::NUMBER)));
+    let k = tp(&db, "K", Some(db.keyof(t)));
+    let access = db.index_access(t, k);
+    assert!(!is_valid_spread_type(&db, access));
+}
+
+#[test]
+fn spread_keyof_deferred_remains_invalid() {
+    // Regression guard for the negative side of the IndexAccess fix:
+    // `keyof T` for an unconstrained `T` is a deferred property-key
+    // primitive. It must still be rejected for spread — the InstantiableNon-
+    // Primitive flag does NOT cover `KeyOf` semantically (tsc treats keyof
+    // results as primitive `string | number | symbol` keys).
+    let db = TypeInterner::new();
+    let keyof_t = db.keyof(tp(&db, "T", None));
+    assert!(!is_valid_spread_type(&db, keyof_t));
+}
+
+#[test]
+fn spread_keyof_object_constrained_remains_invalid() {
+    // The deferred `keyof T` rejection must hold regardless of `T`'s
+    // constraint — a future change accidentally treating constrained
+    // `keyof T` as object-like would silently accept primitive property
+    // keys as spread sources.
+    let db = TypeInterner::new();
+    let keyof_t = db.keyof(tp(&db, "T", Some(db.object(vec![]))));
+    assert!(!is_valid_spread_type(&db, keyof_t));
+}
+
+#[test]
+fn spread_union_member_deferred_index_access_is_valid() {
+    // Union of `T[K]` (deferred, unconstrained) and `{}` should be valid.
+    // Each non-falsy member must pass; the deferred IndexAccess member is
+    // the only difference from the existing union tests.
+    let db = TypeInterner::new();
+    let access = db.index_access(tp(&db, "T", None), tp(&db, "K", None));
+    let obj = db.object(vec![]);
+    let union = db.union(vec![access, obj]);
+    assert!(is_valid_spread_type(&db, union));
+}
+
 #[test]
 fn object_spread_dts_projection_matches_falsy_spread_rules() {
     let db = TypeInterner::new();
