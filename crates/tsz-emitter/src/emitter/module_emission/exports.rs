@@ -667,7 +667,8 @@ impl<'a> Printer<'a> {
                     if let Some(spec_node) = self.arena.get(spec_idx)
                         && let Some(spec) = self.arena.get_specifier(spec_node)
                     {
-                        if spec.is_type_only {
+                        if spec.is_type_only || self.ctx.options.type_only_nodes.contains(&spec_idx)
+                        {
                             continue;
                         }
                         // Get export name and import name (can be string literals)
@@ -1290,6 +1291,29 @@ impl<'a> Printer<'a> {
                                         .runtime_declaration_names
                                         .contains(&local_name)
                                 {
+                                    continue;
+                                }
+
+                                // When the local name is a named-import binding, emit a
+                                // live-binding Object.defineProperty getter using the CJS
+                                // substitution (`t1_1.v1`). This covers the pattern:
+                                //   import { v1 as v } from "./t1"; export { v };
+                                // which must emit:
+                                //   Object.defineProperty(exports, "v",
+                                //     { enumerable: true, get: function () { return t1_1.v1; } });
+                                if let Some(substitution) = self
+                                    .commonjs_named_import_substitutions
+                                    .get(&local_name)
+                                    .cloned()
+                                {
+                                    self.write("Object.defineProperty(exports, \"");
+                                    self.write(&export_name);
+                                    self.write(
+                                        "\", { enumerable: true, get: function () { return ",
+                                    );
+                                    self.write(&substitution);
+                                    self.write("; } });");
+                                    self.write_line();
                                     continue;
                                 }
 
