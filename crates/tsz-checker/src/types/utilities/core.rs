@@ -2531,7 +2531,21 @@ impl<'a> CheckerState<'a> {
                     {
                         return false;
                     }
-                    Some(constraint) => constraint,
+                    // A concrete constraint may still be an unevaluated wrapper
+                    // (e.g. `T extends Record<string, V>`, where the constraint
+                    // is an `Application` of a mapped type). Resolve it to its
+                    // apparent type through the checker environment so the
+                    // index-signature queries below inspect the structural shape
+                    // (`{ [k: string]: V }`) rather than an opaque application
+                    // node — otherwise a resolver-less evaluation leaves the
+                    // wrapper intact and the constraint looks unindexable.
+                    Some(constraint) => {
+                        crate::query_boundaries::dispatch::evaluate_type_with_resolver(
+                            self.ctx.types,
+                            &self.ctx,
+                            constraint,
+                        )
+                    }
                     // Unconstrained: the base constraint is `unknown`, which has
                     // no index signatures, so a concrete key can't index it.
                     None => TypeId::UNKNOWN,

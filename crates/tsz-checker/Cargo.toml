@@ -1583,6 +1583,10 @@ name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
+name = "ts7053_record_constrained_type_param_index_tests"
+path = "tests/ts7053_record_constrained_type_param_index_tests.rs"
+
+[[test]]
 name = "ts7053_unconstrained_type_param_index_tests"
 path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
 
