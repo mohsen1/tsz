@@ -283,9 +283,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Resolve DefIds to their structural forms
+        // Resolve DefIds to their structural forms. A `None` here means the
+        // body is not yet registered (re-entrant lib resolution); record an
+        // undetermined-result event so the enclosing `check_subtype`'s
+        // cache write is skipped instead of caching a False that depended on
+        // a transiently-unresolvable ref.
         let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
+        if s_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
+        if t_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
 
         // Detect self-referencing Lazy types (namespace circular references).
         // When a namespace's DefId resolves back to Lazy(same_DefId), it means
@@ -985,7 +995,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
@@ -1748,7 +1769,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
