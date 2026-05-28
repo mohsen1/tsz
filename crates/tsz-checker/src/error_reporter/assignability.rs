@@ -1944,6 +1944,11 @@ impl<'a> CheckerState<'a> {
                 && !authoritative_names_differ
                 && !pair_is_literal_value
                 && !exact_optional_structural_pair
+                // unique symbols stringify identically but are distinct symbol
+                // identities; tsc reports their mismatch as TS2322, not TS2719.
+                // Detect structurally rather than by display. See #9752.
+                && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, source)
+                && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, target)
             {
                 (
                     format_message(
