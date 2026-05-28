@@ -82,9 +82,94 @@ impl<'a> Printer<'a> {
         if !node.is_identifier() {
             return None;
         }
+        if self.private_static_class_alias_shadow_depth > 0 {
+            return None;
+        }
         let (cls_name, alias) = self.private_static_class_alias.as_ref()?;
         let ident = self.arena.get_identifier(node)?;
         (ident.escaped_text == *cls_name).then_some(alias.as_str())
+    }
+
+    pub(in crate::emitter) fn block_shadows_private_static_class_alias(
+        &self,
+        statements: &[NodeIndex],
+        include_function_params: bool,
+    ) -> bool {
+        let Some((class_name, _)) = self.private_static_class_alias.as_ref() else {
+            return false;
+        };
+
+        if include_function_params {
+            for &param_idx in &self.pending_function_body_parameters {
+                let Some(param) = self.arena.get_parameter_at(param_idx) else {
+                    continue;
+                };
+                if self.binding_name_matches(param.name, class_name) {
+                    return true;
+                }
+            }
+        }
+
+        statements.iter().copied().any(|stmt_idx| {
+            self.statement_declares_private_static_class_alias_name(stmt_idx, class_name)
+        })
+    }
+
+    fn binding_name_matches(&self, name_idx: NodeIndex, needle: &str) -> bool {
+        let mut names = Vec::new();
+        self.collect_binding_names(name_idx, &mut names);
+        names.iter().any(|name| name == needle)
+    }
+
+    fn declaration_name_matches(&self, name_idx: NodeIndex, needle: &str) -> bool {
+        self.arena
+            .get(name_idx)
+            .and_then(|node| self.arena.get_identifier(node))
+            .is_some_and(|ident| ident.escaped_text == needle)
+    }
+
+    fn statement_declares_private_static_class_alias_name(
+        &self,
+        stmt_idx: NodeIndex,
+        class_name: &str,
+    ) -> bool {
+        let Some(stmt_node) = self.arena.get(stmt_idx) else {
+            return false;
+        };
+
+        match stmt_node.kind {
+            k if k == syntax_kind_ext::VARIABLE_STATEMENT => {
+                let Some(var_stmt) = self.arena.get_variable(stmt_node) else {
+                    return false;
+                };
+                var_stmt.declarations.nodes.iter().copied().any(|list_idx| {
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    if let Some(decl) = self.arena.get_variable_declaration(list_node) {
+                        return self.binding_name_matches(decl.name, class_name);
+                    }
+                    let Some(list) = self.arena.get_variable(list_node) else {
+                        return false;
+                    };
+                    list.declarations.nodes.iter().copied().any(|decl_idx| {
+                        self.arena
+                            .get(decl_idx)
+                            .and_then(|decl_node| self.arena.get_variable_declaration(decl_node))
+                            .is_some_and(|decl| self.binding_name_matches(decl.name, class_name))
+                    })
+                })
+            }
+            k if k == syntax_kind_ext::FUNCTION_DECLARATION => self
+                .arena
+                .get_function(stmt_node)
+                .is_some_and(|func| self.declaration_name_matches(func.name, class_name)),
+            k if k == syntax_kind_ext::CLASS_DECLARATION => self
+                .arena
+                .get_class(stmt_node)
+                .is_some_and(|class| self.declaration_name_matches(class.name, class_name)),
+            _ => false,
+        }
     }
 
     /// Check if a receiver expression is simple enough that it doesn't need

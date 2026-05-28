@@ -193,6 +193,44 @@ class A3 {
 }
 
 #[test]
+fn static_private_method_receiver_respects_local_class_name_shadow() {
+    let source = r#"
+class X {
+    static #m() {
+        const X = {};
+        X.#m();
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(X, _a, \"m\", _X_m).call(X);"),
+        "Local class-name bindings should be used as the receiver while the private state still uses the class alias.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn static_private_method_receiver_reuses_alias_after_nested_shadow_block() {
+    let source = r#"
+class X {
+    static #m() {
+        {
+            const X = {};
+        }
+        X.#m();
+    }
+}
+"#;
+    let output = emit(source, ScriptTarget::ES2015);
+
+    assert!(
+        output.contains("__classPrivateFieldGet(_a, _a, \"m\", _X_m).call(_a);"),
+        "Nested block shadows should not suppress class-alias receivers after the block exits.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn static_private_field_destructuring_uses_simple_receivers_directly() {
     let source = r#"
 class A {

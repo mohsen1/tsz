@@ -389,6 +389,7 @@ impl<'a> Printer<'a> {
             pending_private_accessor_defs: Vec::new(),
             private_members_to_skip: FxHashSet::default(),
             private_static_class_alias: None,
+            private_static_class_alias_shadow_depth: 0,
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
