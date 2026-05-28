@@ -1154,7 +1154,15 @@ impl<'a> Printer<'a> {
                             let has_accessor = self
                                 .arena
                                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                            prop.initializer.is_none() && !is_private && !has_accessor
+                            // A no-initializer field is erased *unless* it is still
+                            // runtime-materialized as a defined field (define
+                            // semantics). Use the shared predicate so this stays in
+                            // lockstep with the runtime field-lowering site, which
+                            // would otherwise reference a temp that was never recorded.
+                            prop.initializer.is_none()
+                                && !is_private
+                                && !has_accessor
+                                && !self.no_init_property_is_runtime_materialized(prop)
                         };
                         (&prop.modifiers, prop.name, Some(is_erased))
                     }
@@ -1692,8 +1700,7 @@ impl<'a> Printer<'a> {
                     // Without that flag the typed-only declaration has no
                     // runtime effect, so skip it.
                     let no_initializer_node = prop.initializer.is_none();
-                    let materialize_no_init =
-                        no_initializer_node && self.ctx.options.use_define_for_class_fields;
+                    let materialize_no_init = self.no_init_property_is_runtime_materialized(prop);
                     if !materialize_no_init
                         && (no_initializer_node
                             || !self.class_property_initializer_has_equals(member_node, prop))
@@ -3910,6 +3917,28 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    /// Structural predicate: is this initializer-less `PROPERTY_DECLARATION`
+    /// still runtime-materialized as a *defined* field?
+    ///
+    /// Under `useDefineForClassFields` a field declared without an initializer is
+    /// not erased: `tsc` materializes it with
+    /// `Object.defineProperty(this, <name>, { ... value: void 0 })`. A computed
+    /// name on such a field is therefore hoisted into a temp exactly like a
+    /// computed-name field that *does* have an initializer.
+    ///
+    /// This is the single source of truth shared by the computed-name
+    /// hoisting-classification pass and the runtime field-lowering site so the
+    /// two cannot disagree about whether a no-initializer field survives to
+    /// runtime. It keys purely on structural facts (no initializer + define
+    /// semantics enabled) and intentionally does not re-check abstract/declare/
+    /// private/accessor — those are filtered independently at each call site.
+    const fn no_init_property_is_runtime_materialized(
+        &self,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        prop.initializer.is_none() && self.ctx.options.use_define_for_class_fields
     }
 
     fn class_property_initializer_has_equals(
