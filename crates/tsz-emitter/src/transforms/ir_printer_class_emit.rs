@@ -412,7 +412,17 @@ impl<'a> IRPrinter<'a> {
             .iter()
             .flat_map(|group| group.iter().map(String::as_str))
             .collect();
-        self.generator_state_name = Self::generator_state_name_for_hoisted(&hoisted_vars);
+        self.generator_state_name = if self.outer_reserved_for_generator_state.is_empty() {
+            Self::generator_state_name_for_hoisted(&hoisted_vars)
+        } else {
+            let mut combined: Vec<&str> = hoisted_vars.clone();
+            combined.extend(
+                self.outer_reserved_for_generator_state
+                    .iter()
+                    .map(String::as_str),
+            );
+            Self::generator_state_name_for_hoisted(&combined)
+        };
         self.write("return __awaiter(");
         self.emit_node(this_arg);
         if let Some(ctor) = promise_constructor {

@@ -39,17 +39,6 @@ impl Es5StaticClassExpressionElement {
     }
 }
 
-fn avoid_generator_state_collision(segment: &str, class_temp: &str) -> String {
-    if class_temp != "_a" || !segment.contains("function (_a)") {
-        return segment.to_string();
-    }
-
-    segment
-        .replace("function (_a)", "function (_b)")
-        .replace("_a.label", "_b.label")
-        .replace("_a.sent()", "_b.sent()")
-}
-
 impl<'a> Printer<'a> {
     fn next_arguments_capture_name(&mut self) -> String {
         loop {
@@ -290,11 +279,11 @@ impl<'a> Printer<'a> {
         let temp = class_value_temp.map_or_else(
             || {
                 if self.class_expression_is_in_loop_body(class_node) {
-                    let temp = self.make_unique_name();
+                    let temp = self.make_class_static_temp_name(class_node);
                     self.block_scoped_private_temps.push(temp.clone());
                     temp
                 } else {
-                    self.make_unique_name_hoisted()
+                    self.make_class_static_temp_name_hoisted(class_node)
                 }
             },
             str::to_string,
@@ -362,15 +351,6 @@ impl<'a> Printer<'a> {
                         let full = self.writer.get_output().to_string();
                         let segment = &full[before..after];
                         let replaced = replace_identifier(segment, class_name, &temp);
-                        let replaced = avoid_generator_state_collision(&replaced, &temp);
-                        if replaced != segment {
-                            self.writer.truncate(before);
-                            self.write(&replaced);
-                        }
-                    } else {
-                        let full = self.writer.get_output().to_string();
-                        let segment = &full[before..after];
-                        let replaced = avoid_generator_state_collision(segment, &temp);
                         if replaced != segment {
                             self.writer.truncate(before);
                             self.write(&replaced);
@@ -664,6 +644,10 @@ impl<'a> Printer<'a> {
             let blocked_disposable_names = self.blocked_disposable_names_for_transform();
             async_emitter
                 .set_disposable_env_context(self.next_disposable_env_id, blocked_disposable_names);
+            if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
+                async_emitter
+                    .set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
+            }
 
             let body_has_await = async_emitter.body_contains_await(body);
             let body_is_single_line = self.arena.get(body).is_some_and(|n| self.is_single_line(n));
@@ -1402,6 +1386,9 @@ impl<'a> Printer<'a> {
             es5_emitter.set_tslib_import_binding(self.commonjs_tslib_import_binding.clone());
         }
         es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        if let Some((_, alias)) = &self.scoped_class_expression_self_alias {
+            es5_emitter.set_outer_reserved_for_generator_state(vec![alias.as_ref().to_string()]);
+        }
         if self.es5_class_expression_extends_this_captured {
             es5_emitter.set_extends_this_captured(true);
         }
@@ -1494,11 +1481,11 @@ impl<'a> Printer<'a> {
                 }
             }
             let class_temp = if in_loop {
-                let t = self.make_unique_name();
+                let t = self.make_class_static_temp_name(class_node);
                 self.block_scoped_private_temps.push(t.clone());
                 t
             } else {
-                self.make_unique_name_hoisted()
+                self.make_class_static_temp_name_hoisted(class_node)
             };
 
             let comma_static_elements = if use_static_comma {
