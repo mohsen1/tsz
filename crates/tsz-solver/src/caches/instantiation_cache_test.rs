@@ -13,6 +13,8 @@
 //! 4. The empty / identity short-circuit runs BEFORE cache-key construction,
 //!    leaving the cache untouched on no-op substitutions.
 //! 5. Results from a `depth_exceeded` walk are NOT cached.
+//! 6. Semantically equal substitutions hit the same cache slot even if their
+//!    `FxHashMap` insertion order differs.
 //!
 //! Tests use `TypeInterner` + `QueryCache` and route the cache parameter
 //! explicitly through the `_cached` overloads, mirroring how the hot evaluator
@@ -57,6 +59,43 @@ fn object_with(interner: &TypeInterner, t_id: TypeId) -> TypeId {
         single_quoted_name: false,
     };
     interner.object(vec![prop])
+}
+
+/// Build an object type `{ a: T; b: U }` over two given type-ids.
+fn object_with_pair(interner: &TypeInterner, t_id: TypeId, u_id: TypeId) -> TypeId {
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let prop_a = PropertyInfo {
+        name: a,
+        type_id: t_id,
+        write_type: t_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: true,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let prop_b = PropertyInfo {
+        name: b,
+        type_id: u_id,
+        write_type: u_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 1,
+        is_string_named: true,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    interner.object(vec![prop_a, prop_b])
 }
 
 #[test]
@@ -122,6 +161,48 @@ fn cache_distinct_substitutions_do_not_alias() {
     assert!(
         entries >= 2,
         "expected >= 2 distinct cache entries, got {entries}"
+    );
+}
+
+#[test]
+fn cache_canonicalizes_substitution_insertion_order() {
+    // The cache key is the canonical substitution payload, not the source
+    // FxHashMap's insertion order. Rebuilding the same semantic substitution in
+    // reverse order must hit the first cache entry instead of creating a second.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let (u_atom, u_id) = type_param(&interner, "U");
+    let body = object_with_pair(&interner, t_id, u_id);
+
+    let mut subst_tu = TypeSubstitution::new();
+    subst_tu.insert(t_atom, TypeId::STRING);
+    subst_tu.insert(u_atom, TypeId::NUMBER);
+
+    let mut subst_ut = TypeSubstitution::new();
+    subst_ut.insert(u_atom, TypeId::NUMBER);
+    subst_ut.insert(t_atom, TypeId::STRING);
+
+    let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst_tu);
+    let stats_after_first = db.statistics();
+    assert_eq!(
+        stats_after_first.instantiation_cache_entries, 1,
+        "first non-leaf instantiation should create one cache entry"
+    );
+
+    let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst_ut);
+    let stats_after_second = db.statistics();
+
+    assert_eq!(r1, r2, "equal substitutions must produce equal results");
+    assert_eq!(
+        stats_after_second.instantiation_cache_entries,
+        stats_after_first.instantiation_cache_entries,
+        "reversed insertion order must reuse the canonical cache slot"
+    );
+    assert!(
+        stats_after_second.instantiation_cache_hits > stats_after_first.instantiation_cache_hits,
+        "reversed insertion order should register a cache hit"
     );
 }
 
