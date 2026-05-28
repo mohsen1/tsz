@@ -221,6 +221,11 @@ impl RelationPolicy {
             .contains(RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY)
     }
 
+    /// Whether the next signature comparison is a callback parameter check.
+    pub const fn in_callback_param_check(self) -> bool {
+        self.flags.contains(RelationFlags::IN_CALLBACK_PARAM_CHECK)
+    }
+
     /// Whether readonly must be treated as identity-significant.
     pub const fn strict_readonly_identity(self) -> bool {
         self.flags.contains(RelationFlags::STRICT_READONLY_IDENTITY)
@@ -533,6 +538,7 @@ fn configure_compat_checker_policy_bits<R: TypeResolver>(
     checker.subtype.allow_bivariant_param_count = policy.allow_bivariant_param_count();
     checker.subtype.allow_erased_generic_signature_retry =
         policy.allow_erased_generic_signature_retry();
+    checker.subtype.in_callback_param_check = policy.in_callback_param_check();
 }
 
 const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
@@ -550,6 +556,7 @@ const fn configure_subtype_checker_policy_bits<'a, R: TypeResolver>(
     checker.strict_readonly_identity = policy.strict_readonly_identity();
     checker.erase_generics = policy.erase_generics;
     checker.allow_erased_generic_signature_retry = policy.allow_erased_generic_signature_retry();
+    checker.in_callback_param_check = policy.in_callback_param_check();
     checker
 }
 
