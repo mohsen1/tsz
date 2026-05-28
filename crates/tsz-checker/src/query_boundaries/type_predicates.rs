@@ -67,6 +67,11 @@ pub(crate) fn is_this_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::is_this_type(db, type_id)
 }
 
+/// Whether `type_id` is a `unique symbol` type (`TypeData::UniqueSymbol`).
+pub(crate) fn is_unique_symbol_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::type_queries::is_unique_symbol_type(db, type_id)
+}
+
 pub(crate) fn is_recursive_type_reference(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::recursive_index(db, type_id).is_some()
 }

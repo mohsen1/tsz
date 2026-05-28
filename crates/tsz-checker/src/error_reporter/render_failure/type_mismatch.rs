@@ -534,8 +534,8 @@ impl<'a> CheckerState<'a> {
             // named nominal types — both stringify as `unique symbol`, but tsc
             // reports their mismatch as TS2322 (with `typeof`-based names), not
             // TS2719. Detect them structurally rather than by display. See #9752.
-            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, source)
-            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, target)
+            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, source)
+            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, target)
         {
             let message = format_message(
                 diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE_TWO_DIFFERENT_TYPES_WITH_THIS_NAME_EXIST_BUT_THEY,

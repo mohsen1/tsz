@@ -1151,8 +1151,8 @@ impl<'a> CheckerState<'a> {
             && !crate::error_reporter::assignability::display_is_literal_value(&source_param_str)
             // unique symbols stringify identically but are distinct identities;
             // tsc uses TS2322, not TS2719. Detect structurally. See #9752.
-            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, source_param)
-            && !crate::query_boundaries::common::is_unique_symbol_type(self.ctx.types, target_param)
+            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, source_param)
+            && !crate::query_boundaries::type_predicates::is_unique_symbol_type(self.ctx.types, target_param)
         {
             (
                 format_message(
