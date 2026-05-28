@@ -63,3 +63,22 @@ fn object_rest_destructuring_uses_single_relation_outcome() {
         "object rest destructuring must not pre-gate the rest target decision with a raw boolean guard"
     );
 }
+
+#[test]
+fn binding_pattern_default_inference_uses_relation_outcomes() {
+    let source = fs::read_to_string("src/types/queries/binding.rs")
+        .expect("failed to read types/queries/binding.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert_eq!(
+        compact_source
+            .matches("assign_relation_outcome(init_type,element_type).related")
+            .count(),
+        2,
+        "object and array binding default inference should route element/default compatibility through relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("is_assignable_to(init_type,element_type)"),
+        "binding default inference should not use raw boolean assignability gates"
+    );
+}
