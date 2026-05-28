@@ -532,6 +532,87 @@ interface Window {
         resolved
     }
 
+    /// A cross-file alias whose body nests a homomorphic utility type over an
+    /// imported type (`Omit<Partial<X>, "k">`) must resolve to the real object
+    /// shape, even when the consumer reaches the alias first through a property
+    /// access (so the alias is first evaluated in a nested context).
+    ///
+    /// Regression for #10682 (kysely): while computing `keyof T` for the
+    /// enclosing `Omit`, `Partial`'s structural body has not been registered
+    /// yet, so the resolver hands back `Partial`'s own self-lazy wrapper.
+    /// Substituting the argument into that wrapper dropped it, collapsing
+    /// `Partial<X>` to bare `Partial` and the whole alias to `{}`; a fresh
+    /// object literal with a valid optional subset then failed with a false
+    /// `TS2345`, and the cached degenerate result poisoned later uses. The fix
+    /// keeps the application opaque until the body is ready.
+    ///
+    /// The helper runs two unrelated name/key choices so a fix keyed to a
+    /// single spelling (the interface name, property names, or the omitted
+    /// key) would not satisfy it.
+    #[test]
+    fn cross_file_omit_partial_alias_param_resolves_via_property_access() {
+        // `iface` gains a required `omit_key: string` plus optional number
+        // members `props`; the alias drops `omit_key` via `Omit<Partial<_>, _>`.
+        fn run(case: &str, iface: &str, omit_key: &str, props: &[&str], good: &str) {
+            let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+            assert!(
+                !lib_files.is_empty(),
+                "[{case}] es5.d.ts must be available for this regression"
+            );
+            let members = props
+                .iter()
+                .map(|p| format!("  readonly {p}?: number;\n"))
+                .collect::<String>();
+            let wrong_prop = props[0];
+            let defs = format!(
+                "export interface {iface} {{\n  readonly {omit_key}: string;\n{members}}}\n\
+                 export type Props = Omit<Partial<{iface}>, \"{omit_key}\">;\n\
+                 // type/value name collision, as in kysely's frozen node factories.\n\
+                 export declare const {iface}: {{ with(p: Props): {iface} }};\n"
+            );
+            // Consumer file listed first so the alias is first evaluated through
+            // the nested property-access path (the order that triggered #10682).
+            let use_src = format!(
+                "import {{ {iface} }} from \"./defs.js\";\n\
+                 export const okMulti = {iface}.with({{ {good} }});\n\
+                 export const okEmpty = {iface}.with({{}});\n\
+                 export const wrong = {iface}.with({{ {wrong_prop}: \"not-a-number\" }});\n\
+                 export const excess = {iface}.with({{ definitelyNotAKey: 1 }});\n"
+            );
+            let files = [("/p/use.ts", use_src.as_str()), ("/p/defs.ts", defs.as_str())];
+            let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+
+            // The fix: the nested-utility alias no longer collapses to `{}`, so
+            // valid optional-subset literals (and `{}`) produce no false TS2345.
+            assert!(
+                !diagnostics.iter().any(|d| d.code == 2345),
+                "[{case}] valid optional-subset literals must be assignable to \
+                 Omit<Partial<{iface}>, \"{omit_key}\"> resolved through property \
+                 access; no TS2345 expected. Diagnostics: {diagnostics:?}"
+            );
+
+            // The alias must still resolve to a real object (not `any`/`{}`):
+            // an unknown property and a wrong-typed value are still rejected.
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.code == 2353 && d.message_text.contains("definitelyNotAKey")),
+                "[{case}] an unknown property must still be rejected (TS2353), \
+                 proving the alias resolved to a structural object. \
+                 Diagnostics: {diagnostics:?}"
+            );
+            assert!(
+                diagnostics.iter().any(|d| d.code == 2322),
+                "[{case}] a wrong-typed property must still be rejected (TS2322). \
+                 Diagnostics: {diagnostics:?}"
+            );
+        }
+
+        // Two unrelated spellings prove the fix is structural, not name-keyed.
+        run("widget", "Widget", "kind", &["w", "label"], "w: 1, label: 2");
+        run("record", "RecordNode", "tag", &["alpha", "beta"], "alpha: 2");
+    }
+
     #[test]
     fn readonly_alias_annotation_survives_consumer_first_program_check() {
         let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
