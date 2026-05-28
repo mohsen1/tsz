@@ -669,8 +669,7 @@ impl<'a> LoweringPass<'a> {
         {
             return true;
         }
-        self.ctx.target_es5
-            && self.async_return_type_uses_imported_promise_constructor_after_node(node, &names)
+        self.ctx.target_es5 && self.async_return_type_uses_imported_promise_constructor(&names)
     }
 
     fn named_imports_have_value_usage(
@@ -724,10 +723,7 @@ impl<'a> LoweringPass<'a> {
                 return true;
             }
             self.ctx.target_es5
-                && self.async_return_type_uses_imported_promise_constructor_after_node(
-                    node,
-                    &[local_name],
-                )
+                && self.async_return_type_uses_imported_promise_constructor(&[local_name])
         })
     }
 
@@ -760,38 +756,29 @@ impl<'a> LoweringPass<'a> {
         &source_text[start..]
     }
 
-    fn async_return_type_uses_imported_promise_constructor_after_node(
-        &self,
-        import_node: &Node,
-        names: &[String],
-    ) -> bool {
-        self.arena.nodes.iter().any(|node| {
-            if node.pos < import_node.end {
-                return false;
+    fn async_return_type_uses_imported_promise_constructor(&self, names: &[String]) -> bool {
+        self.arena.nodes.iter().any(|node| match node.kind {
+            kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
+                || kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                || kind == syntax_kind_ext::ARROW_FUNCTION =>
+            {
+                self.arena.get_function(node).is_some_and(|func| {
+                    func.is_async
+                        && self
+                            .promise_constructor_type_name(func.type_annotation)
+                            .is_some_and(|name| names.iter().any(|import| import == &name))
+                })
             }
-            match node.kind {
-                kind if kind == syntax_kind_ext::FUNCTION_DECLARATION
-                    || kind == syntax_kind_ext::FUNCTION_EXPRESSION
-                    || kind == syntax_kind_ext::ARROW_FUNCTION =>
-                {
-                    self.arena.get_function(node).is_some_and(|func| {
-                        func.is_async
-                            && self
-                                .promise_constructor_type_name(func.type_annotation)
-                                .is_some_and(|name| names.iter().any(|import| import == &name))
-                    })
-                }
-                kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
-                    self.arena.get_method_decl(node).is_some_and(|method| {
-                        self.arena
-                            .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
-                            && self
-                                .promise_constructor_type_name(method.type_annotation)
-                                .is_some_and(|name| names.iter().any(|import| import == &name))
-                    })
-                }
-                _ => false,
+            kind if kind == syntax_kind_ext::METHOD_DECLARATION => {
+                self.arena.get_method_decl(node).is_some_and(|method| {
+                    self.arena
+                        .has_modifier(&method.modifiers, SyntaxKind::AsyncKeyword)
+                        && self
+                            .promise_constructor_type_name(method.type_annotation)
+                            .is_some_and(|name| names.iter().any(|import| import == &name))
+                })
             }
+            _ => false,
         })
     }
 

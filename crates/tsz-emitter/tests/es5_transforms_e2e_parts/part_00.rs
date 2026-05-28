@@ -531,6 +531,43 @@ fn async_es5_uses_ambient_value_for_custom_promise_constructor() {
 }
 
 #[test]
+fn async_es5_retains_imported_promise_constructor_value_bindings() {
+    let output = emit_es5_with_module(
+        "import { MyPromise as RenamedPromise } from \"missing\";\n\
+         import DefaultPromise from \"default-missing\";\n\
+         async function f(): RenamedPromise<void> { }\n\
+         var g = async (): RenamedPromise<void> => { };\n\
+         async function h(): DefaultPromise<void> { }\n",
+        ModuleKind::CommonJS,
+    );
+
+    assert!(
+        output.contains("require(\"missing\")"),
+        "Named Promise constructor import should be retained as a value import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.matches(".MyPromise, function").count() >= 2,
+        "Named Promise constructor annotations should use the CommonJS property access.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("void 0, RenamedPromise,"),
+        "Renamed imported Promise constructor should not be emitted as a bare local.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains("require(\"default-missing\")"),
+        "Default Promise constructor import should be retained as a value import.\nOutput:\n{output}"
+    );
+    assert!(
+        output.contains(".default, function"),
+        "Default Promise constructor annotations should use the CommonJS default access.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("void 0, DefaultPromise,"),
+        "Default imported Promise constructor should not be emitted as a bare local.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_es5_arrow_computed_object_value_arrow_captures_generator_this() {
     let output = emit_es5(
         "class A {\n\
