@@ -7,9 +7,9 @@ impl LspServer {
         let method = msg.method.as_deref();
         let id = msg.id.clone();
 
-        // Handle cancellation notification
-        if method == Some("$/cancelRequest") {
-            self.handle_cancel_request(msg.params);
+        if let Some(method) = method
+            && self.handle_notification_method(method, msg.params.clone())
+        {
             return None;
         }
 
@@ -35,35 +35,9 @@ impl LspServer {
                 let result = self.handle_initialize(msg.params.as_ref());
                 Some(self.success_response(id, result))
             }
-            Some("initialized") => {
-                self.initialized = true;
-                self.handle_initialized();
-                None
-            }
             Some("shutdown") => {
                 self.shutdown_requested = true;
                 Some(self.success_response(id, Value::Null))
-            }
-            Some("exit") => {
-                std::process::exit(i32::from(!self.shutdown_requested));
-            }
-
-            // ── Document lifecycle ──────────────────────────────────────
-            Some("textDocument/didOpen") => {
-                self.handle_did_open(msg.params);
-                None
-            }
-            Some("textDocument/didChange") => {
-                self.handle_did_change(msg.params);
-                None
-            }
-            Some("textDocument/didClose") => {
-                self.handle_did_close(msg.params);
-                None
-            }
-            Some("textDocument/didSave") => {
-                self.handle_did_save(msg.params);
-                None
             }
 
             // ── Language features ───────────────────────────────────────
@@ -212,20 +186,6 @@ impl LspServer {
                 Some(self.make_response(id, r))
             }
 
-            // ── Workspace notifications ───────────────────────────────
-            Some("workspace/didChangeConfiguration") => {
-                self.handle_did_change_configuration(msg.params);
-                None
-            }
-            Some("workspace/didChangeWatchedFiles") => {
-                self.handle_did_change_watched_files(msg.params);
-                None
-            }
-            Some("workspace/didChangeWorkspaceFolders") => {
-                self.handle_did_change_workspace_folders(msg.params);
-                None
-            }
-
             // ── Execute command ────────────────────────────────────────
             Some("workspace/executeCommand") => {
                 let r = self.handle_execute_command(msg.params);
@@ -247,25 +207,13 @@ impl LspServer {
                 let r = self.handle_will_rename_files(msg.params);
                 Some(self.make_response(id, r))
             }
-            Some("workspace/didRenameFiles") => {
-                self.handle_did_rename_files(msg.params);
-                None
-            }
             Some("workspace/willCreateFiles") => {
                 // Acknowledge but no edits needed for file creation
                 Some(self.success_response(id, Value::Null))
             }
-            Some("workspace/didCreateFiles") => {
-                self.handle_did_create_files(msg.params);
-                None
-            }
             Some("workspace/willDeleteFiles") => {
                 // Acknowledge but no edits needed for file deletion
                 Some(self.success_response(id, Value::Null))
-            }
-            Some("workspace/didDeleteFiles") => {
-                self.handle_did_delete_files(msg.params);
-                None
             }
 
             // Unknown request → method not found
