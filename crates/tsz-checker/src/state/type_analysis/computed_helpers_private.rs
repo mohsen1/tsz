@@ -264,18 +264,29 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
-                if evaluated != type_id
+                let base = if evaluated != type_id
                     && crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         evaluated,
                     )
                     .is_some_and(|shape| {
                         shape.string_index.is_some() || shape.number_index.is_some()
-                    })
+                    }) {
+                    evaluated
+                } else {
+                    type_id
+                };
+                // Optional private fields (`#x?: T`) in a write context accept
+                // `undefined` unless exactOptionalPropertyTypes is set, matching
+                // the solver's optional_property_write_type behavior for public fields.
+                if is_write_context
+                    && prop.question_token
+                    && self.ctx.strict_null_checks()
+                    && !self.ctx.exact_optional_property_types()
                 {
-                    return Some(evaluated);
+                    return Some(self.ctx.types.factory().union2(base, TypeId::UNDEFINED));
                 }
-                return Some(type_id);
+                return Some(base);
             }
         }
 

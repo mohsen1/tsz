@@ -1762,5 +1762,9 @@ path = "tests/optional_chain_continuation_undefined_tests.rs"
 name = "structural_dispatch_void_tests"
 path = "tests/structural_dispatch_void_tests.rs"
 
+[[test]]
+name = "optional_private_field_write_tests"
+path = "tests/optional_private_field_write_tests.rs"
+
 [lints]
 workspace = true
