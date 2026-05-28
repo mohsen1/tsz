@@ -2,6 +2,7 @@
 //!
 //! This module is organized into several submodules:
 //! - `context` - `CheckerContext` for shared state
+//! - `dispatch` - Expression type computation dispatcher (with companion submodules)
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
 //! - `declarations` - Declaration type checking
