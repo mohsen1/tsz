@@ -2581,6 +2581,31 @@ impl<'a> CheckerState<'a> {
             return true;
         }
 
+        // When the constraint is an intersection, evaluate each member through the
+        // checker's type resolver before checking indexability. Intersection members
+        // may be `Application`/`Lazy` types (e.g. `Record<string, V>`) that
+        // `classify_element_indexable` cannot expand without a resolver — the
+        // solver-level `evaluate_type` it uses has no access to the `TypeEnvironment`.
+        // Structural rule: if any intersection member, when resolved through the
+        // checker's resolver, has a string or number index signature that covers
+        // the key, tsc allows the access and tsz must agree.
+        if let Some(members) =
+            crate::query_boundaries::common::intersection_members(self.ctx.types, unwrapped_type)
+        {
+            let any_member_indexable = members.iter().any(|&member| {
+                let resolved =
+                    crate::query_boundaries::state::type_environment::evaluate_type_with_resolver(
+                        self.ctx.types,
+                        &self.ctx,
+                        member,
+                    );
+                self.is_element_indexable(resolved, wants_string, wants_number)
+            });
+            if any_member_indexable {
+                return false;
+            }
+        }
+
         !self.is_element_indexable(unwrapped_type, wants_string, wants_number)
     }
 
