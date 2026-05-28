@@ -828,6 +828,9 @@ mod predicate_narrowed_lib_union_access_tests;
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
 #[cfg(test)]
+#[path = "tests/private_optional_field_undefined_tests.rs"]
+mod private_optional_field_undefined_tests;
+#[cfg(test)]
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
 #[cfg(test)]
