@@ -559,3 +559,42 @@ const baz = { handle?() {} };
         "Expected no property-function style for optional method 'handle': {output}"
     );
 }
+
+/// When `{ y? }` is written (grammar error TS1162), tsc still infers an optional
+/// property for the object type. The `?` token position is recorded during parsing
+/// so the DTS emitter can produce `y?: T` instead of `y: T`.
+///
+/// Structural rule: when a shorthand property assignment has `question_token_pos != 0`,
+/// the emitted object type member uses `name?` as the prefix (optional property).
+/// This applies regardless of the identifier name used (structural, not spelling-dependent).
+#[test]
+fn optional_shorthand_property_inferred_as_optional_in_dts() {
+    // `{ y? }` is a grammar error but tsc still makes the property optional in DTS.
+    // Usage analysis is required so the emitter can resolve `y` → `let y: number`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+let y: number;
+export const obj = { y? };
+"#,
+    );
+    assert!(
+        output.contains("y?: number"),
+        "shorthand property with `?` should emit as optional (y?: number): {output}"
+    );
+    assert!(
+        !output.contains("y: number"),
+        "shorthand property with `?` must not emit as non-optional: {output}"
+    );
+
+    // Same rule with a different name — proves the rule is not spelling-dependent.
+    let output2 = emit_dts_with_usage_analysis(
+        r#"
+let count: string;
+export const o = { count? };
+"#,
+    );
+    assert!(
+        output2.contains("count?: string"),
+        "renamed shorthand property with `?` should emit as optional (count?: string): {output2}"
+    );
+}

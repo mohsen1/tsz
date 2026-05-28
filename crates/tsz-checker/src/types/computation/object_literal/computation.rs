@@ -1295,9 +1295,11 @@ impl<'a> CheckerState<'a> {
 
                     // In destructuring assignment targets, a shorthand with a default
                     // value (e.g. `{ x = 0 } = source`) makes the property optional
-                    // in the source type.
-                    let is_optional_shorthand =
-                        self.ctx.in_destructuring_target && shorthand.equals_token;
+                    // in the source type. Additionally, `{ y? }` (grammar error TS1162)
+                    // has its `?` recorded; tsc still infers an optional property.
+                    let is_optional_shorthand = (self.ctx.in_destructuring_target
+                        && shorthand.equals_token)
+                        || shorthand.question_token_pos != 0;
 
                     let order = prop_order;
                     prop_order += 1;
