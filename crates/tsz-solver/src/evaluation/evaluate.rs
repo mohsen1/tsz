@@ -859,6 +859,25 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         args: &[TypeId],
         ctx: &ApplicationEvalContext,
     ) -> ApplicationEvalOutcome {
+        // Recursive-call-return placeholder: an `Application(Lazy(value_def),
+        // type_args)` whose `value_def` is a value-space symbol (a function or
+        // `const`/`let`/`var` initialized to a function) with a callable type
+        // denotes the RETURN type of a self-referential generic call
+        // `f<type_args>(...)` whose return type was still being inferred when
+        // the placeholder was built (see the checker's circular-call path).
+        // It must evaluate to the matching call signature's return type
+        // instantiated with `type_args`, not to the instantiated function
+        // value, so property access, assignability, and display observe the
+        // object the call returns. Instantiation expressions (`f<T>` /
+        // `typeof f<T>`) never reach here as a `Lazy`-based application — they
+        // are instantiated eagerly and `typeof f<T>` carries a `TypeQuery`
+        // base — so this shape is unambiguous.
+        if !ctx.base_is_type_query
+            && let Some(resolved) = ctx.resolved
+            && let Some(call_return) = self.value_call_return_application(def_id, resolved, args)
+        {
+            return ApplicationEvalOutcome::Computed(call_return);
+        }
         if let Some(type_params) = ctx.type_params.as_ref() {
             let Some(resolved) = ctx.resolved else {
                 return ApplicationEvalOutcome::Computed(original_type_id);
@@ -1312,6 +1331,72 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         match shape.construct_signatures.first() {
             Some(construct_sig) => construct_sig.return_type,
             None => resolved,
+        }
+    }
+
+    /// Resolve a recursive-call-return placeholder `Application(Lazy(value_def),
+    /// type_args)` to the call signature's return type, instantiated with
+    /// `type_args`.
+    ///
+    /// Returns `Some` only when `def_id` is a value-space symbol
+    /// (`DefKind::Variable`/`DefKind::Function`) and `resolved` is a callable
+    /// with a generic call signature whose arity matches `type_args`. The
+    /// returned type is instantiated one level and left otherwise un-evaluated:
+    /// nested self-referential returns stay deferred (they carry the inner
+    /// signature's free type parameter) and expand lazily on demand, matching
+    /// `tsc`'s recursive object type — never eagerly expanding into an
+    /// excessively deep instantiation.
+    ///
+    /// `None` keeps the normal generic-instantiation path, so type aliases,
+    /// classes, interfaces, and non-generic value functions are unaffected.
+    fn value_call_return_application(
+        &self,
+        def_id: DefId,
+        resolved: TypeId,
+        type_args: &[TypeId],
+    ) -> Option<TypeId> {
+        if type_args.is_empty() {
+            return None;
+        }
+        if !matches!(
+            self.resolver.get_def_kind(def_id),
+            Some(crate::def::DefKind::Variable | crate::def::DefKind::Function)
+        ) {
+            return None;
+        }
+        // The resolved value type is either a single-signature `Function` or a
+        // multi-signature `Callable`; in both cases pick the generic call
+        // signature whose type-parameter arity matches the supplied
+        // `type_args` and instantiate its return type.
+        match self.interner.lookup(resolved)? {
+            TypeData::Function(fs_id) => {
+                let shape = self.interner.function_shape(fs_id);
+                if shape.is_constructor
+                    || shape.type_params.is_empty()
+                    || shape.type_params.len() != type_args.len()
+                {
+                    return None;
+                }
+                Some(instantiate_generic(
+                    self.interner,
+                    shape.return_type,
+                    &shape.type_params,
+                    type_args,
+                ))
+            }
+            TypeData::Callable(cs_id) => {
+                let shape = self.interner.callable_shape(cs_id);
+                let signature = shape.call_signatures.iter().find(|sig| {
+                    !sig.type_params.is_empty() && sig.type_params.len() == type_args.len()
+                })?;
+                Some(instantiate_generic(
+                    self.interner,
+                    signature.return_type,
+                    &signature.type_params,
+                    type_args,
+                ))
+            }
+            _ => None,
         }
     }
 
