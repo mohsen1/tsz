@@ -2,3 +2,8 @@
 # Add a test path here (one per line) to allow it to fail in CI without
 # blocking the aggregate gate. Remove the entry once the regression is fixed.
 # Format: TypeScript/tests/cases/<subpath>.ts (one path per line, comments with #)
+# circular2 and circular4: cross-file type-alias cycle detection (TS2456) fix in
+# progress at PR #10742; re-added here to unblock the removal of the other 11
+# stale entries that are genuinely resolved.
+TypeScript/tests/cases/conformance/externalModules/typeOnly/circular2.ts
+TypeScript/tests/cases/conformance/externalModules/typeOnly/circular4.ts
