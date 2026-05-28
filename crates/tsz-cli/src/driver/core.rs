@@ -3150,6 +3150,10 @@ use plan::{
 mod tests;
 
 #[cfg(test)]
+#[path = "cross_file_circular_alias_tests.rs"]
+mod cross_file_circular_alias_tests;
+
+#[cfg(test)]
 mod explain_files_reason_tests {
     use super::*;
 
