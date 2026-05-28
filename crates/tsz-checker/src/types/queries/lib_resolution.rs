@@ -491,30 +491,56 @@ impl<'a> CheckerState<'a> {
         }
 
         let lib_contexts = self.ctx.lib_contexts.clone();
+        let lib_binders = self.get_lib_binders();
 
-        // Look up the symbol and its declarations
-        let sym_id = name
+        // Resolve the interface symbol. The bare `file_locals` / namespace lookup
+        // misses in cross-arena contexts: when a class declared in another file
+        // is type-checked and one of its method return types instantiates a lib
+        // generic (e.g. `ArrayIterator<T>`), the active file's merged
+        // `file_locals` need not contain that interface name yet. Mirror
+        // `resolve_lib_type_by_name`'s resolution chain — global type table,
+        // then the all-binders / lib-context search — and then `select` the
+        // binder that actually owns the symbol so its (lib-arena) declarations
+        // can be read. Without this, heritage merging silently drops inherited
+        // members (`next`, `return`, ...) from the flattened shape.
+        let raw_sym_id = name
             .split_once('.')
             .and_then(|(namespace, export_name)| {
                 self.resolve_lib_namespace_export_symbol(namespace, export_name)
             })
-            .or_else(|| self.resolve_lib_symbol_by_entity_name(name));
-        let Some(sym_id) = sym_id else {
+            .or_else(|| self.resolve_lib_symbol_by_entity_name(name))
+            .or_else(|| {
+                resolve_name_to_lib_symbol(
+                    name,
+                    self.ctx.binder,
+                    self.ctx.global_file_locals_index.as_deref(),
+                    self.ctx
+                        .all_binders
+                        .as_ref()
+                        .map(|binders| binders.as_ref().as_slice()),
+                    &self.ctx.lib_contexts,
+                )
+            });
+
+        let Some((sym_id, selected_binder_arc)) =
+            selected_lib_symbol_for_name(&self.ctx, name, raw_sym_id, &lib_binders)
+        else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         };
-        let Some(symbol) = self.ctx.binder.get_symbol(sym_id) else {
+        let selected_binder = selected_binder_arc.as_deref().unwrap_or(self.ctx.binder);
+        let Some(symbol) = selected_binder.get_symbol_with_libs(sym_id, &lib_binders) else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
         };
 
         let fallback_arena =
-            resolve_lib_fallback_arena(self.ctx.binder, sym_id, &lib_contexts, self.ctx.arena);
+            resolve_lib_fallback_arena(selected_binder, sym_id, &lib_contexts, self.ctx.arena);
 
         let decls_with_arenas = collect_lib_decls_with_arenas_in_contexts(
-            self.ctx.binder,
+            selected_binder,
             sym_id,
             &symbol.declarations,
             fallback_arena,
