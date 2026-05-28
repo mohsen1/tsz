@@ -138,6 +138,37 @@ fn check_js_without_lib(source: &str) -> Vec<Diagnostic> {
 }
 
 #[test]
+fn type_alias_reference_algebra_still_reports_nested_missing_name() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Wrap<T> = T;\ntype Alias<T> = Wrap<T | MissingAlpha>;",
+    );
+
+    assert!(codes.contains(&2304), "expected TS2304, got {codes:?}");
+}
+
+#[test]
+fn type_alias_indexed_reference_algebra_still_reports_missing_name() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Wrap<T> = T;\ntype Alias<U> = Wrap<U & MissingBeta['field']>;",
+    );
+
+    assert!(codes.contains(&2304), "expected TS2304, got {codes:?}");
+}
+
+#[test]
+fn type_alias_conditional_fallback_still_checks_missing_names() {
+    let codes = tsz_checker::test_utils::check_source_codes(
+        "type Alias<T> = T extends MissingGamma ? T : MissingDelta;",
+    );
+    let missing_name_count = codes.iter().filter(|&&code| code == 2304).count();
+
+    assert!(
+        missing_name_count >= 2,
+        "expected both conditional branches to report TS2304, got {codes:?}"
+    );
+}
+
+#[test]
 fn local_ambient_value_shadows_dom_interface_in_value_position() {
     let diagnostics = check_with_lib(
         r#"
