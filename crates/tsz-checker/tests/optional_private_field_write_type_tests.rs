@@ -5,7 +5,7 @@
 //! type is `T | undefined`, matching the public optional field rule.
 //!
 //! Repro: kysely false TS2322 assigning `undefined` to `#promise?: Promise<void>`
-//! (GitHub issue #10749).
+//! (issue #10749).
 
 use crate::context::CheckerOptions;
 
