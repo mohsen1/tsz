@@ -51,6 +51,18 @@ assert.match(
 );
 
 assert.match(
+  workflow,
+  /shard_status_value\(\)[\s\S]+index\(\$0, key "="\) == 1[\s\S]+status_target_sha="\$\(shard_status_value BENCH_TARGET_SHA\)"[\s\S]+status_shard_label="\$\(shard_status_value BENCH_SHARD_LABEL\)"[\s\S]+status_exit="\$\(shard_status_value BENCH_SHARD_STATUS\)"[\s\S]+exit "\$\{status_exit\}"/,
+  "bench shard waits should parse status env files without sourcing unquoted filter values",
+);
+
+assert.doesNotMatch(
+  workflow,
+  /source "bench-status-\$\{\{ matrix\.label \}\}\.env"/,
+  "bench shard waits must not source status env files because BENCH_SHARD_FILTER can contain spaces or shell metacharacters",
+);
+
+assert.match(
   shardCloudbuild,
   /id: download-bench-prep[\s\S]+env:\s*\n\s*- '_BENCH_TARGET_SHA=\$\{_BENCH_TARGET_SHA\}'[\s\S]+#!\/bin\/sh[\s\S]+\) > bench-prep-fetch\.log 2>&1[\s\S]+BENCH_PREP_FETCH_STATUS=%s[\s\S]+exit 0/,
   "Cloud Build prep-fetch step should receive the benchmark target SHA, use the shell available in cloud-sdk:slim, record status, and never fail the build before shard status artifacts can be written",
