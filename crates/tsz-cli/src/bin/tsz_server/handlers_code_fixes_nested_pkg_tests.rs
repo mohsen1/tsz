@@ -252,6 +252,71 @@ fn import_fix_with_empty_error_codes_at_start_of_file() {
 }
 
 /// Regression test for `importFixesWithPackageJsonInSideAnotherPackage`:
+/// Regression: project has a `package.json` that does NOT list `preact` as a
+/// dependency, but `preact/hooks` exists as a directly installed subpackage
+/// (with its own `package.json`). The import fix must still suggest `preact/hooks`
+/// because the subpackage is directly addressable via its full specifier.
+#[test]
+fn import_fix_with_subpackage_allowed_despite_absent_parent_in_project_deps() {
+    let mut server = make_server();
+
+    let app_tsx = "/project/app.tsx";
+    let app_content = "const state = useMemo(() => 'Hello', []);";
+
+    server
+        .open_files
+        .insert(app_tsx.to_string(), app_content.to_string());
+    // Project package.json lists only "typescript" — NOT "preact".
+    server.open_files.insert(
+        "/project/package.json".to_string(),
+        r#"{ "name": "my-app", "dependencies": { "typescript": "^5.0.0" } }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/package.json".to_string(),
+        r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+        "export declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+    );
+
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": app_tsx,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "errorCodes": [2304]
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let descriptions: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("description").and_then(serde_json::Value::as_str))
+        .collect();
+
+    let has_preact_import = descriptions
+        .iter()
+        .any(|d| d.contains("preact/hooks") && d.contains("useMemo"));
+
+    assert!(
+        has_preact_import,
+        "expected import fix for 'useMemo' from 'preact/hooks' even though project deps omit 'preact', got: {descriptions:?}"
+    );
+}
+
 /// When a package has a nested subpath `package.json` (e.g. `preact/hooks`) but
 /// no parent `package.json` in `open_files`, the import fix should still find
 /// the correct module specifier `preact/hooks` for a missing identifier.
