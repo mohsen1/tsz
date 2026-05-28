@@ -22,6 +22,7 @@ use tsz_common::interner::Atom;
 
 use super::super::evaluate::TypeEvaluator;
 use super::infer_substitutor::InferSubstitutor;
+use std::cell::Cell;
 
 /// Selects how co-located `infer T` candidates are merged when the same name
 /// gets distinct bindings from multiple structurally adjacent positions.
@@ -31,6 +32,58 @@ enum CoLocatedMerge {
     Union,
     /// Function/callable parameters — contravariant.
     Intersection,
+}
+
+thread_local! {
+    /// Cross-evaluator nesting depth for infer-pattern matching that expands an
+    /// `Application`/`Mapped` source or pattern in a *fresh* sub-evaluator.
+    ///
+    /// Infer matching cannot call `evaluate` on the current `&self` evaluator
+    /// (those methods take `&self`), so it spins up a brand-new `TypeEvaluator`
+    /// whose per-instance recursion guard, depth counter, and fuel all start at
+    /// zero. A recursive generic-wrapper application — Zod's
+    /// `ZodObject`/`ZodOptional`/`ZodArray` chains, `DeepPartial`-style helpers,
+    /// etc. — makes that expansion re-enter conditional/infer evaluation at a
+    /// deeper nesting through a *new* evaluator each level, so no per-evaluator
+    /// guard ever fires and the compile hangs. This thread-global counter bounds
+    /// that cross-evaluator nesting. See [`TypeEvaluator::evaluate_for_infer_match`].
+    static INFER_MATCH_EXPANSION_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
+
+/// Maximum cross-evaluator nesting for infer-match sub-evaluator expansions.
+///
+/// Mirrors tsc's `instantiationDepth` cutoff (100): beyond this nesting, tsc
+/// abandons the instantiation, so tsz stops expanding too rather than recurse
+/// forever. Legitimate structural expansion of an application source during
+/// infer matching never nests anywhere near this deep; only unbounded recursive
+/// wrappers do.
+const MAX_INFER_MATCH_EXPANSION_DEPTH: u32 = 100;
+
+/// RAII guard for [`INFER_MATCH_EXPANSION_DEPTH`].
+///
+/// `enter` returns `None` when the budget is exhausted (the caller must then
+/// skip the expansion); otherwise it increments the counter and decrements it
+/// on drop, so the bound is restored even if evaluation unwinds via panic.
+struct InferMatchExpansionGuard;
+
+impl InferMatchExpansionGuard {
+    fn enter() -> Option<Self> {
+        INFER_MATCH_EXPANSION_DEPTH.with(|depth| {
+            let current = depth.get();
+            if current >= MAX_INFER_MATCH_EXPANSION_DEPTH {
+                None
+            } else {
+                depth.set(current + 1);
+                Some(Self)
+            }
+        })
+    }
+}
+
+impl Drop for InferMatchExpansionGuard {
+    fn drop(&mut self) {
+        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
 }
 
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
@@ -1273,6 +1326,34 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         Some(true)
     }
 
+    /// Evaluate `type_id` in a fresh sub-evaluator during infer-pattern
+    /// matching, bounded by a thread-global cross-evaluator recursion budget.
+    ///
+    /// Infer matching expands `Application`/`Mapped` sources and patterns by
+    /// spinning up a new [`TypeEvaluator`] (the matching helpers only hold
+    /// `&self`, so they cannot reuse the current evaluator's `&mut` evaluate
+    /// path). Each fresh evaluator resets its own recursion guard, so a
+    /// recursive generic wrapper can re-enter this expansion at ever-deeper
+    /// nesting without any per-evaluator guard firing — an unbounded hang.
+    ///
+    /// This routes every such expansion through one place that participates in
+    /// [`INFER_MATCH_EXPANSION_DEPTH`]. Once the budget is exhausted the input
+    /// is returned **unchanged**: every caller already treats an unchanged
+    /// result as "could not expand" (the infer match fails / the property is
+    /// not found), which terminates the chain instead of looping. Mirrors tsc's
+    /// global `instantiationDepth` cutoff.
+    pub(crate) fn evaluate_for_infer_match(&self, type_id: TypeId) -> TypeId {
+        let Some(_guard) = InferMatchExpansionGuard::enter() else {
+            return type_id;
+        };
+        let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
+        evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
+        if let Some(query_db) = self.query_db() {
+            evaluator = evaluator.with_query_db(query_db);
+        }
+        evaluator.evaluate(type_id)
+    }
+
     /// Main pattern matching function for infer types.
     ///
     /// Matches a source type against a pattern containing `infer` types,
@@ -1574,12 +1655,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // Fallback: Structural expansion
                 // Expand the pattern Application to its structural form and recurse
                 // This handles cases like: Reducer<infer S> matching a structural function type
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-                if let Some(query_db) = self.query_db() {
-                    evaluator = evaluator.with_query_db(query_db);
-                }
-                let expanded_pattern = evaluator.evaluate(pattern);
+                let expanded_pattern = self.evaluate_for_infer_match(pattern);
 
                 // Only recurse if expansion actually changed the type
                 if expanded_pattern != pattern {
@@ -1667,5 +1743,48 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             }
             _ => checker.is_subtype_of(source, pattern),
         }
+    }
+}
+
+#[cfg(test)]
+mod infer_match_expansion_guard_tests {
+    use super::{
+        INFER_MATCH_EXPANSION_DEPTH, InferMatchExpansionGuard, MAX_INFER_MATCH_EXPANSION_DEPTH,
+    };
+
+    /// The cross-evaluator infer-match expansion guard must (1) allow expansion
+    /// up to the budget, (2) deny it beyond the budget so the caller skips the
+    /// expansion (returns the source unchanged) instead of recursing through a
+    /// fresh evaluator forever, and (3) restore capacity as guards unwind, so
+    /// sequential (non-nested) expansions are never throttled. This is the
+    /// primitive that turns the Zod non-termination (#10662) into a terminating
+    /// compile.
+    #[test]
+    fn guard_bounds_cross_evaluator_expansion_depth() {
+        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
+
+        let mut held = Vec::new();
+        for expected_prev in 0..MAX_INFER_MATCH_EXPANSION_DEPTH {
+            let guard =
+                InferMatchExpansionGuard::enter().expect("enter within budget must succeed");
+            held.push(guard);
+            assert_eq!(
+                INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()),
+                expected_prev + 1
+            );
+        }
+
+        assert!(
+            InferMatchExpansionGuard::enter().is_none(),
+            "enter at the budget must be denied so the caller stops expanding"
+        );
+
+        held.clear();
+        assert_eq!(INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.get()), 0);
+        assert!(
+            InferMatchExpansionGuard::enter().is_some(),
+            "after unwinding, a fresh expansion must be allowed again"
+        );
+        INFER_MATCH_EXPANSION_DEPTH.with(|depth| depth.set(0));
     }
 }
