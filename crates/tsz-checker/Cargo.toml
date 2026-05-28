@@ -111,6 +111,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "async_return_promise_identity_tests"
+path = "tests/async_return_promise_identity_tests.rs"
+
+[[test]]
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
