@@ -67,6 +67,10 @@ name = "object_literal_recovery_tests"
 path = "tests/object_literal_recovery_tests.rs"
 
 [[test]]
+name = "private_identifier_recovery_tests"
+path = "tests/private_identifier_recovery_tests.rs"
+
+[[test]]
 name = "prefix_unary_recovery_tests"
 path = "tests/prefix_unary_recovery_tests.rs"
 
