@@ -128,6 +128,37 @@ function outer<U>(value: U) {
 }
 
 #[test]
+fn return_context_does_not_unwrap_user_readonly_alias_by_name() {
+    let diags = check_source_diagnostics(
+        r#"
+type Readonly<T> = { value: T };
+declare function make<T>(callback: () => T): Readonly<T>;
+
+const n: number = make(() => "text");
+"#,
+    );
+
+    let ts2322: Vec<_> = diags.iter().filter(|d| d.code == 2322).collect();
+    assert!(
+        !ts2322.is_empty(),
+        "Expected TS2322 because a user-defined Readonly<T> alias is not the lib wrapper, got: {:?}",
+        diagnostic_messages(&ts2322)
+    );
+}
+
+#[test]
+fn return_context_wrapper_detection_uses_identity_helpers() {
+    let source = include_str!("../checkers/call_context.rs");
+
+    assert!(
+        !source.contains(
+            "return_context_application_base_has_name(base, &[\"Readonly\", \"NoInfer\", \"Awaited\"])"
+        ),
+        "return-context wrapper detection must not treat utility wrappers as a name allowlist"
+    );
+}
+
+#[test]
 fn generic_wrapper_recheck_clears_stale_implicit_any_on_callback_body_use() {
     let diags = check_source_diagnostics(
         r#"

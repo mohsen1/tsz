@@ -790,8 +790,7 @@ impl<'a> CheckerState<'a> {
         }
         if let Some((base, args)) = common::application_info(self.ctx.types, source)
             && args.len() == 1
-            && self
-                .return_context_application_base_has_name(base, &["Readonly", "NoInfer", "Awaited"])
+            && self.return_context_application_base_is_lib_utility_wrapper(base)
         {
             return self.contextual_return_type_specializes_wrapped_params(
                 args[0],
@@ -956,11 +955,10 @@ impl<'a> CheckerState<'a> {
         self.is_promise_type(base)
     }
 
-    pub(crate) fn return_context_application_base_has_name(
+    fn return_context_application_base_symbol(
         &self,
         base: TypeId,
-        names: &[&str],
-    ) -> bool {
+    ) -> Option<(tsz_binder::SymbolId, &tsz_binder::Symbol)> {
         self.ctx
             .resolve_type_to_symbol_id(base)
             .or_else(|| {
@@ -971,8 +969,27 @@ impl<'a> CheckerState<'a> {
                 common::type_query_symbol(self.ctx.types, base)
                     .map(|symbol_ref| tsz_binder::SymbolId(symbol_ref.0))
             })
-            .and_then(|symbol_id| self.ctx.binder.get_symbol(symbol_id))
-            .is_some_and(|symbol| names.contains(&symbol.escaped_name.as_str()))
+            .and_then(|symbol_id| {
+                self.ctx
+                    .binder
+                    .get_symbol(symbol_id)
+                    .map(|symbol| (symbol_id, symbol))
+            })
+    }
+
+    pub(crate) fn return_context_application_base_is_lib_utility_wrapper(
+        &self,
+        base: TypeId,
+    ) -> bool {
+        let Some((symbol_id, symbol)) = self.return_context_application_base_symbol(base) else {
+            return false;
+        };
+
+        match symbol.escaped_name.as_str() {
+            "Readonly" | "NoInfer" => self.symbol_has_standard_lib_origin(symbol_id),
+            "Awaited" => self.is_standard_or_conditional_awaited_alias(symbol_id, symbol),
+            _ => false,
+        }
     }
 
     pub(crate) fn sensitive_callback_placeholder_should_skip_round1_inference(
