@@ -7,6 +7,10 @@ fn ts2322_messages(source: &str) -> Vec<String> {
         .collect()
 }
 
+fn diagnostic_messages(source: &str) -> Vec<(u32, String)> {
+    check_strict(source)
+}
+
 #[test]
 fn optional_homomorphic_mapped_index_access_displays_source_index() {
     let messages = ts2322_messages(
@@ -90,5 +94,49 @@ function f<T, U extends T, K extends keyof T>(x: { [P in K]: T[P] }, y: { [P in 
             "Type '{ [P in K]: T[P]; }' is not assignable to type '{ [P in K]: U[P]; }'."
         )),
         "expected constrained-key homomorphic mapped assignment mismatch, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn generic_application_arg_preserves_homomorphic_index_alias_surface() {
+    let messages = ts2322_messages(
+        r#"
+type NonNullable<T> = T & {};
+function f<T>(x: Partial<T>[keyof T], y: NonNullable<Partial<T>[keyof T]>) {
+    y = x;
+}
+"#,
+    );
+
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("NonNullable<Partial<T>[keyof T]>")),
+        "expected generic application argument to preserve alias-index spelling, got: {messages:#?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.contains("NonNullable<T[keyof T] | undefined>")),
+        "diagnostic should not simplify the indexed access inside NonNullable, got: {messages:#?}"
+    );
+}
+
+#[test]
+fn mapped_identity_accepts_keyof_type_alias_constraint() {
+    let messages = diagnostic_messages(
+        r#"
+function f<T>() {
+    type K = keyof T;
+    var x: { [P in keyof T]: T[P] };
+    var x: { [Q in keyof T]: T[Q] };
+    var x: { [R in K]: T[R] };
+}
+"#,
+    );
+
+    assert!(
+        messages.is_empty(),
+        "expected mapped identity through keyof alias to be accepted, got: {messages:#?}"
     );
 }

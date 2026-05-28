@@ -1306,19 +1306,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
+        let source_param = self.interner.type_param(source_mapped.type_param);
+        let target_param = self.interner.type_param(target_mapped.type_param);
+        let equiv_start = self.type_param_equivalences.len();
+        self.type_param_equivalences
+            .push((source_param, target_param));
+
+        let result = if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
         ) {
-            return self.check_mapped_to_mapped(
+            self.check_mapped_to_mapped(
                 source_template,
                 target_template,
                 s_inner_mapped,
                 t_inner_mapped,
-            );
-        }
+            )
+        } else {
+            self.check_subtype(source_template, target_template)
+        };
+        self.type_param_equivalences.truncate(equiv_start);
 
-        self.check_subtype(source_template, target_template)
+        result
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).

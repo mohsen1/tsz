@@ -109,6 +109,11 @@ pub struct TypeFormatter<'a> {
     /// should show structural inputs instead of chasing nested application
     /// display aliases.
     skip_application_display_alias_chase: bool,
+    /// Internal guard used while formatting generic application arguments.
+    /// In that context, tsc preserves indexed-access alias spelling such as
+    /// `Partial<T>[keyof T]` instead of simplifying the nested access to
+    /// `T[keyof T] | undefined`.
+    preserve_application_arg_index_alias_surface: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -398,6 +403,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -632,6 +638,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,

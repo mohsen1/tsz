@@ -84,6 +84,13 @@ fn mapped_constraint_matches_template_source(
     constraint: TypeId,
     source: TypeId,
 ) -> bool {
+    let evaluated_constraint = crate::evaluation::evaluate::evaluate_type(interner, constraint);
+    if evaluated_constraint != constraint
+        && mapped_constraint_matches_template_source(interner, evaluated_constraint, source)
+    {
+        return true;
+    }
+
     if keyof_inner_type(interner, constraint)
         .is_some_and(|operand| homomorphic_source_identity_matches(interner, operand, source))
     {
@@ -93,6 +100,18 @@ fn mapped_constraint_matches_template_source(
     if let Some(param) = type_param_info(interner, constraint)
         && let Some(param_constraint) = param.constraint
     {
+        let evaluated_param_constraint =
+            crate::evaluation::evaluate::evaluate_type(interner, param_constraint);
+        if evaluated_param_constraint != param_constraint
+            && mapped_constraint_matches_template_source(
+                interner,
+                evaluated_param_constraint,
+                source,
+            )
+        {
+            return true;
+        }
+
         return keyof_inner_type(interner, param_constraint)
             .is_some_and(|operand| homomorphic_source_identity_matches(interner, operand, source));
     }
