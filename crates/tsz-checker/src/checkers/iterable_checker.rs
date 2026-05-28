@@ -336,6 +336,11 @@ impl<'a> CheckerState<'a> {
             AsyncIterableTypeKind::Union(members) => {
                 members.iter().all(|&m| self.is_async_iterable_type(m))
             }
+            AsyncIterableTypeKind::Intersection(members) => {
+                // An intersection is async iterable if at least one member is async iterable.
+                // Mirrors tsc: `(A & AsyncIterable<T>)` is valid for `for await...of`.
+                members.iter().any(|&m| self.is_async_iterable_type(m))
+            }
             AsyncIterableTypeKind::Object(shape_id) => {
                 // Check if object has a [Symbol.asyncIterator] method or callable property.
                 // Both `{ [Symbol.asyncIterator]() { ... } }` (method) and
@@ -350,25 +355,44 @@ impl<'a> CheckerState<'a> {
                         return true;
                     }
                 }
-                false
+                // Shape didn't have the property directly; fall back to full property-access
+                // resolution which handles inherited members from lib interfaces.
+                self.type_has_symbol_async_iterator_via_property_access(type_id)
+            }
+            AsyncIterableTypeKind::Application { .. } => {
+                // Application types (`AsyncIterableIterator<T>`, `Set<T>`, etc.) use
+                // property-access resolution, same as the sync iterable Application branch.
+                // The base is a `Lazy(DefId)` from a lib interface and must be expanded
+                // via the full property-access path to expose inherited `[Symbol.asyncIterator]`.
+                self.type_has_symbol_async_iterator_via_property_access(type_id)
+            }
+            AsyncIterableTypeKind::TypeParameter { constraint } => {
+                // A type parameter is async iterable when its constraint is async iterable.
+                // Unconstrained type parameters are not async iterable (tsc does not accept them).
+                constraint.is_some_and(|c| self.is_async_iterable_type(c))
             }
             AsyncIterableTypeKind::Readonly(inner) => {
                 // Unwrap readonly wrapper and check inner type
                 self.is_async_iterable_type(inner)
             }
             AsyncIterableTypeKind::NotAsyncIterable => {
-                // Use property access to check for [Symbol.asyncIterator] on types
-                // that couldn't be classified (e.g., Application types with Lazy bases).
-                use crate::query_boundaries::common::PropertyAccessResult;
-                let result =
-                    self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
-                match result {
-                    PropertyAccessResult::Success { type_id, .. } => {
-                        self.is_callable_with_no_required_args(type_id)
-                    }
-                    _ => false,
-                }
+                // Final fallback: use property access for types that couldn't be classified
+                // structurally (e.g., `Lazy(DefId)` references, mapped types, conditionals).
+                self.type_has_symbol_async_iterator_via_property_access(type_id)
             }
+        }
+    }
+
+    /// Resolve `[Symbol.asyncIterator]` on `type_id` via the property-access path and check
+    /// that it is callable with no required arguments.
+    fn type_has_symbol_async_iterator_via_property_access(&mut self, type_id: TypeId) -> bool {
+        use crate::query_boundaries::common::PropertyAccessResult;
+        let result = self.resolve_property_access_with_env(type_id, "[Symbol.asyncIterator]");
+        match result {
+            PropertyAccessResult::Success { type_id, .. } => {
+                self.is_callable_with_no_required_args(type_id)
+            }
+            _ => false,
         }
     }
 

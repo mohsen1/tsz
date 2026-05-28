@@ -112,11 +112,17 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
 pub enum AsyncIterableTypeKind {
     /// Union type - all members must be async iterable
     Union(Vec<TypeId>),
+    /// Intersection type - at least one member must be async iterable
+    Intersection(Vec<TypeId>),
     /// Object type - check for [Symbol.asyncIterator] method
     Object(crate::types::ObjectShapeId),
+    /// Application type (`AsyncIterableIterator<T>`, `Set<T>`, etc.) - check via property access
+    Application { base: TypeId },
+    /// Type parameter - check constraint if present
+    TypeParameter { constraint: Option<TypeId> },
     /// Readonly wrapper - check inner type
     Readonly(TypeId),
-    /// Not async iterable
+    /// Not async iterable (fallback: try property access for `[Symbol.asyncIterator]`)
     NotAsyncIterable,
 }
 
@@ -137,10 +143,25 @@ pub fn classify_async_iterable_type(
             let members = db.type_list(members_id);
             AsyncIterableTypeKind::Union(members.to_vec())
         }
+        TypeData::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            AsyncIterableTypeKind::Intersection(members.to_vec())
+        }
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             AsyncIterableTypeKind::Object(shape_id)
         }
-        TypeData::ReadonlyType(inner) => AsyncIterableTypeKind::Readonly(inner),
+        TypeData::Application(app_id) => {
+            let app = db.type_application(app_id);
+            AsyncIterableTypeKind::Application { base: app.base }
+        }
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+            AsyncIterableTypeKind::TypeParameter {
+                constraint: info.constraint,
+            }
+        }
+        TypeData::ReadonlyType(inner) | TypeData::NoInfer(inner) => {
+            AsyncIterableTypeKind::Readonly(inner)
+        }
         _ => AsyncIterableTypeKind::NotAsyncIterable,
     }
 }

@@ -187,6 +187,10 @@ name = "for_await_promise_array_tests"
 path = "tests/for_await_promise_array_tests.rs"
 
 [[test]]
+name = "async_iterable_type_param_tests"
+path = "tests/async_iterable_type_param_tests.rs"
+
+[[test]]
 name = "promise_callback_variance_tests"
 path = "tests/promise_callback_variance_tests.rs"
 
