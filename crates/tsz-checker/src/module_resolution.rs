@@ -851,11 +851,7 @@ pub fn resolve_specifier_via_file_index(
     // A bare file name with no directory component (e.g. `other.js` in a
     // test harness) has no src_dir. Treat it as the "current directory" so
     // relative specifiers like `./types` still resolve against siblings.
-    // When the last `/` is at position 0 the file lives at the root (e.g.
-    // `/index.ts`); `src_dir` must be `"/"` so that `"./foo"` resolves to
-    // `"/foo"` rather than the empty-prefix `"foo"`.
     let src_dir = match src_norm.rfind('/') {
-        Some(0) => "/",
         Some(slash) => &src_norm[..slash],
         None => "",
     };
