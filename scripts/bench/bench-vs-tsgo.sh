@@ -1313,11 +1313,44 @@ run_isolated() {
     return 0
 }
 
+is_project_compatibility_row() {
+    local candidate="$1"
+    command -v node >/dev/null 2>&1 || return 1
+
+    PROJECT_ROW_NAME="$candidate" \
+    TSZ_PROJECT_ROWS_MJS="$PROJECT_ROOT/scripts/bench/project-rows.mjs" \
+    node --input-type=module <<'NODE'
+import { pathToFileURL } from "node:url";
+
+const rowModule = await import(pathToFileURL(process.env.TSZ_PROJECT_ROWS_MJS));
+const compatibilityRows = new Set([
+  ...rowModule.REQUIRED_PROJECT_ROWS,
+  ...rowModule.COMPILE_CANARY_PROJECT_ROWS,
+]);
+process.exit(compatibilityRows.has(process.env.PROJECT_ROW_NAME) ? 0 : 1);
+NODE
+}
+
 # Append a degraded row to RESULTS_CSV when a fixture group fails outright
 # (no individual benchmarks were recorded). The schema matches existing error
 # rows: name, lines, kb, tsz_ms, tsgo_ms, tsz_lps, tsgo_lps, winner, ratio, status.
 record_fixture_failure() {
     local label="$1" rc="$2"
+    if is_project_compatibility_row "$label"; then
+        record_project_compatibility \
+            "$label" \
+            "runner error" \
+            "fixture setup" \
+            "fixture failed" \
+            "fixture failed before project benchmark recorded compatibility (rc=${rc})" \
+            "0" \
+            "" \
+            "" \
+            "" \
+            "" \
+            "" \
+            ""
+    fi
     RESULTS_CSV="${RESULTS_CSV}${label},0,0,ERR,ERR,N/A,N/A,error,0,fixture failed (rc=${rc})\n"
 }
 
