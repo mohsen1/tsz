@@ -7,6 +7,33 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::construction::TypeDatabase;
+
+/// Classify a member type as callable and report whether any of its call
+/// signatures carry method-local type parameters.
+///
+/// Returns `None` when the type is not callable (so callers fall back to the
+/// strict relation). Handles both the bare `Function` representation (a derived
+/// member computed from its AST) and the `Callable` representation (a base
+/// member resolved from a lowered interface type), which the raw
+/// `get_call_signatures` query does not unify.
+fn callable_generic_flag(db: &dyn TypeDatabase, type_id: TypeId) -> Option<bool> {
+    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, type_id) {
+        return Some(!shape.type_params.is_empty());
+    }
+    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {
+        if shape.call_signatures.is_empty() {
+            return None;
+        }
+        return Some(
+            shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty()),
+        );
+    }
+    None
+}
 
 impl<'a> CheckerState<'a> {
     pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
@@ -49,6 +76,79 @@ impl<'a> CheckerState<'a> {
         }
 
         self.type_base_def_id(source_return) == Some(current_iface_def_id)
+    }
+
+    /// Combine several single-signature method types (one per overload) into a
+    /// single `Callable` carrying all of their call signatures. Returns `None`
+    /// unless at least two signatures were gathered, so callers only use the
+    /// combined form for genuinely overloaded members.
+    pub(super) fn build_overload_callable(&self, fn_types: &[TypeId]) -> Option<TypeId> {
+        use tsz_solver::types::{CallSignature, CallableShape};
+        let mut call_signatures: Vec<CallSignature> = Vec::new();
+        for &ty in fn_types {
+            if let Some(shape) =
+                crate::query_boundaries::common::function_shape_for_type(self.ctx.types, ty)
+            {
+                call_signatures.push(CallSignature {
+                    type_params: shape.type_params.clone(),
+                    params: shape.params.clone(),
+                    this_type: shape.this_type,
+                    return_type: shape.return_type,
+                    type_predicate: shape.type_predicate,
+                    is_method: shape.is_method,
+                });
+            } else if let Some(shape) =
+                crate::query_boundaries::common::callable_shape_for_type(self.ctx.types, ty)
+            {
+                call_signatures.extend(shape.call_signatures.iter().cloned());
+            } else {
+                return None;
+            }
+        }
+        if call_signatures.len() < 2 {
+            return None;
+        }
+        Some(self.ctx.types.factory().callable(CallableShape {
+            call_signatures,
+            construct_signatures: Vec::new(),
+            properties: Vec::new(),
+            string_index: None,
+            number_index: None,
+            symbol: None,
+            is_abstract: false,
+        }))
+    }
+
+    /// For interface heritage (TS2430), the strict no-erase-generics relation
+    /// can reject alpha-equivalent generic method signatures whose method-local
+    /// type parameters are represented with different `TypeId`s on each side —
+    /// e.g. a base member resolved from a lowered interface type (cross-file
+    /// `get_type_of_symbol`, which yields a `Callable` shape) vs a derived member
+    /// computed directly from its AST (a `Function` shape). When both members are
+    /// callables and at least one carries method-local type parameters, and the
+    /// derived signature is assignable to the base signature under fresh
+    /// method-local generic instantiation (the standard relation), the override
+    /// is a valid specialization and tsc does not report TS2430 (matching
+    /// `compareSignaturesRelated`). This is keyed on the structural shape of the
+    /// signatures, not on any identifier name, so renaming the method-local type
+    /// parameter does not change the decision. Non-generic members are excluded
+    /// so the strict relation continues to govern ordinary property/method
+    /// overrides.
+    pub(super) fn generic_method_override_is_valid_specialization(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> bool {
+        let Some(derived_generic) = callable_generic_flag(self.ctx.types, derived) else {
+            return false;
+        };
+        let Some(base_generic) = callable_generic_flag(self.ctx.types, base) else {
+            return false;
+        };
+        if !derived_generic && !base_generic {
+            return false;
+        }
+        self.diagnostic_relation_boolean_guard(derived, base)
     }
 
     pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {

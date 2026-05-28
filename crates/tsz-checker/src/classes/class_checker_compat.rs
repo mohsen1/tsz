@@ -405,6 +405,39 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        // For overloaded methods, the type-alias fallback path below (used when a
+        // base interface's declarations live in another file and could not be
+        // resolved into `base_iface_indices`) compares each derived overload
+        // individually against the base member's *combined* overload set. The
+        // strict relation rejects that even for valid specializations, so
+        // precompute a combined derived callable per overloaded method name and
+        // let that path retry the override as a whole.
+        let mut derived_overload_callables: rustc_hash::FxHashMap<String, TypeId> =
+            rustc_hash::FxHashMap::default();
+        {
+            let mut fns_by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
+                rustc_hash::FxHashMap::default();
+            for (name, member_type, _, kind, _, _) in &derived_members {
+                if *kind == METHOD_SIGNATURE
+                    && derived_method_counts.get(name).copied().unwrap_or(0) > 1
+                {
+                    let fn_ty = crate::query_boundaries::common::find_property_by_str(
+                        self.ctx.types,
+                        *member_type,
+                        name,
+                    )
+                    .map(|p| p.type_id)
+                    .unwrap_or(*member_type);
+                    fns_by_name.entry(name.clone()).or_default().push(fn_ty);
+                }
+            }
+            for (name, fns) in fns_by_name {
+                if let Some(callable) = self.build_overload_callable(&fns) {
+                    derived_overload_callables.insert(name, callable);
+                }
+            }
+        }
+
         let mut derived_string_index_type: Option<(TypeId, NodeIndex)> = None;
         let mut derived_number_index_type: Option<(TypeId, NodeIndex)> = None;
         for &decl_idx in &all_iface_decls {
@@ -1413,6 +1446,41 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_symbol(base_sym_id)
                     };
 
+                    // Substitution from the base's type parameters to the heritage
+                    // type arguments, used to instantiate base member types that the
+                    // Application evaluator left referencing the base's own parameters.
+                    let base_member_substitution: Option<TypeSubstitution> = type_arguments
+                        .and_then(|args| {
+                            let mut arg_ids: Vec<TypeId> = args
+                                .nodes
+                                .iter()
+                                .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+                                .collect();
+                            if arg_ids.is_empty() {
+                                return None;
+                            }
+                            let base_params = self.get_type_params_for_symbol(base_sym_id);
+                            if base_params.is_empty() {
+                                return None;
+                            }
+                            if arg_ids.len() < base_params.len() {
+                                for param in base_params.iter().skip(arg_ids.len()) {
+                                    arg_ids.push(
+                                        param
+                                            .default
+                                            .or(param.constraint)
+                                            .unwrap_or(TypeId::UNKNOWN),
+                                    );
+                                }
+                            }
+                            arg_ids.truncate(base_params.len());
+                            Some(TypeSubstitution::from_args(
+                                self.ctx.types,
+                                &base_params,
+                                &arg_ids,
+                            ))
+                        });
+
                     if base_type != TypeId::ERROR {
                         // Check numeric index signature compatibility. A base
                         // numeric index signature does not constrain every
@@ -1503,6 +1571,24 @@ impl<'a> CheckerState<'a> {
                             };
 
                             if let Some(base_prop_type_id) = base_prop_type {
+                                // The Application evaluator does not always deeply
+                                // instantiate a base interface member's nested generic
+                                // return type, so the member can still reference the
+                                // base's own type parameter (e.g. `AliasedExpression<T, A>`
+                                // for `AliasableExpression<T>` extended with `O`). Apply
+                                // the base→heritage substitution explicitly, mirroring the
+                                // in-arena interface path; it is a no-op on members that
+                                // are already instantiated.
+                                let base_prop_type_id = base_member_substitution
+                                    .as_ref()
+                                    .map(|substitution| {
+                                        instantiate_type(
+                                            self.ctx.types,
+                                            base_prop_type_id,
+                                            substitution,
+                                        )
+                                    })
+                                    .unwrap_or(base_prop_type_id);
                                 // Extract the derived property's raw type from its ObjectShape
                                 // (get_type_of_interface_member returns ObjectShape { name: type },
                                 // but we need the raw property type for comparison with base)
@@ -1515,11 +1601,21 @@ impl<'a> CheckerState<'a> {
                                     .map(|p| p.type_id)
                                     .unwrap_or(*member_type);
 
+                                // For overloaded methods, compare the combined
+                                // derived overload set (not a single overload)
+                                // against the base member.
+                                let generic_override_source = derived_overload_callables
+                                    .get(member_name)
+                                    .copied()
+                                    .unwrap_or(derived_prop_type);
                                 if should_report_member_type_mismatch(
                                     self,
                                     derived_prop_type,
                                     base_prop_type_id,
                                     *derived_member_idx,
+                                ) && !self.generic_method_override_is_valid_specialization(
+                                    generic_override_source,
+                                    base_prop_type_id,
                                 ) {
                                     let diagnostic_base_name = self
                                         .array_or_tuple_alias_target_text_for_name(&base_name)
