@@ -934,6 +934,9 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(type_text) = self.flat_map_array_subclass_return_type_text(expr_idx) {
                     return Some(type_text);
                 }
+                if let Some(type_text) = self.array_map_callback_return_type_text(expr_idx) {
+                    return Some(type_text);
+                }
                 if let Some(type_text) = self.array_filter_typeof_type_text(expr_idx) {
                     return Some(type_text);
                 }

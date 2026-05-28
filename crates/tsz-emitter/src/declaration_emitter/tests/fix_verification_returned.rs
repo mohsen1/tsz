@@ -551,6 +551,60 @@ const impossible = [1, 2].filter(x => typeof x === "string");
     );
 }
 
+#[test]
+fn fix_array_map_callback_decl_uses_return_array_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type MyObj = { data?: string };
+type MyArray = { list?: MyObj[] }[];
+const myArray: MyArray = [];
+
+const result = myArray
+  .map((arr) => arr.list)
+  .filter((arr) => arr && arr.length)
+  .map((arr) => arr
+    .filter((obj) => obj && obj.data)
+    .map(obj => JSON.parse(obj.data))
+  );
+"#,
+    );
+
+    assert!(
+        output.contains("declare const result: any[][];"),
+        "map callback return arrays should compose into the declaration type: {output}"
+    );
+}
+
+#[test]
+fn fix_source_predicate_decl_uses_truthy_union_and_negated_local_guard() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const numOrBoolean = (x: number | boolean) => typeof x === "number" || x;
+
+type Animal = { breath: true };
+type Rock = { breath: false };
+type Something = Animal | Rock;
+
+function isAnimal(something: Something): something is Animal {
+  return something.breath;
+}
+
+function negative(t: Something) {
+  return !isAnimal(t);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare const numOrBoolean: (x: number | boolean) => x is number | true;"),
+        "truthy boolean plus typeof guard should print the inferred predicate: {output}"
+    );
+    assert!(
+        output.contains("declare function negative(t: Something): t is Rock;"),
+        "negated local predicate over a union alias should print the complement arm: {output}"
+    );
+}
+
 // Tests for returned-function-expression recursive unrolling (issue #8683)
 
 #[test]

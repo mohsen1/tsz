@@ -2,6 +2,7 @@
 
 use super::super::DeclarationEmitter;
 use tsz_parser::parser::NodeIndex;
+use tsz_parser::parser::node::FunctionData;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -94,6 +95,58 @@ impl<'a> DeclarationEmitter<'a> {
         Some(format!("{primitive}[]"))
     }
 
+    pub(in crate::declaration_emitter) fn array_map_callback_return_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(call.expression);
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("map") {
+            return None;
+        }
+
+        let callback_idx = call.arguments.as_ref()?.nodes.first().copied()?;
+        let return_expr = self.function_like_single_return_expression(callback_idx)?;
+        let return_type = self
+            .preferred_expression_type_text(return_expr)
+            .or_else(|| self.json_parse_call_type_text(return_expr))
+            .or_else(|| {
+                self.get_node_type_or_names(&[return_expr])
+                    .filter(|type_id| *type_id != tsz_solver::types::TypeId::ERROR)
+                    .map(|type_id| self.print_type_id(type_id))
+            })
+            .filter(|type_text| !type_text.is_empty())?;
+        Some(format!(
+            "{}[]",
+            Self::parenthesize_type_text_in_union_position(&return_type)
+        ))
+    }
+
+    pub(in crate::declaration_emitter) fn function_source_type_predicate_text(
+        &self,
+        func: &FunctionData,
+    ) -> Option<String> {
+        let (param_name, param_type_text) = self.first_named_parameter_type_text(func)?;
+        let predicate_expr = self.callback_predicate_expression(func.body)?;
+        let predicate_type =
+            self.source_type_predicate_type_text(predicate_expr, &param_name, &param_type_text)?;
+        Some(format!("{param_name} is {predicate_type}"))
+    }
+
     fn array_element_type_includes_typeof_primitive(element_text: &str, primitive: &str) -> bool {
         let element_text = Self::strip_parenthesized_union_element_type_text(element_text)
             .unwrap_or_else(|| element_text.trim().to_string());
@@ -102,7 +155,211 @@ impl<'a> DeclarationEmitter<'a> {
             .any(|part| matches!(part.as_str(), "any" | "unknown") || part == primitive)
     }
 
+    fn first_named_parameter_type_text(&self, func: &FunctionData) -> Option<(String, String)> {
+        let param_idx = func.parameters.nodes.first().copied()?;
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let param_name = self.get_identifier_text(param.name)?;
+        let param_type_text = self.emit_type_node_text(param.type_annotation)?;
+        Some((param_name, param_type_text))
+    }
+
+    fn source_type_predicate_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        param_name: &str,
+        param_type_text: &str,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+            let binary = self.arena.get_binary_expr(expr_node)?;
+            if binary.operator_token == SyntaxKind::BarBarToken as u16 {
+                return self.typeof_or_truthy_param_predicate_type_text(
+                    binary.left,
+                    binary.right,
+                    param_name,
+                    param_type_text,
+                );
+            }
+        }
+        if expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            let unary = self.arena.get_unary_expr(expr_node)?;
+            if unary.operator == SyntaxKind::ExclamationToken as u16 {
+                return self.negated_local_predicate_call_type_text(
+                    unary.operand,
+                    param_name,
+                    param_type_text,
+                );
+            }
+        }
+        None
+    }
+
+    fn typeof_or_truthy_param_predicate_type_text(
+        &self,
+        left: NodeIndex,
+        right: NodeIndex,
+        param_name: &str,
+        param_type_text: &str,
+    ) -> Option<String> {
+        if let (Some(primitive), Some(truthy_text)) = (
+            self.typeof_equality_primitive(left, param_name),
+            self.truthy_boolean_param_type_text(right, param_name, param_type_text),
+        ) {
+            return Some(format!("{primitive} | {truthy_text}"));
+        }
+        if let (Some(truthy_text), Some(primitive)) = (
+            self.truthy_boolean_param_type_text(left, param_name, param_type_text),
+            self.typeof_equality_primitive(right, param_name),
+        ) {
+            return Some(format!("{truthy_text} | {primitive}"));
+        }
+        None
+    }
+
+    fn truthy_boolean_param_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        param_name: &str,
+        param_type_text: &str,
+    ) -> Option<&'static str> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        if self.get_identifier_text(expr_idx).as_deref() != Some(param_name) {
+            return None;
+        }
+        Self::split_top_level_union_type_parts(param_type_text)
+            .iter()
+            .any(|part| part == "boolean")
+            .then_some("true")
+    }
+
+    fn negated_local_predicate_call_type_text(
+        &self,
+        expr_idx: NodeIndex,
+        param_name: &str,
+        param_type_text: &str,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let [arg_idx] = call.arguments.as_ref()?.nodes.as_slice() else {
+            return None;
+        };
+        let arg_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(*arg_idx);
+        if self.get_identifier_text(arg_idx).as_deref() != Some(param_name) {
+            return None;
+        }
+        let callee_name = self.get_identifier_text(call.expression)?;
+        let callee_func = self.local_function_declaration_by_name(&callee_name)?;
+        let (_predicate_param, predicate_type_text) =
+            self.function_declared_type_predicate_text(callee_func)?;
+        self.complement_union_type_text(param_type_text, &predicate_type_text)
+    }
+
+    fn json_parse_call_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(call.expression);
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        if self.get_identifier_text(access.expression).as_deref() == Some("JSON")
+            && self.get_identifier_text(access.name_or_argument).as_deref() == Some("parse")
+        {
+            return Some("any".to_string());
+        }
+        None
+    }
+
+    fn local_function_declaration_by_name(&self, name: &str) -> Option<&FunctionData> {
+        if let Some(source_file) = self
+            .current_source_file_idx
+            .and_then(|idx| self.arena.get(idx))
+            .and_then(|node| self.arena.get_source_file(node))
+        {
+            for &stmt_idx in &source_file.statements.nodes {
+                let stmt_node = self.arena.get(stmt_idx)?;
+                let Some(func) = self.arena.get_function(stmt_node) else {
+                    continue;
+                };
+                if self.get_identifier_text(func.name).as_deref() == Some(name) {
+                    return Some(func);
+                }
+            }
+        }
+
+        let binder = self.binder?;
+        let symbol = binder
+            .file_locals
+            .get(name)
+            .or_else(|| binder.current_scope.get(name))?;
+        let declaration = binder.symbols.get(symbol)?.declarations.first().copied()?;
+        let declaration_node = self.arena.get(declaration)?;
+        self.arena.get_function(declaration_node)
+    }
+
+    fn function_declared_type_predicate_text(
+        &self,
+        func: &FunctionData,
+    ) -> Option<(String, String)> {
+        let type_node = self.arena.get(func.type_annotation)?;
+        let predicate = self.arena.get_type_predicate(type_node)?;
+        let target = self.get_identifier_text(predicate.parameter_name)?;
+        let type_text = self.emit_type_node_text(predicate.type_node)?;
+        Some((target, type_text))
+    }
+
+    fn complement_union_type_text(
+        &self,
+        param_type_text: &str,
+        excluded_type_text: &str,
+    ) -> Option<String> {
+        let union_text = self
+            .find_local_type_alias_type_node(param_type_text.trim())
+            .and_then(|type_node| self.emit_type_node_text(type_node))
+            .unwrap_or_else(|| param_type_text.trim().to_string());
+        let excluded = excluded_type_text.trim();
+        let union_parts = Self::split_top_level_union_type_parts(&union_text);
+        let remaining: Vec<_> = union_parts
+            .iter()
+            .filter(|part| part.trim() != excluded)
+            .cloned()
+            .collect();
+        if remaining.is_empty() || remaining.len() == union_parts.len() {
+            return None;
+        }
+        Some(remaining.join(" | "))
+    }
+
     fn typeof_filter_callback_primitive(&self, callback_idx: NodeIndex) -> Option<&'static str> {
+        let condition_idx = self.function_like_single_return_expression(callback_idx)?;
+        let param_name = self.function_like_first_parameter_name(callback_idx)?;
+        self.typeof_equality_primitive(condition_idx, &param_name)
+    }
+
+    fn function_like_single_return_expression(&self, callback_idx: NodeIndex) -> Option<NodeIndex> {
         let callback_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(callback_idx);
@@ -113,12 +370,19 @@ impl<'a> DeclarationEmitter<'a> {
             return None;
         }
         let callback = self.arena.get_function(callback_node)?;
+        self.callback_predicate_expression(callback.body)
+    }
+
+    fn function_like_first_parameter_name(&self, callback_idx: NodeIndex) -> Option<String> {
+        let callback_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(callback_idx);
+        let callback_node = self.arena.get(callback_idx)?;
+        let callback = self.arena.get_function(callback_node)?;
         let param_idx = callback.parameters.nodes.first().copied()?;
         let param_node = self.arena.get(param_idx)?;
         let param = self.arena.get_parameter(param_node)?;
-        let param_name = self.get_identifier_text(param.name)?;
-        let condition_idx = self.callback_predicate_expression(callback.body)?;
-        self.typeof_equality_primitive(condition_idx, &param_name)
+        self.get_identifier_text(param.name)
     }
 
     fn callback_predicate_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {

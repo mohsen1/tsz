@@ -94,6 +94,13 @@ impl<'a> DeclarationEmitter<'a> {
             None
         };
 
+        if func.body.is_some()
+            && let Some(predicate_text) = self.function_source_type_predicate_text(func)
+        {
+            self.write(&predicate_text);
+            return true;
+        }
+
         if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let func_type_id = cache
                 .node_types
