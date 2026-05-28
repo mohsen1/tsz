@@ -909,6 +909,76 @@ const b = <video data-\u0076ideo />;"#;
         );
     }
 
+    /// Intrinsic tag names emit as JS string literals; unicode escapes in the
+    /// name must be cooked because `tsc` rebuilds the argument as a fresh JS
+    /// string. Covers `\uXXXX` and `\u{X...}` escape forms, both at the head of
+    /// the name and inside hyphenated kebab segments.
+    ///
+    /// Witness: `unicodeEscapesInJsxtags.tsx` (`@jsx react`) expects
+    /// `React.createElement("a", null)`, `React.createElement("a-b", null)`,
+    /// and `React.createElement("a-c", null)` for the source
+    /// `<a/>`, `<a-b/>`, `<a-c/>` (and their `\u{...}` variants).
+    #[test]
+    fn jsx_classic_unicode_escape_intrinsic_tag_name_is_cooked() {
+        let source = r#"const a = <a/>;
+const b = <a-b/>;
+const c = <a-c/>;
+const d = <\u{0061}/>;
+const e = <\u{0061}-b/>;
+const f = <a-\u{0063}/>;"#;
+        let output = emit_jsx_react(source);
+        // Anchor each assertion to the originating `const` binding so a regression
+        // in only the `\u{...}` path can't be masked by the plain `<a/>` path
+        // emitting the same `React.createElement("a", null)` fragment.
+        for (label, fragment) in [
+            (r"a head", r#"const a = React.createElement("a", null)"#),
+            (
+                r"a head, hyphen tail",
+                r#"const b = React.createElement("a-b", null)"#,
+            ),
+            (
+                r"hyphen head, c tail",
+                r#"const c = React.createElement("a-c", null)"#,
+            ),
+            (
+                r"\u{0061} head",
+                r#"const d = React.createElement("a", null)"#,
+            ),
+            (
+                r"\u{0061} head, hyphen tail",
+                r#"const e = React.createElement("a-b", null)"#,
+            ),
+            (
+                r"hyphen head, \u{0063} tail",
+                r#"const f = React.createElement("a-c", null)"#,
+            ),
+        ] {
+            assert!(
+                output.contains(fragment),
+                "Intrinsic JSX tag with unicode escape ({label}) should emit cooked string `{fragment}`.\nOutput: {output}"
+            );
+        }
+    }
+
+    /// Component tag references emit as JS expressions; unicode escapes in the
+    /// component identifier (including the extended `\u{X...}` form) must be
+    /// preserved verbatim because the identifier is a value reference, not a
+    /// string. Mirrors the existing
+    /// `jsx_classic_unicode_escape_component_and_member_names_are_preserved`
+    /// coverage for the `\uXXXX` form.
+    ///
+    /// Witness: `unicodeEscapesInJsxtags.tsx` expects
+    /// `React.createElement(Comp\u{0061}, { x: 12 })` for `<Comp\u{0061} x={12} />`.
+    #[test]
+    fn jsx_classic_extended_unicode_escape_component_name_is_preserved() {
+        let source = r#"const a = <Comp\u{0061} x={12} />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement(Comp\u{0061}, { x: 12 })"#),
+            "Component tag identifier extended-escape spelling should be preserved in expression emit.\nOutput: {output}"
+        );
+    }
+
     #[test]
     fn jsx_classic_self_closing_trailing_line_comment_is_preserved() {
         let source = "const x = (<Item value={1} /> // kept\n);";
