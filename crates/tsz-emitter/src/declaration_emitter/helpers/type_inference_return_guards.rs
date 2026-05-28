@@ -3,6 +3,7 @@
 use super::super::DeclarationEmitter;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
+use tsz_scanner::SyntaxKind;
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn array_element_type_text(
@@ -27,6 +28,58 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         None
+    }
+
+    pub(in crate::declaration_emitter) fn element_access_array_element_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(expr_node)?;
+        let key_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(access.name_or_argument);
+        let key_node = self.arena.get(key_idx)?;
+        if key_node.kind != SyntaxKind::NumericLiteral as u16 {
+            return None;
+        }
+
+        let receiver_text = self
+            .preferred_expression_type_text(access.expression)
+            .or_else(|| self.reference_declared_type_annotation_text(access.expression))?;
+        let element_text = Self::array_element_type_text(&receiver_text)?;
+        Some(
+            Self::strip_parenthesized_union_element_type_text(&element_text)
+                .unwrap_or(element_text),
+        )
+    }
+
+    fn strip_parenthesized_union_element_type_text(type_text: &str) -> Option<String> {
+        let trimmed = type_text.trim();
+        if !trimmed.starts_with('(') || !trimmed.ends_with(')') || !trimmed.contains('|') {
+            return None;
+        }
+
+        let mut depth = 0usize;
+        for (idx, ch) in trimmed.char_indices() {
+            match ch {
+                '(' => depth += 1,
+                ')' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 && idx != trimmed.len() - ch.len_utf8() {
+                        return None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        (depth == 0).then(|| trimmed[1..trimmed.len() - 1].trim().to_string())
     }
 
     /// Returns `true` when `func_body` is a block whose sole non-trivial

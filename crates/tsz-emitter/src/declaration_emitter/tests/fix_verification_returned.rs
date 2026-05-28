@@ -505,6 +505,28 @@ type Bar = Foo & {
     );
 }
 
+#[test]
+fn fix_element_access_decl_uses_source_array_element_type() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Foo = {
+    foo: string;
+};
+type Bar = Foo & {
+    bar: string;
+};
+
+const list: (Foo | Bar)[] = [];
+const fooOrBar = list[0];
+"#,
+    );
+
+    assert!(
+        output.contains("declare const fooOrBar: Foo | Bar;"),
+        "element access over a source array annotation should print the element type: {output}"
+    );
+}
+
 // Tests for returned-function-expression recursive unrolling (issue #8683)
 
 #[test]

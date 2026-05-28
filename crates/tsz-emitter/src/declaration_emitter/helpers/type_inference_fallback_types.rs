@@ -1013,6 +1013,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.conditional_unique_symbol_union_type_text(expr_idx)),
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self
                 .array_literal_element_access_type_text(expr_idx)
+                .or_else(|| self.element_access_array_element_type_text(expr_idx))
                 .or_else(|| self.template_index_signature_element_access_type_text(expr_idx))
                 .or_else(|| self.class_static_computed_index_access_type_text(expr_idx)),
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {
