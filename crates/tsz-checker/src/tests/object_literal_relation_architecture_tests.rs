@@ -179,3 +179,27 @@ fn test_mapped_contextual_property_type_uses_relation_outcome_boundary() {
         "mapped contextual property key checks must not regress to raw boolean assignability"
     );
 }
+
+/// Contextual symbol-index value diagnostics choose the computed-name anchor
+/// locally, but the source-to-symbol-index relation decision belongs on the
+/// shared relation outcome path.
+#[test]
+fn test_contextual_symbol_index_value_mismatch_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/object_literal/symbol_key_routing.rs")
+        .expect("failed to read symbol_key_routing.rs");
+    let helper = source
+        .split("fn report_contextual_symbol_index_value_mismatch")
+        .nth(1)
+        .and_then(|tail| tail.split("fn contextual_symbol_index_value_type").next())
+        .expect("failed to locate contextual symbol index diagnostic helper");
+
+    assert!(
+        helper.contains("assign_relation_outcome(source_value_type, target_value_type)")
+            && helper.contains(".related"),
+        "contextual symbol-index diagnostics must route value compatibility through relation outcomes"
+    );
+    assert!(
+        !helper.contains("diagnostic_relation_boolean_guard(source_value_type, target_value_type)"),
+        "contextual symbol-index diagnostics must not use a raw diagnostic boolean relation guard"
+    );
+}
