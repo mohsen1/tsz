@@ -782,3 +782,61 @@ export function outer<V>() {
         "three-level chain with explicit tuple return annotation: {output}"
     );
 }
+
+// When an unannotated function directly returns a call to a generic function
+// whose return-type annotation references the callee's own type parameter,
+// declaration emit must substitute the inferred type argument into the alias
+// reference instead of copying the callee's bare type parameter verbatim.
+// Regression for mappedTypes4 (`Boxified<T>` -> `Boxified<A | undefined>`).
+#[test]
+fn fix_returned_generic_call_substitutes_inferred_type_argument() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+declare function boxify<T>(obj: T): Boxified<T>;
+type A = { a: string };
+type B = { b: string };
+export function f1(x: A | B) {
+    return boxify(x);
+}
+"#,
+    );
+    assert!(
+        output.contains("function f1(x: A | B): Boxified<A | B>"),
+        "inferred return of returned generic call must substitute inferred arg: {output}"
+    );
+    assert!(
+        !output.contains("Boxified<T>"),
+        "must not leak the callee's bare type parameter: {output}"
+    );
+}
+
+// Same rule, different type-parameter spelling on both the callee and its alias,
+// plus a renamed parameter — proves the fix is structural, not keyed to `T`.
+#[test]
+fn fix_returned_generic_call_substitution_is_structural_not_named() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Wrap<Elem> = {
+    [Key in keyof Elem]: Elem[Key];
+};
+declare function wrapify<Source>(input: Source): Wrap<Source>;
+type One = { one: number };
+type Two = { two: number };
+export function g(value: One | Two) {
+    return wrapify(value);
+}
+"#,
+    );
+    assert!(
+        output.contains("function g(value: One | Two): Wrap<One | Two>"),
+        "renamed type parameter must still substitute the inferred arg: {output}"
+    );
+    assert!(
+        !output.contains("Wrap<Source>"),
+        "must not leak the callee's bare type parameter `Source`: {output}"
+    );
+}
