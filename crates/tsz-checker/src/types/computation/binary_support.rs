@@ -1404,7 +1404,7 @@ impl<'a> CheckerState<'a> {
                         if ret != TypeId::BOOLEAN
                             && ret != TypeId::ANY
                             && ret != TypeId::ERROR
-                            && !self.is_assignable_to(ret, TypeId::BOOLEAN)
+                            && !self.assign_relation_outcome(ret, TypeId::BOOLEAN).related
                         {
                             self.error_at_node_msg(
                                 right_idx,
@@ -1423,7 +1423,7 @@ impl<'a> CheckerState<'a> {
                                 && param_type != TypeId::ANY
                                 && param_type != TypeId::UNKNOWN
                                 && param_type != TypeId::ERROR
-                                && !self.is_assignable_to(lhs_type, param_type)
+                                && !self.assign_relation_outcome(lhs_type, param_type).related
                             {
                                 self.error_at_node_msg(
                                     left_idx,
@@ -1466,7 +1466,7 @@ impl<'a> CheckerState<'a> {
             .ctx
             .types
             .union3(TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL);
-        if self.is_assignable_to(key_type, target) {
+        if self.assign_relation_outcome(key_type, target).related {
             return;
         }
         // Source uses the widened diagnostic form so a fresh literal operand shows its
@@ -1636,12 +1636,14 @@ impl<'a> CheckerState<'a> {
                     self.ctx.types,
                     left,
                 )
-                    || left_is_index_access && self.is_assignable_to(left, TypeId::NUMBER);
+                    || left_is_index_access
+                        && self.assign_relation_outcome(left, TypeId::NUMBER).related;
                 let right_ok =
                     crate::query_boundaries::type_computation::core::is_arithmetic_operand(
                         self.ctx.types,
                         right,
-                    ) || right_is_index_access && self.is_assignable_to(right, TypeId::NUMBER);
+                    ) || right_is_index_access
+                        && self.assign_relation_outcome(right, TypeId::NUMBER).related;
                 left_ok && right_ok
             }
             _ => false,
