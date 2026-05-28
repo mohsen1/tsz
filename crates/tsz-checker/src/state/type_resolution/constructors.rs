@@ -925,6 +925,7 @@ impl<'a> CheckerState<'a> {
             if let Some((base_instance_type, base_type_params)) =
                 self.class_instance_type_with_params_from_symbol(base_sym_id)
             {
+                self.register_self_referential_base_class_instance(base_sym_id, base_instance_type);
                 let instantiated = self.instantiate_base_instance_type_with_args(
                     base_instance_type,
                     &base_type_params,
@@ -959,6 +960,21 @@ impl<'a> CheckerState<'a> {
         if adds_implicit_any_index && resolved.is_some_and(TypeId::is_any) {
             resolved = Some(self.implicit_any_index_base_instance_type());
         }
+        // When the base class lives in another file's arena, the instance is
+        // synthesized from its constructor's construct-return. Self-referential
+        // members in that synthesized instance are interned as `Lazy(DefId)`
+        // pointing back at the base class. Register the synthesized instance as
+        // the base class's instance type so the solver resolves those
+        // `Lazy(DefId)` self-references to the base **instance**, not the base
+        // **constructor** (issue #10634, false TS2416 on covariant overrides).
+        // Only do this for the un-instantiated base (no heritage type args), so
+        // the registered type is the class's canonical instance.
+        if type_argument_count == 0
+            && let Some(resolved_instance) = resolved
+            && let Some(base_sym_id) = self.resolve_heritage_symbol(expr_idx)
+        {
+            self.register_self_referential_base_class_instance(base_sym_id, resolved_instance);
+        }
         if self.ctx.is_js_file()
             && let Some(synthesized) =
                 self.synthesize_js_constructor_instance_type(expr_idx, ctor_type, &[])
@@ -975,6 +991,54 @@ impl<'a> CheckerState<'a> {
             };
         }
         self.cache_base_instance_result(expr_idx, should_cache, resolved)
+    }
+
+    /// Register a base class's canonical **instance** type against its `DefId`
+    /// in the solver type environments, mirroring the in-file class path.
+    ///
+    /// The solver's `TypeEnvironment::resolve_lazy` resolves a `Lazy(DefId)`
+    /// type reference to the class **instance** when `class_instance_types`
+    /// carries an entry for that `DefId`, otherwise it falls back to the def
+    /// body — which for a class is the **constructor** (static side). When a
+    /// base class is resolved cross-arena (constructor synthesis or the
+    /// symbol path), nothing populates that entry, so a self-referential
+    /// member typed as `Lazy(DefId(base))` resolves to the constructor and a
+    /// covariant override (`self(): Derived` / `next: Derived`) is wrongly
+    /// compared against the base constructor, yielding a false `TS2416`.
+    /// Registering the instance closes that gap (issue #10634).
+    fn register_self_referential_base_class_instance(
+        &mut self,
+        base_sym_id: tsz_binder::SymbolId,
+        canonical_instance: TypeId,
+    ) {
+        if matches!(
+            canonical_instance,
+            TypeId::ERROR | TypeId::ANY | TypeId::UNKNOWN
+        ) {
+            return;
+        }
+        let Some(def_id) = self.ctx.get_existing_def_id(base_sym_id) else {
+            return;
+        };
+        // Don't clobber an already-registered instance (e.g. the in-file
+        // canonical instance) with a synthesized one.
+        let already_registered = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .is_some_and(|env| env.get_class_instance_type(def_id).is_some());
+        if already_registered {
+            return;
+        }
+        self.ctx
+            .register_class_instance_in_envs(def_id, canonical_instance);
+        // A `Lazy(DefId)` self-reference may already have been evaluated to the
+        // base **constructor** and memoized in the evaluation caches before the
+        // instance mapping existed (heritage processing evaluates the base
+        // reference eagerly). Drop those stale entries so the self-reference
+        // re-resolves to the freshly registered instance type.
+        self.ctx.clear_type_evaluation_caches_for_def(def_id);
     }
 
     fn constructor_type_explicitly_returns_any(&mut self, ctor_type: TypeId) -> bool {

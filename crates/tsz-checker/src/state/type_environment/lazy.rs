@@ -1481,6 +1481,21 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// The class **instance** type recorded for `def_id` in the solver type
+    /// environment, if any. Only classes register `class_instance_types`
+    /// entries, so a hit is unambiguously the instance (type-position) form. A
+    /// self-`Lazy(def_id)` wrapper is rejected so callers don't return the very
+    /// reference they are trying to resolve.
+    fn registered_class_instance_for_def(&self, def_id: tsz_solver::DefId) -> Option<TypeId> {
+        let instance_type = self
+            .ctx
+            .type_env
+            .try_borrow()
+            .ok()
+            .and_then(|env| env.get_class_instance_type(def_id))?;
+        (lazy_def_id(self.ctx.types, instance_type) != Some(def_id)).then_some(instance_type)
+    }
+
     /// Resolve a `DefId` to a concrete type and insert a `DefId` mapping into the type environment.
     ///
     /// Returns the resolved type when a symbol bridge exists; returns `None` when the `DefId`
@@ -1501,6 +1516,24 @@ impl<'a> CheckerState<'a> {
                 return Some(resolved);
             }
             return Some(self.ctx.types.lazy(def_id));
+        }
+
+        // A `Lazy(DefId)` in type position resolves to the class **instance**, not
+        // its constructor. When a base class was resolved cross-arena, its
+        // canonical instance is recorded in the solver type environment's
+        // `class_instance_types` (see
+        // `register_self_referential_base_class_instance`). Honour that mapping
+        // before the symbol-based fallback, which yields the class
+        // **constructor** and makes a self-referential covariant override compare
+        // against the static side, emitting a false `TS2416` (issue #10634). This
+        // also covers cross-arena classes whose `def_symbol_identity` is not
+        // resolvable in the current context (the `?` below would otherwise bail).
+        // Inserting the instance as the def body mirrors the in-file class path
+        // (symbol → `symbol_instance_types` → `try_insert_def_in_type_env`), so
+        // callers relying on the def-registration side effect keep working.
+        if let Some(instance_type) = self.registered_class_instance_for_def(def_id) {
+            self.try_insert_def_in_type_env(def_id, instance_type);
+            return Some(instance_type);
         }
 
         let (sym_id, owner_file_idx) = self.ctx.def_symbol_identity(def_id)?;
