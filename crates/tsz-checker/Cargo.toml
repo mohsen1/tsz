@@ -443,6 +443,10 @@ name = "ts2430_tests"
 path = "tests/ts2430_tests.rs"
 
 [[test]]
+name = "ts2430_cross_file_generic_heritage_tests"
+path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
+
+[[test]]
 name = "ts2540_readonly_tests"
 path = "tests/ts2540_readonly_tests.rs"
 
