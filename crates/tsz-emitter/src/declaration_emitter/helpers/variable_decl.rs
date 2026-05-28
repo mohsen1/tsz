@@ -1031,6 +1031,12 @@ impl<'a> DeclarationEmitter<'a> {
 
                 let selected_type_text = if has_initializer {
                     self.object_literal_declared_shorthand_type_text(initializer, self.indent_level)
+                        .or_else(|| {
+                            self.object_literal_optional_method_type_text(
+                                initializer,
+                                self.indent_level,
+                            )
+                        })
                         .unwrap_or_else(|| selected_type_text.to_string())
                 } else {
                     selected_type_text.to_string()

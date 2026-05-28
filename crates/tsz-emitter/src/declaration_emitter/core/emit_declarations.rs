@@ -1048,11 +1048,25 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if func_body.is_some()
+                        && self.function_body_returns_object_with_this_only_methods(func_body)
+                        && let Some(object_literal_idx) =
+                            self.direct_returned_object_literal(func_body)
+                        && let Some(type_text) =
+                            self.infer_object_literal_type_text_at(object_literal_idx, 0)
+                    {
+                        // Prefer AST-derived text: solver's TypePrinter expands self-referential
+                        // `this`-returning object types exponentially (max_depth = 128 levels).
+                        // `infer_object_literal_type_text_at` emits `/*elided*/ any` for
+                        // `this`-returning methods, which matches tsc's declaration output.
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some((type_text, _)) = scoped_preferred_return.as_ref()
                         && func_body.is_some()
                         && self.function_body_returns_object_with_this_only_methods(func_body)
                     {
-                        // Prefer AST-derived text: solver print of `this`-returning object methods expands exponentially.
+                        // Fallback when direct object-literal inference is unavailable:
+                        // use the scoped preferred return text derived from the source annotation.
                         self.write(": ");
                         self.write(type_text);
                     } else if let Some(type_text) = func_body

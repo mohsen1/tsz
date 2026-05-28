@@ -524,3 +524,38 @@ fn test_jsdoc_redirected_event_const_undefined_includes_undefined() {
         "Expected redirected `event` lookup with undefined initializer to preserve undefined: {output}"
     );
 }
+
+/// Object literal optional method `a?() {}` must emit as method-signature
+/// style `a?(): void`, not property-function style `a?: () => void`.
+///
+/// Adjacent shape: different method name (`handle?()`) proves the rule is
+/// not name-dependent.
+#[test]
+fn test_object_literal_optional_method_uses_method_signature_style() {
+    // Uses emit_dts_with_binding (no solver cache) which goes through the
+    // allowlisted_initializer_type_text path; the optional method must still
+    // render with method-signature syntax.
+    let output = emit_dts_with_binding(
+        r#"
+const bar = { a?() {} };
+const baz = { handle?() {} };
+"#,
+    );
+
+    assert!(
+        output.contains("a?(): void"),
+        "Expected optional method to emit as 'a?(): void' (method-signature style), not 'a?: () => void': {output}"
+    );
+    assert!(
+        output.contains("handle?(): void"),
+        "Expected optional method 'handle' to emit as 'handle?(): void': {output}"
+    );
+    assert!(
+        !output.contains("a?: () =>"),
+        "Expected no property-function style for optional method 'a': {output}"
+    );
+    assert!(
+        !output.contains("handle?: () =>"),
+        "Expected no property-function style for optional method 'handle': {output}"
+    );
+}
