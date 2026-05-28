@@ -36,7 +36,10 @@ pub(crate) struct ResolvedDeclarationTypeText {
 }
 
 impl<'a> DeclarationEmitter<'a> {
-    fn symbol_is_nameable_type_for_emit(&self, sym_id: SymbolId) -> bool {
+    pub(in crate::declaration_emitter) fn symbol_is_nameable_type_for_emit(
+        &self,
+        sym_id: SymbolId,
+    ) -> bool {
         self.binder
             .and_then(|binder| binder.symbols.get(sym_id))
             .is_none_or(|symbol| {
@@ -103,6 +106,33 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         false
+    }
+
+    fn should_preserve_named_type_reference_for_emit(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::construction::TypeInterner,
+    ) -> bool {
+        if self.should_preserve_named_application_for_emit(type_id, interner) {
+            return true;
+        }
+
+        if let Some(sym_ref) = tsz_solver::visitor::type_query_symbol(interner, type_id) {
+            return self.symbol_is_nameable_type_for_emit(SymbolId(sym_ref.0));
+        }
+
+        let Some(def_id) = tsz_solver::visitor::lazy_def_id(interner, type_id) else {
+            return false;
+        };
+        let Some(cache) = self.type_cache.as_ref() else {
+            return true;
+        };
+        cache
+            .def_to_symbol
+            .get(&def_id)
+            .copied()
+            .is_some_and(|sym_id| self.symbol_is_nameable_type_for_emit(sym_id))
+            || cache.def_to_name.contains_key(&def_id)
     }
 
     pub(in crate::declaration_emitter) fn should_preserve_named_application_for_inferred_emit(
@@ -807,6 +837,48 @@ impl<'a> DeclarationEmitter<'a> {
         let printed = self.print_type_id_with_policy(
             type_id,
             Self::should_preserve_named_application_for_inferred_emit,
+        );
+        let printed = if elided_alias_names.is_empty() {
+            printed
+        } else {
+            Self::elide_type_reference_names(&printed, &elided_alias_names)
+        };
+        let printed =
+            Self::simplify_inexact_optional_mapped_intersection_text(&printed).unwrap_or(printed);
+        let printed = self
+            .expand_imported_indexed_access_type_text(&printed)
+            .unwrap_or(printed);
+        if Self::contains_portable_mapped_object_text(&printed)
+            && let Some(expanded) =
+                self.expand_portable_intersection_type_text(self.arena, &printed)
+        {
+            expanded
+        } else {
+            printed
+        }
+    }
+
+    pub(in crate::declaration_emitter) fn print_type_id_for_inferred_predicate_declaration(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+    ) -> String {
+        let elided_alias_names = self.function_local_type_alias_application_names(type_id);
+        let type_id = if let Some(interner) = self.type_interner {
+            let type_id = self
+                .inferred_declaration_mapped_constraint_surface(type_id)
+                .unwrap_or(type_id);
+            self.display_alias_for_policy(
+                type_id,
+                interner,
+                Self::should_preserve_named_type_reference_for_emit,
+            )
+        } else {
+            type_id
+        };
+        let type_id = self.reduce_conditional_aliases_for_inferred_emit(type_id, 0);
+        let printed = self.print_type_id_with_policy(
+            type_id,
+            Self::should_preserve_named_type_reference_for_emit,
         );
         let printed = if elided_alias_names.is_empty() {
             printed
