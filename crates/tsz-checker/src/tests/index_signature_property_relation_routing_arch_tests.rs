@@ -32,3 +32,32 @@ fn index_signature_property_checks_use_relation_outcome_boundary() {
         "property/index value checks should not use raw boolean relation guards"
     );
 }
+
+#[test]
+fn union_excess_unresolved_member_matching_uses_relation_outcome() {
+    let source = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/state/state_checking/property.rs"),
+    )
+    .expect("failed to read state_checking/property.rs");
+    let start = source
+        .find("let effective_members = if !had_discriminant_narrowing")
+        .expect("find union excess effective members block");
+    let end = start
+        + source[start..]
+            .find("let effective_shapes = effective_members")
+            .expect("find end of union excess effective members block");
+    let block = &source[start..end];
+    let compact_block: String = block.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        compact_block.contains("assign_relation_outcome(")
+            && compact_block.contains("source_prop.type_id")
+            && compact_block.contains("target_prop.type_id")
+            && compact_block.contains(".related"),
+        "union excess fallback member matching should route property compatibility through relation outcomes"
+    );
+    assert!(
+        !block.contains("diagnostic_relation_boolean_guard"),
+        "union excess fallback member matching should not use raw boolean relation guards"
+    );
+}

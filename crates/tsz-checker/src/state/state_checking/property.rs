@@ -616,10 +616,12 @@ impl<'a> CheckerState<'a> {
                                 }
                                 source_props.iter().any(|source_prop| {
                                     source_prop.name == target_prop.name
-                                        && self.diagnostic_relation_boolean_guard(
-                                            source_prop.type_id,
-                                            target_prop.type_id,
-                                        )
+                                        && self
+                                            .assign_relation_outcome(
+                                                source_prop.type_id,
+                                                target_prop.type_id,
+                                            )
+                                            .related
                                 })
                             })
                         })
