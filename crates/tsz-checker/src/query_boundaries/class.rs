@@ -19,6 +19,30 @@ pub(crate) fn maybe_substitute_this_type(
     }
 }
 
+/// Collect a type's call signatures, handling both `CallableShape`
+/// (overloaded / object-with-call-sigs) and the single-signature `FunctionShape`
+/// that an interface method declaration lowers to. `get_call_signatures` alone
+/// misses the `FunctionShape` case and would yield an empty signature list.
+pub(crate) fn member_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<tsz_solver::CallSignature> {
+    if let Some(sigs) = tsz_solver::type_queries::get_call_signatures(db, type_id) {
+        return sigs;
+    }
+    if let Some(fs) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        return vec![tsz_solver::CallSignature {
+            type_params: fs.type_params.clone(),
+            params: fs.params.clone(),
+            this_type: fs.this_type,
+            return_type: fs.return_type,
+            type_predicate: fs.type_predicate,
+            is_method: fs.is_method,
+        }];
+    }
+    Vec::new()
+}
+
 fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     if let Some(shape) = tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id) {
         return shape
