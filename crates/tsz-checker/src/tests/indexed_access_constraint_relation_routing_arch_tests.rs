@@ -136,3 +136,20 @@ fn indexed_access_ts2536_key_space_checks_use_relation_outcome_boundary() {
         "value-union keyof fallback checks should route through RelationOutcome"
     );
 }
+
+#[test]
+fn indexed_access_computation_keyof_source_checks_use_relation_outcome_boundary() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/types/computation/access.rs");
+    let source = fs::read_to_string(&source_path).expect("read indexed-access computation source");
+    let compact_source: String = source.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        !source.contains("diagnostic_relation_boolean_guard"),
+        "indexed-access computation diagnostics should not use raw diagnostic boolean relation guards"
+    );
+    assert!(
+        compact_source
+            .contains("assign_relation_outcome(pre_resolution_object_type,key_source).related"),
+        "keyof-source type-parameter checks should route relation truth through RelationOutcome"
+    );
+}

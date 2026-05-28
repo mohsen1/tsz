@@ -1510,7 +1510,8 @@ impl<'a> CheckerState<'a> {
                 if let Some(key_source) =
                     self.keyof_source_type_param(index_type, pre_resolution_object_type)
                     && !self
-                        .diagnostic_relation_boolean_guard(pre_resolution_object_type, key_source)
+                        .assign_relation_outcome(pre_resolution_object_type, key_source)
+                        .related
                     && !self.object_constraint_covers_keyof_source(
                         pre_resolution_object_type,
                         key_source,
