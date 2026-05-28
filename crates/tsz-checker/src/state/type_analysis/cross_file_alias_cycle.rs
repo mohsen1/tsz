@@ -62,9 +62,11 @@ impl<'a> CheckerState<'a> {
 
     /// If `def_id` is already on the active cross-arena alias stack, the alias
     /// chain is circular: mark every member of the cycle (from that entry to the
-    /// top of the stack) circular in the shared `DefinitionStore` and return
-    /// `true`. Returns `false` when there is no cycle.
-    pub(crate) fn mark_cross_arena_alias_cycle(&mut self, def_id: DefId) -> bool {
+    /// top of the stack) circular in the shared `DefinitionStore`. A no-op when
+    /// there is no cycle. Marking only enables the per-file TS2456 post-pass; it
+    /// does not change type resolution, so a legitimately recursive (non-cyclic
+    /// per tsc) alias is unaffected — its own file never owns a circular member.
+    pub(crate) fn mark_cross_arena_alias_cycle(&mut self, def_id: DefId) {
         let cycle_members = CROSS_ARENA_ALIAS_STACK.with(|stack| {
             let stack = stack.borrow();
             stack
@@ -72,14 +74,10 @@ impl<'a> CheckerState<'a> {
                 .position(|&d| d == def_id)
                 .map(|idx| stack[idx..].to_vec())
         });
-        match cycle_members {
-            Some(members) => {
-                for member in members {
-                    self.ctx.definition_store.mark_circular_def(member);
-                }
-                true
+        if let Some(members) = cycle_members {
+            for member in members {
+                self.ctx.definition_store.mark_circular_def(member);
             }
-            None => false,
         }
     }
 

@@ -852,11 +852,18 @@ impl<'a> CheckerState<'a> {
 
             // Cross-file circular type-alias detection (TS2456): if resolving
             // this alias re-enters an alias already on the delegation path, mark
-            // the whole cycle circular and stop (see `cross_file_alias_cycle`).
+            // every member of the cycle circular so each file's
+            // `check_cross_file_circular_type_aliases` post-pass emits its own
+            // TS2456 (see `cross_file_alias_cycle`). We deliberately do NOT
+            // short-circuit resolution here: the cross-arena depth guard below
+            // terminates the recursion exactly as it does without this marking,
+            // so a legitimately self-referential (non-circular per tsc, e.g. a
+            // recursive lib alias resolved through deferral) type keeps
+            // resolving to the same type main produces instead of collapsing
+            // early to ERROR and cascading spurious assignability errors.
             let alias_cycle_def_id = self.cross_arena_alias_def_id(sym_id);
-            if alias_cycle_def_id.is_some_and(|def_id| self.mark_cross_arena_alias_cycle(def_id)) {
-                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
-                return Some((TypeId::ERROR, Vec::new()));
+            if let Some(def_id) = alias_cycle_def_id {
+                self.mark_cross_arena_alias_cycle(def_id);
             }
 
             // Guard against deep cross-arena recursion to prevent stack overflow.
