@@ -30,6 +30,86 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         self.check_function_subtype_impl(source, target, allow_constructor_bivariance)
     }
 
+    /// Whether the type parameter `tp_id` appears *bare* anywhere inside
+    /// `type_id` — that is, as a directly-observable value type rather than only
+    /// as a type argument of a generic application.
+    ///
+    /// `Box<T>` does NOT count `T` as bare (it is a type argument whose effect is
+    /// mediated by `Box`'s declared variance), but `T`, `T[]`, `T | null`, and
+    /// `(arg: T) => void` all do (the parameter is observed directly). Used to
+    /// decide whether a generic target signature's type parameter may be erased
+    /// to its constraint when relating a non-generic implementation against it:
+    /// bare parameters must stay opaque because the caller controls them, while
+    /// application-only parameters reduce to their constraint like tsc's
+    /// `getBaseSignature`.
+    fn type_param_appears_bare(&self, type_id: TypeId, tp_id: TypeId) -> bool {
+        if type_id == tp_id {
+            return true;
+        }
+        // Cheap pruning: if the parameter does not occur at all, it is not bare.
+        if !crate::visitor::collect_all_types(self.interner, type_id).contains(&tp_id) {
+            return false;
+        }
+        match self.interner.lookup(type_id) {
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                if self.type_param_appears_bare(app.base, tp_id) {
+                    return true;
+                }
+                // A direct type argument equal to `tp_id` is mediated by the
+                // application's variance and is not a bare occurrence; deeper
+                // structure inside an argument still counts.
+                app.args
+                    .iter()
+                    .any(|&arg| arg != tp_id && self.type_param_appears_bare(arg, tp_id))
+            }
+            Some(TypeData::Array(elem)) => self.type_param_appears_bare(elem, tp_id),
+            Some(TypeData::ReadonlyType(inner)) => self.type_param_appears_bare(inner, tp_id),
+            Some(TypeData::Union(list)) | Some(TypeData::Intersection(list)) => self
+                .interner
+                .type_list(list)
+                .iter()
+                .any(|&m| self.type_param_appears_bare(m, tp_id)),
+            Some(TypeData::Tuple(list)) => self
+                .interner
+                .tuple_list(list)
+                .iter()
+                .any(|e| self.type_param_appears_bare(e.type_id, tp_id)),
+            Some(TypeData::Function(shape_id)) => {
+                let shape = self.interner.function_shape(shape_id);
+                shape
+                    .params
+                    .iter()
+                    .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
+                    || shape
+                        .this_type
+                        .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
+                    || self.type_param_appears_bare(shape.return_type, tp_id)
+            }
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = self.interner.callable_shape(shape_id);
+                shape
+                    .call_signatures
+                    .iter()
+                    .chain(shape.construct_signatures.iter())
+                    .any(|sig| {
+                        sig.params
+                            .iter()
+                            .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
+                            || sig
+                                .this_type
+                                .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
+                            || self.type_param_appears_bare(sig.return_type, tp_id)
+                    })
+            }
+            // The parameter occurs (per the pruning check above) inside a variant
+            // we do not structurally decompose here. Treat it conservatively as a
+            // bare occurrence so the parameter stays opaque rather than being
+            // erased — this preserves existing relation behavior for those shapes.
+            _ => true,
+        }
+    }
+
     fn check_function_subtype_impl(
         &mut self,
         source: &FunctionShape,
@@ -527,18 +607,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                     .contains(&tp_id)
             });
 
-            let source_mentions_outer_type_params = source_instantiated
-                .params
-                .iter()
-                .any(|p| crate::visitor::contains_type_parameters(self.interner, p.type_id))
-                || source_instantiated.this_type.is_some_and(|this_type| {
-                    crate::visitor::contains_type_parameters(self.interner, this_type)
-                })
-                || crate::visitor::contains_type_parameters(
-                    self.interner,
-                    source_instantiated.return_type,
-                );
-
             if source_refs_target_params {
                 if !self.erase_generics {
                     // In strict member-compatibility checks (TS2416/TS2430), a
@@ -560,31 +628,87 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 // will match correctly.
                 target_instantiated.type_params.clear();
                 source_instantiated.type_params.clear();
-            } else if !self.erase_generics {
-                if source_mentions_outer_type_params {
-                    // Strict member-compatibility checks (TS2416/TS2430) must reject a
-                    // non-generic source that only works for some outer-scope type
-                    // parameter when the target is genuinely generic. Otherwise shapes like
-                    // `new (x: T) => T[]` are incorrectly accepted as subtypes of
-                    // `new <U>(x: U) => U[]` in interface/base compatibility.
-                    self.type_param_equivalences.truncate(equiv_start);
-                    return SubtypeResult::False;
+            } else {
+                // Non-generic source vs a genuinely generic target with no shared
+                // type-parameter identity. Follow tsc's `getBaseSignature` for the
+                // subset of the target's type parameters that are *only observed
+                // through a generic application* — i.e. they appear exclusively as a
+                // type argument such as the alias `A` in `AliasedRawBuilder<O, A>`,
+                // never as a directly-observable value type. Each such constrained
+                // parameter is instantiated to its constraint before structural
+                // comparison, so a concrete implementation whose result satisfies the
+                // constraint is accepted. This matches tsc for overloaded generic
+                // builder methods like
+                // `as<A extends string>(alias: Expression<any>): Aliased<T, A>`, where
+                // an implementation returning `Aliased<T, string>` is a valid override.
+                //
+                // Any type parameter that appears *bare* in a value position (a direct
+                // parameter/return type, including inside a nested callback signature,
+                // e.g. `T` in `() => T` or `(arg: T) => U`) stays opaque. The caller
+                // fully controls such a parameter, so a concrete implementation cannot
+                // satisfy every instantiation: `(x: string) => string` remains
+                // incompatible with `<T>(x: T) => T`, and
+                // `new () => MyClass` remains incompatible with
+                // `new <T extends {...}>() => T`. Unconstrained parameters also stay
+                // opaque (no meaningful constraint to erase to).
+                let mut target_canonical = TypeSubstitution::new();
+                let mut has_opaque_remaining = false;
+                for tp in &target_instantiated.type_params {
+                    let tp_id = self.interner.type_param(*tp);
+                    let erasable = match tp.constraint {
+                        Some(constraint) if constraint != TypeId::UNKNOWN => {
+                            let appears_bare = target_instantiated
+                                .params
+                                .iter()
+                                .any(|p| self.type_param_appears_bare(p.type_id, tp_id))
+                                || target_instantiated
+                                    .this_type
+                                    .is_some_and(|t| self.type_param_appears_bare(t, tp_id))
+                                || self.type_param_appears_bare(
+                                    target_instantiated.return_type,
+                                    tp_id,
+                                );
+                            if appears_bare {
+                                false
+                            } else {
+                                target_canonical.insert(tp.name, constraint);
+                                true
+                            }
+                        }
+                        _ => false,
+                    };
+                    if !erasable {
+                        has_opaque_remaining = true;
+                    }
                 }
 
-                // When erase_generics is false (strict mode, used for implements/extends
-                // member type checking), a non-generic function is NOT assignable to a
-                // generic function. This matches tsc's compareSignaturesRelated with
-                // eraseGenerics=false: the comparison proceeds with raw TypeParameter
-                // types in the target, and the SubtypeChecker rejects concrete types
-                // against opaque type parameters (e.g., string ≤ T returns False).
-                // This ensures TS2416 is correctly emitted for incompatible overrides.
-                target_instantiated.type_params.clear();
-            } else {
-                // In regular assignability, a non-generic source still must satisfy a
-                // universally quantified generic target. Keep target type parameters
-                // opaque so nested contravariant comparisons such as `Base <= T`
-                // reject instead of becoming `Base <= Base` after constraint erasure.
-                target_instantiated.type_params.clear();
+                // A target type parameter that survives erasure stays genuinely
+                // quantified. A non-generic source that is itself pinned to an
+                // outer-scope type parameter cannot satisfy that quantification, so
+                // strict member-compatibility checks (TS2416/TS2430) must still
+                // reject it — e.g. `interface I<T> extends A { a: (x: T) => T[] }`
+                // against base `a: <T>(x: T) => T[]`. Application-only-constrained
+                // parameters were already erased above and no longer count as
+                // remaining quantification, which is what lets a concrete builder
+                // override such as `as(...): AliasedRawBuilder<O, string>` through.
+                if has_opaque_remaining && !self.erase_generics {
+                    let source_mentions_outer_type_params =
+                        source_instantiated.params.iter().any(|p| {
+                            crate::visitor::contains_type_parameters(self.interner, p.type_id)
+                        }) || source_instantiated.this_type.is_some_and(|t| {
+                            crate::visitor::contains_type_parameters(self.interner, t)
+                        }) || crate::visitor::contains_type_parameters(
+                            self.interner,
+                            source_instantiated.return_type,
+                        );
+                    if source_mentions_outer_type_params {
+                        self.type_param_equivalences.truncate(equiv_start);
+                        return SubtypeResult::False;
+                    }
+                }
+
+                target_instantiated =
+                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
             }
         }
 
