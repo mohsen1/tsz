@@ -238,6 +238,12 @@ impl Server {
 
             checker.ctx.report_unresolved_imports = true;
             program_context.apply_to(&mut checker.ctx);
+            // The server never populates resolved_module_request_paths, so the
+            // ProgramContext default propagates an empty Arc into the checker.
+            // Reset it to None so resolve_import_target_from_file_for_request
+            // falls through to the file-based resolver (the same path it takes
+            // when resolved_module_request_paths is absent entirely).
+            checker.ctx.resolved_module_request_paths = None;
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
@@ -504,6 +510,10 @@ impl Server {
             );
 
             program_context.apply_to(&mut checker.ctx);
+            // See get_diagnostics_by_category: reset to None so the resolver
+            // falls through to the file-based path rather than looking up in
+            // an empty request-path map that blocks dynamic-import resolution.
+            checker.ctx.resolved_module_request_paths = None;
             checker
                 .ctx
                 .set_resolved_modules(Arc::clone(&resolved_modules_arc));
