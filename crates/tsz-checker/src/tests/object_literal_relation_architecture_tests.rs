@@ -148,3 +148,34 @@ fn test_object_literal_declared_property_uses_relation_diagnostic_helper() {
          canonical relation diagnostic helper with raw is_assignable_to"
     );
 }
+
+/// Mapped contextual object-literal property lookup should keep checker-owned
+/// template instantiation local, but route the key-space relation probes through
+/// relation outcomes.
+#[test]
+fn test_mapped_contextual_property_type_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/object_literal_context.rs")
+        .expect("failed to read object_literal_context.rs");
+    let helper = source
+        .split("fn mapped_contextual_property_type")
+        .nth(1)
+        .and_then(|tail| {
+            tail.split("fn contextual_object_literal_property_type")
+                .next()
+        })
+        .expect("failed to locate mapped contextual property helper");
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome(key_type,").count(),
+        2,
+        "mapped contextual property key checks must route through relation outcomes"
+    );
+    assert!(
+        helper.matches(".related").count() >= 2,
+        "mapped contextual property key checks must use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("is_assignable_to(key_type,"),
+        "mapped contextual property key checks must not regress to raw boolean assignability"
+    );
+}
