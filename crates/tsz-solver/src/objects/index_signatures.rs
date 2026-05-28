@@ -29,7 +29,10 @@
 
 use crate::TypeId;
 use crate::construction::TypeDatabase;
-use crate::types::{CallableShapeId, IndexInfo, IndexSignature, ObjectShapeId, TypeData};
+use crate::types::{
+    CallableShapeId, IndexInfo, IndexSignature, MappedTypeId, ObjectShapeId, TypeApplicationId,
+    TypeData,
+};
 use crate::utils;
 use crate::visitor::TypeVisitor;
 
@@ -105,6 +108,23 @@ impl<'a> TypeVisitor for StringIndexResolver<'a> {
         self.visit_type(self.db, inner_type)
     }
 
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        let type_id = self.db.application(app.base, app.args.clone());
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
     fn default_output() -> Self::Output {
         None
     }
@@ -156,6 +176,23 @@ impl<'a> TypeVisitor for NumberIndexResolver<'a> {
 
     fn visit_readonly_type(&mut self, inner_type: TypeId) -> Self::Output {
         self.visit_type(self.db, inner_type)
+    }
+
+    fn visit_application(&mut self, app_id: u32) -> Self::Output {
+        let app = self.db.type_application(TypeApplicationId(app_id));
+        let type_id = self.db.application(app.base, app.args.clone());
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
+    }
+
+    fn visit_mapped(&mut self, mapped_id: u32) -> Self::Output {
+        let type_id = self.db.mapped(self.db.get_mapped(MappedTypeId(mapped_id)));
+        let evaluated = crate::evaluation::evaluate::evaluate_type(self.db, type_id);
+        (evaluated != type_id)
+            .then(|| self.visit_type(self.db, evaluated))
+            .flatten()
     }
 
     fn default_output() -> Self::Output {

@@ -1,6 +1,9 @@
 use super::*;
 use crate::intern::TypeInterner;
-use crate::types::{CallableShape, ObjectFlags, ObjectShape, TupleElement};
+use crate::types::{
+    CallableShape, MappedType, ObjectFlags, ObjectShape, TupleElement, TypeParamInfo,
+};
+use tsz_common::interner::Atom;
 
 #[test]
 fn test_resolve_string_index() {
@@ -46,6 +49,50 @@ fn test_resolve_number_index() {
     let resolver = IndexSignatureResolver::new(&db);
     assert_eq!(resolver.resolve_string_index(obj), None);
     assert_eq!(resolver.resolve_number_index(obj), Some(TypeId::STRING));
+}
+
+fn mapped_record(db: &TypeInterner, key_type: TypeId, value_type: TypeId) -> TypeId {
+    db.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: Atom::NONE,
+            constraint: Some(key_type),
+            default: None,
+            is_const: false,
+        },
+        constraint: key_type,
+        name_type: None,
+        template: value_type,
+        readonly_modifier: None,
+        optional_modifier: None,
+    })
+}
+
+#[test]
+fn test_resolve_string_index_from_mapped_record() {
+    let db = TypeInterner::new();
+    let record = mapped_record(&db, TypeId::STRING, TypeId::UNKNOWN);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(
+        resolver.resolve_string_index(record),
+        Some(TypeId::UNKNOWN),
+        "Record<string, unknown>-shaped mapped types should expose their string index"
+    );
+    assert_eq!(resolver.resolve_number_index(record), None);
+}
+
+#[test]
+fn test_resolve_number_index_from_mapped_record() {
+    let db = TypeInterner::new();
+    let record = mapped_record(&db, TypeId::NUMBER, TypeId::STRING);
+
+    let resolver = IndexSignatureResolver::new(&db);
+    assert_eq!(resolver.resolve_string_index(record), None);
+    assert_eq!(
+        resolver.resolve_number_index(record),
+        Some(TypeId::STRING),
+        "Record<number, string>-shaped mapped types should expose their number index"
+    );
 }
 
 #[test]
