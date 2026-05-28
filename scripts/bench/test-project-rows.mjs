@@ -200,6 +200,11 @@ const benchRunnerScript = readRepoFile("scripts/bench/bench-vs-tsgo.sh");
 const projectFixturesScript = readRepoFile("scripts/bench/project-fixtures.sh");
 const projectCompileGuardScript = readRepoFile("scripts/ci/project-compile-guard.sh");
 const benchRows = extractBenchRunnerRows(benchRunnerScript);
+assert.match(
+  benchRunnerScript,
+  /is_project_compatibility_row\(\)[\s\S]+REQUIRED_PROJECT_ROWS[\s\S]+COMPILE_CANARY_PROJECT_ROWS[\s\S]+record_fixture_failure\(\)[\s\S]+is_project_compatibility_row "\$label"[\s\S]+record_project_compatibility[\s\S]+fixture failed before project benchmark recorded compatibility/,
+  "bench fixture failures for project rows must record compatibility metadata before publishing degraded rows",
+);
 assert.doesNotMatch(
   benchRunnerScript,
   /\[ "\$name" != "nextjs" \] && \[ "\$name" != "large-ts-repo" \]/,
