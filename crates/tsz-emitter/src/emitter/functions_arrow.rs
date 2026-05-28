@@ -335,7 +335,7 @@ impl<'a> Printer<'a> {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };
-        let body_token_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
+        let body_token_end = self.find_last_expr_end_before_trivia(body_node.pos, body_node.end);
         let comment_end = std::cmp::max(body_node.end, arrow_end);
         if let Some((defer_start, defer_end)) = self.arrow_concise_body_trailing_comment_defer_range
             && body_token_end == defer_start
@@ -369,7 +369,7 @@ impl<'a> Printer<'a> {
             if body.kind == syntax_kind_ext::BLOCK {
                 return None;
             }
-            return Some(self.find_token_end_before_trivia(body.pos, body.end));
+            return Some(self.find_last_expr_end_before_trivia(body.pos, body.end));
         }
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {

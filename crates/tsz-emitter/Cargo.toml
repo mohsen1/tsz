@@ -226,6 +226,10 @@ path = "tests/async_loop_emit.rs"
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
 
+[[test]]
+name = "ternary_trailing_comment_tests"
+path = "tests/ternary_trailing_comment_tests.rs"
+
 [lints]
 workspace = true
 
