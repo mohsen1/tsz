@@ -7,6 +7,7 @@ const DEFAULT_MAX_PRS = 200;
 const DEFAULT_QUEUE_BRANCH_PREFIX = "automation/merge-queue";
 const DEFAULT_QUEUE_LABEL = "merge-queue";
 const DEFAULT_STATUS_CONTEXT = "Queue Tested";
+const DEFAULT_CI_WORKFLOW = "ci.yml";
 const DEFAULT_PR_REQUIRED_CHECKS = ["CI Summary", "GitGuardian Security Checks"];
 const DEFAULT_MERGE_REQUIRED_CHECKS = ["CI Summary"];
 const DEFAULT_WAIT_ATTEMPTS = 90;
@@ -28,6 +29,7 @@ function usage() {
     "  --status-context <name>         Required status context to post",
     "  --queue-label <name>            Label that marks a PR ready for the queue",
     "  --queue-branch-prefix <prefix>  Temporary branch namespace",
+    "  --ci-workflow <id>              CI workflow file/id to dispatch for synthetic branches",
     "  --agent-name <name>             AgentName for queue failure comments",
     "  --pr-required-check <name>      PR-head check required before queueing",
     "  --merge-required-check <name>   Synthetic merge check required before merge",
@@ -55,6 +57,7 @@ export function parseArgs(argv) {
   const options = {
     agentName: process.env.AGENT_NAME || "M1-A",
     base: process.env.BASE_BRANCH || DEFAULT_BASE,
+    ciWorkflow: process.env.CI_WORKFLOW || DEFAULT_CI_WORKFLOW,
     cleanupQueueBranches: false,
     cleanupSupersededOpenQueueBranches: false,
     dryRun: false,
@@ -91,6 +94,9 @@ export function parseArgs(argv) {
     } else if (arg === "--queue-branch-prefix") {
       options.queueBranchPrefix = argv[++index];
       if (!options.queueBranchPrefix) throw new Error("--queue-branch-prefix requires a branch prefix");
+    } else if (arg === "--ci-workflow") {
+      options.ciWorkflow = argv[++index];
+      if (!options.ciWorkflow) throw new Error("--ci-workflow requires a workflow file/id");
     } else if (arg === "--agent-name") {
       options.agentName = argv[++index];
       if (!options.agentName) throw new Error("--agent-name requires an AgentName");
@@ -562,6 +568,22 @@ function postComment(repository, number, body) {
   ]);
 }
 
+export function syntheticCiDispatchArgs(repository, workflow, branch) {
+  if (!repository) throw new Error("repository is required");
+  if (!workflow) throw new Error("workflow is required");
+  if (!branch) throw new Error("branch is required");
+  const workflowId = encodeURIComponent(String(workflow));
+  return [
+    "api", "-X", "POST",
+    `repos/${repository}/actions/workflows/${workflowId}/dispatches`,
+    "-f", `ref=${branch}`,
+  ];
+}
+
+function dispatchSyntheticCi(repository, synthetic, options) {
+  runGh(syntheticCiDispatchArgs(repository, options.ciWorkflow, synthetic.branch));
+}
+
 export function failureCommentBody(agentName, reason) {
   const lines = [
     `AgentName: ${cleanAgentName(agentName)}`,
@@ -945,6 +967,7 @@ function prepareSyntheticMerge(repository, pr, baseOid, options) {
   const mergeOid = git(["rev-parse", "HEAD"]).trim();
   if (!options.dryRun) {
     git(["push", forceWithLeaseArg(branch), "origin", `${mergeOid}:refs/heads/${branch}`], { stdio: "inherit" });
+    dispatchSyntheticCi(repository, { branch, mergeOid }, options);
   }
   return { branch, mergeOid };
 }

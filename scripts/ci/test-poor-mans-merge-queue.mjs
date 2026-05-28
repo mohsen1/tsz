@@ -23,6 +23,7 @@ import {
   skipOwnerReasonCounts,
   skipReasonCounts,
   supersededOpenQueueBranchReason,
+  syntheticCiDispatchArgs,
 } from "./poor-mans-merge-queue.mjs";
 
 function check(overrides = {}) {
@@ -63,6 +64,7 @@ if (originalAgentName === undefined) {
 }
 assert.equal(parseArgs(["--repository", "owner/repo", "--agent-name", "M4-B"]).agentName, "M4-B");
 assert.equal(parseArgs(["--repository", "owner/repo", "--queue-label", "ready-to-merge"]).queueLabel, "ready-to-merge");
+assert.equal(parseArgs(["--repository", "owner/repo", "--ci-workflow", "queue-ci.yml"]).ciWorkflow, "queue-ci.yml");
 assert.equal(parseArgs(["--repository", "owner/repo", "--cleanup-queue-branches"]).cleanupQueueBranches, true);
 assert.equal(
   parseArgs(["--repository", "owner/repo", "--cleanup-superseded-open-queue-branches"]).cleanupSupersededOpenQueueBranches,
@@ -122,6 +124,22 @@ assert.match(
 assert.equal(
   supersededOpenQueueBranchReason("automation/merge-queue/pr-123", "a56115afffffffffffffffffffffffffffffffffff"),
   null,
+);
+assert.deepEqual(
+  syntheticCiDispatchArgs("owner/repo", "ci.yml", "automation/merge-queue/pr-123"),
+  [
+    "api", "-X", "POST",
+    "repos/owner/repo/actions/workflows/ci.yml/dispatches",
+    "-f", "ref=automation/merge-queue/pr-123",
+  ],
+);
+assert.deepEqual(
+  syntheticCiDispatchArgs("owner/repo", ".github/workflows/ci.yml", "automation/merge-queue/pr-123"),
+  [
+    "api", "-X", "POST",
+    "repos/owner/repo/actions/workflows/.github%2Fworkflows%2Fci.yml/dispatches",
+    "-f", "ref=automation/merge-queue/pr-123",
+  ],
 );
 
 const paginatedObjectArrayUrls = [];
