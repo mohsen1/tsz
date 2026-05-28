@@ -2046,6 +2046,16 @@ impl ParserState {
         if right.is_none() {
             return Some(left);
         }
+        // tsc does not fold the trailing value into a comma expression; it
+        // re-reads it as the property name of a fresh object member that then
+        // expects a `:`. When that recovered tail butts directly against the
+        // object's closing `}` (no comma/semicolon separator), tsc reports
+        // TS1005 "':' expected." at the `}` for the missing property colon.
+        // Mirror that here so the recovered comma-expression AST is preserved
+        // while the trailing diagnostic still matches tsc.
+        if self.is_token(SyntaxKind::CloseBraceToken) {
+            self.parse_error_at_current_token("':' expected.", diagnostic_codes::EXPECTED);
+        }
         let left_start = self.arena.get(left).map_or(name_end, |node| node.pos);
         let end_pos = self
             .arena
