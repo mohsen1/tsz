@@ -264,18 +264,28 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
-                if evaluated != type_id
+                let result = if evaluated != type_id
                     && crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         evaluated,
                     )
                     .is_some_and(|shape| {
                         shape.string_index.is_some() || shape.number_index.is_some()
-                    })
-                {
-                    return Some(evaluated);
+                    }) {
+                    evaluated
+                } else {
+                    type_id
+                };
+                // Reading an optional private field (`this.#p` where `#p?: T`)
+                // yields `T | undefined`, just like public optional property
+                // access (`optional_property_type`). Without this, the field
+                // reads as bare `T`, dropping a soundness check (TS2322) and
+                // misfiring "always defined" truthiness (TS2801). The write path
+                // keeps the relation type unchanged. See #10668.
+                if !is_write_context && prop.question_token {
+                    return Some(self.ctx.types.factory().union2(result, TypeId::UNDEFINED));
                 }
-                return Some(type_id);
+                return Some(result);
             }
         }
 
