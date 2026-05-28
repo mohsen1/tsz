@@ -88,6 +88,136 @@
         parallel::merge_bind_results(bind_results)
     }
 
+    #[test]
+    fn project_mode_cross_file_class_type_reference_uses_instance_type() {
+        let mut options = ResolvedCompilerOptions::default();
+        options.no_emit = true;
+        options.checker.strict = true;
+        options.checker.module = ModuleKind::ES2015;
+        options.printer.module = ModuleKind::ES2015;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export abstract class Base {
+  abstract self(): Base;
+}
+"#,
+                ),
+                (
+                    "/p/derived.ts",
+                    r#"
+import { Base } from "./base";
+
+export class Derived extends Base {
+  self(): Derived {
+    return this;
+  }
+}
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2416),
+            "project mode should resolve imported class type annotations to the instance type, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_cross_file_generic_class_self_reference_uses_instance_type() {
+        let mut options = ResolvedCompilerOptions::default();
+        options.no_emit = true;
+        options.checker.strict = true;
+        options.checker.module = ModuleKind::ES2015;
+        options.printer.module = ModuleKind::ES2015;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export abstract class Box<T> {
+  value!: T;
+  abstract self(): Box<T>;
+}
+"#,
+                ),
+                (
+                    "/p/derived.ts",
+                    r#"
+import { Box } from "./base";
+
+export class StringBox extends Box<string> {
+  self(): StringBox {
+    return this;
+  }
+}
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2416),
+            "project mode should resolve generic imported class self references to the instance type, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_annotation_and_typeof_keep_instance_constructor_split() {
+        let mut options = ResolvedCompilerOptions::default();
+        options.no_emit = true;
+        options.checker.strict = true;
+        options.checker.module = ModuleKind::ES2015;
+        options.printer.module = ModuleKind::ES2015;
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export class Token {
+  value = 1;
+  static create(): Token {
+    return new Token();
+  }
+}
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { Token } from "./base";
+
+let okInstance: Token = Token.create();
+let okCtor: typeof Token = Token;
+let badCtor: typeof Token = Token.create();
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "only the typeof constructor mismatch should be reported, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics[0].code, 2739,
+            "typeof Token should remain constructor-shaped, got: {diagnostics:?}"
+        );
+    }
+
     /// Asserts the post-PR-#7521 file-session reuse env policy: OFF unless
     /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
     /// PR #7521 the default was ON (set by PRs #6870 / #6893) which

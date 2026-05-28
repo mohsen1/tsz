@@ -1525,6 +1525,23 @@ impl<'a> CheckerState<'a> {
                             .primary_declaration()
                             .and_then(|idx| self.ctx.class_instance_type_cache.get(&idx).copied())
                     })
+                    .or_else(|| {
+                        owner_file_idx
+                            .filter(|file_idx| *file_idx != self.ctx.current_file_idx)
+                            .and_then(|file_idx| {
+                                self.ctx
+                                    .cached_cross_file_class_instance_type(sym_id, file_idx as u32)
+                                    .map(|(instance_type, _)| instance_type)
+                            })
+                    })
+                    .or_else(|| {
+                        owner_file_idx
+                            .filter(|file_idx| *file_idx != self.ctx.current_file_idx)
+                            .and_then(|_| {
+                                self.delegate_cross_arena_class_instance_type(sym_id)
+                                    .map(|(instance_type, _)| instance_type)
+                            })
+                    })
                     .unwrap_or_else(|| self.get_type_of_symbol(sym_id))
             } else {
                 self.get_type_of_symbol(sym_id)
