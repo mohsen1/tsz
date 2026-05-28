@@ -554,7 +554,7 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    pub(super) fn type_alias_type_param_names(
+    pub(crate) fn type_alias_type_param_names(
         arena: &NodeArena,
         type_alias: &TypeAliasData,
     ) -> Vec<String> {

@@ -14,6 +14,20 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
+/// The declaration context of a (possibly cross-file) type alias, used by the
+/// structural cross-file circularity walk.
+struct AliasBodyContext<'b> {
+    /// File index that owns the alias declaration.
+    file_idx: usize,
+    arena: &'b tsz_parser::parser::NodeArena,
+    binder: &'b tsz_binder::BinderState,
+    /// The alias's declared body type node.
+    body: NodeIndex,
+    /// Type-parameter names in scope for the body (so they are not mistaken for
+    /// same-named top-level aliases).
+    type_params: Vec<String>,
+}
+
 impl<'a> CheckerState<'a> {
     /// True for bare type refs (`type A = B`), false for wrapped (`type A = { x: B }`).
     pub(crate) fn is_simple_type_reference(&self, type_node: NodeIndex) -> bool {
@@ -1203,6 +1217,243 @@ impl<'a> CheckerState<'a> {
         false
     }
 
+    /// Structural detection of a cross-file type-alias self-cycle.
+    ///
+    /// Cross-file alias resolution runs through child-checker delegation, which
+    /// breaks the `Lazy(DefId)` re-entry by collapsing the cycle to `ERROR`
+    /// instead of leaving a `Lazy` chain or marking the `DefId` circular. That
+    /// makes both `is_cross_file_circular_alias` (which walks a `Lazy` chain)
+    /// and the `shared_circular` mark unreliable for mutually-referential
+    /// type-only imports. This walk reconstructs the cycle directly from the
+    /// alias declarations: starting at `start_sym`, it follows each alias body's
+    /// non-deferred type references across files (resolving import aliases and
+    /// namespace members) and returns `true` if a path returns to `start_sym`.
+    ///
+    /// Deferral matches `tsc`'s rule and `alias_ast_is_deferred`: references
+    /// behind a structural wrapper (array, tuple, object literal, mapped,
+    /// function/constructor, type operator, or a generic application carrying
+    /// type arguments) defer evaluation and break the cycle. Parenthesized,
+    /// union, and intersection types are transparent and are traversed.
+    ///
+    /// Symbol identity is keyed on `(SymbolId, file_idx)`: raw `SymbolId`s are
+    /// not globally unique (different files' binders can share index ranges), so
+    /// the file index disambiguates them when comparing against the start alias
+    /// and when recording visited aliases.
+    pub(crate) fn alias_cross_file_cycles_to_self(&self, start_sym: SymbolId) -> bool {
+        let start = (start_sym, self.symbol_file_idx(start_sym));
+        let mut visited = FxHashSet::default();
+        visited.insert(start);
+        self.alias_body_cycles_to(start_sym, start, &mut visited)
+    }
+
+    /// File index that canonically owns `sym_id`. Used to disambiguate raw
+    /// `SymbolId`s that can collide across files' binders.
+    fn symbol_file_idx(&self, sym_id: SymbolId) -> usize {
+        self.get_cross_file_symbol(sym_id)
+            .map(|s| s.decl_file_idx)
+            .filter(|&f| f != u32::MAX)
+            .map(|f| f as usize)
+            .or_else(|| self.ctx.resolve_symbol_file_index(sym_id))
+            .unwrap_or(self.ctx.current_file_idx)
+    }
+
+    fn alias_body_cycles_to(
+        &self,
+        cur_sym: SymbolId,
+        start: (SymbolId, usize),
+        visited: &mut FxHashSet<(SymbolId, usize)>,
+    ) -> bool {
+        let Some(ctx) = self.alias_body_in_file(cur_sym) else {
+            return false;
+        };
+        self.type_node_cycles_to(&ctx, ctx.body, start, visited)
+    }
+
+    /// Resolve the declaration context (owning file, arena, binder, body type
+    /// node, type-parameter names) for a (possibly cross-file) type-alias
+    /// symbol. The type-parameter names scope the walk: a body reference whose
+    /// name is one of them denotes the parameter, not a same-named top-level
+    /// alias.
+    fn alias_body_in_file(&self, sym_id: SymbolId) -> Option<AliasBodyContext<'_>> {
+        let symbol = self.get_cross_file_symbol(sym_id)?;
+        if symbol.flags & tsz_binder::symbol_flags::TYPE_ALIAS == 0 {
+            return None;
+        }
+        let file_idx = (symbol.decl_file_idx != u32::MAX)
+            .then_some(symbol.decl_file_idx as usize)
+            .or_else(|| self.ctx.resolve_symbol_file_index(sym_id))?;
+        let arena = self.ctx.get_arena_for_file(file_idx as u32);
+        // Pair the binder to the arena we actually use so resolution never runs
+        // a sibling file's AST against the wrong file's `file_locals`.
+        let binder = self
+            .ctx
+            .get_binder_for_arena(arena)
+            .unwrap_or(self.ctx.binder);
+        for &decl_idx in &symbol.declarations {
+            if let Some(node) = arena.get(decl_idx)
+                && node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                && let Some(ta) = arena.get_type_alias(node)
+            {
+                let name_matches = arena
+                    .get(ta.name)
+                    .and_then(|n| arena.get_identifier(n))
+                    .is_some_and(|ident| {
+                        arena.resolve_identifier_text(ident) == symbol.escaped_name.as_str()
+                    });
+                if name_matches {
+                    return Some(AliasBodyContext {
+                        file_idx,
+                        arena,
+                        binder,
+                        body: ta.type_node,
+                        type_params: Self::type_alias_type_param_names(arena, ta),
+                    });
+                }
+            }
+        }
+        None
+    }
+
+    /// Walk a type node looking for a non-deferred reference path back to the
+    /// `start` alias. Transparent wrappers are traversed; structural wrappers
+    /// defer and stop the walk. `ctx` carries the file/arena/binder and the
+    /// type-parameter names in scope for the alias body being walked.
+    fn type_node_cycles_to(
+        &self,
+        ctx: &AliasBodyContext<'_>,
+        node_idx: NodeIndex,
+        start: (SymbolId, usize),
+        visited: &mut FxHashSet<(SymbolId, usize)>,
+    ) -> bool {
+        let Some(node) = ctx.arena.get(node_idx) else {
+            return false;
+        };
+        let k = node.kind;
+        if k == syntax_kind_ext::PARENTHESIZED_TYPE
+            || k == syntax_kind_ext::UNION_TYPE
+            || k == syntax_kind_ext::INTERSECTION_TYPE
+        {
+            return ctx
+                .arena
+                .get_children(node_idx)
+                .into_iter()
+                .any(|child| self.type_node_cycles_to(ctx, child, start, visited));
+        }
+        if k == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = ctx.arena.get_type_ref(node) else {
+                return false;
+            };
+            // A generic application defers through instantiation, just like
+            // `alias_ast_is_deferred` treats `Foo<...>`.
+            if type_ref
+                .type_arguments
+                .as_ref()
+                .is_some_and(|args| !args.nodes.is_empty())
+            {
+                return false;
+            }
+            let Some(target) = self.resolve_type_name_symbol_in_file(ctx, type_ref.type_name)
+            else {
+                return false;
+            };
+            if target == start {
+                return true;
+            }
+            let target_is_alias = self
+                .get_cross_file_symbol(target.0)
+                .is_some_and(|s| s.flags & tsz_binder::symbol_flags::TYPE_ALIAS != 0);
+            if target_is_alias && visited.insert(target) {
+                return self.alias_body_cycles_to(target.0, start, visited);
+            }
+        }
+        false
+    }
+
+    /// Resolve an entity-name node (`Identifier` or `QualifiedName`) that lives
+    /// in `ctx`'s file to the `(SymbolId, file_idx)` it denotes, following
+    /// cross-file import aliases and namespace member access. A bare name listed
+    /// in `ctx.type_params` denotes a type parameter (not a top-level alias) and
+    /// resolves to nothing.
+    fn resolve_type_name_symbol_in_file(
+        &self,
+        ctx: &AliasBodyContext<'_>,
+        name_node: NodeIndex,
+    ) -> Option<(SymbolId, usize)> {
+        let node = ctx.arena.get(name_node)?;
+        if node.kind == SyntaxKind::Identifier as u16 {
+            let ident = ctx.arena.get_identifier(node)?;
+            let name = ident.escaped_text.as_str();
+            if ctx.type_params.iter().any(|p| p == name) {
+                return None;
+            }
+            let local = ctx.binder.file_locals.get(name)?;
+            return Some(self.canonicalize_resolved(local, ctx.file_idx));
+        }
+        if node.kind == syntax_kind_ext::QUALIFIED_NAME {
+            let qn = ctx.arena.get_qualified_name(node)?;
+            let (left_sym, left_file) = self.resolve_type_name_symbol_in_file(ctx, qn.left)?;
+            let right_node = ctx.arena.get(qn.right)?;
+            let right_name = ctx.arena.get_identifier(right_node)?.escaped_text.as_str();
+            let member = self
+                .get_cross_file_symbol(left_sym)?
+                .exports
+                .as_ref()?
+                .get(right_name)?;
+            return Some(self.canonicalize_resolved(member, left_file));
+        }
+        None
+    }
+
+    /// Follow `sym_id`'s import-alias chain (if any) to its real target and pair
+    /// it with the owning file. A symbol that is not an import alias keeps
+    /// `home_file` — the file whose scope produced it — since that is where it
+    /// is declared.
+    fn canonicalize_resolved(&self, sym_id: SymbolId, home_file: usize) -> (SymbolId, usize) {
+        let followed = self.follow_alias_to_target(sym_id);
+        if followed == sym_id {
+            (sym_id, home_file)
+        } else {
+            (followed, self.symbol_file_idx(followed))
+        }
+    }
+
+    /// Follow an import/export alias chain to its real target symbol across
+    /// files, stopping at the first non-alias symbol. Bounded by a visited set.
+    fn follow_alias_to_target(&self, sym_id: SymbolId) -> SymbolId {
+        let mut current = sym_id;
+        let mut guard = FxHashSet::default();
+        while guard.insert(current) {
+            let Some(symbol) = self.get_cross_file_symbol(current) else {
+                break;
+            };
+            if symbol.flags & tsz_binder::symbol_flags::ALIAS == 0 {
+                break;
+            }
+            let Some(module_name) = symbol.import_module.clone() else {
+                break;
+            };
+            let import_name = symbol
+                .import_name
+                .clone()
+                .unwrap_or_else(|| symbol.escaped_name.clone());
+            let source_file_idx = (symbol.decl_file_idx != u32::MAX)
+                .then_some(symbol.decl_file_idx as usize)
+                .or_else(|| self.ctx.resolve_symbol_file_index(current));
+            let Some(target) = self.resolve_cross_file_export_from_file(
+                &module_name,
+                &import_name,
+                source_file_idx,
+            ) else {
+                break;
+            };
+            if target == current {
+                break;
+            }
+            current = target;
+        }
+        current
+    }
+
     /// Detect cross-file circular type alias cycles via `DefinitionStore` Lazy chain.
     pub(crate) fn is_cross_file_circular_alias(
         &self,
@@ -1319,11 +1570,25 @@ impl<'a> CheckerState<'a> {
                 .get_existing_def_id(sym_id)
                 .is_some_and(|def_id| self.ctx.definition_store.is_circular_def(def_id));
 
-            if !is_lazy && !shared_circular {
+            // Structural cross-file cycle detection: when a sibling file's alias
+            // body resolves back to this alias (a `Lazy(...)` cycle through
+            // type-only imports), the cross-arena resolution path collapses the
+            // cycle to `ERROR` without leaving a `Lazy` chain or a
+            // `shared_circular` mark. Detect the cycle directly from the alias
+            // declarations across files so the diagnostic does not depend on the
+            // fragile resolved-type signals above. Only walk when the cheap
+            // signals have not already decided the alias is circular.
+            let structural_cycle =
+                !is_lazy && !shared_circular && self.alias_cross_file_cycles_to_self(sym_id);
+
+            if !is_lazy && !shared_circular && !structural_cycle {
                 continue;
             }
 
-            if shared_circular || self.is_cross_file_circular_alias(sym_id, resolved) {
+            if shared_circular
+                || structural_cycle
+                || self.is_cross_file_circular_alias(sym_id, resolved)
+            {
                 // Get the symbol name for the diagnostic message.
                 let name = self
                     .ctx
