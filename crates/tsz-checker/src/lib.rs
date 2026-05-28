@@ -136,6 +136,9 @@ mod control_flow_tests;
 #[path = "../tests/control_flow_type_guard_tests.rs"]
 mod control_flow_type_guard_tests;
 #[cfg(test)]
+#[path = "tests/cross_module_class_self_member_tests.rs"]
+mod cross_module_class_self_member_tests;
+#[cfg(test)]
 #[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
 mod decorator_return_relation_routing_arch_tests;
 #[cfg(test)]

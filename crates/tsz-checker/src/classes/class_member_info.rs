@@ -392,7 +392,12 @@ impl<'a> CheckerState<'a> {
                         && base_type != TypeId::ANY
                     {
                         let resolved_member_type = self.resolve_type_query_type(member_type);
+                        let resolved_member_type = self.resolve_lazy_type(resolved_member_type);
+                        let resolved_member_type =
+                            self.evaluate_type_with_env(resolved_member_type);
                         let resolved_base_type = self.resolve_type_query_type(base_type);
+                        let resolved_base_type = self.resolve_lazy_type(resolved_base_type);
+                        let resolved_base_type = self.evaluate_type_with_env(resolved_base_type);
 
                         let should_report = if info.is_method || info.is_static {
                             should_report_member_type_mismatch_bivariant(
