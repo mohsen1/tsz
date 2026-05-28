@@ -522,9 +522,19 @@ impl<'a> CheckerState<'a> {
                 )
             });
 
-        let Some((sym_id, selected_binder_arc)) =
-            selected_lib_symbol_for_name(&self.ctx, name, raw_sym_id, &lib_binders)
-        else {
+        // Prefer the binder-aware selection: it also picks the lib-context binder
+        // that owns a symbol absent from the active file's `file_locals`. When it
+        // cannot select (e.g. a namespace-qualified `name` whose symbol's
+        // `escaped_name` is the bare member name), fall back to the directly
+        // resolved symbol in the active binder — the pre-existing behavior — so
+        // namespaced lib heritage keeps resolving.
+        let selected = selected_lib_symbol_for_name(&self.ctx, name, raw_sym_id, &lib_binders)
+            .or_else(|| {
+                raw_sym_id
+                    .filter(|&id| self.ctx.binder.get_symbol(id).is_some())
+                    .map(|id| (id, None))
+            });
+        let Some((sym_id, selected_binder_arc)) = selected else {
             self.ctx.lib_heritage_in_progress.remove(name);
             self.ctx.leave_recursion();
             return derived_type;
