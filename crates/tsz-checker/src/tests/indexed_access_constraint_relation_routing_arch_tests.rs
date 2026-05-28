@@ -52,3 +52,46 @@ fn indexed_access_key_space_helpers_use_relation_outcome_boundary() {
         "string-index, constrained-keyof, and union-member key-space checks should route through RelationOutcome"
     );
 }
+
+#[test]
+fn indexed_access_type_checking_helpers_use_relation_outcome_boundary() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/types/type_checking/indexed_access/indexed_access_helpers.rs");
+    let source =
+        fs::read_to_string(&source_path).expect("read indexed-access type-checking helper source");
+
+    let helper_start = source
+        .find("pub(super) fn type_literal_member_values_accept_index")
+        .expect("find type literal indexed-access helper");
+    let helper_end = source[helper_start..]
+        .find("\n    fn keyof_candidate_target_is_array_like")
+        .expect("find end of indexed-access key-space helper block");
+    let helpers = &source[helper_start..helper_start + helper_end];
+    let compact_helpers: String = helpers.chars().filter(|ch| !ch.is_whitespace()).collect();
+
+    assert!(
+        !helpers.contains("diagnostic_relation_boolean_guard"),
+        "indexed-access type-checking key-space helpers must use relation outcomes"
+    );
+    assert!(
+        compact_helpers.contains("assign_relation_outcome(index_for_check,value_keyof).related"),
+        "type-literal member value checks should route index/keyof compatibility through RelationOutcome"
+    );
+    assert!(
+        compact_helpers
+            .contains("assign_relation_outcome(nested_index_for_check,nested_base_keyof).related"),
+        "nested type-literal indexed access checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains("assign_relation_outcome(member,keyof_object).related"),
+        "union index member checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains("assign_relation_outcome(index_type,template_keyof).related"),
+        "mapped constraint value checks should route through RelationOutcome"
+    );
+    assert!(
+        compact_helpers.contains("assign_relation_outcome(candidate,string_or_number).related"),
+        "string-index candidate checks should route through RelationOutcome"
+    );
+}
