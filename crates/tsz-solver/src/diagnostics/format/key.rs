@@ -384,11 +384,16 @@ impl<'a> TypeFormatter<'a> {
                 if self.skip_application_alias_names && base_str.as_ref() == "Omit" {
                     self.skip_application_display_alias_chase = true;
                 }
+                let previous_preserve_application_arg_index_alias_surface =
+                    self.preserve_application_arg_index_alias_surface;
+                self.preserve_application_arg_index_alias_surface = true;
                 let mut args: Vec<Cow<'static, str>> = display_args
                     .iter()
                     .take(visible_arg_count)
                     .map(|&arg| self.format(self.simplify_application_arg_for_display(arg)))
                     .collect();
+                self.preserve_application_arg_index_alias_surface =
+                    previous_preserve_application_arg_index_alias_surface;
                 self.skip_application_display_alias_chase =
                     previous_skip_application_display_alias_chase;
                 if base_str.as_ref() == "Defaultize"
@@ -443,8 +448,9 @@ impl<'a> TypeFormatter<'a> {
                 // mapped form still appears when M is formatted directly,
                 // but in indexed-access position tsc collapses to the
                 // simpler X[K] form.
-                if let Some(simplified) =
-                    self.try_format_homomorphic_mapped_index_access(*obj, *idx)
+                if !self.preserve_application_arg_index_alias_surface
+                    && let Some(simplified) =
+                        self.try_format_homomorphic_mapped_index_access(*obj, *idx)
                 {
                     return simplified.into();
                 }
