@@ -27,9 +27,18 @@
 //!    several whole-attrs TS2322 / TS2741 paths fires, in the precedence
 //!    order that matches tsc.
 //!
-//! Each phase reads the precomputed context, mutates the outcome where
-//! appropriate, and never touches a private `TypeKey` or pattern-matches on
-//! solver internals — all type queries go through `query_boundaries`.
+//! Phase mutability contract:
+//! - Phase 1 returns `JsxAttrCheckContext` (immutable downstream).
+//! - Phase 2 (in `resolution.rs`) mutates `JsxAttrComparisonOutcome`.
+//! - Phase 3 (deferred spread) mutates the outcome (sets `spread_covers_all`,
+//!   may flip `has_excess_property_error` via `check_spread_property_types`).
+//! - Phase 4 (children synthesis) mutates the outcome (`provided_attrs.push`,
+//!   `has_excess_property_error`).
+//! - Phase 5 (final cascade) **only reads** the outcome and emits
+//!   diagnostics — it deliberately takes `&JsxAttrComparisonOutcome`.
+//!
+//! No phase touches a private `TypeKey` or pattern-matches on solver
+//! internals — all type queries go through `query_boundaries`.
 
 use crate::checkers_domain::JsxChildrenContext;
 use crate::context::TypingRequest;

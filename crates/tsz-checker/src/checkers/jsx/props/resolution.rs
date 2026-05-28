@@ -442,9 +442,6 @@ impl<'a> CheckerState<'a> {
                                 TypeId::BOOLEAN_TRUE,
                                 expected_type,
                             ) {
-                                use crate::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
-                                };
                                 let target_str = self.format_type(expected_type);
                                 let message = format_message(
                                     diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
@@ -726,9 +723,6 @@ impl<'a> CheckerState<'a> {
                     }
                     if !self.diagnostic_relation_boolean_guard(TypeId::BOOLEAN_TRUE, expected_type)
                     {
-                        use crate::diagnostics::{
-                            diagnostic_codes, diagnostic_messages, format_message,
-                        };
                         let is_literal_target = crate::query_boundaries::common::is_literal_type(
                             self.ctx.types,
                             expected_type,
@@ -1047,9 +1041,6 @@ impl<'a> CheckerState<'a> {
                         if !sp.optional {
                             let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
                             if let Some(&attr_name_idx) = outcome.named_attr_nodes.get(&sp_name) {
-                                use crate::diagnostics::{
-                                    diagnostic_codes, diagnostic_messages, format_message,
-                                };
                                 let message = format_message(
                                     diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
                                     &[&sp_name],
