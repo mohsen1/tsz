@@ -744,3 +744,92 @@ fn assignability_cache_allow_bivariant_rest_matches_uncached_relation_policy() {
         "ordinary rest slot must remain intact after the bivariant-rest lookup",
     );
 }
+
+#[test]
+fn assignability_cache_allow_bivariant_param_count_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let source = interner.function(FunctionShape::new(
+        vec![
+            ParamInfo::unnamed(TypeId::STRING),
+            ParamInfo::unnamed(TypeId::NUMBER),
+        ],
+        TypeId::VOID,
+    ));
+    let target = interner.function(FunctionShape::new(
+        vec![ParamInfo::unnamed(TypeId::STRING)],
+        TypeId::VOID,
+    ));
+
+    let ordinary = RelationPolicy::unflagged_compatibility();
+    let bivariant_count =
+        RelationPolicy::from_relation_flags(RelationFlags::ALLOW_BIVARIANT_PARAM_COUNT);
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let bivariant_count_key =
+        RelationCacheKey::for_assignability(source, target, bivariant_count.cache_config());
+
+    assert_ne!(
+        ordinary_key, bivariant_count_key,
+        "ordinary and bivariant-param-count policies must occupy distinct assignability cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let bivariant_count_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        bivariant_count,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !ordinary_uncached,
+        "ordinary assignability should reject extra required source parameters",
+    );
+    assert!(
+        bivariant_count_uncached,
+        "bivariant parameter-count assignability should allow extra required source parameters",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary parameter-count policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary parameter-count result must be stored in the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_count_key),
+        None,
+        "bivariant-param-count lookup must not hit the ordinary slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, bivariant_count),
+        bivariant_count_uncached,
+        "cached bivariant-param-count policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(bivariant_count_key),
+        Some(bivariant_count_uncached),
+        "bivariant-param-count result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary parameter-count slot must remain intact after the bivariant-param-count lookup",
+    );
+}
