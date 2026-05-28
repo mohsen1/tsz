@@ -44,6 +44,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let spread_source_is_deferred = generic_spread_types
+            .iter()
+            .any(|&spread_type| self.jsx_relation_operand_defers(spread_type));
         let explicit_attrs_type = self.build_jsx_provided_attrs_object_type(provided_attrs);
         let mut members = generic_spread_types;
         members.push(explicit_attrs_type);
@@ -63,6 +66,14 @@ impl<'a> CheckerState<'a> {
             let Some(expected_type) = expected_type else {
                 return false;
             };
+            // A deferred conditional on either operand is comparable for `tsc`;
+            // the structural relation cannot soundly disprove it, so it is not a
+            // genuine mismatch.
+            if self.jsx_relation_operand_defers(*actual_type)
+                || self.jsx_relation_operand_defers(expected_type)
+            {
+                return false;
+            }
             !self.diagnostic_relation_boolean_guard(*actual_type, expected_type)
         });
 
@@ -73,6 +84,19 @@ impl<'a> CheckerState<'a> {
         if has_excess_property_error
             && !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
+        {
+            return false;
+        }
+
+        // A spread whose source carries a deferred conditional over a type
+        // parameter (e.g. `Omit`/`Overwrite` of an unresolved `T`) is an
+        // instantiable, comparable type for `tsc`; it does not drive a
+        // whole-object TS2322. Without a concrete explicit-attribute mismatch
+        // the structural relation cannot soundly disprove assignability, so
+        // emitting here is a false positive.
+        if !has_explicit_prop_mismatch
+            && !has_alias_string_prop_mismatch
+            && spread_source_is_deferred
         {
             return false;
         }
