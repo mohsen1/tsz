@@ -307,7 +307,7 @@ FILE_LINE_LIMIT_CHECKS = [
         5150,
     ),
     # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
-    # splitting into option-domain submodules. Ratchet down as domains land.
+    # splitting into option-domain submodules. Ratchet down as each domain lands.
     (
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
