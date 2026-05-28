@@ -2580,9 +2580,7 @@ impl<'a> CheckerState<'a> {
             // constituents). Resolve each member separately: merging the whole
             // intersection drops member index signatures, which would re-introduce
             // the false positive.
-            if let Some(members) =
-                crate::query_boundaries::common::intersection_members(self.ctx.types, check_type)
-            {
+            if let Some(members) = query::get_intersection_members(self.ctx.types, check_type) {
                 return members.iter().all(|&member| {
                     self.constraint_member_reports_no_index_signature(
                         member,
