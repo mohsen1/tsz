@@ -941,19 +941,16 @@ fn is_valid_spread_type_impl(db: &dyn TypeDatabase, type_id: TypeId, depth: u32)
         //   }
         //   return !!(type.flags & (Any | NonPrimitive | Object | InstantiableNonPrimitive) | …);
         //
-        // For an `IndexAccess` we first try to reduce through any usable
-        // constraint by asking the evaluator. If reduction succeeds the
-        // result is validated like any other type. If it does not, the
-        // deferred form is itself `InstantiableNonPrimitive` (an indexed
-        // access could be an object at runtime), so the flag-check arm
-        // accepts the spread.
+        // For an `IndexAccess` we first ask the evaluator to reduce through
+        // any usable constraint. If reduction succeeds the result is
+        // validated like any other type. If it does not, the deferred form
+        // itself carries `InstantiableNonPrimitive` (an indexed access could
+        // be an object at runtime), so the flag-check arm accepts the
+        // spread without recursing — the unchanged `resolved` carries no new
+        // information for a recursive call.
         Some(TypeData::IndexAccess(_, _)) => {
             let evaluated = evaluate_type(db, resolved);
-            if evaluated != resolved {
-                is_valid_spread_type_impl(db, evaluated, depth + 1)
-            } else {
-                true
-            }
+            evaluated == resolved || is_valid_spread_type_impl(db, evaluated, depth + 1)
         }
         // Everything else is spreadable: object types, arrays, tuples, functions,
         // callables, mapped types, type parameters (unconstrained ones reach here

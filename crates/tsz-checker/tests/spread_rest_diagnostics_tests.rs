@@ -690,6 +690,28 @@ function f<T>(x: keyof T) {
 }
 
 #[test]
+fn test_no_ts2698_for_spread_of_deferred_conditional() {
+    // tsc treats a deferred `T extends … ? … : …` as `InstantiableNonPrimitive`
+    // when no useful base constraint can be computed. tsz already accepts
+    // these through the catch-all arm in `is_valid_spread_type_impl`; this
+    // test pins that behavior so it doesn't drift while the IndexAccess
+    // and KeyOf arms move around.
+    let source = r#"
+function f<T>(x: T extends string ? { s: string } : { n: number }) {
+    return { ...x };
+}
+"#;
+    let diagnostics = check_source_diagnostics(source);
+    let ts2698 = diagnostic_count(&diagnostics, 2698);
+    assert_eq!(
+        ts2698,
+        0,
+        "TS2698 must not fire for spread of a deferred conditional; got: {:?}",
+        diagnostic_messages_with_code(&diagnostics, 2698)
+    );
+}
+
+#[test]
 fn test_ts2698_still_fires_for_spread_of_t_extends_string() {
     // Negative case: `T extends string` reduces to a primitive constraint,
     // which is not spreadable.
