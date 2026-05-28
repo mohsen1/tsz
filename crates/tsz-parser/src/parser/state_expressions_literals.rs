@@ -1897,8 +1897,9 @@ impl ParserState {
 
         // Check for optional property marker '?' - not allowed in object literals
         // TSC emits TS1162: "An object member cannot be declared optional."
-        if self.is_token(SyntaxKind::QuestionToken) {
+        let question_pos = if self.is_token(SyntaxKind::QuestionToken) {
             use tsz_common::diagnostics::diagnostic_codes;
+            let pos = self.u32_from_usize(self.scanner.get_token_start());
             self.parse_error_at_current_token(
                 "An object member cannot be declared optional.",
                 diagnostic_codes::AN_OBJECT_MEMBER_CANNOT_BE_DECLARED_OPTIONAL,
@@ -1916,7 +1917,10 @@ impl ParserState {
                     start_pos, name, false, false, true,
                 );
             }
-        }
+            pos
+        } else {
+            0
+        };
 
         // Check for definite assignment assertion '!' - not allowed in object literals.
         // TSC emits TS1255 as a grammar error (not a parse error), so it does not
@@ -2006,6 +2010,7 @@ impl ParserState {
                     equals_token: has_equals,
                     equals_token_pos,
                     exclamation_token_pos: exclamation_pos,
+                    question_token_pos: question_pos,
                     object_assignment_initializer: initializer,
                 },
             )

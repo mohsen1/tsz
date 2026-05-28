@@ -1115,9 +1115,17 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 .or_else(|| self.preferred_object_member_initializer_type_text(initializer, depth))
                 .unwrap_or_else(|| "any".to_string());
+                // When `{ y? }` is written (grammar error TS1162), tsc still infers an
+                // optional property. Mirror that by using `y?` as the prefix when the
+                // question token position was recorded during parsing.
+                let prefix = if data.question_token_pos != 0 {
+                    format!("{name}?")
+                } else {
+                    name.to_string()
+                };
                 Some(ObjectTypeLiteralMember::typed(
                     name.to_string(),
-                    name.to_string(),
+                    prefix,
                     type_text,
                 ))
             }
