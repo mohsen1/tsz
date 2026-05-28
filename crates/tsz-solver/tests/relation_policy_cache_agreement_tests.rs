@@ -311,6 +311,88 @@ fn assignability_cache_exact_optional_matches_uncached_property_policy() {
 }
 
 #[test]
+fn assignability_cache_no_unchecked_indexed_access_matches_uncached_index_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let source = interner.index_access(interner.array(TypeId::STRING), TypeId::NUMBER);
+    let target = TypeId::STRING;
+    let checked_policy = RelationPolicy::from_relation_flags(RelationFlags::STRICT_NULL_CHECKS);
+    let unchecked_policy = RelationPolicy::from_relation_flags(
+        RelationFlags::STRICT_NULL_CHECKS | RelationFlags::NO_UNCHECKED_INDEXED_ACCESS,
+    );
+    let checked_key =
+        RelationCacheKey::for_assignability(source, target, checked_policy.cache_config());
+    let unchecked_key =
+        RelationCacheKey::for_assignability(source, target, unchecked_policy.cache_config());
+
+    assert_ne!(
+        checked_key, unchecked_key,
+        "no-unchecked-indexed-access must occupy a distinct assignability cache slot",
+    );
+
+    let checked_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        checked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+    let unchecked_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        unchecked_policy,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        checked_uncached,
+        "plain array indexed access should produce the element type",
+    );
+    assert!(
+        !unchecked_uncached,
+        "no-unchecked-indexed-access should include undefined under strict null checks",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, checked_policy),
+        checked_uncached,
+        "cached checked indexed-access policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(checked_key),
+        Some(checked_uncached),
+        "checked indexed-access result must be stored in the checked assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(unchecked_key),
+        None,
+        "unchecked lookup must not hit the checked slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, unchecked_policy),
+        unchecked_uncached,
+        "cached no-unchecked-indexed-access policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(unchecked_key),
+        Some(unchecked_uncached),
+        "unchecked indexed-access result must be stored in the unchecked assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(checked_key),
+        Some(checked_uncached),
+        "checked assignability slot must remain intact after the unchecked lookup",
+    );
+}
+
+#[test]
 fn subtype_cache_strict_readonly_identity_matches_uncached_property_policy() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
