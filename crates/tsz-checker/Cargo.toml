@@ -955,6 +955,10 @@ name = "ts2344_literal_type_message"
 path = "tests/ts2344_literal_type_message.rs"
 
 [[test]]
+name = "ts4112_cross_file_override_heritage_tests"
+path = "tests/ts4112_cross_file_override_heritage_tests.rs"
+
+[[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
