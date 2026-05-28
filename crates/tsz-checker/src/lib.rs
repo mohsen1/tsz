@@ -180,6 +180,9 @@ mod generator_yield_identity_tests;
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
 #[cfg(test)]
+#[path = "tests/generic_method_override_variance_tests.rs"]
+mod generic_method_override_variance_tests;
+#[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
 #[cfg(test)]
