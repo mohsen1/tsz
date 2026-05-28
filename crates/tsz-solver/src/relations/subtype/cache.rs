@@ -400,6 +400,14 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Helper macro to cache a definitive subtype result, but only when the
         // computation did not depend on a `Lazy` whose body was unresolved
         // (which would make the result undetermined and poison the cache).
+        //
+        // This is best-effort and intentionally conservative: the snapshot is
+        // process-wide (thread-local), so *any* unresolved-`Lazy` event anywhere
+        // in this top-level call's subtree — even in a branch whose result did
+        // not feed the final answer — suppresses the write. That only ever skips
+        // a cache write (correctness-preserving: the result is recomputed later,
+        // when the body is registered), never produces a wrong answer. Captures
+        // `lazy_failures_at_entry` from the enclosing scope by name.
         macro_rules! cache_definitive {
             ($db:expr, $key:expr, $result:expr) => {
                 if lazy_resolve_failure_count() == lazy_failures_at_entry {
