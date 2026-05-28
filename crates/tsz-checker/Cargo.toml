@@ -1211,6 +1211,10 @@ name = "ts2339_union_narrow_display_tests"
 path = "tests/ts2339_union_narrow_display_tests.rs"
 
 [[test]]
+name = "ts2339_user_defined_predicate_primitive_or_object_tests"
+path = "tests/ts2339_user_defined_predicate_primitive_or_object_tests.rs"
+
+[[test]]
 name = "ts2345_instanceof_narrowed_union_display_tests"
 path = "tests/ts2345_instanceof_narrowed_union_display_tests.rs"
 
