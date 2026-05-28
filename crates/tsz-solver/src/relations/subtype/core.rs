@@ -580,10 +580,16 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
     pub(crate) fn resolve_lazy_type(&self, type_id: TypeId) -> TypeId {
         if let Some(def_id) = lazy_def_id(self.interner, type_id) {
-            self.resolver
-                .resolve_lazy(def_id, self.interner)
-                .map(|resolved| self.bind_polymorphic_this(type_id, resolved))
-                .unwrap_or(type_id)
+            match self.resolver.resolve_lazy(def_id, self.interner) {
+                Some(resolved) => self.bind_polymorphic_this(type_id, resolved),
+                None => {
+                    // The def body is not registered yet (re-entrant lib
+                    // resolution). Any False derived from comparing the
+                    // still-Lazy ref is undetermined and must not be cached.
+                    super::cache::note_lazy_resolve_failure();
+                    type_id
+                }
+            }
         } else {
             type_id
         }
