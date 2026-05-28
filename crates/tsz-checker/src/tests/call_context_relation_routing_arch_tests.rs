@@ -57,6 +57,34 @@ fn source_constraint_substitution_fallback_uses_env_relation_outcome_boundary() 
 }
 
 #[test]
+fn round2_contextual_substitution_widening_uses_relation_outcome_boundary() {
+    let source = fs::read_to_string("src/types/computation/call_inference.rs")
+        .expect("failed to read call inference source");
+    let start = source
+        .find("pub(crate) fn widen_round2_contextual_substitution")
+        .expect("missing round-2 contextual substitution widening helper");
+    let end = source[start..]
+        .find("fn fill_unresolved_contextual_substitution_from_constraints")
+        .map(|offset| start + offset)
+        .expect("missing round-2 contextual substitution widening end marker");
+    let helper = &source[start..end];
+
+    assert_eq!(
+        helper.matches("assign_relation_outcome(").count(),
+        2,
+        "round-2 contextual substitution widening should route relation probes through RelationOutcome"
+    );
+    assert!(
+        helper.matches(".related").count() >= 2,
+        "round-2 contextual substitution widening should use relation outcome decisions"
+    );
+    assert!(
+        !helper.contains("is_assignable_to("),
+        "round-2 contextual substitution widening should not regress to raw boolean assignability"
+    );
+}
+
+#[test]
 fn round2_argument_recheck_uses_env_relation_outcome_boundary() {
     let source = fs::read_to_string("src/types/computation/call_inference/argument_context.rs")
         .expect("failed to read call inference argument context source");

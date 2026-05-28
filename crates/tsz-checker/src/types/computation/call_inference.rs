@@ -278,8 +278,12 @@ impl<'a> CheckerState<'a> {
                     substitution,
                 );
                 let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
-                if !self.is_assignable_to(widened_current, evaluated_constraint)
-                    && self.is_assignable_to(current, evaluated_constraint)
+                if !self
+                    .assign_relation_outcome(widened_current, evaluated_constraint)
+                    .related
+                    && self
+                        .assign_relation_outcome(current, evaluated_constraint)
+                        .related
                 {
                     current
                 } else {
