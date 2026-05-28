@@ -108,7 +108,7 @@ impl<'a> DeclarationEmitter<'a> {
         false
     }
 
-    fn should_preserve_named_type_reference_for_emit(
+    pub(in crate::declaration_emitter) fn should_preserve_named_type_reference_for_emit(
         &self,
         type_id: tsz_solver::types::TypeId,
         interner: &tsz_solver::construction::TypeInterner,

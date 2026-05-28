@@ -457,7 +457,7 @@ type Bar = Foo & {
         properties: Vec::new(),
         string_index: None,
         number_index: None,
-        symbol: Some(bar_sym),
+        symbol: None,
     });
     let param_type = interner.union(vec![foo_surface, bar_surface, TypeId::NULL]);
 

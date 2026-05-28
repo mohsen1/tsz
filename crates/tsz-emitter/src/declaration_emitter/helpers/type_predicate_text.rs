@@ -82,20 +82,31 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     fn predicate_alias_candidate_text(&self, type_id: tsz_solver::types::TypeId) -> Option<String> {
-        let text = self.print_type_id_for_inferred_predicate_declaration(type_id);
-        if Self::predicate_alias_candidate_text_is_nameable(&text) {
-            return Some(text);
+        let interner = self.type_interner?;
+        if self.predicate_alias_candidate_is_nameable_type(type_id, interner) {
+            return Some(self.print_type_id_for_inferred_predicate_declaration(type_id));
         }
 
         self.nameable_alias_text_for_predicate_surface(type_id)
     }
 
-    fn predicate_alias_candidate_text_is_nameable(text: &str) -> bool {
-        let trimmed = text.trim_start();
-        !text.is_empty()
-            && text != "any"
-            && !trimmed.starts_with('{')
-            && !trimmed.starts_with("import(")
+    fn predicate_alias_candidate_is_nameable_type(
+        &self,
+        type_id: tsz_solver::types::TypeId,
+        interner: &tsz_solver::construction::TypeInterner,
+    ) -> bool {
+        if type_id.is_intrinsic() || tsz_solver::visitor::literal_value(interner, type_id).is_some()
+        {
+            return true;
+        }
+        if self.should_preserve_named_type_reference_for_emit(type_id, interner) {
+            return true;
+        }
+        let shape_id = tsz_solver::visitor::object_shape_id(interner, type_id)
+            .or_else(|| tsz_solver::visitor::object_with_index_shape_id(interner, type_id));
+        shape_id
+            .and_then(|shape_id| interner.object_shape(shape_id).symbol)
+            .is_some_and(|sym_id| self.symbol_is_nameable_type_for_emit(sym_id))
     }
 
     fn nameable_alias_text_for_predicate_surface(
@@ -131,10 +142,12 @@ impl<'a> DeclarationEmitter<'a> {
             .collect();
         matches.sort_by_key(|def_id| def_id.0);
 
-        matches.into_iter().find_map(|def_id| {
-            let text = self.print_type_id_for_inferred_predicate_declaration(interner.lazy(def_id));
-            Self::predicate_alias_candidate_text_is_nameable(&text).then_some(text)
-        })
+        matches
+            .into_iter()
+            .map(|def_id| {
+                self.print_type_id_for_inferred_predicate_declaration(interner.lazy(def_id))
+            })
+            .next()
     }
 
     fn predicate_alias_def_is_nameable(&self, def_id: tsz_solver::DefId) -> bool {
