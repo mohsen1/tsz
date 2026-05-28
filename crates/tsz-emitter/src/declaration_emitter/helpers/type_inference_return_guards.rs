@@ -60,6 +60,146 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
+    pub(in crate::declaration_emitter) fn array_filter_typeof_type_text(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> Option<String> {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let expr_node = self.arena.get(expr_idx)?;
+        if expr_node.kind != syntax_kind_ext::CALL_EXPRESSION {
+            return None;
+        }
+        let call = self.arena.get_call_expr(expr_node)?;
+        let callee_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(call.expression);
+        let callee_node = self.arena.get(callee_idx)?;
+        if callee_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION {
+            return None;
+        }
+        let access = self.arena.get_access_expr(callee_node)?;
+        if self.get_identifier_text(access.name_or_argument).as_deref() != Some("filter") {
+            return None;
+        }
+
+        let receiver_text = self.preferred_expression_type_text(access.expression)?;
+        let element_text = Self::array_element_type_text(&receiver_text)?;
+        let callback_idx = call.arguments.as_ref()?.nodes.first().copied()?;
+        let primitive = self.typeof_filter_callback_primitive(callback_idx)?;
+        if !Self::array_element_type_includes_typeof_primitive(&element_text, primitive) {
+            return None;
+        }
+        Some(format!("{primitive}[]"))
+    }
+
+    fn array_element_type_includes_typeof_primitive(element_text: &str, primitive: &str) -> bool {
+        let element_text = Self::strip_parenthesized_union_element_type_text(element_text)
+            .unwrap_or_else(|| element_text.trim().to_string());
+        Self::split_top_level_union_type_parts(&element_text)
+            .iter()
+            .any(|part| matches!(part.as_str(), "any" | "unknown") || part == primitive)
+    }
+
+    fn typeof_filter_callback_primitive(&self, callback_idx: NodeIndex) -> Option<&'static str> {
+        let callback_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(callback_idx);
+        let callback_node = self.arena.get(callback_idx)?;
+        if callback_node.kind != syntax_kind_ext::ARROW_FUNCTION
+            && callback_node.kind != syntax_kind_ext::FUNCTION_EXPRESSION
+        {
+            return None;
+        }
+        let callback = self.arena.get_function(callback_node)?;
+        let param_idx = callback.parameters.nodes.first().copied()?;
+        let param_node = self.arena.get(param_idx)?;
+        let param = self.arena.get_parameter(param_node)?;
+        let param_name = self.get_identifier_text(param.name)?;
+        let condition_idx = self.callback_predicate_expression(callback.body)?;
+        self.typeof_equality_primitive(condition_idx, &param_name)
+    }
+
+    fn callback_predicate_expression(&self, body_idx: NodeIndex) -> Option<NodeIndex> {
+        let body_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(body_idx);
+        let body_node = self.arena.get(body_idx)?;
+        if body_node.kind != syntax_kind_ext::BLOCK {
+            return Some(body_idx);
+        }
+
+        let block = self.arena.get_block(body_node)?;
+        let [stmt_idx] = block.statements.nodes.as_slice() else {
+            return None;
+        };
+        let stmt_node = self.arena.get(*stmt_idx)?;
+        let ret = self.arena.get_return_statement(stmt_node)?;
+        self.skip_parenthesized_expression(ret.expression)
+    }
+
+    fn typeof_equality_primitive(
+        &self,
+        condition_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<&'static str> {
+        let condition_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(condition_idx);
+        let condition_node = self.arena.get(condition_idx)?;
+        if condition_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return None;
+        }
+        let binary = self.arena.get_binary_expr(condition_node)?;
+        if binary.operator_token != SyntaxKind::EqualsEqualsEqualsToken as u16 {
+            return None;
+        }
+
+        self.typeof_primitive_pair(binary.left, binary.right, param_name)
+            .or_else(|| self.typeof_primitive_pair(binary.right, binary.left, param_name))
+    }
+
+    fn typeof_primitive_pair(
+        &self,
+        typeof_idx: NodeIndex,
+        literal_idx: NodeIndex,
+        param_name: &str,
+    ) -> Option<&'static str> {
+        let typeof_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(typeof_idx);
+        let typeof_node = self.arena.get(typeof_idx)?;
+        if typeof_node.kind != syntax_kind_ext::PREFIX_UNARY_EXPRESSION {
+            return None;
+        }
+        let unary = self.arena.get_unary_expr(typeof_node)?;
+        if unary.operator != SyntaxKind::TypeOfKeyword as u16 {
+            return None;
+        }
+        if self.get_identifier_text(unary.operand).as_deref() != Some(param_name) {
+            return None;
+        }
+
+        let literal_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(literal_idx);
+        let literal_node = self.arena.get(literal_idx)?;
+        if literal_node.kind != SyntaxKind::StringLiteral as u16 {
+            return None;
+        }
+        let literal = self.get_source_slice(literal_node.pos, literal_node.end)?;
+        match literal.trim().trim_matches(['"', '\'']) {
+            "string" => Some("string"),
+            "number" => Some("number"),
+            "boolean" => Some("boolean"),
+            "bigint" => Some("bigint"),
+            "symbol" => Some("symbol"),
+            "undefined" => Some("undefined"),
+            _ => None,
+        }
+    }
+
     fn strip_parenthesized_union_element_type_text(type_text: &str) -> Option<String> {
         let trimmed = type_text.trim();
         if !trimmed.starts_with('(') || !trimmed.ends_with(')') || !trimmed.contains('|') {

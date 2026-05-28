@@ -527,6 +527,30 @@ const fooOrBar = list[0];
     );
 }
 
+#[test]
+fn fix_array_filter_typeof_decl_uses_narrowed_primitive_array() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+const strings = [1, "foo", 2, "bar"].filter(x => typeof x === "string");
+const numbers = ["a", 1, "b", 2].filter(x => "number" === typeof x);
+const impossible = [1, 2].filter(x => typeof x === "string");
+"#,
+    );
+
+    assert!(
+        output.contains("declare const strings: string[];"),
+        "typeof string filter should print string[]: {output}"
+    );
+    assert!(
+        output.contains("declare const numbers: number[];"),
+        "reversed typeof number filter should print number[]: {output}"
+    );
+    assert!(
+        !output.contains("declare const impossible: string[];"),
+        "impossible typeof string filter should not be overstated as string[]: {output}"
+    );
+}
+
 // Tests for returned-function-expression recursive unrolling (issue #8683)
 
 #[test]
