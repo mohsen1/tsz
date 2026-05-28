@@ -931,7 +931,7 @@ impl<'a> NarrowingContext<'a> {
             return None;
         };
         let app = self.db.type_application(app_id);
-        if app.args.len() == 1 && self.application_base_name_is(app.base, "ReadonlyArray") {
+        if app.args.len() == 1 && self.application_base_is_readonly_array(app.base) {
             Some(app.args[0])
         } else {
             None
@@ -956,25 +956,5 @@ impl<'a> NarrowingContext<'a> {
         }
 
         false
-    }
-
-    fn application_base_name_is(&self, base: TypeId, expected: &str) -> bool {
-        if expected == "ReadonlyArray" && self.application_base_is_readonly_array(base) {
-            return true;
-        }
-
-        match self.db.lookup(base) {
-            Some(TypeData::Lazy(def_id)) => self
-                .resolver
-                .and_then(|resolver| resolver.get_def_name(def_id))
-                .is_some_and(|name| self.db.resolve_atom_ref(name).as_ref() == expected),
-            Some(TypeData::UnresolvedTypeName(name)) => {
-                self.db.resolve_atom_ref(name).as_ref() == expected
-            }
-            _ => self
-                .db
-                .get_display_alias(base)
-                .is_some_and(|alias| self.application_base_name_is(alias, expected)),
-        }
     }
 }
