@@ -60,14 +60,80 @@ mod state_variable_declarations;
 pub(crate) mod test_fixture;
 
 #[cfg(test)]
-#[path = "../../tests/parser_improvement_late_tests.rs"]
-mod parser_improvement_late_tests;
+#[path = "../../tests/parser_improvement_arrow_recovery_tests.rs"]
+mod parser_improvement_arrow_recovery_tests;
 #[cfg(test)]
-#[path = "../../tests/parser_improvement_middle_tests.rs"]
-mod parser_improvement_middle_tests;
+#[path = "../../tests/parser_improvement_asi_recovery_tests.rs"]
+mod parser_improvement_asi_recovery_tests;
 #[cfg(test)]
-#[path = "../../tests/parser_improvement_tests.rs"]
-mod parser_improvement_tests;
+#[path = "../../tests/parser_improvement_class_member_recovery_tests.rs"]
+mod parser_improvement_class_member_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_expression_recovery_tests.rs"]
+mod parser_improvement_expression_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_import_recovery_tests.rs"]
+mod parser_improvement_import_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_incremental_parse_tests.rs"]
+mod parser_improvement_incremental_parse_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_index_signature_recovery_tests.rs"]
+mod parser_improvement_index_signature_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_jsdoc_type_recovery_tests.rs"]
+mod parser_improvement_jsdoc_type_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_jsx_recovery_tests.rs"]
+mod parser_improvement_jsx_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_let_array_ambiguity_tests.rs"]
+mod parser_improvement_let_array_ambiguity_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_merging_no_duplicate_tests.rs"]
+mod parser_improvement_merging_no_duplicate_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_misc_statement_recovery_tests.rs"]
+mod parser_improvement_misc_statement_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_nullable_type_recovery_tests.rs"]
+mod parser_improvement_nullable_type_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_object_array_literal_recovery_tests.rs"]
+mod parser_improvement_object_array_literal_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_orphan_block_recovery_tests.rs"]
+mod parser_improvement_orphan_block_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_parameter_recovery_tests.rs"]
+mod parser_improvement_parameter_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_prefix_unary_recovery_tests.rs"]
+mod parser_improvement_prefix_unary_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_primitive_type_recovery_tests.rs"]
+mod parser_improvement_primitive_type_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_regex_recovery_tests.rs"]
+mod parser_improvement_regex_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_template_recovery_tests.rs"]
+mod parser_improvement_template_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_trailing_comma_recovery_tests.rs"]
+mod parser_improvement_trailing_comma_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_tuple_type_recovery_tests.rs"]
+mod parser_improvement_tuple_type_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_type_member_recovery_tests.rs"]
+mod parser_improvement_type_member_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_unicode_escape_recovery_tests.rs"]
+mod parser_improvement_unicode_escape_recovery_tests;
+#[cfg(test)]
+#[path = "../../tests/parser_improvement_yield_generator_recovery_tests.rs"]
+mod parser_improvement_yield_generator_recovery_tests;
 #[cfg(test)]
 #[path = "../../tests/tests.rs"]
 mod tests;
