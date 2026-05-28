@@ -20,6 +20,8 @@ extern crate self as tsz_checker;
 pub mod context;
 pub mod dispatch;
 mod dispatch_helpers;
+mod dispatch_jsx;
+mod dispatch_this;
 mod dispatch_yield;
 pub mod error_reporter;
 pub mod expr;
