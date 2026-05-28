@@ -59,6 +59,11 @@ mod state_variable_declarations;
 #[path = "../../tests/test_fixture.rs"]
 pub(crate) mod test_fixture;
 
+// Parser-improvement tests are sharded by syntax/recovery family so that
+// owners of a feature (arrow disambiguation, regex recovery, import, JSX,
+// JSDoc-style types, tuples, etc.) can locate the related cases by file name
+// without grepping a single monolithic file. Each shard imports only the
+// `test_fixture` helpers it actually uses; tests share no per-shard helpers.
 #[cfg(test)]
 #[path = "../../tests/parser_improvement_arrow_recovery_tests.rs"]
 mod parser_improvement_arrow_recovery_tests;
