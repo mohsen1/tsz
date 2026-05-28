@@ -1016,6 +1016,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
         let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            // Same undetermined-result event as `resolve_lazy_type`: the
+            // conditional-alias-base decision derived from an unresolvable
+            // `Lazy` must not poison the subtype cache in the enclosing call.
+            note_lazy_resolve_failure();
             return false;
         };
         if matches!(self.interner.lookup(body), Some(TypeData::Conditional(_))) {

@@ -283,9 +283,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Resolve DefIds to their structural forms
+        // Resolve DefIds to their structural forms. A `None` here means the
+        // body is not yet registered (re-entrant lib resolution); record an
+        // undetermined-result event so the enclosing `check_subtype`'s
+        // cache write is skipped instead of caching a False that depended on
+        // a transiently-unresolvable ref.
         let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
+        if s_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
+        if t_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
 
         // Detect self-referencing Lazy types (namespace circular references).
         // When a namespace's DefId resolves back to Lazy(same_DefId), it means
