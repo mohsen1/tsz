@@ -241,7 +241,11 @@ impl<'a> CheckerState<'a> {
         }
     }
 
-    fn is_standard_or_conditional_awaited_alias(&self, sym_id: SymbolId, symbol: &Symbol) -> bool {
+    pub(crate) fn is_standard_or_conditional_awaited_alias(
+        &self,
+        sym_id: SymbolId,
+        symbol: &Symbol,
+    ) -> bool {
         if self.symbol_has_standard_lib_origin(sym_id) {
             return true;
         }
