@@ -342,12 +342,10 @@ impl<'a> CheckerState<'a> {
                 .get_expr_type_args(checker.ctx.arena.get(type_idx)?)
                 .and_then(|expr_type_args| expr_type_args.type_arguments.as_ref())
         };
-        // Track the base class symbol for namespace-merged static type check (TS2417).
-        // Set when the heritage clause resolves to a class symbol. The actual TS2417
-        // check only fires when the *derived* class has a merged namespace.
-        let mut base_sym_for_ns_static_check: Option<tsz_binder::SymbolId> = None;
-        // The symbol the `extends` target resolves to, used to gate TS4112 when no
-        // base type could be resolved structurally (e.g. cross-file generic base).
+        // The symbol the `extends` target resolves to. Drives the namespace-merged
+        // static type check (TS2417) and gates TS4112 when no base type could be
+        // resolved structurally (e.g. a cross-file generic base). The TS2417 check
+        // only fires when the *derived* class has a merged namespace.
         let mut base_heritage_sym: Option<tsz_binder::SymbolId> = None;
 
         for &clause_idx in &heritage_clauses.nodes {
@@ -446,7 +444,6 @@ impl<'a> CheckerState<'a> {
                         // *base* had a namespace, but tsc also reports TS2417 when the
                         // derived class's namespace introduces conflicting static members
                         // even if the base class has no namespace at all.
-                        base_sym_for_ns_static_check = Some(sym_id);
                         base_heritage_sym = Some(sym_id);
                         // Resolve to an in-arena class declaration when possible.
                         // Cross-file/module heritage often resolves to symbols whose
@@ -1312,7 +1309,7 @@ impl<'a> CheckerState<'a> {
         // flag), since a derived class without any namespace cannot have conflicting
         // namespace exports. This avoids false positives for classes that simply
         // don't replicate namespace exports from their base class.
-        if !class_extends_error_reported && let Some(base_sym) = base_sym_for_ns_static_check {
+        if !class_extends_error_reported && let Some(base_sym) = base_heritage_sym {
             let derived_sym = self.ctx.binder.get_node_symbol(class_idx);
             if let Some(derived_sym) = derived_sym {
                 let derived_symbol_flags = self
