@@ -8,11 +8,14 @@
 //!    component carries a managed-props shape, whether `as="..."` resolves to
 //!    intrinsic props, etc.). Output is `JsxAttrCheckContext`.
 //!
-//! 2. **Per-attribute comparison** — walks `JsxAttribute` and `JsxSpread`
-//!    nodes, populates `JsxAttrComparisonOutcome` (provided attrs, error
-//!    flags, deferred spread entries). Still lives in `resolution.rs` because
-//!    the loop body interleaves type-of-node computation with checker state
-//!    that is wide enough that extraction would not improve readability.
+//! 2. **Per-attribute comparison** — `compare_jsx_attributes_loop` (in
+//!    `resolution.rs`) walks `JsxAttribute` and `JsxSpread` nodes and
+//!    populates `JsxAttrComparisonOutcome` (provided attrs, error flags,
+//!    deferred spread entries). The named-attribute arm stays inline because
+//!    its body interleaves contextual-type derivation, speculation snapshots,
+//!    and per-attribute TS2322 anchoring in ways that resist clean
+//!    extraction. The spread arm is extracted to `compare_jsx_spread_attribute`
+//!    here, since it is self-contained and benefits from a name.
 //!
 //! 3. **Deferred spread checking** — `emit_deferred_jsx_spread_diagnostics`
 //!    consumes `spread_entries` collected during phase 2 and emits TS2322
@@ -226,6 +229,171 @@ impl<'a> CheckerState<'a> {
         Some(attrs.properties.nodes.to_vec())
     }
 
+    /// Per-attribute phase 2 helper for the JSX spread-attribute arm of the
+    /// walk in `compare_jsx_attributes_loop`. Computes the spread's effective
+    /// type, emits TS2783 spread-overwrite diagnostics, mirrors `provided`
+    /// entries from the spread shape, sets `spread_covers_all` when the
+    /// spread satisfies the whole props type structurally, and pushes the
+    /// `(spread, display_spread, expr_idx, attr_pos)` entry that phase 3
+    /// will consume for TS2322 per-property checking.
+    pub(in crate::checkers_domain::jsx) fn compare_jsx_spread_attribute(
+        &mut self,
+        attr_idx: NodeIndex,
+        attr_i: usize,
+        opts: &JsxPropsCheckOpts<'_>,
+        ctx: &JsxAttrCheckContext,
+        outcome: &mut JsxAttrComparisonOutcome,
+    ) {
+        let Some(attr_node) = self.ctx.arena.get(attr_idx) else {
+            return;
+        };
+        let Some(spread_data) = self.ctx.arena.get_jsx_spread_attribute(attr_node) else {
+            return;
+        };
+        let spread_expr_idx = spread_data.expression;
+        let raw_spread_type = self.compute_type_of_node(spread_expr_idx);
+        let spread_has_type_parameters = crate::query_boundaries::common::contains_type_parameters(
+            self.ctx.types,
+            raw_spread_type,
+        );
+        let unresolved_spread_into_generic_props = raw_spread_type == TypeId::UNKNOWN
+            && crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                ctx.props_type,
+            );
+        if (spread_has_type_parameters || unresolved_spread_into_generic_props)
+            && !outcome
+                .invalid_generic_spread_types
+                .contains(&raw_spread_type)
+        {
+            outcome.invalid_generic_spread_types.push(raw_spread_type);
+        }
+
+        // Set contextual type so spread literals preserve narrow types.
+        let spread_request = if !ctx.skip_prop_checks {
+            opts.request
+                .read()
+                .normal_origin()
+                .contextual(ctx.props_type)
+        } else {
+            opts.request.read().normal_origin().contextual_opt(None)
+        };
+        let spread_type =
+            self.compute_normalized_jsx_spread_type_with_request(spread_expr_idx, &spread_request);
+
+        // any/error spread covers all properties (no TS2698 — tsc treats
+        // these as dynamic). `unknown` spread is *not* covered: tsc emits
+        // TS2698 for it (and for `T extends any` after constraint
+        // normalization, whose apparent type resolves to `unknown`).
+        if spread_type == TypeId::ANY || spread_type == TypeId::ERROR {
+            // Mark all required props as provided (any spread covers everything)
+            outcome.spread_covers_all = true;
+            return;
+        }
+
+        // TS2698 spread validity is emitted by the JSX orchestration entry
+        // (`check_jsx_spread_attrs_for_ts2698`). We still skip further
+        // processing of an invalid spread here so we don't try to
+        // enumerate properties from a non-object source.
+        let resolved = self.resolve_lazy_type(spread_type);
+        if resolved == TypeId::NEVER
+            || !crate::query_boundaries::type_computation::access::is_valid_spread_type(
+                self.ctx.types,
+                resolved,
+            )
+        {
+            return;
+        }
+
+        // TS2783: Check if any earlier explicit attributes will be
+        // overwritten by required (non-optional) properties from this spread.
+        if !outcome.named_attr_nodes.is_empty() {
+            let spread_props = self.collect_object_spread_properties(spread_type);
+            for sp in &spread_props {
+                if !sp.optional {
+                    let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                    if let Some(&attr_name_idx) = outcome.named_attr_nodes.get(&sp_name) {
+                        let message = crate::diagnostics::format_message(
+                            crate::diagnostics::diagnostic_messages::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                            &[&sp_name],
+                        );
+                        self.error_at_node(
+                            attr_name_idx,
+                            &message,
+                            crate::diagnostics::diagnostic_codes::IS_SPECIFIED_MORE_THAN_ONCE_SO_THIS_USAGE_WILL_BE_OVERWRITTEN,
+                        );
+                    }
+                }
+            }
+            // Clear required spread props from tracking.
+            for sp in &spread_props {
+                if !sp.optional {
+                    let sp_name = self.ctx.types.resolve_atom(sp.name).to_string();
+                    outcome.named_attr_nodes.remove(&sp_name);
+                }
+            }
+        }
+
+        // Extract spread props for TS2741 tracking.
+        if let Some(spread_shape) =
+            crate::query_boundaries::common::object_shape_for_type(self.ctx.types, spread_type)
+        {
+            for prop in &spread_shape.properties {
+                let prop_name = self.ctx.types.resolve_atom(prop.name);
+                outcome
+                    .provided_attrs
+                    .push((prop_name.to_string(), prop.type_id));
+            }
+        }
+
+        // When the spread type contains type parameters (e.g., `{...props}`
+        // where `props: T`), we can't enumerate the properties it provides.
+        // Mark spread_covers_all so missing-required-property checks (TS2741)
+        // don't fire — the generic spread could provide any property.
+        if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type) {
+            outcome.spread_covers_all = true;
+        } else if !ctx.skip_prop_checks
+            && self.diagnostic_relation_boolean_guard(spread_type, ctx.props_type)
+        {
+            // The solver reports the spread is structurally assignable to the
+            // whole props type, so all required members are satisfied — including
+            // ones inherited from Object.prototype (toString, valueOf, …) that
+            // wouldn't appear in the spread's declared property shape. The
+            // property-by-property missing check (TS2741) only walks declared
+            // shapes, so it would otherwise emit a false positive when a spread
+            // like `{...{}}` is fed into a target that requires only inherited
+            // members. Defer to the solver here. Per-property type-mismatch
+            // checking still runs via the deferred `check_spread_property_types`
+            // below.
+            outcome.spread_covers_all = true;
+        }
+
+        // Defer TS2322 spread checking until after attribute override tracking.
+        if !ctx.skip_prop_checks {
+            let display_spread_type = if crate::query_boundaries::common::contains_type_parameters(
+                self.ctx.types,
+                raw_spread_type,
+            ) {
+                raw_spread_type
+            } else if self
+                .ctx
+                .arena
+                .get(spread_expr_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION)
+            {
+                spread_type
+            } else {
+                raw_spread_type
+            };
+            outcome.spread_entries.push((
+                spread_type,
+                display_spread_type,
+                spread_expr_idx,
+                attr_i,
+            ));
+        }
+    }
+
     /// Phase 3: TS2322 spread-property checks deferred until after attribute
     /// override tracking has been recorded. Walks `outcome.spread_entries`
     /// in declaration order; for each spread we collect the names of later
@@ -265,6 +433,13 @@ impl<'a> CheckerState<'a> {
             ctx.props_type,
             opts.request,
         );
+        // Loop-invariant: `opts.children_ctx` is fixed for the whole element,
+        // so the "are there JSX body children?" predicate is constant across
+        // every spread iteration.
+        let has_body_children = opts
+            .children_ctx
+            .as_ref()
+            .is_some_and(|child_ctx| child_ctx.child_count > 0);
 
         let mut suppress_missing_props_from_spread = false;
         let mut earlier_spread_props: FxHashSet<String> = FxHashSet::default();
@@ -303,11 +478,7 @@ impl<'a> CheckerState<'a> {
 
             // When JSX body children exist, treat `children` as already
             // provided so spreads without `children` don't trigger TS2741.
-            if opts
-                .children_ctx
-                .as_ref()
-                .is_some_and(|child_ctx| child_ctx.child_count > 0)
-            {
+            if has_body_children {
                 overridden.insert("children");
                 overridden_for_missing.insert("children");
             }
@@ -347,10 +518,6 @@ impl<'a> CheckerState<'a> {
             } else {
                 false
             };
-            let has_body_children = opts
-                .children_ctx
-                .as_ref()
-                .is_some_and(|ctx| ctx.child_count > 0);
             let suppress_missing_props = spread_has_children && has_body_children;
 
             let had_error =
