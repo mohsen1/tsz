@@ -218,6 +218,336 @@ let badCtor: typeof Token = Token.create();
         );
     }
 
+    // Kysely-shape regression coverage for the cross-file class instance-type
+    // resolution fixed by #10686. These tests pin down adjacent shapes from
+    // issue #10672 (Readonly mapped-type members, PromiseLike conformance via
+    // a `then` method, merged interface + const value, private class fields)
+    // that share the cross-file class identity root cause but were not yet
+    // covered by the three project_mode_* tests #10686 added.
+    //
+    // Structural rule under test:
+    //   In project mode, a cross-file class reference used in a type position
+    //   (including as the argument of a mapped/utility type, as the
+    //   constraint of a PromiseLike conformance check, or as a private-field
+    //   annotation) must resolve to the class's instance type, not the
+    //   constructor (static) type.
+    //
+    // Renamed identifiers (different class names, different property names,
+    // different generic parameter names) are used across the matrix to prove
+    // the rule is structural and not name-keyed.
+
+    fn project_mode_es2015_strict_options() -> ResolvedCompilerOptions {
+        let mut options = ResolvedCompilerOptions::default();
+        options.no_emit = true;
+        options.checker.strict = true;
+        options.checker.module = ModuleKind::ES2015;
+        options.printer.module = ModuleKind::ES2015;
+        options
+    }
+
+    #[test]
+    fn project_mode_readonly_imported_class_preserves_instance_members() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available to provide Readonly<T>"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/node.ts",
+                    r#"
+export class AlterNode {
+  readonly kind: 'AlterNode' = 'AlterNode';
+  cloneWithProps(props: unknown): AlterNode {
+    return this;
+  }
+  cloneWithAlt(alt: unknown): AlterNode {
+    return this;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/builder.ts",
+                    r#"
+import { AlterNode } from "./node";
+
+export class Builder {
+  // Cross-file class as the argument of Readonly<T>: the mapped instantiation
+  // must preserve the instance methods declared on AlterNode.
+  readonly node: Readonly<AlterNode>;
+
+  constructor(node: Readonly<AlterNode>) {
+    this.node = node;
+  }
+
+  // Reading members through Readonly<X> must see X's instance methods.
+  clone(): Builder {
+    const next = this.node.cloneWithProps({});
+    return new Builder(next);
+  }
+
+  // Readonly<X> assignable to X (instance) is the structural rule under test.
+  unwrap(): AlterNode {
+    return this.node;
+  }
+}
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2339 | 2345 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Readonly<ImportedClass> must preserve instance members; cross-file class identity in mapped-type position must resolve to the instance type. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_with_then_method_is_promise_like() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts + es2015.d.ts must be available to provide PromiseLike and Promise"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/builder.ts",
+                    r#"
+export class SchemaBuilder<O> {
+  then<TResult1 = O, TResult2 = never>(
+    onfulfilled?: ((value: O) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return Promise.resolve(undefined as unknown as O).then(onfulfilled, onrejected);
+  }
+}
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { SchemaBuilder } from "./builder";
+
+declare function expectPromiseLike<U>(p: PromiseLike<U>): void;
+
+declare const b: SchemaBuilder<number>;
+
+// Cross-file class is used in PromiseLike<U> argument position; the relation
+// must see the class's instance `then` method to accept the conformance.
+expectPromiseLike(b);
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Cross-file class with a structural `then` method must be recognized as PromiseLike. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_with_private_field_assignable_across_files() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available to provide Array<T>"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/store.ts",
+                    r#"
+export class Store<V> {
+  #items: V[] = [];
+  push(value: V): void {
+    this.#items.push(value);
+  }
+  size(): number {
+    return this.#items.length;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { Store } from "./store";
+
+declare function consume(s: Store<number>): void;
+
+const s: Store<number> = new Store<number>();
+s.push(1);
+consume(s);
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2339 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Cross-file class with a private (#) field must remain assignable through type annotations. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_cross_file_kysely_shape_negative_still_reports_genuine_mismatch() {
+        // The cross-file class instance-type fix must not silence genuine
+        // mismatches. Each kysely-shape pattern below still surfaces its
+        // ordinary diagnostic when the source/target really differ.
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts + es2015.d.ts must be available for negative coverage"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/lib.ts",
+                    r#"
+export class NodeA {
+  readonly kind: 'A' = 'A';
+  alpha(): number {
+    return 1;
+  }
+}
+
+export class NodeB {
+  readonly kind: 'B' = 'B';
+  beta(): string {
+    return "b";
+  }
+}
+
+export class NotAwaitable {
+  describe(): string {
+    return "no then here";
+  }
+}
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { NodeA, NodeB, NotAwaitable } from "./lib";
+
+// Cross-file class identity preserved on the negative direction:
+// NodeA and NodeB are distinct cross-file classes, so assigning one to
+// Readonly<the other> must still report TS2322.
+declare const a: NodeA;
+const wrong: Readonly<NodeB> = a;
+
+// Cross-file class without a `then` method is not PromiseLike: assigning it
+// to PromiseLike<unknown> must still report TS2322.
+declare const na: NotAwaitable;
+const notPL: PromiseLike<unknown> = na;
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        // tsc emits TS2741 (missing required property) for these specific
+        // missing-member assignability failures. The fix must still produce a
+        // mismatch diagnostic — accept TS2322 or TS2741, which both represent
+        // a real cross-file assignability failure preserved by the fix.
+        let mismatches = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2741))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mismatches.len(),
+            2,
+            "genuine cross-file Readonly mismatch and missing-then PromiseLike mismatch must still emit a mismatch diagnostic. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_merged_interface_and_const_value_keep_distinct_shapes_across_files() {
+        let options = project_mode_es2015_strict_options();
+
+        // Kysely-shape: an interface `Op` declares the data shape;
+        // a const `Op` carries static-like helpers (`is` / `create`). Cross-file
+        // consumers must see the interface (no helpers) when `Op` is in a type
+        // position, and the const (with helpers) when it is in a value position.
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/op.ts",
+                    r#"
+export interface Op {
+  readonly kind: string;
+}
+
+export const Op = {
+  is(value: unknown): value is Op {
+    return typeof value === "object" && value !== null && "kind" in value;
+  },
+  create(kind: string): Op {
+    return { kind };
+  },
+};
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { Op } from "./op";
+
+// `Op` in a type position is the interface (no helpers).
+declare const item: Op;
+const k: string = item.kind;
+
+// `Op` in a value position is the const (helpers available).
+const made: Op = Op.create("X");
+const checked: boolean = Op.is(made);
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2339 | 2739 | 2306))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Merged interface + const must keep distinct cross-file shapes; type-position and value-position resolutions must not collapse. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
     /// Asserts the post-PR-#7521 file-session reuse env policy: OFF unless
     /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
     /// PR #7521 the default was ON (set by PRs #6870 / #6893) which
