@@ -399,33 +399,11 @@ impl<'a> CheckerState<'a> {
                 sym_found.is_some_and(|s| s.has_any_flags(symbol_flags::TYPE_ALIAS));
             if has_type_alias {
                 let symbol = sym_found.expect("has_type_alias guard ensures sym_found is Some");
-                tracing::debug!(
-                    sym_id = sym_id.0,
-                    name = %symbol.escaped_name,
-                    num_decls = symbol.declarations.len(),
-                    arena_len = self.ctx.arena.len(),
-                    "delegate_cross_arena: checking TYPE_ALIAS in current arena"
-                );
-                let has_type_alias_in_current_arena = symbol.declarations.iter().any(|&d| {
-                    self.ctx
-                        .arena
-                        .get(d)
-                        .and_then(|n| {
-                            if n.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION {
-                                // Verify the name matches to prevent NodeIndex collisions:
-                                // A lib NodeIndex may accidentally map to a different
-                                // TYPE_ALIAS_DECLARATION in the user arena.
-                                let type_alias = self.ctx.arena.get_type_alias(n)?;
-                                let name_node = self.ctx.arena.get(type_alias.name)?;
-                                let ident = self.ctx.arena.get_identifier(name_node)?;
-                                let name = self.ctx.arena.resolve_identifier_text(ident);
-                                Some(name == symbol.escaped_name.as_str())
-                            } else {
-                                Some(false)
-                            }
-                        })
-                        .unwrap_or(false)
-                });
+                // A cross-file alias can collide with an identically-shaped local
+                // alias on raw SymbolId/NodeIndex; the helper confirms genuine
+                // current-file ownership before we resolve it locally.
+                let has_type_alias_in_current_arena =
+                    self.symbol_has_local_type_alias_declaration(symbol, sym_id);
                 tracing::debug!(
                     sym_id = sym_id.0,
                     name = %symbol.escaped_name,
@@ -872,6 +850,15 @@ impl<'a> CheckerState<'a> {
                 miss_target_source_file.map(|source_file| source_file.file_name.as_str()),
             );
 
+            // Cross-file circular type-alias detection (TS2456): if resolving
+            // this alias re-enters an alias already on the delegation path, mark
+            // the whole cycle circular and stop (see `cross_file_alias_cycle`).
+            let alias_cycle_def_id = self.cross_arena_alias_def_id(sym_id);
+            if alias_cycle_def_id.is_some_and(|def_id| self.mark_cross_arena_alias_cycle(def_id)) {
+                self.ctx.symbol_types.insert(sym_id, TypeId::ERROR);
+                return Some((TypeId::ERROR, Vec::new()));
+            }
+
             // Guard against deep cross-arena recursion to prevent stack overflow.
             // Uses shared thread-local counter across all delegation points.
             if !Self::enter_cross_arena_delegation() {
@@ -988,8 +975,16 @@ impl<'a> CheckerState<'a> {
             // so inner DefId→TypeId mappings survive child-checker teardown.
             checker.ctx.ensure_both_envs_have_definition_store();
 
-            // Use get_type_of_symbol to ensure proper cycle detection.
-            let result = checker.get_type_of_symbol(sym_id);
+            // Track this alias on the cross-arena resolution stack so a nested
+            // delegation that comes back to it is recognized as a cross-file
+            // cycle (see the detection above). The guard pops on drop —
+            // including on panic unwind — so a reused worker thread never
+            // inherits a stale entry.
+            let result = {
+                let _alias_guard = alias_cycle_def_id.map(Self::enter_cross_arena_alias);
+                // Use get_type_of_symbol to ensure proper cycle detection.
+                checker.get_type_of_symbol(sym_id)
+            };
             let result_params = checker
                 .ctx
                 .get_existing_def_id(sym_id)
