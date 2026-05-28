@@ -1140,7 +1140,16 @@ QUERY_BOUNDARY_COMMON_REFERENCE_COUNT_CHECKS = [
         # `intersection_members` + `find_property_by_str` member lookup, all
         # matching the existing direct-call pattern already used throughout this
         # file. The helpers are only exposed via `query_boundaries::common`.
-        3269,
+        #
+        # Bumped by 8 for the TS2352 constrained-type-parameter assertion
+        # rule (#10676) — `assertion_source_fits_constrained_type_param` and
+        # its recursive helper resolve / decompose the constraint via
+        # `query_boundaries::common` helpers (`type_param_info`,
+        # `union_members`, `intersection_members`, `find_property_in_object`,
+        # `object_shape_for_type`, `types_are_comparable_for_assertion`).
+        # All routes are existing request-shaped boundaries — no new
+        # quarantine entry — so the count rises by the expected delta.
+        3277,
     ),
 ]
 

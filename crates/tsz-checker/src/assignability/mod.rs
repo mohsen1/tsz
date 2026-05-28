@@ -15,6 +15,7 @@ pub mod assignment_checker;
 mod awaited_variance_normalization;
 mod callable_union_relation;
 pub(crate) mod compound_assignment;
+mod constrained_type_param_assertion;
 mod index_access_normalization;
 mod nullish_error_targets;
 mod polymorphic_this_diagnostics;
