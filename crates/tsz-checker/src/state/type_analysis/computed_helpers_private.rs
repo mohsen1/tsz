@@ -257,6 +257,9 @@ impl<'a> CheckerState<'a> {
             let Some(prop) = self.ctx.arena.get_property_decl(node) else {
                 continue;
             };
+            // Capture the optional flag before the mutable borrow consumed by the
+            // type-resolution calls below. `bool` is Copy so this is zero-cost.
+            let is_optional = prop.question_token;
             let declared_type = if is_write_context {
                 self.class_property_relation_declared_type(decl_idx, prop)
             } else {
@@ -274,6 +277,17 @@ impl<'a> CheckerState<'a> {
                     })
                 {
                     return Some(evaluated);
+                }
+                // An optional private field `#x?: T` has write type `T | undefined`
+                // under strictNullChecks without exactOptionalPropertyTypes, matching
+                // the public field rule (p?: T also widens to T | undefined on write).
+                if is_write_context
+                    && is_optional
+                    && self.ctx.strict_null_checks()
+                    && !self.ctx.exact_optional_property_types()
+                {
+                    let widened = self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED);
+                    return Some(widened);
                 }
                 return Some(type_id);
             }
