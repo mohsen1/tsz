@@ -8,7 +8,7 @@
 //! is async iterable when at least one arm satisfies the protocol.
 //!
 //! Addresses the solver `classify_async_iterable_type` gap where Application
-//! and TypeParameter variants were missing, mirroring `classify_full_iterable_type`.
+//! and `TypeParameter` variants were missing, mirroring `classify_full_iterable_type`.
 
 use tsz_checker::context::CheckerOptions;
 use tsz_checker::test_utils::check_multi_file;
