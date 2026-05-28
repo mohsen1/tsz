@@ -707,14 +707,28 @@ impl<'a> DeclarationEmitter<'a> {
                 && let Some(type_text) = self.preferred_expression_type_text(initializer)
                 && type_text != "any"
             {
-                self.write(": ");
-                if keyword == "const"
-                    && let Some(template_index_type) =
-                        self.template_index_signature_element_access_type_text(initializer)
-                {
-                    self.write(&template_index_type);
-                } else {
-                    self.write(&type_text);
+                let emitted_truncation_diagnostic = self
+                    .get_identifier_text(decl_name)
+                    .zip(self.arena.get(decl_name))
+                    .zip(self.current_file_path.clone())
+                    .is_some_and(|((_, name_node), file_path)| {
+                        self.emit_truncation_diagnostic_if_needed(
+                            initializer,
+                            &file_path,
+                            name_node.pos,
+                            name_node.end - name_node.pos,
+                        )
+                    });
+                if !emitted_truncation_diagnostic {
+                    self.write(": ");
+                    if keyword == "const"
+                        && let Some(template_index_type) =
+                            self.template_index_signature_element_access_type_text(initializer)
+                    {
+                        self.write(&template_index_type);
+                    } else {
+                        self.write(&type_text);
+                    }
                 }
             } else if has_initializer
                 && self
