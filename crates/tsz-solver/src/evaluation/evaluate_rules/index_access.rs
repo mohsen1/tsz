@@ -16,7 +16,8 @@ use crate::types::{
 };
 use crate::utils;
 use crate::visitor::{
-    TypeVisitor, intersection_list_id, keyof_inner_type, literal_number, union_list_id,
+    TypeVisitor, intersection_list_id, keyof_inner_type, literal_number, type_param_info,
+    union_list_id,
 };
 
 use super::super::evaluate::TypeEvaluator;
@@ -24,6 +25,22 @@ use super::string_index_helpers::string_index_signature_applies;
 use crate::objects::apparent::literal_value_intrinsic_kind;
 
 const MAX_UNION_INDEX_SIZE: usize = 500;
+
+/// Threshold at which `O[T]` with a generic `T extends keyof O` index should
+/// be left deferred instead of distributed into the per-key value-type union.
+///
+/// Below this many properties, the eager expansion is cheap and downstream
+/// callers (property/method lookup, contextual typing, narrowing) rely on the
+/// resolved value-type union to find members like `Array<O[T]>.push`. At or
+/// above this many properties — `JSX.IntrinsicElements` from `react16.d.ts`
+/// (~150 keys, each a complex generic `DetailedHTMLProps<...>` Application) is
+/// the canonical case — the expansion becomes quadratic in `|keyof O|`,
+/// hitting tens of seconds on a single relation and balooning the type graph
+/// at every relation site. tsc keeps these accesses deferred (matching the
+/// pre-evaluation `IndexAccess` key-identity rejection in
+/// `tsz_checker::assignability::assignability_relation` lines 456-480).
+const LARGE_OBJECT_DEFERRAL_THRESHOLD: usize = 60;
+
 struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
     evaluator: &'b mut TypeEvaluator<'a, R>,
     object_type: TypeId,
@@ -137,6 +154,54 @@ impl<'a, 'b, R: TypeResolver> IndexAccessVisitor<'a, 'b, R> {
                 | TypeData::TemplateLiteral(_) // Templates might resolve to generic strings
                 | TypeData::Intersection(_)
         )
+    }
+
+    /// Check whether the index is a type parameter whose effective constraint
+    /// is structurally `keyof <this_object>` — the same object whose property
+    /// table the visitor is about to walk. When that holds, `O[T]` must stay
+    /// deferred: distributing T's constraint over every key of O would expand
+    /// `O[T]` to the full value-type union of O at every relation site, which
+    /// is quadratic in `|keyof O|` for large interfaces (e.g. JSX.IntrinsicElements
+    /// with ~150 keys mapped to generic Applications) and erases the per-call-site
+    /// type-parameter identity that diagnostics like TS2322 + TS5075 require.
+    fn index_is_type_param_constrained_by_keyof_of_this_object(&mut self) -> bool {
+        let Some(info) = type_param_info(self.evaluator.interner(), self.index_type) else {
+            return false;
+        };
+        let Some(constraint) = info.constraint else {
+            return false;
+        };
+        self.constraint_is_keyof_of_object(constraint)
+    }
+
+    /// True iff `constraint` (possibly nested in an intersection) is structurally
+    /// `keyof X` where `X` is the same as `self.object_type` (modulo evaluation).
+    /// We accept either form: the raw `KeyOf(X)` TypeData or its evaluated form
+    /// that still resolves back to `self.object_type` once we strip the `keyof`.
+    fn constraint_is_keyof_of_object(&mut self, constraint: TypeId) -> bool {
+        if let Some(list_id) = intersection_list_id(self.evaluator.interner(), constraint) {
+            let members: Vec<_> = self
+                .evaluator
+                .interner()
+                .type_list(list_id)
+                .iter()
+                .copied()
+                .collect();
+            return members
+                .into_iter()
+                .any(|member| self.constraint_is_keyof_of_object(member));
+        }
+        let inner = keyof_inner_type(self.evaluator.interner(), constraint).or_else(|| {
+            let evaluated = self.evaluator.evaluate(constraint);
+            (evaluated != constraint)
+                .then(|| keyof_inner_type(self.evaluator.interner(), evaluated))
+                .flatten()
+        });
+        let Some(inner) = inner else {
+            return false;
+        };
+        self.evaluator
+            .constraints_semantically_match(inner, self.object_type)
     }
 
     /// Check if the index type is an intersection that contains the mapped type's constraint.
@@ -507,6 +572,22 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .interner()
             .object_shape(ObjectShapeId(shape_id));
 
+        // Defer `O[T]` when the index is a type parameter whose constraint is
+        // `keyof O` (the object currently being indexed) AND distributing T's
+        // constraint over every key of O would produce an unmanageable value-type
+        // union — i.e. O has many properties (think `JSX.IntrinsicElements` with
+        // ~150 keys mapped to complex generic Applications). tsc keeps `O[T]`
+        // deferred for any generic key, but the cost of eager expansion is what
+        // matters at scale: small Os can be expanded safely (and downstream code
+        // still relies on the eager value-type union for property/method lookup
+        // on Array-of-O[T] etc.). The threshold is the smallest property count
+        // above which the quadratic expansion becomes noticeable in CI.
+        if shape.properties.len() >= LARGE_OBJECT_DEFERRAL_THRESHOLD
+            && self.index_is_type_param_constrained_by_keyof_of_this_object()
+        {
+            return None;
+        }
+
         let result = self
             .evaluator
             .evaluate_object_index_from_constraint(&shape.properties, self.index_type)
@@ -531,6 +612,12 @@ impl<'a, 'b, R: TypeResolver> TypeVisitor for IndexAccessVisitor<'a, 'b, R> {
             .evaluator
             .interner()
             .object_shape(ObjectShapeId(shape_id));
+
+        if shape.properties.len() >= LARGE_OBJECT_DEFERRAL_THRESHOLD
+            && self.index_is_type_param_constrained_by_keyof_of_this_object()
+        {
+            return None;
+        }
 
         let result = self
             .evaluator
