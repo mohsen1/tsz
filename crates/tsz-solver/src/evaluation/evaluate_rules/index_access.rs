@@ -33,12 +33,14 @@ const MAX_UNION_INDEX_SIZE: usize = 500;
 /// callers (property/method lookup, contextual typing, narrowing) rely on the
 /// resolved value-type union to find members like `Array<O[T]>.push`. At or
 /// above this many properties — `JSX.IntrinsicElements` from `react16.d.ts`
-/// (~150 keys, each a complex generic `DetailedHTMLProps<...>` Application) is
+/// (~150 keys, each a complex generic `DetailedHTMLProps<...>` application) is
 /// the canonical case — the expansion becomes quadratic in `|keyof O|`,
-/// hitting tens of seconds on a single relation and balooning the type graph
-/// at every relation site. tsc keeps these accesses deferred (matching the
-/// pre-evaluation `IndexAccess` key-identity rejection in
-/// `tsz_checker::assignability::assignability_relation` lines 456-480).
+/// hitting tens of seconds on a single relation and ballooning the type
+/// graph at every relation site. tsc keeps these accesses deferred; this
+/// matches the pre-evaluation key-identity rejection that the upper layers
+/// apply for the same shape, so downstream relation diagnostics see the
+/// unevaluated `IndexAccess` and can emit the canonical TS2322 + TS5075
+/// elaboration on it instead of comparing two identical value-type unions.
 const LARGE_OBJECT_DEFERRAL_THRESHOLD: usize = 60;
 
 struct IndexAccessVisitor<'a, 'b, R: TypeResolver> {
