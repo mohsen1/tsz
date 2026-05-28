@@ -1948,6 +1948,10 @@ impl ParserState {
                     self.suppress_object_literal_comma_once = true;
                 }
                 name // Use property name as fallback for error recovery
+            } else if let Some(recovered) =
+                self.recover_object_literal_computed_indexer_tail(name, expr)
+            {
+                recovered
             } else {
                 expr
             };
@@ -2006,6 +2010,57 @@ impl ParserState {
                 },
             )
         }
+    }
+
+    fn recover_object_literal_computed_indexer_tail(
+        &mut self,
+        name: NodeIndex,
+        left: NodeIndex,
+    ) -> Option<NodeIndex> {
+        let name_node = self.arena.get(name)?;
+        let name_end = name_node.end;
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME
+            || !self.is_token(SyntaxKind::CloseBracketToken)
+        {
+            return None;
+        }
+
+        let snapshot = self.scanner.save_state();
+        let current = self.current_token;
+        self.next_token();
+        let has_colon_after_bracket = self.is_token(SyntaxKind::ColonToken);
+        self.scanner.restore_state(snapshot);
+        self.current_token = current;
+        if !has_colon_after_bracket {
+            return None;
+        }
+
+        self.parse_error_at_current_token("',' expected.", diagnostic_codes::EXPECTED);
+        self.next_token();
+        self.parse_error_at_current_token(
+            "Property assignment expected.",
+            diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED,
+        );
+        self.next_token();
+        let right = self.parse_assignment_expression();
+        if right.is_none() {
+            return Some(left);
+        }
+        let left_start = self.arena.get(left).map_or(name_end, |node| node.pos);
+        let end_pos = self
+            .arena
+            .get(right)
+            .map_or(self.token_end(), |node| node.end);
+        Some(self.arena.add_binary_expr(
+            syntax_kind_ext::BINARY_EXPRESSION,
+            left_start,
+            end_pos,
+            crate::parser::node::BinaryExprData {
+                left,
+                operator_token: SyntaxKind::CommaToken as u16,
+                right,
+            },
+        ))
     }
 
     /// Look ahead to check if get/set/async is a method vs property name
