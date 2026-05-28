@@ -1743,6 +1743,10 @@ name = "deeply_nested_conditional_mapped_recursion_tests"
 path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 
 [[test]]
+name = "infer_match_recursive_wrapper_termination_tests"
+path = "tests/infer_match_recursive_wrapper_termination_tests.rs"
+
+[[test]]
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 

@@ -195,12 +195,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             Some(TypeData::Application(_)) => {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-                if let Some(query_db) = self.query_db() {
-                    evaluator = evaluator.with_query_db(query_db);
-                }
-                let evaluated = evaluator.evaluate(source);
+                let evaluated = self.evaluate_for_infer_match(source);
                 if evaluated == source {
                     return false;
                 }
@@ -404,17 +399,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     ) -> Option<TypeId> {
         let evaluated = match self.interner().lookup(type_id) {
             Some(TypeData::Application(_)) | Some(TypeData::Mapped(_)) => {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-                if let Some(query_db) = self.query_db() {
-                    evaluator = evaluator.with_query_db(query_db);
-                }
-                let evaluated = evaluator.evaluate(type_id);
-                if evaluated == type_id {
-                    type_id
-                } else {
-                    evaluated
-                }
+                self.evaluate_for_infer_match(type_id)
             }
             _ => type_id,
         };
@@ -615,12 +600,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 true
             }
             Some(TypeData::Application(_)) => {
-                let mut evaluator = TypeEvaluator::with_resolver(self.interner(), self.resolver());
-                evaluator.set_no_unchecked_indexed_access(self.no_unchecked_indexed_access());
-                if let Some(query_db) = self.query_db() {
-                    evaluator = evaluator.with_query_db(query_db);
-                }
-                let evaluated = evaluator.evaluate(source);
+                let evaluated = self.evaluate_for_infer_match(source);
                 if evaluated == source {
                     return false;
                 }
