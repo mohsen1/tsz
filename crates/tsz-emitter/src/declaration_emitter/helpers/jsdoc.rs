@@ -501,7 +501,7 @@ impl<'a> DeclarationEmitter<'a> {
         (text.to_string(), false)
     }
 
-    fn is_jsdoc_tag_name_continuation(ch: char) -> bool {
+    const fn is_jsdoc_tag_name_continuation(ch: char) -> bool {
         ch.is_ascii_alphanumeric() || ch == '_' || ch == '$'
     }
 
