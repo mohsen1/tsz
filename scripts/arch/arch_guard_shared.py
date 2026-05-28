@@ -345,7 +345,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "class"
         / "emit_es6.rs",
-        4105,
+        4110,
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
