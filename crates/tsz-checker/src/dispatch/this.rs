@@ -7,7 +7,7 @@ use crate::state::CheckerState;
 use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
-use super::dispatch::ExpressionDispatcher;
+use super::ExpressionDispatcher;
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     /// Compute the type of a `this` keyword expression.

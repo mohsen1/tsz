@@ -1,5 +1,10 @@
 //! Expression type computation dispatcher.
 
+pub(crate) mod helpers;
+mod jsx;
+mod this;
+mod yield_;
+
 use crate::context::TypingRequest;
 use crate::query_boundaries::checkers::generic as generic_query;
 use crate::query_boundaries::dispatch as query;
@@ -1455,4 +1460,4 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     }
 }
 
-use crate::dispatch_helpers::keyword_type_mapping;
+use self::helpers::keyword_type_mapping;

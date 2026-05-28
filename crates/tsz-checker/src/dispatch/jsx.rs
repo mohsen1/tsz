@@ -8,7 +8,7 @@ use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-use super::dispatch::ExpressionDispatcher;
+use super::ExpressionDispatcher;
 
 impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
     /// Compute the type of a `JSX_ELEMENT` node.
