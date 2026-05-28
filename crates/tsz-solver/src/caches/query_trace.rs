@@ -6,7 +6,7 @@
 //! Environment:
 //! - `TSZ_QUERY_RUN_ID`: optional run identifier attached to every event.
 
-use crate::types::{RelationFlags, TypeId};
+use crate::types::{CachedAnyMode, RelationCacheConfig, TypeId};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{Level, trace};
@@ -74,8 +74,9 @@ pub(crate) fn relation_start(
     op: &'static str,
     source: TypeId,
     target: TypeId,
-    flags: RelationFlags,
+    config: RelationCacheConfig,
 ) {
+    let fields = relation_cache_config_trace_fields(config);
     trace!(
         target: "tsz::query_json",
         event = "query",
@@ -85,8 +86,30 @@ pub(crate) fn relation_start(
         op,
         source_type_id = source.0,
         target_type_id = target.0,
-        flags = flags.bits()
+        flags = fields.flags,
+        any_mode = fields.any_mode
     );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RelationCacheConfigTraceFields {
+    flags: u32,
+    any_mode: &'static str,
+}
+
+#[inline]
+const fn relation_cache_config_trace_fields(
+    config: RelationCacheConfig,
+) -> RelationCacheConfigTraceFields {
+    let any_mode = match config.any_mode {
+        CachedAnyMode::All => "all",
+        CachedAnyMode::TopLevelOnlyAtTop => "top_level_only_at_top",
+        CachedAnyMode::TopLevelOnlyNested => "top_level_only_nested",
+    };
+    RelationCacheConfigTraceFields {
+        flags: config.flags.bits(),
+        any_mode,
+    }
 }
 
 #[inline]
@@ -175,6 +198,22 @@ mod tests {
             id >= 1,
             "first non-fetched query id should be >= 1, got {id}"
         );
+    }
+
+    #[test]
+    fn relation_cache_config_trace_fields_include_any_mode() {
+        let config = crate::types::RelationCacheConfig::new(
+            crate::types::RelationFlags::STRICT_NULL_CHECKS,
+            crate::types::CachedAnyMode::TopLevelOnlyNested,
+        );
+
+        let fields = relation_cache_config_trace_fields(config);
+
+        assert_eq!(
+            fields.flags,
+            crate::types::RelationFlags::STRICT_NULL_CHECKS.bits()
+        );
+        assert_eq!(fields.any_mode, "top_level_only_nested");
     }
 
     #[test]
