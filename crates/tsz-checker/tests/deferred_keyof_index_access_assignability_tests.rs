@@ -410,16 +410,17 @@ class Holder<T1 extends keyof Things, T2 extends keyof Things> {{
 /// directive §25): the structural rule is "for `O[A] -> O[B]` with A != B both
 /// generic type parameters constrained by `keyof O`, emit TS2322 with the
 /// stable elaboration." A name-bound fix would silently regress when callers
-/// pick a different spelling.
+/// pick a different spelling. Uses 80 keys — above the large-object deferral
+/// threshold — so the deferral path is exercised across name choices.
 #[test]
 fn large_object_with_generic_value_types_two_names() {
     for (p1, p2) in [("T1", "T2"), ("Key1", "Key2"), ("Alpha", "Beta")] {
         let mut things_body = String::new();
-        for i in 0..40 {
+        for i in 0..80 {
             things_body.push_str(&format!("    k{i}: Detailed<Base<E{i}>, E{i}>;\n"));
         }
         let mut elements_body = String::new();
-        for i in 0..40 {
+        for i in 0..80 {
             elements_body.push_str(&format!("interface E{i} {{}}\n"));
         }
         let source = format!(
@@ -455,11 +456,13 @@ class Holder<{p1} extends keyof Things, {p2} extends keyof Things> {{
 
 /// Negative companion: same shape but the source and target use the *same*
 /// type-parameter identity — `Things[T] -> Things[T]` is identity, must not
-/// emit TS2322 regardless of how many keys `Things` has.
+/// emit TS2322 regardless of how many keys `Things` has. Sized above the
+/// large-object deferral threshold to verify the deferral does not reject
+/// the identity case.
 #[test]
 fn large_object_same_key_param_identity_accepts() {
     let mut things_body = String::new();
-    for i in 0..30 {
+    for i in 0..80 {
         things_body.push_str(&format!("    k{i}: {{ id?: string }};\n"));
     }
     let source = format!(
@@ -489,10 +492,11 @@ class Holder<K extends keyof Things> {{
 /// Negative companion: `{} -> Things[K]` must still detect rejection when at
 /// least one key's value type has a required property, even at large scale.
 /// The fix targets evaluation deferral, not the rejection rule itself.
+/// Sized above the large-object deferral threshold.
 #[test]
 fn large_object_with_required_member_still_rejects_empty_object() {
     let mut things_body = String::new();
-    for i in 0..29 {
+    for i in 0..79 {
         things_body.push_str(&format!("    k{i}: {{ a?: string }};\n"));
     }
     // One key with a REQUIRED prop; the rule must still fire.
@@ -514,7 +518,48 @@ class Holder<K extends keyof Things> {{
     let assignability_errors = count(&diags, 2322) + count(&diags, 2741);
     assert!(
         assignability_errors >= 1,
-        "Even with 30 keys, the one required-prop value must reject {{}}; got: {:?}",
+        "Even with 80 keys, the one required-prop value must reject {{}}; got: {:?}",
+        diags
+            .iter()
+            .map(|d| (d.code, d.message_text.clone()))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Coverage for the second deferral site: `visit_object_with_index` (object
+/// types that carry an index signature `[k: string]: V` alongside named
+/// properties). Without the gating, `Things[T]` for a 100-key object with a
+/// string-index signature would still expand the per-key value-type union.
+/// With the gating, `Things[T1]` and `Things[T2]` stay deferred and the
+/// pre-evaluation key-identity rejection emits TS2322 directly.
+#[test]
+fn large_object_with_index_signature_distinct_keys_still_reject() {
+    let mut things_body = String::new();
+    for i in 0..80 {
+        things_body.push_str(&format!("    k{i}: {{ tag: 'k{i}'; value?: string }};\n"));
+    }
+    let source = format!(
+        r#"
+interface Things {{
+    [arbitrary: string]: {{ tag: string; value?: string }};
+{things_body}}}
+
+class Holder<T1 extends keyof Things, T2 extends keyof Things> {{
+    M() {{
+        const c1: Things[T1] = (null as any) as Things[T1];
+        const c2: Things[T2] = c1;
+    }}
+}}
+"#
+    );
+    let diags = check_source_diagnostics(&source);
+    assert!(
+        diags.iter().any(|d| {
+            d.code == 2322
+                && d.message_text
+                    .contains("Type 'Things[T1]' is not assignable to type 'Things[T2]'.")
+        }),
+        "object-with-index Things[T1] -> Things[T2] must emit TS2322; got: {:?}",
         diags
             .iter()
             .map(|d| (d.code, d.message_text.clone()))
