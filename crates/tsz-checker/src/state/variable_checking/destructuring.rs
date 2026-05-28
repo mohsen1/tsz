@@ -522,7 +522,10 @@ impl<'a> CheckerState<'a> {
 
                 if element_type == TypeId::ANY || element_type == TypeId::UNKNOWN {
                     element_type = init_type;
-                } else if !self.is_assignable_to(init_type, element_type) {
+                } else if !self
+                    .assign_relation_outcome(init_type, element_type)
+                    .related
+                {
                     element_type = self.ctx.types.factory().union2(element_type, init_type);
                 }
             }

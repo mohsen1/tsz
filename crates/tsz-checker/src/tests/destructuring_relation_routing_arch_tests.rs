@@ -82,3 +82,19 @@ fn binding_pattern_default_inference_uses_relation_outcomes() {
         "binding default inference should not use raw boolean assignability gates"
     );
 }
+
+#[test]
+fn state_destructuring_default_inference_uses_relation_outcome() {
+    let source = fs::read_to_string("src/state/variable_checking/destructuring.rs")
+        .expect("failed to read state/variable_checking/destructuring.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        compact_source.contains("assign_relation_outcome(init_type,element_type).related"),
+        "state destructuring default inference should route element/default compatibility through relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("is_assignable_to(init_type,element_type)"),
+        "state destructuring default inference should not use a raw boolean assignability gate"
+    );
+}
