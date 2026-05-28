@@ -828,6 +828,40 @@ fn expr_object_literal() {
 }
 
 #[test]
+fn object_literal_private_indexer_tail_recovers_as_comma_initializer() {
+    let source = "const x = { private [x: string]: string; };";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        1,
+        "malformed indexer tail should stay on one object property"
+    );
+
+    let prop = arena
+        .get(object_data.elements.nodes[0])
+        .expect("property assignment");
+    let assignment = arena
+        .get_property_assignment(prop)
+        .expect("property assignment data");
+    let (_, op, _) = get_binary(arena, assignment.initializer);
+    assert_eq!(op, SyntaxKind::CommaToken as u16);
+
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED));
+}
+
+#[test]
 fn expr_yield() {
     // `function* gen() { yield 1; yield* other(); }`
     let (parser, _) = parse_source("function* gen() { yield 1; yield* other(); }");
@@ -1772,4 +1806,3 @@ fn no_substitution_template_records_raw_token_text() {
         );
     }
 }
-
