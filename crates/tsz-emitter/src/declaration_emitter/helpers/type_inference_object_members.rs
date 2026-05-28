@@ -391,6 +391,52 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten()
     }
 
+    /// Returns an AST-based type text for an object literal whose members
+    /// include at least one optional method declaration (`a?() {}`).
+    ///
+    /// The solver prints optional methods as property-function-types
+    /// (`a?: () => void`), but tsc emits them as method signatures
+    /// (`a?(): void`). When at least one optional method is present, use the
+    /// AST-based inference path so the output matches tsc.
+    ///
+    /// No-spread check mirrors `object_literal_declared_shorthand_type_text`.
+    pub(in crate::declaration_emitter) fn object_literal_optional_method_type_text(
+        &self,
+        initializer: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(init_node)?;
+        let mut has_optional_method = false;
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            // Spread members prevent reliable AST-based inference.
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                if let Some(method) = self.arena.get_method_decl(member_node) {
+                    // Only trigger when there is at least one optional method;
+                    // non-optional methods are already handled correctly via the
+                    // solver-printed type in most contexts.
+                    if method.question_token {
+                        has_optional_method = true;
+                    }
+                }
+            }
+        }
+
+        has_optional_method
+            .then(|| self.infer_object_literal_type_text_at(initializer, depth))
+            .flatten()
+    }
+
     pub(in crate::declaration_emitter) fn enum_member_widened_type_text(
         &self,
         expr_idx: NodeIndex,
