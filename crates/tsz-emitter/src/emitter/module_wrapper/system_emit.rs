@@ -2,6 +2,7 @@ use super::super::Printer;
 use super::system_legacy_class_decorators::split_system_class_static_tail;
 use super::{SystemDependencyAction, SystemDependencyPlan};
 use crate::emitter::{JsxEmit, ModuleKind};
+use crate::transforms::ClassES5Emitter;
 use rustc_hash::FxHashMap;
 use std::collections::{HashMap, HashSet};
 use tsz_parser::parser::NodeIndex;
@@ -806,6 +807,55 @@ impl<'a> Printer<'a> {
                                 .and_then(|class| self.get_identifier_text_opt(class.name))
                         };
                         if let Some(export_name) = export_name {
+                            // When a legacy-decorated ES5 class with value-position self-references
+                            // is inside a System module's top-level `using` try block, tsc uses the
+                            // outer-alias pattern (C_1) and emits two separate exports_1 calls:
+                            //   exports_1("C", C = C_1 = /** @class */ (...));
+                            //   exports_1("C", C = C_1 = __decorate([dec], C_1));
+                            // The generic emit_top_level_using_class_assignment path uses the
+                            // inline-alias pattern instead, producing a structural mismatch.
+                            if !export.is_default_export
+                                && self.ctx.options.legacy_decorators
+                                && self.ctx.target_es5
+                                && self.in_top_level_using_scope
+                                && !self.in_system_top_level_using_prelude
+                            {
+                                let class_data =
+                                    self.arena.get_class(clause_node).map(|class_decl| {
+                                        let decorators =
+                                            self.collect_class_decorators(&class_decl.modifiers);
+                                        let class_name =
+                                            self.get_identifier_text_idx(class_decl.name);
+                                        let members: Vec<NodeIndex> =
+                                            class_decl.members.nodes.clone();
+                                        (class_name, decorators, members)
+                                    });
+                                if let Some((class_name, decorators, members)) = class_data {
+                                    let has_decorators = !decorators.is_empty()
+                                        || !self
+                                            .collect_constructor_param_decorators(&members)
+                                            .is_empty();
+                                    if has_decorators {
+                                        let alias_name = self.system_legacy_decorated_class_alias(
+                                            export.export_clause,
+                                            &class_name,
+                                            &members,
+                                        );
+                                        if alias_name.is_some() {
+                                            self.emit_system_using_legacy_decorated_es5_class_export(
+                                                clause_node,
+                                                export.export_clause,
+                                                &export_name,
+                                                &class_name,
+                                                &decorators,
+                                                &members,
+                                                alias_name.as_deref(),
+                                            );
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
                             self.emit_top_level_using_class_assignment(
                                 clause_node,
                                 export.export_clause,
@@ -867,6 +917,75 @@ impl<'a> Printer<'a> {
                 true
             }
         }
+    }
+
+    /// Emit a legacy-decorated ES5 class with value-position self-references inside
+    /// a System module's top-level `using` try block, using the outer-alias pattern:
+    ///
+    /// ```text
+    /// exports_1("C", C = C_1 = /** @class */ (function () { … return C; }()));
+    /// exports_1("C", C = C_1 = __decorate([dec], C_1));
+    /// ```
+    ///
+    /// The outer-alias pattern (`C_1`) is what `tsc` produces. The generic
+    /// `emit_top_level_using_class_assignment` path would instead use the inline
+    /// self-capture pattern (`C_2 = C; var C_2;` inside the IIFE), which diverges.
+    fn emit_system_using_legacy_decorated_es5_class_export(
+        &mut self,
+        _class_node: &tsz_parser::parser::node::Node,
+        class_idx: NodeIndex,
+        export_name: &str,
+        class_name: &str,
+        decorators: &[NodeIndex],
+        members: &[NodeIndex],
+        alias_name: Option<&str>,
+    ) {
+        // Build an ES5 class emitter WITHOUT decorator info so that __decorate
+        // is NOT inlined into the IIFE body. The outer-alias pattern that tsc
+        // produces requires two separate export calls:
+        //   exports_1("C", C = C_1 = /** @class */ (function () { … }()));
+        //   exports_1("C", C = C_1 = __decorate([dec], C_1));
+        let mut es5_emitter = ClassES5Emitter::new(self.arena);
+        es5_emitter.set_temp_var_counter(self.ctx.destructuring_state.temp_var_counter);
+        es5_emitter
+            .set_async_generator_inner_name_counts(self.async_generator_inner_name_counts.clone());
+        self.configure_es5_class_emitter_disposable_context(&mut es5_emitter);
+        es5_emitter.set_indent_level(self.writer.indent_level());
+        es5_emitter.set_transforms(self.transforms.clone());
+        es5_emitter.set_remove_comments(self.ctx.options.remove_comments);
+        es5_emitter.set_use_define_for_class_fields(self.ctx.options.use_define_for_class_fields);
+        es5_emitter.set_printer_options(self.ctx.options.clone());
+        es5_emitter.set_module_kind(self.ctx.outer_module_kind());
+        if let Some(text) = self.source_text_for_map() {
+            es5_emitter.set_source_text(text);
+        }
+        if let Some(alias) = alias_name {
+            es5_emitter.set_class_self_reference_alias(alias.to_string());
+        }
+
+        let (iife_expr, _computed_decls, _computed_inits) =
+            es5_emitter.emit_class_as_iife_expr(class_idx, class_name);
+        self.sync_es5_class_emitter_state(&mut es5_emitter);
+
+        self.write("exports_1(\"");
+        self.write(export_name);
+        self.write("\", ");
+        self.write(class_name);
+        self.write(" = ");
+        if let Some(alias) = alias_name {
+            self.write(alias);
+            self.write(" = ");
+        }
+        self.write(&iife_expr);
+        self.write(");");
+        self.write_line();
+        self.emit_system_legacy_class_decorator_export(
+            export_name,
+            class_name,
+            decorators,
+            members,
+            alias_name,
+        );
     }
 
     fn emit_system_top_level_using_variable_statement(
