@@ -257,6 +257,7 @@ impl<'a> CheckerState<'a> {
             let Some(prop) = self.ctx.arena.get_property_decl(node) else {
                 continue;
             };
+            let is_optional = prop.question_token;
             let declared_type = if is_write_context {
                 self.class_property_relation_declared_type(decl_idx, prop)
             } else {
@@ -264,22 +265,57 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
-                if evaluated != type_id
+                let base = if evaluated != type_id
                     && crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         evaluated,
                     )
                     .is_some_and(|shape| {
                         shape.string_index.is_some() || shape.number_index.is_some()
-                    })
-                {
-                    return Some(evaluated);
-                }
-                return Some(type_id);
+                    }) {
+                    evaluated
+                } else {
+                    type_id
+                };
+                return Some(self.optional_field_write_target_type(
+                    base,
+                    is_optional,
+                    is_write_context,
+                ));
             }
         }
 
         None
+    }
+
+    /// Widen the write target of an optional private field to `T | undefined`.
+    ///
+    /// This annotation-direct path bypasses the solver property query (so it can
+    /// resolve self-referential class members before the full type is built),
+    /// which means it must replicate tsc's optional-property semantics itself.
+    /// Under `strictNullChecks`, the assignment target of an optional field
+    /// (`name?: T`) is `T | undefined`, so `this.#x = undefined` is allowed.
+    /// With `exactOptionalPropertyTypes`, an optional field's write target stays
+    /// `T` (assigning `undefined` is an error), matching tsc. Read context is
+    /// left unchanged.
+    fn optional_field_write_target_type(
+        &self,
+        base: TypeId,
+        is_optional: bool,
+        is_write_context: bool,
+    ) -> TypeId {
+        if is_optional
+            && is_write_context
+            && self.ctx.strict_null_checks()
+            && !self.ctx.exact_optional_property_types()
+            && base != TypeId::ANY
+            && base != TypeId::UNKNOWN
+            && base != TypeId::ERROR
+        {
+            self.ctx.types.factory().union2(base, TypeId::UNDEFINED)
+        } else {
+            base
+        }
     }
 
     pub(crate) fn get_type_of_private_property_access(
@@ -930,5 +966,106 @@ impl<'a> CheckerState<'a> {
         // E.g., inside `if (!this.#x)`, the narrowed type of `this.#x` is `null`,
         // but assigning `this.#x = value` must check against `T | null`.
         self.finalize_property_access_result(idx, result_type, is_write_context, false)
+    }
+}
+
+#[cfg(test)]
+mod optional_private_field_write_tests {
+    use crate::test_utils::{check_source_strict, check_with_options, strict_checker_options};
+    use tsz_common::options::checker::CheckerOptions;
+
+    fn codes(diags: Vec<crate::diagnostics::Diagnostic>) -> Vec<u32> {
+        diags.into_iter().map(|d| d.code).collect()
+    }
+
+    // Under strictNullChecks (no exactOptionalPropertyTypes), an optional field's
+    // write target is `T | undefined`, so assigning `undefined` is allowed. The
+    // private-name (`#x`) path used to drop the `| undefined`, wrongly raising
+    // TS2322. Cover several field names and value types so the fix proves the
+    // structural rule rather than one spelling.
+    #[test]
+    fn assigning_undefined_to_optional_private_field_is_allowed() {
+        let codes = codes(check_source_strict(
+            r#"
+class Mutex {
+    #promise?: Promise<void>
+    #resolve?: () => void
+    #count?: number
+    clear(): void {
+        this.#promise = undefined
+        this.#resolve = undefined
+        this.#count = undefined
+    }
+}
+"#,
+        ));
+        assert!(
+            !codes.contains(&2322),
+            "assigning undefined to an optional private field should not raise TS2322; got {codes:?}"
+        );
+    }
+
+    // Renaming the field and changing its type must not change the outcome.
+    #[test]
+    fn assigning_undefined_to_optional_private_field_is_allowed_renamed() {
+        let codes = codes(check_source_strict(
+            r#"
+class Holder<T> {
+    #slot?: T[]
+    reset(): void {
+        this.#slot = undefined
+    }
+}
+"#,
+        ));
+        assert!(
+            !codes.contains(&2322),
+            "renamed/generic optional private field should accept undefined; got {codes:?}"
+        );
+    }
+
+    // A non-optional private field still rejects `undefined` (negative case).
+    #[test]
+    fn assigning_undefined_to_required_private_field_is_rejected() {
+        let codes = codes(check_source_strict(
+            r#"
+class C {
+    #value: number = 1
+    clear(): void {
+        this.#value = undefined
+    }
+}
+"#,
+        ));
+        assert!(
+            codes.contains(&2322),
+            "assigning undefined to a required private field should raise TS2322; got {codes:?}"
+        );
+    }
+
+    // With exactOptionalPropertyTypes, an optional field's write target stays
+    // `T`, so assigning `undefined` is still an error (TS2322 for private names,
+    // matching tsc — the EOPT-specific TS2412 is only used for public members).
+    #[test]
+    fn assigning_undefined_to_optional_private_field_rejected_under_exact_optional() {
+        let opts = CheckerOptions {
+            exact_optional_property_types: true,
+            ..strict_checker_options()
+        };
+        let codes = codes(check_with_options(
+            r#"
+class C {
+    #value?: number
+    clear(): void {
+        this.#value = undefined
+    }
+}
+"#,
+            opts,
+        ));
+        assert!(
+            codes.contains(&2322),
+            "exactOptionalPropertyTypes should still reject undefined on an optional private field; got {codes:?}"
+        );
     }
 }
