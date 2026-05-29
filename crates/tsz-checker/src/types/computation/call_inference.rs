@@ -316,7 +316,9 @@ impl<'a> CheckerState<'a> {
                 fallback,
                 &filled,
             );
-            let fallback_name = self.format_type_diagnostic(instantiated);
+            let fallback_name = self
+                .named_type_display_name(instantiated)
+                .unwrap_or_default();
             let resolved_fallback = self
                 .is_well_known_lib_type_name(&fallback_name)
                 .then(|| self.resolve_lib_type_by_name(&fallback_name))
