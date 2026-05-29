@@ -1410,6 +1410,25 @@ pub struct CheckerContext<'a> {
     // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
     // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
     // object shapes distinctly.
+    /// Node-based fallback cache for type parameter `TypeIds` that have no
+    /// `DefId` registration (i.e. class/method/interface type parameters, which
+    /// are not emitted into `semantic_defs` by the binder).
+    ///
+    /// `intern_type_param_for_decl` uses `DefinitionStore::find_type_param_for_def`
+    /// when a def is available. For unregistered type params it previously fell
+    /// back to `fresh_type_param` on every call, which minted a new `TypeId` per
+    /// call. Because `get_class_instance_type_inner` calls `push_type_parameters`
+    /// independently from the outer `check_class_declaration` call, the class
+    /// type parameter `T` received different `TypeIds` in the two contexts. This
+    /// caused `MappedType.constraint = KeyOf(T_id_instance)` to differ from
+    /// `K.constraint = KeyOf(T_id_check)`, breaking `type_param_constraint_matches`
+    /// in the solver's `visit_mapped` — producing a false TS2349.
+    ///
+    /// Key: `(name_node_index, TypeParamInfo)` — the declaration node's raw u32
+    /// paired with the full info so constraint refinement (second pass) replaces
+    /// the unconstrained entry with a constrained one, exactly mirroring the
+    /// def-based path.
+    pub type_param_node_cache: FxHashMap<(u32, tsz_solver::TypeParamInfo), tsz_solver::TypeId>,
 }
 
 /// Project-wide shared environment for multi-file type checking.

@@ -582,6 +582,136 @@ fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
 // Mapped Type Indexing Tests
 // =============================================================================
 
+/// Regression test for `{[K in keyof T]: F<K>}[K]` where K extends keyof T.
+/// When a TypeParameter K has constraint = `keyof T` and the mapped type's
+/// constraint is also `keyof T`, visit_mapped must recognize K as a valid
+/// substitution index. This is the pattern used by class methods:
+///
+/// ```ts
+/// class Form<T> {
+///   private map: {[K in keyof T]: (v: T[K]) => void}
+///   set<K extends keyof T>(key: K, v: T[K]) { this.map[key](v) }
+/// }
+/// ```
+#[test]
+fn test_index_access_mapped_constrained_type_param() {
+    let interner = TypeInterner::new();
+
+    // T (unconstrained, using fresh to simulate checker behavior)
+    let t_type = interner.fresh_type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let keyof_t = interner.keyof(t_type);
+
+    // Template: () => void (a callable type)
+    let template_type = interner.function(crate::types::FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    // Mapped type: { [P in keyof T]: () => void }
+    let mapped_type_param = TypeParamInfo {
+        name: interner.intern_string("P"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    };
+    let mapped = interner.mapped(MappedType {
+        type_param: mapped_type_param,
+        constraint: keyof_t,
+        name_type: None,
+        template: template_type,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    // K with constraint = keyof T (using the SAME keyof_t TypeId)
+    let k_type = interner.fresh_type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(keyof_t),
+        default: None,
+        is_const: false,
+    });
+
+    // Evaluate: { [P in keyof T]: () => void }[K]
+    // Should resolve to the template: () => void
+    use crate::evaluation::evaluate::evaluate_index_access;
+    let result = evaluate_index_access(&interner, mapped, k_type);
+    assert_eq!(
+        result, template_type,
+        "{{[P in keyof T]: () => void}}[K extends keyof T] should resolve to () => void"
+    );
+}
+
+/// Variant: K constraint and mapped constraint are SEPARATE keyof calls
+/// but over the SAME T TypeId — should produce same result since keyof is
+/// content-addressed.
+#[test]
+fn test_index_access_mapped_constrained_type_param_separate_keyof() {
+    let interner = TypeInterner::new();
+
+    let t_type = interner.fresh_type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+
+    // Two separate calls to keyof(t_type) — should intern to same TypeId
+    let keyof_t_for_mapped = interner.keyof(t_type);
+    let keyof_t_for_k = interner.keyof(t_type);
+    assert_eq!(
+        keyof_t_for_mapped, keyof_t_for_k,
+        "keyof T must be content-addressed"
+    );
+
+    let template_type = interner.function(crate::types::FunctionShape {
+        type_params: vec![],
+        params: vec![],
+        this_type: None,
+        return_type: TypeId::VOID,
+        type_predicate: None,
+        is_constructor: false,
+        is_method: false,
+    });
+
+    let mapped = interner.mapped(MappedType {
+        type_param: TypeParamInfo {
+            name: interner.intern_string("P"),
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        constraint: keyof_t_for_mapped,
+        name_type: None,
+        template: template_type,
+        optional_modifier: None,
+        readonly_modifier: None,
+    });
+
+    let k_type = interner.fresh_type_param(TypeParamInfo {
+        name: interner.intern_string("K"),
+        constraint: Some(keyof_t_for_k),
+        default: None,
+        is_const: false,
+    });
+
+    use crate::evaluation::evaluate::evaluate_index_access;
+    let result = evaluate_index_access(&interner, mapped, k_type);
+    assert_eq!(
+        result, template_type,
+        "{{[P in keyof T]: () => void}}[K extends keyof T] should resolve to () => void (separate keyof calls)"
+    );
+}
+
 /// When an index type is an intersection like `string & keyof T`, the
 /// `visit_mapped` fast path should recognize that the intersection contains
 /// the mapped type's constraint and allow substitution.
