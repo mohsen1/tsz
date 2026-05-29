@@ -576,28 +576,27 @@ impl<'a> Printer<'a> {
         };
         match init_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp + per-property default temps.
-                    let mut defaults = 0usize;
-                    for &elem_idx in &lit.elements.nodes {
-                        let Some(elem_node) = self.arena.get(elem_idx) else {
-                            continue;
-                        };
-                        if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                            && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                            && let Some(value_node) = self.arena.get(prop.initializer)
-                            && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                            && let Some(bin) = self.arena.get_binary_expr(value_node)
-                            && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        {
-                            defaults += 1;
-                        }
+                let Some(lit) = self.arena.get_literal_expr(init_node) else {
+                    return 0;
+                };
+                // Count per-property default temps. A property with a default
+                // (colon form `{ k: name = init }` or shorthand cover-init form
+                // `{ name = init }`) reserves one extract temp so the
+                // `tmp = source.k, name = tmp === void 0 ? init : tmp` guard can
+                // be emitted, mirroring tsc's allocation order.
+                let mut defaults = 0usize;
+                for &elem_idx in &lit.elements.nodes {
+                    if self.for_of_assignment_property_has_default(elem_idx) {
+                        defaults += 1;
                     }
+                }
+                if lit.elements.nodes.len() > 1 {
+                    // Multi-element patterns also extract one source temp.
                     return 1 + defaults;
                 }
-                0
+                // Single-element patterns inline the source, so only the default
+                // extract temp (if any) is reserved.
+                defaults
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(init_node)
@@ -610,6 +609,36 @@ impl<'a> Printer<'a> {
                 0
             }
             _ => 0,
+        }
+    }
+
+    /// Whether an object-pattern element carries a default value, in either the
+    /// colon form (`{ k: name = init }`, a `PROPERTY_ASSIGNMENT` whose
+    /// initializer is an `=` binary) or the shorthand cover-initialized form
+    /// (`{ name = init }`, a `SHORTHAND_PROPERTY_ASSIGNMENT` with an
+    /// `object_assignment_initializer`). Both lower to one extract temp.
+    fn for_of_assignment_property_has_default(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        match elem_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(elem_node)
+                .and_then(|prop| self.arena.get(prop.initializer))
+                .and_then(|value_node| {
+                    if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                        self.arena.get_binary_expr(value_node)
+                    } else {
+                        None
+                    }
+                })
+                .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16),
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_shorthand_property(elem_node)
+                .is_some_and(|shorthand| shorthand.object_assignment_initializer.is_some()),
+            _ => false,
         }
     }
 

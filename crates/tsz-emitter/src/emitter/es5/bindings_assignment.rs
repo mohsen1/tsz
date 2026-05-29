@@ -1417,22 +1417,48 @@ impl<'a> Printer<'a> {
                 }
                 k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => {
                     // { name } → name = source.name
+                    // { name = init } (cover-initialized shorthand) → mirror the
+                    // colon-form default branch: extract the property into a temp,
+                    // then assign `name = tmp === void 0 ? init : tmp`.
                     if let Some(shorthand) = self.arena.get_shorthand_property(elem_node) {
                         let name = crate::transforms::emit_utils::identifier_text_or_empty(
                             self.arena,
                             shorthand.name,
                         );
-                        self.emit_assignment_separator(first);
-                        if !self.emit_commonjs_live_export_assignment_target_name(&name) {
-                            self.emit_assignment_target(shorthand.name);
+                        if shorthand.object_assignment_initializer.is_some() {
+                            let temp = self.make_unique_name_hoisted_assignment();
+                            self.emit_assignment_separator(first);
+                            self.write(&temp);
+                            self.write(" = ");
+                            self.emit_assignment_object_key_access(
+                                source,
+                                inline_source,
+                                shorthand.name,
+                                None,
+                            );
+                            self.write(", ");
+                            if !self.emit_commonjs_live_export_assignment_target_name(&name) {
+                                self.emit_assignment_target(shorthand.name);
+                            }
+                            self.write(" = ");
+                            self.write(&temp);
+                            self.write(" === void 0 ? ");
+                            self.emit(shorthand.object_assignment_initializer);
+                            self.write(" : ");
+                            self.write(&temp);
+                        } else {
+                            self.emit_assignment_separator(first);
+                            if !self.emit_commonjs_live_export_assignment_target_name(&name) {
+                                self.emit_assignment_target(shorthand.name);
+                            }
+                            self.write(" = ");
+                            self.emit_assignment_object_key_access(
+                                source,
+                                inline_source,
+                                shorthand.name,
+                                None,
+                            );
                         }
-                        self.write(" = ");
-                        self.emit_assignment_object_key_access(
-                            source,
-                            inline_source,
-                            shorthand.name,
-                            None,
-                        );
                         if !name.is_empty() {
                             rest_props.push(AssignmentRestProp::Static(name));
                         }
