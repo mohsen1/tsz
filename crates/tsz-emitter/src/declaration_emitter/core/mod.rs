@@ -318,6 +318,17 @@ pub struct DeclarationEmitter<'a> {
     /// and `escaped_name`. Used to substitute alias names when printing qualified type names
     /// only when a target has a single unambiguous alias.
     pub(super) local_namespace_alias_targets: FxHashMap<(SymbolId, String), FxHashSet<String>>,
+    /// Maps the resolved target SymbolId of an `import alias = Q.R.S` declaration
+    /// to the alias name(s) plus the alias's enclosing scope symbol. Unlike
+    /// `local_namespace_alias_targets`, which keys on the *leftmost* segment to
+    /// alias a namespace prefix, this map keys on the symbol the *whole* qualified
+    /// path resolves to. tsc references such a symbol by the alias name directly
+    /// (e.g. `import xc = x.c; var p: xc`) but only where the alias is in lexical
+    /// scope, so each entry records the alias's enclosing namespace/module symbol
+    /// (`SymbolId::NONE` for top-level/file scope). When printing a type whose
+    /// symbol equals the recorded target and the current emit position is within
+    /// that scope, we emit the alias name instead of the expanded qualified path.
+    pub(super) local_import_equals_alias_for_target: FxHashMap<SymbolId, Vec<(String, SymbolId)>>,
 }
 
 pub(super) struct SourceMapState {

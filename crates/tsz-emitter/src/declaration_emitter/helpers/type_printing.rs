@@ -768,6 +768,8 @@ impl<'a> DeclarationEmitter<'a> {
 
             let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
             let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
+            let import_equals_alias_resolver =
+                |sym_id| self.resolve_import_equals_alias_for_symbol(sym_id);
             let local_import_alias_name_resolver =
                 |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
             let has_local_import_alias_resolver = |sym_id| {
@@ -782,6 +784,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .with_node_arena(self.arena)
                 .with_module_path_resolver(&module_path_resolver)
                 .with_namespace_alias_resolver(&namespace_alias_resolver)
+                .with_import_equals_alias_resolver(&import_equals_alias_resolver)
                 .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
                 .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
                 .with_strict_null_checks(self.strict_null_checks);
@@ -1336,6 +1339,8 @@ impl<'a> DeclarationEmitter<'a> {
         }
         let module_path_resolver = |sym_id| self.resolve_symbol_module_path(sym_id);
         let namespace_alias_resolver = |sym_id| self.resolve_namespace_import_alias(sym_id);
+        let import_equals_alias_resolver =
+            |sym_id| self.resolve_import_equals_alias_for_symbol(sym_id);
         let local_import_alias_name_resolver =
             |sym_id| self.can_reference_local_import_alias_by_name(sym_id);
         let has_local_import_alias_resolver = |sym_id| {
@@ -1350,6 +1355,7 @@ impl<'a> DeclarationEmitter<'a> {
             .with_node_arena(self.arena)
             .with_module_path_resolver(&module_path_resolver)
             .with_namespace_alias_resolver(&namespace_alias_resolver)
+            .with_import_equals_alias_resolver(&import_equals_alias_resolver)
             .with_local_import_alias_name_resolver(&local_import_alias_name_resolver)
             .with_has_local_import_alias_resolver(&has_local_import_alias_resolver)
             .with_strict_null_checks(self.strict_null_checks)
