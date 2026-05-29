@@ -44,6 +44,7 @@ const {
   readCompatibilityRows,
   groupByPattern,
   buildReductionTasks,
+  buildIssueIndex,
   renderMarkdown,
   createReductionBacklog,
 } = await import(pathToFileURL(SCRIPT));
@@ -266,6 +267,119 @@ withTempDir((dir) => {
   assert.ok(!task.linked_issues.some((i) => i.number === 456), "should not link unrelated issue");
   // Issue 789 is closed, should NOT be linked
   assert.ok(!task.linked_issues.some((i) => i.number === 789), "should not link closed issue");
+}
+
+// --- buildIssueIndex: normalize once, drop closed issues, preserve order ---
+
+{
+  const issues = [
+    { number: 1, title: "Open A", labels: ["Solver", "keyspace-property-indexed"], state: "open" },
+    { number: 2, title: "Closed B", labels: ["solver"], state: "closed" },
+    { number: 3, title: "Open C", labels: undefined, state: undefined },
+  ];
+  const index = buildIssueIndex(issues);
+  // Closed issues are removed; issues with no/undefined state are kept (open by default).
+  assert.equal(index.length, 2, "buildIssueIndex should drop closed issues");
+  assert.deepEqual(index.map((e) => e.issue.number), [1, 3], "should preserve original order of open issues");
+  // Labels are lowercased and hyphens normalized to spaces, exactly once.
+  assert.ok(index[0].labelSet.has("solver"));
+  assert.ok(index[0].labelSet.has("keyspace property indexed"));
+  // Title is lowercased for substring matching.
+  assert.equal(index[0].titleLower, "open a");
+  // Missing labels normalize to an empty set rather than throwing.
+  assert.equal(index[1].labelSet.size, 0);
+}
+
+// --- issue linking: ordering preserved and capped at 5 with early exit ---
+
+{
+  const rows = [
+    {
+      name: "type-fest-project",
+      state: "yellow",
+      exit_class: "exit success",
+      oracle_classification: "tsz-fails-only",
+      primary_subsystem: "keyspace-property-indexed",
+      diagnostic_codes: ["TS2339"],
+      diagnostic_subsystems: [{ subsystem: "keyspace-property-indexed", codes: ["TS2339"], count: 1, examples: [] }],
+      diagnostic_deltas: ["src/a.ts(1,1): error TS2339: Property 'x' does not exist."],
+      repro: null,
+    },
+  ];
+  // Seven issues match by label; linking must keep the first five in input order.
+  const issues = [];
+  for (let n = 10; n < 17; n++) {
+    issues.push({
+      number: n,
+      title: `matching issue ${n}`,
+      labels: ["keyspace-property-indexed"],
+      state: "open",
+      html_url: `https://github.com/mohsen1/tsz/issues/${n}`,
+    });
+  }
+  // Insert a closed match and an unrelated issue to prove they are skipped.
+  issues.splice(2, 0, { number: 999, title: "closed match", labels: ["keyspace-property-indexed"], state: "closed" });
+  issues.push({ number: 500, title: "unrelated narrowing", labels: ["flow-narrowing"], state: "open" });
+
+  const { groups } = groupByPattern(rows);
+  const tasks = buildReductionTasks(groups, issues, { minRows: 1 });
+  assert.equal(tasks.length, 1);
+  const linked = tasks[0].linked_issues;
+  assert.equal(linked.length, 5, "linked issues are capped at 5");
+  assert.deepEqual(
+    linked.map((i) => i.number),
+    [10, 11, 12, 13, 14],
+    "first five open matches in input order, skipping the closed one",
+  );
+  assert.ok(!linked.some((i) => i.number === 999), "closed issue must not be linked");
+  assert.ok(!linked.some((i) => i.number === 500), "unrelated issue must not be linked");
+}
+
+// --- issue linking: matching is invariant to a single shared index across groups ---
+// Linking results must be identical whether two groups are built together (one
+// shared index) or independently — proving the hoisted index does not leak
+// per-group state.
+
+{
+  const rows = [
+    {
+      name: "a",
+      state: "yellow",
+      exit_class: "exit success",
+      primary_subsystem: "keyspace-property-indexed",
+      diagnostic_codes: ["TS2339"],
+      diagnostic_subsystems: [{ subsystem: "keyspace-property-indexed", codes: ["TS2339"], count: 1, examples: [] }],
+      diagnostic_deltas: [],
+      repro: null,
+    },
+    {
+      name: "b",
+      state: "yellow",
+      exit_class: "exit success",
+      primary_subsystem: "flow-narrowing",
+      diagnostic_codes: ["TS2367"],
+      diagnostic_subsystems: [{ subsystem: "flow-narrowing", codes: ["TS2367"], count: 1, examples: [] }],
+      diagnostic_deltas: [],
+      repro: null,
+    },
+  ];
+  const issues = [
+    { number: 1, title: "keyspace bug", labels: ["keyspace-property-indexed"], state: "open" },
+    { number: 2, title: "narrowing bug", labels: ["flow-narrowing"], state: "open" },
+  ];
+  const { groups } = groupByPattern(rows);
+  const tasks = buildReductionTasks(groups, issues, { minRows: 1 });
+  const bySubsystem = new Map(tasks.map((t) => [t.subsystem, t]));
+  assert.deepEqual(
+    bySubsystem.get("keyspace-property-indexed").linked_issues.map((i) => i.number),
+    [1],
+    "keyspace group links only its own issue",
+  );
+  assert.deepEqual(
+    bySubsystem.get("flow-narrowing").linked_issues.map((i) => i.number),
+    [2],
+    "flow-narrowing group links only its own issue",
+  );
 }
 
 // --- exit-class rows without diagnostic codes ---
