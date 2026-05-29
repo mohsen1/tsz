@@ -1675,6 +1675,10 @@ name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
 
 [[test]]
+name = "generic_method_override_constraint_ts2416_tests"
+path = "tests/generic_method_override_constraint_ts2416_tests.rs"
+
+[[test]]
 name = "override_accessor_property_kind_mismatch_ts2416_tests"
 path = "tests/override_accessor_property_kind_mismatch_ts2416_tests.rs"
 

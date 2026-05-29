@@ -19,6 +19,24 @@ mod params;
 
 type HoistedTypeParams = (Vec<TypeParamInfo>, Vec<(TypeId, TypeId)>);
 
+/// Result of comparing one source/target type-parameter constraint pair while
+/// relating two generic signatures of the same arity (see
+/// [`SubtypeChecker::classify_generic_tp_constraint`]).
+struct GenericTpConstraintRelation {
+    /// The source bound is strictly narrower than the target bound, so the source
+    /// type parameter cannot be freely alpha-renamed onto the target marker.
+    source_is_stricter: bool,
+    /// The source constraint merely wraps the target's recursive constraint in
+    /// extra application layers (e.g. `Array<Array<T>>` vs `Array<T>`); the extra
+    /// wrapping is not treated as genuinely stricter. Only computed (and only
+    /// meaningful) when `source_is_stricter` is set.
+    wraps_recursive: bool,
+    /// The two constraints are mutually assignable. Only computed (and only
+    /// meaningful) when the caller requests the bidirectional check via
+    /// `need_bidirectional`, i.e. for mapped/indexed contexts; otherwise `false`.
+    constraints_mutually_assignable: bool,
+}
+
 impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
     pub(crate) fn check_function_subtype(
         &mut self,
@@ -107,6 +125,122 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // bare occurrence so the parameter stays opaque rather than being
             // erased — this preserves existing relation behavior for those shapes.
             _ => true,
+        }
+    }
+
+    /// Walk a chain of single-argument generic applications (e.g. `Array<Array<T>>`)
+    /// looking for `tp_name` at the leaf, returning the shared application base and
+    /// the nesting depth. Used to recognise when a source constraint *wraps* the
+    /// target's recursive constraint one or more levels deeper, in which case the
+    /// extra wrapping does not make the source genuinely stricter.
+    fn recursive_application_depth_for_tp(
+        &self,
+        mut type_id: TypeId,
+        tp_name: tsz_common::interner::Atom,
+    ) -> Option<(TypeId, usize)> {
+        let mut base = None;
+        let mut depth = 0;
+        loop {
+            match self.interner.lookup(type_id) {
+                Some(TypeData::Application(app_id)) => {
+                    let app = self.interner.type_application(app_id);
+                    if app.args.len() != 1 {
+                        return None;
+                    }
+                    if base.is_some_and(|base| base != app.base) {
+                        return None;
+                    }
+                    base = Some(app.base);
+                    depth += 1;
+                    type_id = app.args[0];
+                }
+                Some(TypeData::TypeParameter(info) | TypeData::Infer(info))
+                    if info.name == tp_name =>
+                {
+                    return base.map(|base| (base, depth));
+                }
+                _ => return None,
+            }
+        }
+    }
+
+    /// Classify how a source type parameter's constraint relates to the
+    /// corresponding target type parameter's constraint when comparing two
+    /// generic signatures of the same arity.
+    ///
+    /// `target_to_source_substitution` maps the target's type-parameter names onto
+    /// the source's type-parameter identities so the two constraints are expressed
+    /// in a common vocabulary before comparison.
+    ///
+    /// `need_bidirectional` requests the (more expensive) mutual-assignability
+    /// check used by mapped/indexed contexts. This is a hot path, so the
+    /// `check_subtype` queries and recursive-application walks are only performed
+    /// when their results can actually affect a decision.
+    fn classify_generic_tp_constraint(
+        &mut self,
+        source_tp: &TypeParamInfo,
+        target_tp: &TypeParamInfo,
+        target_to_source_substitution: &TypeSubstitution,
+        need_bidirectional: bool,
+    ) -> GenericTpConstraintRelation {
+        let source_has_constraint = source_tp.constraint.is_some();
+        let target_has_constraint = target_tp.constraint.is_some();
+        let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
+        let target_constraint = target_tp.constraint.map_or(TypeId::UNKNOWN, |constraint| {
+            instantiate_type(self.interner, constraint, target_to_source_substitution)
+        });
+
+        // `target ≤ source` decides strictness when both sides are constrained,
+        // and feeds the mutual-assignability check; only compute it when one of
+        // those is reachable.
+        let need_target_to_source =
+            (source_has_constraint && target_has_constraint) || need_bidirectional;
+        let target_to_source = need_target_to_source
+            && self
+                .check_subtype(target_constraint, source_constraint)
+                .is_true();
+
+        // Source is stricter when it imposes a narrower bound than the target:
+        // - source constrained, target not → always stricter;
+        // - target constrained, source not → source is looser (OK);
+        // - both constrained → stricter iff the target bound is not assignable to
+        //   the source bound (so the source bound is the narrower one).
+        let source_is_stricter = if source_has_constraint && !target_has_constraint {
+            true
+        } else if !source_has_constraint && target_has_constraint {
+            false
+        } else if source_has_constraint && target_has_constraint {
+            !target_to_source
+        } else {
+            false
+        };
+
+        // The recursive-wrap exception only matters when the source would
+        // otherwise be rejected as stricter.
+        let wraps_recursive = source_is_stricter && {
+            let source_recursive_depth =
+                self.recursive_application_depth_for_tp(source_constraint, source_tp.name);
+            let target_recursive_depth =
+                self.recursive_application_depth_for_tp(target_constraint, source_tp.name);
+            source_recursive_depth
+                .zip(target_recursive_depth)
+                .is_some_and(
+                    |((source_base, source_depth), (target_base, target_depth))| {
+                        source_base == target_base && source_depth > target_depth
+                    },
+                )
+        };
+
+        let constraints_mutually_assignable = need_bidirectional
+            && target_to_source
+            && self
+                .check_subtype(source_constraint, target_constraint)
+                .is_true();
+
+        GenericTpConstraintRelation {
+            source_is_stricter,
+            wraps_recursive,
+            constraints_mutually_assignable,
         }
     }
 
@@ -240,125 +374,35 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             // or apparent-member facts can be erased and make the signatures look
             // spuriously compatible. Outside that lane, keep the broader one-way
             // compatibility that TypeScript uses for generic function directionality.
+            // For alpha-rename to succeed, every source type parameter's bound must
+            // be no stricter than the corresponding target bound (so the source's
+            // requirements are at most as strict as the target's). When the source
+            // is stricter we must not erase that distinction by alpha-renaming it
+            // onto the target marker; the only exception is a source constraint that
+            // merely wraps the target's recursive constraint in extra application
+            // layers. For mapped/indexed contexts both directions must hold so
+            // apparent-member facts are preserved.
             let constraints_allow_alpha_rename = source_instantiated
                 .type_params
                 .iter()
                 .zip(target_instantiated.type_params.iter())
                 .all(|(source_tp, target_tp)| {
-                    let source_constraint = source_tp.constraint.unwrap_or(TypeId::UNKNOWN);
-                    let target_constraint =
-                        target_tp.constraint.map_or(TypeId::UNKNOWN, |constraint| {
-                            instantiate_type(
-                                self.interner,
-                                constraint,
-                                &target_to_source_substitution,
-                            )
-                        });
-
-                    // For alpha-rename to succeed, the target's constraint must be
-                    // at least as strict as the source's constraint. This ensures the source
-                    // function's constraint requirements are at most as strict
-                    // as the target's.
-                    //
-                    // The key check: target_constraint ≤ source_constraint
-                    // If target's constraint is not assignable to source's constraint,
-                    // then source is stricter and we should NOT allow alpha-rename.
-                    //
-                    // Example:
-                    //   source: <S extends T> (constraint: T)
-                    //   target: <S> (constraint: unknown)
-                    //   check: unknown ≤ T → true (unknown is assignable to T)
-                    //   But wait, this means target is LOOSER, so source is STRICTER!
-                    //   We should NOT allow alpha-rename when source is stricter.
-                    //
-                    // The issue: when source has S extends T and target has S (no constraint),
-                    // the source is stricter. Alpha-rename would erase this distinction.
-                    // We need to detect when source has a constraint that target doesn't.
-                    //
-                    // Correction: check if source has a constraint that target doesn't.
-                    // If source has constraint and target doesn't (or target's constraint
-                    // is looser), then alpha-rename should fail.
-                    //
-                    // We check: does source have a constraint that makes it stricter?
-                    // Source is stricter if:
-                    // - source has constraint, target doesn't: always stricter
-                    // - both have constraints: source is stricter if its constraint is narrower
-                    let source_has_constraint = source_tp.constraint.is_some();
-                    let target_has_constraint = target_tp.constraint.is_some();
-
-                    let target_to_source = self
-                        .check_subtype(target_constraint, source_constraint)
-                        .is_true();
-                    let source_to_target = self
-                        .check_subtype(source_constraint, target_constraint)
-                        .is_true();
-                    let recursive_application_depth = |mut type_id: TypeId| {
-                        let mut base = None;
-                        let mut depth = 0;
-
-                        loop {
-                            match self.interner.lookup(type_id) {
-                                Some(TypeData::Application(app_id)) => {
-                                    let app = self.interner.type_application(app_id);
-                                    if app.args.len() != 1 {
-                                        return None;
-                                    }
-                                    if base.is_some_and(|base| base != app.base) {
-                                        return None;
-                                    }
-                                    base = Some(app.base);
-                                    depth += 1;
-                                    type_id = app.args[0];
-                                }
-                                Some(TypeData::TypeParameter(info) | TypeData::Infer(info))
-                                    if info.name == source_tp.name =>
-                                {
-                                    return base.map(|base| (base, depth));
-                                }
-                                _ => return None,
-                            }
-                        }
-                    };
-                    let source_recursive_depth = recursive_application_depth(source_constraint);
-                    let target_recursive_depth = recursive_application_depth(target_constraint);
-                    let source_wraps_target_recursive_constraint = source_recursive_depth
-                        .zip(target_recursive_depth)
-                        .is_some_and(
-                            |((source_base, source_depth), (target_base, target_depth))| {
-                                source_base == target_base && source_depth > target_depth
-                            },
-                        );
-
-                    let source_is_stricter = if source_has_constraint && !target_has_constraint {
-                        // Source has constraint, target doesn't → source is stricter
-                        true
-                    } else if !source_has_constraint && target_has_constraint {
-                        // Target has constraint, source doesn't → source is looser (OK)
-                        false
-                    } else if source_has_constraint && target_has_constraint {
-                        // Both have constraints: check if source's is stricter
-                        // If target's constraint is NOT assignable to source's constraint,
-                        // then source is stricter
-                        !target_to_source
-                    } else {
-                        // Neither has constraint → equal
-                        false
-                    };
-
-                    if source_is_stricter {
-                        if !mapped_constraint_sensitive && source_wraps_target_recursive_constraint
-                        {
+                    let relation = self.classify_generic_tp_constraint(
+                        source_tp,
+                        target_tp,
+                        &target_to_source_substitution,
+                        mapped_constraint_sensitive,
+                    );
+                    if relation.source_is_stricter {
+                        if !mapped_constraint_sensitive && relation.wraps_recursive {
                             return true;
                         }
-                        return false; // Don't allow alpha-rename
+                        return false;
                     }
-
-                    // For mapped/indexed contexts, both directions must hold
-                    // to preserve constraint information.
                     if mapped_constraint_sensitive {
-                        target_to_source && source_to_target
+                        relation.constraints_mutually_assignable
                     } else {
-                        true // Constraints are compatible, allow alpha-rename
+                        true
                     }
                 });
 
@@ -399,30 +443,66 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.type_param_equivalences.truncate(equiv_start);
                 return SubtypeResult::False;
             } else {
-                // Strategy 2: When alpha-rename fails due to incompatible constraints
-                // in non-mapped contexts, fall through to constraint erasure (tsc's
-                // `getErasedSignature` behavior). Both signatures have their type params
-                // replaced with their constraints (or `unknown` if unconstrained) and
-                // then compared structurally.
+                // Strategy 2: alpha-rename was refused because at least one source
+                // type parameter carries a strictly stronger constraint than its
+                // target counterpart (e.g. `<T extends object>` vs `<T>`).
                 //
-                // Example that should PASS:
+                // tsc handles this by keeping the target's type parameters as
+                // canonical opaque markers (`getCanonicalSignature`) and
+                // instantiating the *source* in the context of the target
+                // (`instantiateSignatureInContextOf`): each source type parameter is
+                // inferred from the target marker and clamped to its declared
+                // constraint when the marker cannot satisfy it. For the same-arity
+                // case this is exactly:
+                //   - a stricter source parameter never satisfies its bound from the
+                //     looser target marker, so it clamps to its own constraint;
+                //   - a non-stricter source parameter is satisfied by the target
+                //     marker, so it keeps the marker (an alpha-rename onto it).
+                // The target keeps its parameters as free opaque markers (their
+                // embedded constraints survive) for the structural comparison below.
+                //
+                // This is critical for soundness: erasing *both* sides to their
+                // constraints loses the target markers, after which a method-bivariant
+                // or covariant comparison silently accepts unsound overrides such as
+                //   source: <T extends object>(x: T) => T   (derived)
+                //   target: <T>(x: T) => T                  (base)
+                // because `object`/`unknown` compare loosely. Clamping keeps the
+                // distinction (`T` becomes `object`, compared against the opaque base
+                // marker `U`, which fails) while still accepting cases where the
+                // constraint difference is reconciled by parameter usage, e.g.
                 //   source: <T extends {p: string}>(x: T[]) => void
                 //   target: <S extends {p: string}[]>(x: S) => void
-                //   erased: (x: {p: string}[]) => void vs (x: {p: string}[]) => void → OK
-                //
-                // Example that should FAIL:
-                //   source: <T extends string>(x: T[]) => void
-                //   target: <S extends number[]>(x: S) => void
-                //   erased: (x: string[]) => void vs (x: number[]) => void → FAIL
-                let source_canonical =
-                    erase_type_params_to_constraints(&source_instantiated.type_params);
+                // (`T` clamps to `{p: string}`, source param becomes `{p: string}[]`,
+                // which the opaque `S extends {p: string}[]` marker accepts).
+                let mut source_substitution = TypeSubstitution::new();
+                for (source_tp, target_tp) in source_instantiated
+                    .type_params
+                    .iter()
+                    .zip(target_instantiated.type_params.iter())
+                {
+                    let relation = self.classify_generic_tp_constraint(
+                        source_tp,
+                        target_tp,
+                        &target_to_source_substitution,
+                        false,
+                    );
+                    if relation.source_is_stricter && !relation.wraps_recursive {
+                        // Clamp the stricter source parameter to its own constraint.
+                        source_substitution.insert(
+                            source_tp.name,
+                            source_tp.constraint.unwrap_or(TypeId::UNKNOWN),
+                        );
+                    } else {
+                        // Reconcilable: alpha-rename onto the target's opaque marker.
+                        source_substitution
+                            .insert(source_tp.name, self.interner.type_param(*target_tp));
+                    }
+                }
                 source_instantiated =
-                    self.instantiate_function_shape(&source_instantiated, &source_canonical);
-
-                let target_canonical =
-                    erase_type_params_to_constraints(&target_instantiated.type_params);
-                target_instantiated =
-                    self.instantiate_function_shape(&target_instantiated, &target_canonical);
+                    self.instantiate_function_shape(&source_instantiated, &source_substitution);
+                // Drop the target quantifier so its parameters become free opaque
+                // markers (retaining their embedded constraints) for comparison.
+                target_instantiated.type_params.clear();
             }
         }
 
