@@ -614,6 +614,17 @@ impl<'a> Printer<'a> {
             return "Object".to_string();
         };
 
+        // A type reference whose root name resolves to a numeric enum
+        // declaration serializes to `Number`, matching tsc. This covers a bare
+        // enum reference (`E`) and a qualified enum-member reference (`E.A`),
+        // and — via the union serializer's "all members agree" rule — unions of
+        // numeric-enum members (`E.B | E.C`) and `E | number`.
+        if !type_param_names.iter().any(|tp| tp == root)
+            && self.metadata_reference_is_numeric_enum(&parts)
+        {
+            return "Number".to_string();
+        }
+
         if parts.len() == 1 {
             return self.serialize_identifier_type_reference_for_metadata(root, &type_param_names);
         }
@@ -674,6 +685,107 @@ impl<'a> Printer<'a> {
 
         let name = self.get_identifier_text_idx(idx);
         (!name.is_empty()).then_some(vec![name])
+    }
+
+    /// Resolve the metadata entity name `parts` to a declared enum and report
+    /// whether that enum is homogeneously numeric (no string-valued member).
+    ///
+    /// `parts` is the dotted entity name of a `design:type` type reference,
+    /// e.g. `["E"]` for `E` or `["E", "A"]` for the enum-member reference
+    /// `E.A`. The enum is identified by the *declaration* segment of the path
+    /// (the bare name, or the leading segment for an `Enum.Member` reference),
+    /// resolved against enum declarations in the same source file so we do not
+    /// depend on type-parameter names or the printed form of the type.
+    fn metadata_reference_is_numeric_enum(&self, parts: &[String]) -> bool {
+        let Some(enum_name) = parts.first() else {
+            return false;
+        };
+        // For a longer path (`Ns.E`, `E.Member`) try the enum-declaration name
+        // candidates: the leading segment and the segment just before the last.
+        // This recognizes both `E` (bare) and `E.A` (member) without assuming a
+        // specific namespace layout.
+        let mut candidates: Vec<&str> = vec![enum_name.as_str()];
+        if parts.len() >= 2 {
+            candidates.push(parts[parts.len() - 2].as_str());
+        }
+        candidates
+            .iter()
+            .any(|name| self.is_declared_numeric_enum(name))
+    }
+
+    /// True when the source file declares an enum named `name` and every member
+    /// is numeric (no string/template-valued initializer). A const enum counts
+    /// the same as a regular numeric enum for metadata purposes.
+    fn is_declared_numeric_enum(&self, name: &str) -> bool {
+        if name.is_empty() {
+            return false;
+        }
+        let mut found = false;
+        for node in &self.arena.nodes {
+            if node.kind != syntax_kind_ext::ENUM_DECLARATION {
+                continue;
+            }
+            let Some(enum_data) = self.arena.get_enum(node) else {
+                continue;
+            };
+            if self.get_identifier_text_idx(enum_data.name) != name {
+                continue;
+            }
+            found = true;
+            for &member_idx in &enum_data.members.nodes {
+                let Some(member_node) = self.arena.get(member_idx) else {
+                    continue;
+                };
+                let Some(member) = self.arena.get_enum_member(member_node) else {
+                    continue;
+                };
+                if member.initializer.is_some()
+                    && self.metadata_enum_initializer_is_string(member.initializer)
+                {
+                    return false;
+                }
+            }
+        }
+        found
+    }
+
+    /// Syntactic string-initializer test for an enum member, mirroring the
+    /// string-vs-numeric split used by the ES5 enum transform: string/template
+    /// literals and `"x" + ...` concatenations are string members; everything
+    /// else (numeric literals, bitwise/arithmetic expressions, member refs) is
+    /// treated as numeric.
+    fn metadata_enum_initializer_is_string(&self, idx: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(idx) else {
+            return false;
+        };
+        match node.kind {
+            k if k == SyntaxKind::StringLiteral as u16 => true,
+            k if k == SyntaxKind::NoSubstitutionTemplateLiteral as u16 => true,
+            k if k == syntax_kind_ext::TEMPLATE_EXPRESSION => true,
+            k if k == syntax_kind_ext::PARENTHESIZED_EXPRESSION => self
+                .arena
+                .get_parenthesized(node)
+                .is_some_and(|p| self.metadata_enum_initializer_is_string(p.expression)),
+            k if k == syntax_kind_ext::AS_EXPRESSION
+                || k == syntax_kind_ext::TYPE_ASSERTION
+                || k == syntax_kind_ext::SATISFIES_EXPRESSION =>
+            {
+                self.arena
+                    .get_type_assertion(node)
+                    .is_some_and(|a| self.metadata_enum_initializer_is_string(a.expression))
+            }
+            k if k == syntax_kind_ext::NON_NULL_EXPRESSION => self
+                .arena
+                .get_unary_expr_ex(node)
+                .is_some_and(|u| self.metadata_enum_initializer_is_string(u.expression)),
+            k if k == syntax_kind_ext::BINARY_EXPRESSION => {
+                self.arena.get_binary_expr(node).is_some_and(|bin| {
+                    bin.operator_token == SyntaxKind::PlusToken as u16
+                        && self.metadata_enum_initializer_is_string(bin.left)
+                })
+            }
+            _ => false,
+        }
     }
 
     fn metadata_entity_expression_parts(&self, parts: &[String]) -> Vec<String> {
