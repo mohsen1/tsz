@@ -1345,23 +1345,25 @@ impl<'a> DeclarationEmitter<'a> {
     fn constructor_reference_resolves_to_class(&self, expr_idx: NodeIndex) -> bool {
         if let Some(sym_id) = self.value_reference_symbol(expr_idx)
             && let Some(binder) = self.binder
-            && binder.lib_symbol_ids.contains(&sym_id)
         {
-            return true;
-        }
+            if binder.lib_symbol_ids.contains(&sym_id) {
+                return true;
+            }
 
-        if let Some(sym_id) = self.value_reference_symbol(expr_idx)
-            && let Some(binder) = self.binder
-            && let Some(symbol) = binder.symbols.get(sym_id)
-            && (symbol.flags & symbol_flags::CLASS != 0
-                || symbol.declarations.iter().copied().any(|decl_idx| {
-                    self.arena.get(decl_idx).is_some_and(|decl_node| {
-                        decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
-                            || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
-                    })
-                }))
-        {
-            return true;
+            // The heritage reference may be an import alias (e.g.
+            // `import { EventEmitter } from "events"`) or a re-export alias
+            // (`export = ...`) whose local binding carries no class flag itself.
+            // Follow the alias/portability chain so a class declared in another
+            // module is recognized as a constructor reference, matching tsc's
+            // direct `extends <name>` emit instead of synthesizing a `_base`
+            // const.
+            let resolved_sym_id = self.resolve_portability_declaration_symbol(sym_id, binder);
+            if self.symbol_is_class_constructor(sym_id, binder)
+                || self.symbol_is_class_constructor(resolved_sym_id, binder)
+                || self.symbol_value_meaning_is_class_constructor(resolved_sym_id, binder)
+            {
+                return true;
+            }
         }
 
         let Some(expr_name) = self.get_identifier_text(expr_idx) else {
@@ -1372,6 +1374,53 @@ impl<'a> DeclarationEmitter<'a> {
                 self.get_identifier_text(class.name).as_deref() == Some(expr_name.as_str())
             })
         })
+    }
+
+    /// Whether `sym_id` denotes a class constructor value: it carries the
+    /// `CLASS` symbol flag or is backed by a class declaration/expression.
+    fn symbol_is_class_constructor(&self, sym_id: SymbolId, binder: &BinderState) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        symbol.flags & symbol_flags::CLASS != 0
+            || symbol.declarations.iter().copied().any(|decl_idx| {
+                self.arena.get(decl_idx).is_some_and(|decl_node| {
+                    decl_node.kind == syntax_kind_ext::CLASS_DECLARATION
+                        || decl_node.kind == syntax_kind_ext::CLASS_EXPRESSION
+                })
+            })
+    }
+
+    /// Whether the *value* meaning of `sym_id` is a class constructor that was
+    /// merged into a same-named namespace/module.
+    ///
+    /// This is the classic ambient pattern `namespace N { class N {} } export = N`
+    /// (e.g. `@types/node`'s `events`): the exported symbol is the namespace,
+    /// but its self-named member is a class, so a reference to `N` as a value is
+    /// a class constructor. tsc emits `extends N` directly here rather than
+    /// synthesizing a `_base` const. The match is structural (member name equals
+    /// the namespace's own name); no specific identifier is hard-coded.
+    fn symbol_value_meaning_is_class_constructor(
+        &self,
+        sym_id: SymbolId,
+        binder: &BinderState,
+    ) -> bool {
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+        if symbol.flags & (symbol_flags::VALUE_MODULE | symbol_flags::NAMESPACE_MODULE) == 0 {
+            return false;
+        }
+        let Some(exports) = symbol.exports.as_ref() else {
+            return false;
+        };
+        let Some(self_member) = exports.get(symbol.escaped_name.as_str()) else {
+            return false;
+        };
+        if self_member == sym_id {
+            return false;
+        }
+        self.symbol_is_class_constructor(self_member, binder)
     }
 
     pub(in crate::declaration_emitter) fn js_extends_entity_reference_has_any_annotation(
