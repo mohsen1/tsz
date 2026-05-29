@@ -7,6 +7,28 @@ use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo
 use rustc_hash::FxHashMap;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn direct_type_param_name(&self, type_id: TypeId) -> Option<tsz_common::Atom> {
+        crate::type_param_info(self.interner.as_type_database(), type_id).map(|info| info.name)
+    }
+
+    fn function_uses_only_naked_type_params(
+        &self,
+        func: &FunctionShape,
+        names: &[tsz_common::Atom],
+    ) -> bool {
+        if func.params.is_empty() {
+            return false;
+        }
+        let params_are_naked = func.params.iter().all(|param| {
+            self.direct_type_param_name(param.type_id)
+                .is_some_and(|name| names.contains(&name))
+        });
+        params_are_naked
+            && self
+                .direct_type_param_name(func.return_type)
+                .is_some_and(|name| names.contains(&name))
+    }
+
     pub(super) fn constrain_return_context_params_with_rest(
         &mut self,
         infer_ctx: &mut InferenceContext<'_>,
@@ -213,14 +235,23 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             source_tp_count = source_fn.type_params.len(),
             "check_generic_arg_stricter_constraint_mismatch: source_fn"
         );
-        if source_fn.type_params.is_empty()
-            || !source_fn
-                .type_params
-                .iter()
-                .any(|tp| tp.constraint.is_some())
+        let source_tp_names: Vec<_> = source_fn.type_params.iter().map(|tp| tp.name).collect();
+        let all_source_tps_constrained = source_fn
+            .type_params
+            .iter()
+            .all(|tp| tp.constraint.is_some());
+        let has_strict_source_constraint = source_fn
+            .type_params
+            .iter()
+            .filter_map(|tp| tp.constraint)
+            .any(|constraint| constraint != TypeId::UNKNOWN);
+        if source_tp_names.is_empty()
+            || !all_source_tps_constrained
+            || !has_strict_source_constraint
+            || !self.function_uses_only_naked_type_params(&source_fn, &source_tp_names)
         {
             tracing::trace!(
-                "check_generic_arg_stricter_constraint_mismatch: no constrained tp, skip"
+                "check_generic_arg_stricter_constraint_mismatch: source shape is not strict naked generic, skip"
             );
             return None;
         }
@@ -240,16 +271,29 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         let local_tp_names: rustc_hash::FxHashSet<tsz_common::Atom> =
             target_fn.type_params.iter().map(|tp| tp.name).collect();
 
-        // Collect outer type param names that appear (non-locally) in raw_param_type.
-        // TypeParameters created with `fresh_type_param` have unique TypeIds that
-        // won't match a re-interned version, so we match by name (Atom) instead of TypeId.
-        let all_tp_names_in_param: rustc_hash::FxHashSet<tsz_common::Atom> =
-            crate::visitor::collect_all_types(self.interner, raw_param_type)
-                .into_iter()
-                .filter_map(|ty| crate::type_param_info(self.interner.as_type_database(), ty))
-                .map(|info| info.name)
-                .filter(|name| !local_tp_names.contains(name))
-                .collect();
+        let outer_tp_names: Vec<_> = outer_type_params.iter().map(|tp| tp.name).collect();
+        if !self.function_uses_only_naked_type_params(&target_fn, &outer_tp_names) {
+            tracing::trace!(
+                "check_generic_arg_stricter_constraint_mismatch: target shape is not naked outer generic, skip"
+            );
+            return None;
+        }
+
+        let mut all_tp_names_in_param = Vec::new();
+        for ty in target_fn
+            .params
+            .iter()
+            .map(|param| param.type_id)
+            .chain(std::iter::once(target_fn.return_type))
+        {
+            let name = self.direct_type_param_name(ty)?;
+            if local_tp_names.contains(&name) {
+                return None;
+            }
+            if !all_tp_names_in_param.contains(&name) {
+                all_tp_names_in_param.push(name);
+            }
+        }
 
         let relevant_outer_tps: Vec<&TypeParamInfo> = outer_type_params
             .iter()
@@ -300,6 +344,25 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
         }
 
         Some(generic_target_id)
+    }
+
+    pub(crate) fn arg_mismatch(
+        &mut self,
+        arg_type: TypeId,
+        raw_param_type: TypeId,
+        final_param_type: TypeId,
+        func: &FunctionShape,
+    ) -> Option<TypeId> {
+        if let Some(expected) =
+            self.conflicting_contextual_signature_instantiation_type(arg_type, final_param_type)
+        {
+            return Some(expected);
+        }
+        self.check_generic_arg_stricter_constraint_mismatch(
+            arg_type,
+            raw_param_type,
+            &func.type_params,
+        )
     }
 
     pub(super) fn conflicting_contextual_param_candidate_substitution(

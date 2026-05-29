@@ -50,51 +50,6 @@ impl<'a> CheckerState<'a> {
         false
     }
 
-    /// Returns `true` when `actual` is a generic function whose every type parameter has a
-    /// constraint, `expected` is a generic function with the same arity but no constraints,
-    /// and both have only a single relevant call signature.
-    ///
-    /// In that shape the mismatch is a constraint-strictness incompatibility that can never
-    /// be resolved by outer inference — deferral would silently drop a real TS2345.
-    pub(crate) fn generic_arg_constraint_mismatch_is_structural(
-        &self,
-        actual: TypeId,
-        expected: TypeId,
-    ) -> bool {
-        use crate::query_boundaries::common::{callable_shape_for_type, function_shape_for_type};
-
-        let source_constraints: Vec<Option<tsz_solver::TypeId>> =
-            if let Some(shape) = function_shape_for_type(self.ctx.types, actual) {
-                shape.type_params.iter().map(|tp| tp.constraint).collect()
-            } else if let Some(shape) = callable_shape_for_type(self.ctx.types, actual) {
-                let Some(sig) = shape.call_signatures.first() else {
-                    return false;
-                };
-                sig.type_params.iter().map(|tp| tp.constraint).collect()
-            } else {
-                return false;
-            };
-
-        if source_constraints.is_empty() || !source_constraints.iter().all(|c| c.is_some()) {
-            return false;
-        }
-
-        let target_constraints: Vec<Option<tsz_solver::TypeId>> =
-            if let Some(shape) = function_shape_for_type(self.ctx.types, expected) {
-                shape.type_params.iter().map(|tp| tp.constraint).collect()
-            } else if let Some(shape) = callable_shape_for_type(self.ctx.types, expected) {
-                let Some(sig) = shape.call_signatures.first() else {
-                    return false;
-                };
-                sig.type_params.iter().map(|tp| tp.constraint).collect()
-            } else {
-                return false;
-            };
-
-        target_constraints.len() == source_constraints.len()
-            && target_constraints.iter().all(|c| c.is_none())
-    }
-
     /// Check if a callable type's parameters contain type parameters within intersections.
     /// This distinguishes narrowed callback parameters (e.g., `(x: number & T) => void`)
     /// from callbacks with standalone enclosing-scope type parameters (e.g., `(x: T) => void`).

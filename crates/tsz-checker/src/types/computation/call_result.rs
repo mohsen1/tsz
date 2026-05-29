@@ -1585,7 +1585,11 @@ impl<'a> CheckerState<'a> {
             // Do not defer when the actual is a same-arity generic function with all type
             // parameters constrained but the expected has none constrained. That is a
             // structural constraint-strictness mismatch — inference cannot resolve it.
-            if self.generic_arg_constraint_mismatch_is_structural(actual, expected) {
+            if assign_query::generic_arg_constraint_mismatch_is_structural(
+                self.ctx.types,
+                actual,
+                expected,
+            ) {
                 return false;
             }
             return true;

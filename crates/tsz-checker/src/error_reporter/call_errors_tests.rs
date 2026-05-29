@@ -1659,3 +1659,43 @@ take(h);
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn no_ts2345_for_generic_component_props_contextual_inference() {
+    let source = r#"
+type ComponentProps<T> = T extends (props: infer P) => unknown ? P : never;
+declare function wrapComponent<P>(component: (props: P) => unknown): (props: P) => unknown;
+const WrappedComponent = wrapComponent(
+  <T extends string = "span">(props: { as?: T | undefined; className?: string }) => null,
+);
+type RetrievedProps = ComponentProps<typeof WrappedComponent>;
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected contextual generic props inference to stay deferrable, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2345_for_higher_order_generic_callback_inference() {
+    let source = r#"
+declare function f2<T>(cb: <S extends number>(x: S) => T): T;
+declare function f3<T>(cb: <S extends Array<S>>(x: S) => T): T;
+let x2 = f2(x => x);
+let x3 = f3(x => x);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected constrained higher-order callback inference to stay deferrable, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
