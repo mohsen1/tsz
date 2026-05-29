@@ -1281,7 +1281,9 @@ impl<'a> DeclarationEmitter<'a> {
                 {
                     text
                 } else if let Some(text) = self
-                    .infer_fallback_type_text_at(ret.expression, 0)
+                    // Base the inferred object-literal return text at the current
+                    // `indent_level` so a class method nests one level deeper.
+                    .infer_fallback_type_text_at(ret.expression, self.indent_level)
                     .filter(|text| !text.is_empty())
                 {
                     text

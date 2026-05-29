@@ -1425,6 +1425,7 @@ impl<'a> Printer<'a> {
         let needs_any_comma_expr =
             needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
+            && !self.emitting_concise_arrow_return_argument
             && self
                 .arena
                 .get_extended(_idx)
@@ -3303,7 +3304,7 @@ impl<'a> Printer<'a> {
                     self.write_line();
                     self.write("value: ");
                     let before = self.writer.len();
-                    self.emit_expression_with_scoped_static_initializer_mode(
+                    self.emit_static_field_initializer_with_inner_comments(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
@@ -3342,7 +3343,7 @@ impl<'a> Printer<'a> {
                     }
                     self.write(" = ");
                     let before = self.writer.len();
-                    self.emit_expression_with_scoped_static_initializer_mode(
+                    self.emit_static_field_initializer_with_inner_comments(
                         *init_idx,
                         static_initializer_this_binding,
                         static_initializer_super_base,
