@@ -8,7 +8,7 @@ use super::super::DeclarationEmitter;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn format_object_member_type_text(
@@ -288,11 +288,36 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_text(text: &str) -> String {
-        if Self::is_unquoted_property_name(text) {
+        Self::format_property_name_with_quote(text, "\"")
+    }
+
+    /// Render a property name, deciding bare-vs-quoted via the canonical rule
+    /// and, when quoting is required, using `quote` (`"` or `'`) as the quote
+    /// character. `tsc` preserves the original quote character of a quoted
+    /// source name that must remain quoted (e.g. `'foo bar'` stays
+    /// single-quoted), while a bare name forced to quote (e.g. a reserved word)
+    /// uses double quotes.
+    pub(in crate::declaration_emitter) fn format_property_name_with_quote(
+        text: &str,
+        quote: &str,
+    ) -> String {
+        if Self::can_emit_bare_property_name(text) {
             text.to_string()
+        } else if quote == "'" {
+            format!("'{}'", super::escape_string_for_single_quote(text))
         } else {
             format!("\"{}\"", super::escape_string_for_double_quote(text))
         }
+    }
+
+    /// Canonical decision for whether a property name may be emitted bare in a
+    /// declaration file: it must be a syntactically valid identifier *and* not
+    /// a reserved word. This is independent of how the source spelled the name
+    /// (bare vs. quoted): `tsc` re-derives the canonical form, so a bare
+    /// reserved word (`new`) becomes `"new"` and a quoted valid identifier
+    /// (`"__proto__"`) becomes bare `__proto__`.
+    pub(in crate::declaration_emitter) fn can_emit_bare_property_name(text: &str) -> bool {
+        Self::is_unquoted_property_name(text) && !token_is_reserved_word(string_to_token(text))
     }
 
     pub(in crate::declaration_emitter) fn is_unquoted_property_name(text: &str) -> bool {
@@ -477,9 +502,13 @@ impl<'a> DeclarationEmitter<'a> {
             let expr_node = self.arena.get(expr_idx)?;
             match expr_node.kind {
                 k if k == SyntaxKind::StringLiteral as u16 => {
+                    // A computed string-literal name (`["new"]`, `["__proto__"]`)
+                    // resolves to a string property name; canonicalize it the
+                    // same way as a written string-literal property name,
+                    // preserving the source quote character when quoting.
                     let literal = self.arena.get_literal(expr_node)?;
                     let quote = self.original_quote_char(expr_node);
-                    return Some(format!("{}{}{}", quote, literal.text, quote));
+                    return Some(Self::format_property_name_with_quote(&literal.text, quote));
                 }
                 k if k == SyntaxKind::NumericLiteral as u16 => {
                     let literal = self.arena.get_literal(expr_node)?;
@@ -528,12 +557,22 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         if let Some(ident) = self.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            // The source wrote a bare property name; canonicalize so a bare
+            // reserved word (`new`) is quoted in the declaration file.
+            return Some(Self::format_property_name_literal_text(&ident.escaped_text));
         }
         if let Some(literal) = self.arena.get_literal(node) {
+            // The source wrote a quoted property name; canonicalize so a quoted
+            // valid identifier (`"__proto__"`) is emitted bare, while a name
+            // that must stay quoted preserves the original quote character
+            // (`'foo bar'` stays single-quoted).
             let quote = self.original_quote_char(node);
-            return Some(format!("{}{}{}", quote, literal.text, quote));
+            return Some(Self::format_property_name_with_quote(&literal.text, quote));
         }
         self.get_source_slice(node.pos, node.end)
     }
 }
+
+#[cfg(test)]
+#[path = "type_inference_object_members_tests.rs"]
+mod type_inference_object_members_tests;
