@@ -19,11 +19,9 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 
 `tsz` is built the with help of AI-assistant coding. Many tools and AI models were used during its development.
 
-TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
-engine on top to match TypeScript behavior while preserving correctness where possible.
-
 ## Performance
 
+`tsz` is aiming to be 2x faster than tsgo on all benchmarks. It is 3x faster in small file samples. Work on larger projects is underway.
 <!-- PERFORMANCE_START -->
 <p align="left">
   <a href="https://tsz.dev/benchmarks/">
@@ -56,6 +54,8 @@ irm https://tsz.dev/install.ps1 | iex
 ```
 
 ## TypeScript compatibility
+
+`tsz` runs TypeScript's own test suite for compatablity across type-checking, code emition and LSP. 
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
@@ -71,17 +71,9 @@ Progress: [████████████████████] 100.0% 
 ```
 <!-- CONFORMANCE_END -->
 
-Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match tsc in
-error code, file, line, column, and message.
-
-The checked-in detail snapshot is exact, but release conformance also tracks
-the accepted-regression strictness list separately until that deficit reaches
-zero.
 
 ### Emitter
 
-We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
-to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
@@ -90,14 +82,7 @@ Declaration: [███████████████████░] 97.0
 ```
 <!-- EMIT_END -->
 
-This block is generated from the latest CI emit metric when available, falling
-back to the checked-in emit artifact with `python3 scripts/refresh-readme.py
---write`; release claims should cite the current CI artifact.
-
 ### Language Service
-
-We run TypeScript's fourslash language service tests against `tsz-server` to measure
-language service feature coverage (completions, quickinfo, go-to-definition, etc.).
 
 <!-- FOURSLASH_START -->
 ```
