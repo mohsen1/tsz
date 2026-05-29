@@ -125,6 +125,60 @@ fn async_do_while_awaited_condition_uses_positive_sent_backedge() {
 }
 
 #[test]
+fn async_do_while_body_await_without_continue_materializes_condition_case() {
+    // A do-while whose body awaits but contains no `continue` must still get a
+    // dedicated condition case (the post-body fallthrough). tsc emits
+    // `_a.sent(); _a.label = 2; case 2: if (cond) return [3 /*break*/, 0]; _a.label = 3;`
+    // rather than collapsing the condition into the body case with a negated
+    // test. Use non-default identifiers to prove the rule keys on the do-while
+    // structure, not on a particular spelling.
+    let output = emit_es5(
+        "declare var first, second: any;
+        async function run() {
+            do {
+                await first;
+            } while (second);
+        }",
+    );
+
+    assert!(
+        output.contains("_a.sent();\n                    _a.label = 2;\n                case 2:\n                    if (second) return [3 /*break*/, 0];\n                    _a.label = 3;\n                case 3: return [2 /*return*/];"),
+        "A no-continue do-while with an awaiting body should fall through to a dedicated condition case using tsc's positive backedge test.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("if (!second)"),
+        "The do-while condition must use the positive backedge test, never a negated `if (!cond)` collapse.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn async_do_while_unlabeled_break_targets_exit_with_condition_case() {
+    // An unlabeled `break` inside an awaiting do-while body jumps directly to
+    // the loop exit case, while the post-body condition case is still
+    // materialized. Renamed identifiers keep the assertion structural.
+    let output = emit_es5(
+        "declare var alpha, beta: any;
+        async function run() {
+            do {
+                await alpha;
+                break;
+            } while (beta);
+        }",
+    );
+
+    // body: yield alpha (case 0), then `_a.sent(); break -> exit` (case 1).
+    assert!(
+        output.contains("_a.sent();\n                    return [3 /*break*/, 3];"),
+        "An unlabeled break should jump straight to the do-while exit case.\nOutput:\n{output}"
+    );
+    // condition case is still present with the positive backedge test.
+    assert!(
+        output.contains("case 2:\n                    if (beta) return [3 /*break*/, 0];\n                    _a.label = 3;\n                case 3: return [2 /*return*/];"),
+        "The do-while condition case must remain materialized even when the body breaks.\nOutput:\n{output}"
+    );
+}
+
+#[test]
 fn async_conditional_true_await_reserves_false_label_after_resume() {
     let output = emit_es5(
         "declare var x, y, z, a: any;
