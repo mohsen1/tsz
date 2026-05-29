@@ -249,6 +249,40 @@ export var c: (string | number) | boolean;
     assert!(!dts.contains("((("), "no triple parens anywhere:\n{dts}");
 }
 
+/// Function type in direct variable annotation: parens stripped.
+/// Adjacent cases: arrow function, constructor, generic call signature.
+#[test]
+fn parenthesized_function_type_annotation_is_stripped() {
+    let Some(dts) = emit_dts(
+        "fn_annotation",
+        r#"
+export var f: (() => string);
+export var g: ((x: number) => boolean);
+export var h: ((a: string, b: number) => void);
+"#,
+    ) else {
+        println!("skipping: tsz binary not found");
+        return;
+    };
+
+    assert!(
+        dts.contains("f: () => string"),
+        "expected paren-wrapped arrow function annotation stripped:\n{dts}"
+    );
+    assert!(
+        dts.contains("g: (x: number) => boolean"),
+        "expected paren-wrapped single-param function annotation stripped:\n{dts}"
+    );
+    assert!(
+        dts.contains("h: (a: string, b: number) => void"),
+        "expected paren-wrapped multi-param function annotation stripped:\n{dts}"
+    );
+    assert!(
+        !dts.contains("f: (() => string)"),
+        "no outer parens should remain on function type annotation:\n{dts}"
+    );
+}
+
 /// Intersection arms: union types need parens; simple types do not.
 #[test]
 fn parenthesized_intersection_arm_gets_structural_parens_for_union() {
