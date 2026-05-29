@@ -1087,6 +1087,10 @@ name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
 
 [[test]]
+name = "infer_constraint_whole_candidate_tests"
+path = "tests/infer_constraint_whole_candidate_tests.rs"
+
+[[test]]
 name = "fresh_intersection_display_tests"
 path = "tests/fresh_intersection_display_tests.rs"
 

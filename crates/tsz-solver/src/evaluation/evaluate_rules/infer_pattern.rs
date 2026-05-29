@@ -336,10 +336,22 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         }
     }
 
-    /// Filter an inferred type by its constraint.
+    /// Validate an inferred candidate against a constrained `infer U extends C`.
     ///
-    /// Returns `Some(filtered_type)` if any part of the inferred type satisfies the constraint,
-    /// or None if no part satisfies it.
+    /// tsc treats the constraint as a whole-candidate check, not a per-member
+    /// union filter: it infers a candidate `X` for `U`, and if `X` is not
+    /// assignable to `C` it replaces `X` with `C` and re-checks the conditional
+    /// structurally — a re-check that fails at the position that produced `X`,
+    /// so the conditional resolves to its false branch. tsc never keeps a
+    /// matching subset of a union candidate while dropping the rest.
+    ///
+    /// We therefore mirror that exactly: return `Some(inferred)` when the whole
+    /// candidate satisfies the constraint, and `None` otherwise so the caller
+    /// takes the false branch. Distributive conditionals have already split a
+    /// union check type into individual members before reaching here, so each
+    /// member is validated independently — the distributive `1 | 2 | "x"` case
+    /// still yields `1 | 2 | <false-branch>` rather than a silently filtered
+    /// `1 | 2`.
     pub(crate) fn filter_inferred_by_constraint(
         &self,
         inferred: TypeId,
@@ -350,67 +362,62 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return Some(inferred);
         }
 
-        if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
-            let members = self.interner().type_list(members);
-            let mut filtered: SmallVec<[TypeId; 8]> = SmallVec::new();
-            for &member in members.iter() {
-                if checker.is_subtype_of(member, constraint) {
-                    filtered.push(member);
-                }
-            }
-            return match filtered.len() {
-                0 => None,
-                1 => Some(filtered[0]),
-                _ => Some(self.interner().union_from_slice(&filtered)),
-            };
-        }
-
         checker
             .is_subtype_of(inferred, constraint)
             .then_some(inferred)
     }
 
-    /// Filter an inferred type by its constraint, returning undefined for non-matching parts.
+    /// Validate a constrained `infer U extends C` candidate inferred from an
+    /// *optional* source position (optional tuple element or optional property).
     ///
-    /// Similar to `filter_inferred_by_constraint`, but returns `undefined` instead of None
-    /// when parts don't match the constraint.
-    pub(crate) fn filter_inferred_by_constraint_or_undefined(
+    /// An optional position contributes an extra `undefined` to the inferred
+    /// candidate (an absent element/property reads as `undefined`). tsc strips
+    /// that optionality-`undefined` before applying the constraint, and then
+    /// performs the same whole-candidate check as a required position — it does
+    /// *not* keep a matching subset of the remaining union. So:
+    ///
+    /// * `{ a?: string }` against `{ a?: infer R extends string }` strips the
+    ///   `undefined` and yields `R = string`.
+    /// * `{ a?: "x" | 1 }` strips the `undefined`, leaving `"x" | 1`, which is
+    ///   not assignable to `string`, so the conditional takes its false branch
+    ///   (tsc does not partially filter the candidate down to `"x"`).
+    ///
+    /// Returns the stripped candidate when it satisfies the constraint, or
+    /// `None` so the caller selects the false branch.
+    pub(crate) fn filter_optional_inferred_by_constraint(
         &self,
         inferred: TypeId,
         constraint: TypeId,
         checker: &mut SubtypeChecker<'_, R>,
-    ) -> TypeId {
-        if inferred == constraint {
+    ) -> Option<TypeId> {
+        let stripped = self.strip_optionality_undefined(inferred);
+        self.filter_inferred_by_constraint(stripped, constraint, checker)
+    }
+
+    /// Remove the `undefined` member that an optional source position adds to an
+    /// inferred candidate. Only strips a top-level `undefined` union member; a
+    /// bare `undefined` candidate (no other members) is left untouched so the
+    /// constraint check can still reject it.
+    fn strip_optionality_undefined(&self, inferred: TypeId) -> TypeId {
+        let Some(TypeData::Union(members)) = self.interner().lookup(inferred) else {
+            return inferred;
+        };
+        let members = self.interner().type_list(members);
+        // Fast path: no optionality-`undefined` to strip, so avoid rebuilding.
+        if !members.contains(&TypeId::UNDEFINED) {
             return inferred;
         }
-
-        if let Some(TypeData::Union(members)) = self.interner().lookup(inferred) {
-            let members = self.interner().type_list(members);
-            let mut filtered: SmallVec<[TypeId; 8]> = SmallVec::new();
-            let mut had_non_matching = false;
-            for &member in members.iter() {
-                if checker.is_subtype_of(member, constraint) {
-                    filtered.push(member);
-                } else {
-                    had_non_matching = true;
-                }
-            }
-
-            if had_non_matching {
-                filtered.push(TypeId::UNDEFINED);
-            }
-
-            return match filtered.len() {
-                0 => TypeId::UNDEFINED,
-                1 => filtered[0],
-                _ => self.interner().union_from_slice(&filtered),
-            };
-        }
-
-        if checker.is_subtype_of(inferred, constraint) {
-            inferred
-        } else {
-            TypeId::UNDEFINED
+        let kept: SmallVec<[TypeId; 8]> = members
+            .iter()
+            .copied()
+            .filter(|&m| m != TypeId::UNDEFINED)
+            .collect();
+        match kept.len() {
+            // The candidate was only `undefined`; leave it so the constraint can
+            // still reject it.
+            0 => inferred,
+            1 => kept[0],
+            _ => self.interner().union_from_slice(&kept),
         }
     }
 
