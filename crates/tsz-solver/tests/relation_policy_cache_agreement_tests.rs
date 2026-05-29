@@ -342,6 +342,97 @@ fn assignability_cache_strict_null_checks_matches_uncached_relation_policy() {
 }
 
 #[test]
+fn assignability_cache_assume_related_on_cycle_matches_uncached_depth_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let mut source = TypeId::STRING;
+    let mut target = TypeId::NUMBER;
+    for _ in 0..128 {
+        source = interner.array(source);
+        target = interner.array(target);
+    }
+
+    let assume_related = RelationPolicy::default().with_assume_related_on_cycle(true);
+    let reject_overflow = RelationPolicy::default().with_assume_related_on_cycle(false);
+    let assume_key =
+        RelationCacheKey::for_assignability(source, target, assume_related.cache_config());
+    let reject_key =
+        RelationCacheKey::for_assignability(source, target, reject_overflow.cache_config());
+
+    assert_ne!(
+        assume_key, reject_key,
+        "cycle/depth-overflow policies must occupy distinct assignability cache slots",
+    );
+
+    let assume_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        assume_related,
+        RelationContext::default(),
+    );
+    let reject_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        reject_overflow,
+        RelationContext::default(),
+    );
+
+    assert!(
+        assume_uncached.depth_exceeded,
+        "deep nested array comparison should exceed the relation depth budget",
+    );
+    assert!(
+        reject_uncached.depth_exceeded,
+        "the non-assuming policy should see the same depth overflow",
+    );
+    assert!(
+        assume_uncached.is_related(),
+        "assume-related policy should treat relation depth overflow as related",
+    );
+    assert!(
+        !reject_uncached.is_related(),
+        "non-assuming policy should treat relation depth overflow as not related",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, assume_related),
+        assume_uncached.is_related(),
+        "cached assume-related overflow policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assume_key),
+        Some(assume_uncached.is_related()),
+        "assume-related result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(reject_key),
+        None,
+        "non-assuming lookup must not hit the assume-related slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, reject_overflow),
+        reject_uncached.is_related(),
+        "cached non-assuming overflow policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(reject_key),
+        Some(reject_uncached.is_related()),
+        "non-assuming result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(assume_key),
+        Some(assume_uncached.is_related()),
+        "assume-related slot must remain intact after the non-assuming lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_strict_function_types_matches_uncached_function_variance() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
