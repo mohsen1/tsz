@@ -509,11 +509,32 @@ impl<'a> CheckerState<'a> {
         );
 
         if base_diag.code != diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE {
-            let new_related = self
-                .related_from_diagnostic(&base_diag, RelatedInformationPolicy::WRAPPED_DIAGNOSTIC);
+            // tsc renders a `satisfies` failure through the *same* assignability
+            // elaboration `checkSatisfiesExpression` would produce for an
+            // assignment, with the `Type_0_does_not_satisfy_the_expected_type_1`
+            // head message layered on top. The only question is whether that head
+            // *replaces* `base_diag`'s top message or *wraps* it:
+            //
+            // * The generic "Type X is not assignable to type Y" (TS2322) says
+            //   nothing the satisfies head doesn't already say, so the head
+            //   replaces it in place and the deeper chain is preserved untouched.
+            // * Every other top-level code carries a *specific* failure the head
+            //   does not convey (e.g. TS2741 "Property 'c' is missing ...", which
+            //   tsc reports at top level for a plain assignment). The head is
+            //   prepended and that specific message is demoted into the chain.
+            //
+            // So the discriminator is simply "is the existing top message the
+            // generic relation?" — and TS2322 is the only code that is.
+            let top_is_generic_relation =
+                base_diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE;
+            if !top_is_generic_relation {
+                base_diag.related_information = self.related_from_diagnostic(
+                    &base_diag,
+                    RelatedInformationPolicy::WRAPPED_DIAGNOSTIC,
+                );
+            }
             base_diag.code = diagnostic_codes::TYPE_DOES_NOT_SATISFY_THE_EXPECTED_TYPE;
             base_diag.message_text = msg;
-            base_diag.related_information = new_related;
         }
 
         // Override the diagnostic start position to the `satisfies` keyword

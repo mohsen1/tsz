@@ -1699,6 +1699,10 @@ name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
 
 [[test]]
+name = "satisfies_elaboration_chain_tests"
+path = "tests/satisfies_elaboration_chain_tests.rs"
+
+[[test]]
 name = "nested_infer_extends_scope_tests"
 path = "tests/nested_infer_extends_scope_tests.rs"
 

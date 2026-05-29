@@ -53,6 +53,9 @@ impl RelatedInformationPolicy {
         limit: None,
     };
 
+    /// Demote a diagnostic's primary message into the related chain, keeping any
+    /// existing deeper entries. Used when a specific assignability failure (e.g.
+    /// TS2741 missing property) must be nested beneath a wrapping head message.
     pub(crate) const WRAPPED_DIAGNOSTIC: Self = Self {
         include_primary: true,
         dedupe: true,
