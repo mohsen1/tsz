@@ -83,6 +83,10 @@ name = "parenthesized_iife_tests"
 path = "tests/parenthesized_iife_tests.rs"
 
 [[test]]
+name = "namespace_iife_param_nonbinding_tests"
+path = "tests/namespace_iife_param_nonbinding_tests.rs"
+
+[[test]]
 name = "export_equals_type_only_namespace"
 path = "tests/export_equals_type_only_namespace.rs"
 
