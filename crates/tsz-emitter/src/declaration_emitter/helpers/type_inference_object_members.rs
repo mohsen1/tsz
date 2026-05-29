@@ -489,6 +489,122 @@ impl<'a> DeclarationEmitter<'a> {
         self.nameable_constructor_expression_text(enum_expr)
     }
 
+    /// Returns `true` when `name_idx` is a computed property name whose key
+    /// expression cannot be reproduced as a literal property name inside a
+    /// `.d.ts` file.
+    ///
+    /// A computed key is *nameable* when its expression is a string/numeric
+    /// literal (including a `+`/`-` prefixed numeric literal) or an entity name
+    /// that resolves to a single literal value or enum member
+    /// (`resolved_computed_property_name_text`). Everything else — for example
+    /// `[this.a]`, `[fn()]`, or `[someValue]` whose type is not a literal —
+    /// is *non-nameable*: tsc drops the named member and represents the object
+    /// through its synthesized index signature instead.
+    ///
+    /// The decision is keyed on the structural shape of the key expression and
+    /// the solver-resolved key type, never on the spelling of an identifier.
+    pub(in crate::declaration_emitter) fn is_non_nameable_computed_member_key(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        // Literal key expressions are always reproducible as property names.
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            return false;
+        }
+        if expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(expr_node)
+        {
+            let operand_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(unary.operand);
+            if self
+                .arena
+                .get(operand_idx)
+                .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16)
+            {
+                return false;
+            }
+        }
+
+        // Entity-name keys that resolve to a single literal value or an enum
+        // member are reproducible (`[E.A]`, `[SOME_CONST]`, unique symbols).
+        if self
+            .resolved_computed_property_name_text(name_idx)
+            .is_some()
+        {
+            return false;
+        }
+
+        // Any other computed key (a property access like `this.a`, a call, a
+        // non-literal value reference) is non-nameable.
+        true
+    }
+
+    /// Render the solver-synthesized index signature entries for an inferred
+    /// object literal whose computed key could not be reproduced as a literal
+    /// property name. The key/value types are read from the object literal
+    /// expression's solver `TypeId`, so the output matches the type the checker
+    /// inferred (e.g. `[x: number]: string`) rather than the raw source slice.
+    ///
+    /// Returns `None` when the solver type is unavailable or carries no index
+    /// signature, leaving the caller on its existing path.
+    pub(in crate::declaration_emitter) fn object_literal_synthesized_index_signature_entries(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let interner = self.type_interner?;
+        let type_id = self
+            .get_node_type(object_expr_idx)
+            .or_else(|| self.get_node_type_or_names(&[object_expr_idx]))?;
+        let shape_id = tsz_solver::visitor::object_with_index_shape_id(interner, type_id)
+            .or_else(|| tsz_solver::visitor::object_shape_id(interner, type_id))?;
+        let shape = interner.object_shape(shape_id);
+
+        let mut entries = Vec::new();
+        for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let key_text = self.print_type_id(index.key_type);
+            let value_text = self.print_type_id(index.value_type);
+            let param_name = index
+                .param_name
+                .map(|atom| interner.resolve_atom(atom))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| Self::default_index_signature_param_name(&key_text).to_string());
+            let readonly = if index.readonly { "readonly " } else { "" };
+            entries.push(format!(
+                "{readonly}[{param_name}: {key_text}]: {value_text}"
+            ));
+        }
+
+        (!entries.is_empty()).then_some(entries)
+    }
+
+    /// Pick the conventional index-signature parameter name tsc uses when the
+    /// solver did not preserve one: `x` for number keys, `key` otherwise.
+    fn default_index_signature_param_name(key_text: &str) -> &'static str {
+        if key_text == "number" { "x" } else { "key" }
+    }
+
     pub(in crate::declaration_emitter) fn infer_property_name_text(
         &self,
         node_id: NodeIndex,
