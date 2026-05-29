@@ -1425,6 +1425,7 @@ impl<'a> Printer<'a> {
         let needs_any_comma_expr =
             needs_static_comma_expr || needs_private_comma_expr || needs_computed_prop_comma_expr;
         let class_expr_comma_needs_parens = needs_any_comma_expr
+            && !self.emitting_concise_arrow_return_argument
             && self
                 .arena
                 .get_extended(_idx)
