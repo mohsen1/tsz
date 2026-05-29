@@ -3,6 +3,7 @@
 //!
 //! Props extraction lives in `extraction.rs`, overload resolution in `overloads.rs`.
 
+mod attr_check_pipeline;
 mod attr_value;
 mod generic_spread;
 pub(crate) mod resolution;
