@@ -1953,3 +1953,10 @@ fn mapped_type_named_tuple_union_as_clause_stays_inline() {
         "Named-tuple union in mapped-type as-clause must stay inline: {output}"
     );
 }
+
+// The end-to-end array-of-union parenthesization for inferred `.map()` return
+// types (e.g. `mapOnTupleTypes01`: `let d = numStr.map(x => x)` producing
+// `(string | number)[]`) needs the checker's resolved parameter types, so it
+// is covered by the emit-runner baseline rather than the no-type-info
+// `emit_dts` harness here. The structural parenthesization rule itself is unit
+// tested directly in `type_inference_object_rewrites::array_element_paren_tests`.
