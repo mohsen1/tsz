@@ -129,7 +129,6 @@ impl AsyncES5Transformer<'_> {
             }
             k if k == syntax_kind_ext::CATCH_CLAUSE => {
                 if let Some(catch_clause) = self.arena.get_catch_clause(node) {
-                    self.collect_variable_binding_names(catch_clause.variable_declaration, names);
                     self.collect_body_binding_names(catch_clause.block, names);
                 }
             }

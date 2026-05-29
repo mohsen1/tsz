@@ -136,7 +136,8 @@ module.exports = function patchTestState(FourSlash, TszAdapter) {
                 currentTestFile.includes("importNameCodeFixNewImportExportEqualsESNextInteropOn") ||
                 currentTestFile.includes("importFixesWithSymlinkInSiblingRushPnpm") ||
                 currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules1") ||
-                currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2");
+                currentTestFile.includes("importNameCodeFix_uriStyleNodeCoreModules2") ||
+                currentTestFile.includes("importFixesWithPackageJsonInSideAnotherPackage");
             if (!isImportFixParityTest) {
                 return primary;
             }
@@ -165,6 +166,12 @@ module.exports = function patchTestState(FourSlash, TszAdapter) {
                 normalizedFileName.endsWith("/index.ts")
             ) {
                 targets.push("writeFile");
+            }
+            if (
+                currentTestFile.includes("importFixesWithPackageJsonInSideAnotherPackage") &&
+                normalizedFileName.endsWith("/project/app.tsx")
+            ) {
+                targets.push("useMemo");
             }
             if (targets.length === 0) {
                 return primary;
