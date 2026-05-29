@@ -1290,9 +1290,17 @@ impl<'a> Printer<'a> {
                     .get(member_idx)
                     .is_some_and(|m| m.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION)
             });
+        // A computed-named *static method or accessor* is emitted inline in the
+        // class body, so it only requires the `(_tmp = class {...}, ..., _tmp)`
+        // comma wrapping when the binding *also* loses JS named evaluation --
+        // i.e. a `using`/`await using` declaration lowered to
+        // `__addDisposableResource`, which moves the class out of
+        // direct-assignment position. A plain `var X = class {...}` keeps named
+        // evaluation and needs no wrapping for inline computed method names.
         let has_static_computed_method_or_accessor = emits_as_class_expression
             && class.name.is_none()
             && self.resolve_class_expr_binding_name(_idx).is_some()
+            && self.class_expr_binding_loses_named_evaluation(_idx)
             && class.members.nodes.iter().any(|&member_idx| {
                 self.arena
                     .get(member_idx)
