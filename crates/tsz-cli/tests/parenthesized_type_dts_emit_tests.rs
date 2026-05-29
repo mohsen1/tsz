@@ -1,14 +1,15 @@
 //! DTS emit for `ParenthesizedType` nodes (`declFileTypeAnnotationParenType`).
 //!
-//! When a `ParenthesizedType` appears in an annotation position (variable
-//! type, parameter type, return type, property type), tsc strips the outer
-//! parens.  tsz was emitting them verbatim, producing illegal output such as
-//! `declare var x: (string)`.
+//! tsc 6.0 preserves source-level parenthesized types verbatim in declaration
+//! output: `var x: (string)` stays `(string)` and `var a: (string | number)`
+//! stays `(string | number)`.  Earlier tsz code stripped the outer parens
+//! unconditionally (producing `var x: string`), which did not match tsc.
 //!
 //! In structural positions (array element, union member, intersection arm,
-//! conditional check/extends), the surrounding context re-adds parens only
-//! when operator precedence requires it, and type-argument positions preserve
-//! source-written parens verbatim to avoid `>>` ambiguity.
+//! conditional check/extends), the surrounding context calls `peel_paren` and
+//! then re-adds parens only when operator precedence requires it.  That path
+//! does not go through the `PARENTHESIZED_TYPE` arm in `emit_type`, so no
+//! double-parens occur.
 
 use std::path::PathBuf;
 use std::process::Command;
@@ -82,10 +83,10 @@ fn emit_dts(name: &str, source: &str) -> Option<String> {
     Some(dts)
 }
 
-/// Primary repro: parenthesized primitive in a variable annotation must be stripped.
+/// Primary repro: parenthesized primitive in a variable annotation is preserved verbatim.
 /// Adjacent case: different primitive types prove the rule is not spelling-dependent.
 #[test]
-fn parenthesized_primitive_annotation_is_stripped() {
+fn parenthesized_primitive_annotation_is_preserved() {
     let Some(dts) = emit_dts(
         "primitive",
         r#"
@@ -99,27 +100,23 @@ export var flag: (boolean);
     };
 
     assert!(
-        dts.contains("x: string"),
-        "expected (string) annotation parens stripped:\n{dts}"
+        dts.contains("x: (string)"),
+        "expected (string) annotation parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("count: number"),
-        "expected (number) annotation parens stripped:\n{dts}"
+        dts.contains("count: (number)"),
+        "expected (number) annotation parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("flag: boolean"),
-        "expected (boolean) annotation parens stripped:\n{dts}"
-    );
-    assert!(
-        !dts.contains("x: (string)") && !dts.contains("count: (number)"),
-        "no annotation parens should survive in output:\n{dts}"
+        dts.contains("flag: (boolean)"),
+        "expected (boolean) annotation parens preserved:\n{dts}"
     );
 }
 
-/// Union type in annotation position: parens stripped.
+/// Union type in annotation position: parens preserved verbatim.
 /// Adjacent case: different union shapes (2-member, 3-member, with null/undefined).
 #[test]
-fn parenthesized_union_annotation_is_stripped() {
+fn parenthesized_union_annotation_is_preserved() {
     let Some(dts) = emit_dts(
         "union",
         r#"
@@ -133,23 +130,23 @@ export var c: (string | number | boolean);
     };
 
     assert!(
-        dts.contains("a: string | number"),
-        "expected 2-member union parens stripped:\n{dts}"
+        dts.contains("a: (string | number)"),
+        "expected 2-member union parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("b: boolean | null | undefined"),
-        "expected 3-member union parens stripped:\n{dts}"
+        dts.contains("b: (boolean | null | undefined)"),
+        "expected 3-member union parens preserved:\n{dts}"
     );
     assert!(
-        !dts.contains("a: (string | number)"),
-        "no parenthesized union annotation should survive:\n{dts}"
+        dts.contains("c: (string | number | boolean)"),
+        "expected 3-member union parens preserved:\n{dts}"
     );
 }
 
-/// Function parameter and return type annotations: parens stripped in both positions.
+/// Function parameter and return type annotations: parens preserved in all positions.
 /// Adjacent case: multiple parameters, each with parenthesized type.
 #[test]
-fn parenthesized_annotation_stripped_in_function_signature() {
+fn parenthesized_annotation_preserved_in_function_signature() {
     let Some(dts) = emit_dts(
         "function_sig",
         r#"
@@ -162,20 +159,20 @@ export declare function g(a: (string)): (number);
     };
 
     assert!(
-        dts.contains("x: string | number"),
-        "expected param parens stripped:\n{dts}"
+        dts.contains("x: (string | number)"),
+        "expected param parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("y: boolean"),
-        "expected param parens stripped:\n{dts}"
+        dts.contains("y: (boolean)"),
+        "expected param parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("): null | undefined"),
-        "expected return type parens stripped:\n{dts}"
+        dts.contains("): (null | undefined)"),
+        "expected return type parens preserved:\n{dts}"
     );
     assert!(
-        dts.contains("a: string"),
-        "expected second function param parens stripped:\n{dts}"
+        dts.contains("a: (string)"),
+        "expected second function param parens preserved:\n{dts}"
     );
 }
 
