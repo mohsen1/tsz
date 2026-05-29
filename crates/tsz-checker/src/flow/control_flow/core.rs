@@ -2175,6 +2175,17 @@ impl<'a> FlowAnalyzer<'a> {
                         // Class property initializers run outside the surrounding
                         // function's flow point, so outer bindings do not inherit its narrowing.
                         initial_type
+                    } else if self.is_member_like_reference(reference) {
+                        // Property/element-access (and qualified-name) references do not
+                        // inherit control-flow narrowing across a function/closure boundary:
+                        // the closure may run after the property has been reassigned, so tsc
+                        // resets such references to their declared type at the function start
+                        // (mirrors the `PropertyAccessExpression`/`ElementAccessExpression`
+                        // exclusion in `getTypeAtFlowNode`'s `FlowStart` handling). Only the
+                        // base of an immediately-invoked function expression keeps narrowing,
+                        // and those are bound inline without a `START` boundary, so they never
+                        // reach this branch.
+                        initial_type
                     } else if self.is_captured_variable(reference)
                         && !self.is_effectively_const_for_narrowing(reference)
                     {

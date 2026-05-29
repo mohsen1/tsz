@@ -31,6 +31,10 @@ web-time = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "closure_boundary_property_narrowing_tests"
+path = "tests/closure_boundary_property_narrowing_tests.rs"
+
+[[test]]
 name = "union_protected_intersection_property_tests"
 path = "tests/union_protected_intersection_property_tests.rs"
 
