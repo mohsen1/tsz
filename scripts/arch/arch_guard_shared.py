@@ -296,6 +296,7 @@ FILE_LINE_LIMIT_CHECKS = [
     # monolith into staged lowering modules. The cap should ratchet down
     # as more phases (helper scheduling, temp/hoist planning, suspended
     # target lowering, ...) are extracted into sibling submodules.
+    # Ratcheted 5150→4918 after submodule extraction reduced the core engine.
     (
         "Emitter boundary: async ES5 IR engine size ratchet (#8277)",
         ROOT
@@ -304,7 +305,14 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "transforms"
         / "async_es5_ir.rs",
-        5150,
+        4918,
+    ),
+    # Emitter ES decorators: PR #10778 tracks sharding into 7 focused submodules.
+    # Ratchet down as submodules land.
+    (
+        "Emitter boundary: es_decorators monolith size ratchet (#10778)",
+        ROOT / "crates" / "tsz-emitter" / "src" / "transforms" / "es_decorators.rs",
+        5755,
     ),
     # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
     # splitting into option-domain submodules. Ratchet down as each domain lands.
