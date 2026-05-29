@@ -290,6 +290,31 @@ fn widen_unique_symbol_value_type_for_dts_inner(
         }
         Some(TypeData::Union(list_id)) => {
             let members = types.type_list(list_id);
+            // A union with two or more *distinct* unique-symbol members must be
+            // preserved verbatim. Widening each member to `symbol` would dedupe
+            // the distinct identities into a single `symbol`, losing the
+            // `typeof x | typeof y` form that tsc prints for inferred value
+            // surfaces (e.g. `indirectUniqueSymbolDeclarationEmit`). A union
+            // with a single distinct unique-symbol member still widens to
+            // `symbol`, matching the standalone case.
+            //
+            // Keyed on structural TypeData (UniqueSymbol carrying its declaring
+            // `SymbolRef`), not on any user-chosen name (§25/§26).
+            let mut distinct_unique_symbols: smallvec::SmallVec<[SymbolRef; 4]> =
+                smallvec::SmallVec::new();
+            for &member in members.iter() {
+                if member.is_intrinsic() {
+                    continue;
+                }
+                if let Some(TypeData::UniqueSymbol(symbol_ref)) = types.lookup(member)
+                    && !distinct_unique_symbols.contains(&symbol_ref)
+                {
+                    distinct_unique_symbols.push(symbol_ref);
+                }
+            }
+            if distinct_unique_symbols.len() >= 2 {
+                return type_id;
+            }
             let mut changed = false;
             let widened_members = members
                 .iter()
@@ -1092,5 +1117,101 @@ fn collect_infer_sig(
         if let Some(default) = param.default {
             collect_infer_bindings_inner(types, default, result, visited);
         }
+    }
+}
+
+#[cfg(test)]
+mod widen_unique_symbol_dts_tests {
+    use super::widen_unique_symbol_value_type_for_dts;
+    use crate::construction::TypeInterner;
+    use crate::types::{SymbolRef, TypeData, TypeId};
+
+    #[test]
+    fn standalone_unique_symbol_widens_to_symbol() {
+        // A standalone `unique symbol` value surface prints as `symbol` in .d.ts.
+        let interner = TypeInterner::new();
+        let sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
+        let widened = widen_unique_symbol_value_type_for_dts(&interner, sym);
+        assert_eq!(widened, TypeId::SYMBOL);
+    }
+
+    #[test]
+    fn two_distinct_unique_symbols_in_union_are_preserved() {
+        // `typeof x | typeof y` over two distinct unique symbols must stay a
+        // 2-member union; widening each member to `symbol` would dedupe them
+        // into a single `symbol`, dropping the declared identities. This is the
+        // `indirectUniqueSymbolDeclarationEmit` witness shape.
+        let interner = TypeInterner::new();
+        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
+        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
+        let union = interner.union(vec![sym_a, sym_b]);
+        let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
+        assert_eq!(widened, union, "2-member unique-symbol union preserved");
+        match interner.lookup(widened) {
+            Some(TypeData::Union(list_id)) => {
+                let members = interner.type_list(list_id);
+                assert_eq!(members.len(), 2);
+                assert!(members.contains(&sym_a));
+                assert!(members.contains(&sym_b));
+            }
+            other => panic!("expected a 2-member union, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn three_distinct_unique_symbols_in_union_are_preserved() {
+        let interner = TypeInterner::new();
+        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(10)));
+        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(20)));
+        let sym_c = interner.intern(TypeData::UniqueSymbol(SymbolRef(30)));
+        let union = interner.union(vec![sym_a, sym_b, sym_c]);
+        let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
+        assert_eq!(widened, union);
+        match interner.lookup(widened) {
+            Some(TypeData::Union(list_id)) => {
+                assert_eq!(interner.type_list(list_id).len(), 3);
+            }
+            other => panic!("expected a 3-member union, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn single_distinct_unique_symbol_union_widens_to_symbol() {
+        // A union that contains only one distinct unique symbol (paired with a
+        // passthrough non-unique-symbol member) must still widen that
+        // unique-symbol member — the guard only triggers for >= 2 distinct ones.
+        let interner = TypeInterner::new();
+        let sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(7)));
+        let union = interner.union(vec![sym, TypeId::STRING]);
+        let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
+        match interner.lookup(widened) {
+            Some(TypeData::Union(list_id)) => {
+                let members = interner.type_list(list_id);
+                assert!(
+                    members.contains(&TypeId::SYMBOL),
+                    "lone unique symbol widened to symbol"
+                );
+                assert!(members.contains(&TypeId::STRING));
+                assert!(
+                    !members.contains(&sym),
+                    "the unique-symbol member must not survive"
+                );
+            }
+            other => panic!("expected a widened union, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn distinct_unique_symbol_union_independent_of_symbolref_value() {
+        // Renamed-binding equivalence: the guard keys on distinct `SymbolRef`s,
+        // not on any particular id value or user-chosen name.
+        let interner = TypeInterner::new();
+        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(999)));
+        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(1000)));
+        let union = interner.union(vec![sym_a, sym_b]);
+        assert_eq!(
+            widen_unique_symbol_value_type_for_dts(&interner, union),
+            union
+        );
     }
 }
