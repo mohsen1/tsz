@@ -842,37 +842,21 @@ impl<'a> Printer<'a> {
             }
 
             // Private members in source order. Walk `class.members.nodes`
-            // once and look up each member's pre-computed info entry by
-            // private-identifier name. Accessors share a private name across
-            // get/set, so we dedupe within an accessor pair.
-            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+            // once and look up each member's pre-computed info entry by source
+            // member identity, not by private clean-name. When several members
+            // share a clean-name (an instance and a static `#foo`, or duplicate
+            // declarations in an error case), each member owns a distinct
+            // `_N`-suffixed helper; matching by identity keeps this hoisted
+            // var-decl list in agreement with the initializer/assignment paths
+            // that iterate the same collections. Accessors collapse a get/set
+            // pair into one entry, so we emit each accessor entry once when its
+            // first member is reached.
+            let mut emitted_accessor_entries: rustc_hash::FxHashSet<usize> =
                 rustc_hash::FxHashSet::default();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                let private_name = match member_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                        .arena
-                        .get_property_decl(member_node)
-                        .and_then(|p| get_private_field_name(self.arena, p.name)),
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|m| get_private_field_name(self.arena, m.name)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|a| get_private_field_name(self.arena, a.name))
-                    }
-                    _ => None,
-                };
-                let Some(private_name) = private_name else {
-                    continue;
-                };
-                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
                 match member_node.kind {
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                         if let Some(accessor) = private_auto_accessors
@@ -882,13 +866,14 @@ impl<'a> Printer<'a> {
                             var_names.push(accessor.get_var_name.clone());
                             var_names.push(accessor.set_var_name.clone());
                         } else if let Some(field) =
-                            private_fields.iter().find(|f| f.name == clean_name)
+                            private_fields.iter().find(|f| f.member_idx == member_idx)
                         {
                             var_names.push(field.weakmap_name.clone());
                         }
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        if let Some(method) =
+                            private_methods.iter().find(|m| m.member_idx == member_idx)
                         {
                             var_names.push(method.fn_var_name.clone());
                         }
@@ -896,12 +881,14 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
-                        if !emitted_accessor_names.insert(clean_name.to_string()) {
-                            continue;
-                        }
-                        if let Some(accessor) =
-                            private_accessors.iter().find(|a| a.name == clean_name)
+                        if let Some((entry_pos, accessor)) = private_accessors
+                            .iter()
+                            .enumerate()
+                            .find(|(_, a)| a.member_indices.contains(&member_idx))
                         {
+                            if !emitted_accessor_entries.insert(entry_pos) {
+                                continue;
+                            }
                             if let Some(ref name) = accessor.get_var_name
                                 && accessor.getter_body.is_some()
                             {
