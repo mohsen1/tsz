@@ -61,6 +61,60 @@ function parseEmitExtraFromReadmeLine(line) {
   return extra ? ` (${extra})` : "";
 }
 
+function setConformanceFromReadme(metrics, readme) {
+  if (!readme) return false;
+  const confSection = readme.match(
+    /<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/,
+  );
+  if (!confSection) return false;
+  const m = confSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
+  if (!m) return false;
+  return setSuiteIfValid(
+    metrics,
+    "conformance",
+    toNumber(m[1]),
+    toInt(m[2]),
+    toInt(m[3]),
+  );
+}
+
+function setEmitFromReadme(metrics, readme, key, label) {
+  if (!readme) return false;
+  const emitSection = readme.match(/<!-- EMIT_START -->([\s\S]*?)<!-- EMIT_END -->/);
+  if (!emitSection) return false;
+  const line = emitSection[1]
+    .split("\n")
+    .find((candidate) => candidate.includes(label));
+  if (!line) return false;
+  const m = line.match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
+  if (!m) return false;
+  return setSuiteIfValid(
+    metrics,
+    key,
+    toNumber(m[1]),
+    toInt(m[2]),
+    toInt(m[3]),
+    parseEmitExtraFromReadmeLine(line),
+  );
+}
+
+function setFourslashFromReadme(metrics, readme) {
+  if (!readme) return false;
+  const fsSection = readme.match(
+    /<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/,
+  );
+  if (!fsSection) return false;
+  const m = fsSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
+  if (!m) return false;
+  return setSuiteIfValid(
+    metrics,
+    "fourslash",
+    toNumber(m[1]),
+    toInt(m[2]),
+    toInt(m[3]),
+  );
+}
+
 function setSuiteUnavailable(metrics, key) {
   metrics[`${key}_rate`] = "N/A";
   metrics[`${key}_rate_label`] = "N/A";
@@ -147,108 +201,53 @@ function extractMetrics() {
       )
     : false;
 
+  const hasReadmeConformance = hasCiConformance
+    || setConformanceFromReadme(metrics, readme);
+  const hasReadmeEmitJs = hasCiEmitJs
+    || setEmitFromReadme(metrics, readme, "emit_js", "JavaScript");
+  const hasReadmeEmitDts = hasCiEmitDts
+    || setEmitFromReadme(metrics, readme, "emit_dts", "Declaration");
+  const hasReadmeFourslash = hasCiFourslash
+    || setFourslashFromReadme(metrics, readme);
+
   const conformanceSnapshot = readJsonIfExists(path.join(ROOT, "scripts/conformance/conformance-snapshot.json"));
   const emitSnapshot = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-snapshot.json"));
   const emitDetail = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-detail.json"));
   const fourslashSnapshot = readJsonIfExists(path.join(ROOT, "scripts/fourslash/fourslash-snapshot.json"));
 
-  const hasSnapshotConformance = hasCiConformance
-    || setSuiteFromSnapshotSummary(
+  if (!hasReadmeConformance) {
+    setSuiteFromSnapshotSummary(
       metrics,
       "conformance",
       conformanceSnapshot?.summary?.passed,
       conformanceSnapshot?.summary?.total_tests ?? conformanceSnapshot?.summary?.total,
     );
-  const hasSnapshotEmitJs = hasCiEmitJs
-    || setSuiteFromSnapshotSummary(
+  }
+  if (!hasReadmeEmitJs) {
+    setSuiteFromSnapshotSummary(
       metrics,
       "emit_js",
       emitDetail?.summary?.jsPass ?? emitSnapshot?.summary?.jsPass ?? emitSnapshot?.jsPass,
       emitDetail?.summary?.jsTotal ?? emitSnapshot?.summary?.jsTotal,
       formatEmitExtra(toInt(emitDetail?.summary?.jsSkip), toInt(emitDetail?.summary?.jsTimeout)),
     );
-  const hasSnapshotEmitDts = hasCiEmitDts
-    || setSuiteFromSnapshotSummary(
+  }
+  if (!hasReadmeEmitDts) {
+    setSuiteFromSnapshotSummary(
       metrics,
       "emit_dts",
       emitDetail?.summary?.dtsPass ?? emitSnapshot?.summary?.dtsPass ?? emitSnapshot?.dtsPass,
       emitDetail?.summary?.dtsTotal ?? emitSnapshot?.summary?.dtsTotal,
       formatEmitExtra(toInt(emitDetail?.summary?.dtsSkip)),
     );
-  const hasSnapshotFourslash = hasCiFourslash
-    || setSuiteFromSnapshotSummary(
+  }
+  if (!hasReadmeFourslash) {
+    setSuiteFromSnapshotSummary(
       metrics,
       "fourslash",
       fourslashSnapshot?.summary?.passed ?? fourslashSnapshot?.passed,
       fourslashSnapshot?.summary?.total ?? fourslashSnapshot?.total,
     );
-
-  if (readme) {
-    if (!hasSnapshotConformance) {
-      const confSection = readme.match(
-        /<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/,
-      );
-      if (confSection) {
-        const m = confSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-        if (m) {
-          setSuiteIfValid(
-            metrics,
-            "conformance",
-            toNumber(m[1]),
-            toInt(m[2]),
-            toInt(m[3]),
-          );
-        }
-      }
-    }
-
-    if (!hasSnapshotEmitJs || !hasSnapshotEmitDts) {
-      const emitSection = readme.match(/<!-- EMIT_START -->([\s\S]*?)<!-- EMIT_END -->/);
-      if (emitSection) {
-        const lines = emitSection[1].split("\n");
-        for (const line of lines) {
-          const m = line.match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-          if (!m) continue;
-          if (!hasSnapshotEmitJs && line.includes("JavaScript")) {
-            setSuiteIfValid(
-              metrics,
-              "emit_js",
-              toNumber(m[1]),
-              toInt(m[2]),
-              toInt(m[3]),
-              parseEmitExtraFromReadmeLine(line),
-            );
-          } else if (!hasSnapshotEmitDts && line.includes("Declaration")) {
-            setSuiteIfValid(
-              metrics,
-              "emit_dts",
-              toNumber(m[1]),
-              toInt(m[2]),
-              toInt(m[3]),
-              parseEmitExtraFromReadmeLine(line),
-            );
-          }
-        }
-      }
-    }
-
-    if (!hasSnapshotFourslash) {
-      const fsSection = readme.match(
-        /<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/,
-      );
-      if (fsSection) {
-        const m = fsSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-        if (m) {
-          setSuiteIfValid(
-            metrics,
-            "fourslash",
-            toNumber(m[1]),
-            toInt(m[2]),
-            toInt(m[3]),
-          );
-        }
-      }
-    }
   }
 
   let loc;
