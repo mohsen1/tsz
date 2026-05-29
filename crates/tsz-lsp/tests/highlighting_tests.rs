@@ -1886,3 +1886,47 @@ fn test_highlight_deep_inheritance_no_stack_overflow() {
     // The exact column doesn't matter — the test just must not panic/SIGABRT.
     let _ = provider.get_document_highlights(root, Position::new(0, 12));
 }
+
+/// Regression test: circular class inheritance must not cause a stack overflow.
+///
+/// `class C extends D` + `class D extends C` creates a mutually recursive type
+/// relationship. Requesting document highlights on `prop1` in either class must
+/// complete without overflowing the stack (SIGABRT), regardless of which marker
+/// position the cursor is at.
+///
+/// This mirrors `documentHighlightAtInheritedProperties6.ts` from the fourslash
+/// corpus, which crashes the tsz-server process with a stack overflow on the
+/// main thread when highlights are requested in the presence of circular class
+/// inheritance.
+#[test]
+fn test_highlight_circular_class_inheritance_no_stack_overflow() {
+    let source = r#"class C extends D {
+    prop0: string;
+    prop1: string;
+}
+
+class D extends C {
+    prop0: string;
+    prop1: string;
+}
+
+var d: D;
+d.prop1;
+"#;
+
+    let (parser, root) = parse_test_source(source);
+    let arena = parser.get_arena();
+    let mut binder = BinderState::new();
+    binder.bind_source_file(arena, root);
+    let line_map = LineMap::build(source);
+    let provider = DocumentHighlightProvider::new(arena, &binder, &line_map, source);
+
+    // Request highlights from every [|prop1|] marker position — mirrors what
+    // verify.baselineDocumentHighlights() does in fourslash test 6:
+    //   line 1, col 4  → prop1 in class C
+    //   line 6, col 4  → prop1 in class D
+    //   line 11, col 2 → d.prop1 (the access)
+    for (line, col) in [(1u32, 4u32), (6u32, 4u32), (11u32, 2u32)] {
+        let _ = provider.get_document_highlights(root, Position::new(line, col));
+    }
+}

@@ -246,3 +246,4 @@ js_body_uses_arguments = { lifetime = "DiagnosticsOnly", capability = "Diagnosti
 emitted_ts2454_errors = { lifetime = "SpeculationScoped", capability = "SpeculationState", reason = "snapshot/rollback-sensitive state mutated during speculative checking" }
 emitted_ts2411_for_iface_prop = { lifetime = "DiagnosticsOnly", capability = "DiagnosticState", reason = "diagnostic emission, dedupe, or suppression state; clear at file-session boundary" }
 type_resolution_fuel = { lifetime = "FileLocalReset", capability = "RelationSessionState", reason = "checker-local mutable state tied to the active file or traversal; reset at file-session boundary" }
+type_param_node_cache = { lifetime = "FileLocalReset", capability = "FileTypeCache", reason = "node-keyed TypeId cache for class/method/interface type params lacking DefId registration; ensures push_type_parameters convergence within a file session" }

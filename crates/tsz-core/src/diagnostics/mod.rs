@@ -321,6 +321,22 @@ impl Diagnostic {
         self.span.len()
     }
 
+    /// Canonical total ordering for diagnostics, mirroring the TypeScript
+    /// compiler's `compareDiagnostics`: by file, then start, then length, then
+    /// code, then message. This is a *total* order over the observable fields,
+    /// so diagnostics that tie on file and start still have a stable,
+    /// reproducible relative order independent of the order in which they were
+    /// produced. Sorting through this comparator is what keeps reported
+    /// diagnostic order deterministic across equivalent relations.
+    pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.file_name
+            .cmp(&other.file_name)
+            .then_with(|| self.span.start.cmp(&other.span.start))
+            .then_with(|| self.span.len().cmp(&other.span.len()))
+            .then_with(|| self.code.cmp(&other.code))
+            .then_with(|| self.message.cmp(&other.message))
+    }
+
     /// Format the diagnostic for display.
     ///
     /// Returns a string like: "file.ts(1,5): error TS2304: Cannot find name 'foo'."
@@ -559,13 +575,10 @@ impl DiagnosticBag {
         self.diagnostics.iter().filter(move |d| d.code == code)
     }
 
-    /// Sort diagnostics by file, then by position.
+    /// Sort diagnostics into the canonical, deterministic order (file, start,
+    /// length, code, message) defined by [`Diagnostic::compare`].
     pub fn sort(&mut self) {
-        self.diagnostics
-            .sort_by(|a, b| match a.file_name.cmp(&b.file_name) {
-                std::cmp::Ordering::Equal => a.span.start.cmp(&b.span.start),
-                other => other,
-            });
+        self.diagnostics.sort_by(|a, b| a.compare(b));
     }
 
     /// Clear all diagnostics.
@@ -874,6 +887,38 @@ mod tests {
         assert_eq!(diagnostics[1].file_name, "a.ts");
         assert_eq!(diagnostics[1].span.start, 5);
         assert_eq!(diagnostics[2].file_name, "b.ts");
+    }
+
+    #[test]
+    fn test_diagnostic_bag_sort_is_deterministic_on_tied_positions() {
+        // Diagnostics that tie on (file, start) must still land in a
+        // deterministic order regardless of insertion order. The canonical
+        // order is length, then code, then message after file+start.
+        let build = |order: [usize; 4]| {
+            let entries = [
+                // same file+start, differing length / code / message
+                Diagnostic::error("a.ts", Span::new(10, 12), "short", 2345),
+                Diagnostic::error("a.ts", Span::new(10, 15), "longer-low-code", 1000),
+                Diagnostic::error("a.ts", Span::new(10, 15), "longer-high-code", 2322),
+                Diagnostic::error("a.ts", Span::new(10, 15), "longer-high-code-2", 2322),
+            ];
+            let mut bag = DiagnosticBag::new();
+            for idx in order {
+                bag.add(entries[idx].clone());
+            }
+            bag.sort();
+            bag.iter().map(|d| d.message.clone()).collect::<Vec<_>>()
+        };
+
+        let expected = vec![
+            "short".to_string(),
+            "longer-low-code".to_string(),
+            "longer-high-code".to_string(),
+            "longer-high-code-2".to_string(),
+        ];
+        assert_eq!(build([0, 1, 2, 3]), expected);
+        assert_eq!(build([3, 2, 1, 0]), expected);
+        assert_eq!(build([2, 0, 3, 1]), expected);
     }
 
     #[test]

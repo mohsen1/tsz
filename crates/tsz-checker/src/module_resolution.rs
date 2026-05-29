@@ -45,14 +45,58 @@ use tsz_parser::parser::node::NodeArena;
 // Extension tables
 // ---------------------------------------------------------------------------
 
-/// TypeScript/JavaScript file extensions in resolution priority order.
+/// TypeScript/JavaScript file extensions in *stripping* order.
 ///
-/// `.d.ts` (and friends) must appear before `.ts` so that stripping does not
-/// leave a `.d` artifact in the stem.
+/// `.d.ts` (and friends) must appear before `.ts` so that stripping peels the
+/// whole `.d.ts` suffix instead of leaving a `.d` artifact in the stem. This
+/// ordering is correct for [`strip_ts_extension`] but is **not** the order in
+/// which resolution candidates should be tried — use [`RESOLUTION_EXTENSIONS`]
+/// for that.
 const TS_EXTENSIONS: &[&str] = &[
     ".d.ts", ".d.tsx", ".d.mts", ".d.cts", ".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs",
     ".cjs",
 ];
+
+/// File extensions in `tsc` resolution-candidate priority order, mirroring
+/// TypeScript's `getSupportedExtensions`: an implementation (source) file wins
+/// over its declaration counterpart (`.ts` before `.d.ts`, `.mts` before
+/// `.d.mts`, `.cts` before `.d.cts`), `.ts`/`.tsx` precede `.cts`/`.mts`, and
+/// every TypeScript surface precedes its JavaScript counterpart. So `./foo`
+/// resolves to a `foo.ts` source ahead of a sibling `foo.d.ts`, exactly as
+/// `tsc` does. The same order is used by `tsz_core::module_resolver` and by the
+/// triple-slash directive resolver in `state_checking::directive`.
+///
+/// This is intentionally distinct from [`TS_EXTENSIONS`], which is ordered
+/// declaration-first purely so suffix *stripping* works. There is no real
+/// `.d.tsx` file in TypeScript, so it is absent here.
+const RESOLUTION_EXTENSIONS: &[&str] = &[
+    ".ts", ".tsx", ".d.ts", ".cts", ".d.cts", ".mts", ".d.mts", ".js", ".jsx", ".cjs", ".mjs",
+];
+
+/// `tsc` resolution priority of a concrete file path: the position of its
+/// extension in [`RESOLUTION_EXTENSIONS`], where a lower value means higher
+/// priority. The file's actual extension is detected by longest suffix match
+/// (so `foo.d.ts` is ranked as `.d.ts`, never mistaken for `.ts`). Paths with
+/// an unrecognized extension sort last. Used to break extensionless-stem ties
+/// so the highest-priority sibling (source over declaration) wins, matching
+/// `tsc`.
+fn resolution_priority(path: &str) -> usize {
+    // Single pass: the longest matching suffix is the file's real extension
+    // (so `foo.d.ts` ranks as `.d.ts`, not `.ts`), and its index in
+    // `RESOLUTION_EXTENSIONS` is its priority.
+    RESOLUTION_EXTENSIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, ext)| path.ends_with(**ext))
+        .max_by_key(|(_, ext)| ext.len())
+        .map_or(RESOLUTION_EXTENSIONS.len(), |(index, _)| index)
+}
+
+/// `tsc` resolution priority of an indexed target, by its file extension.
+/// Target paths originate from `String`s, so `to_str` never fails in practice.
+fn target_resolution_priority(target: &IndexedTarget<'_>) -> usize {
+    resolution_priority(target.abs_path.to_str().unwrap_or_default())
+}
 
 /// Tails that mark a file as an *arbitrary-extension declaration file*: a file
 /// named `<base>.d.<ext>.ts` where `<ext>` is itself a known TS/JS/JSON
@@ -451,23 +495,49 @@ pub fn resolve_from_source(
 
     let src_dir = Path::new(source_file).parent()?;
 
+    // File matches win over directory-index matches, and within each bucket the
+    // highest `tsc` resolution priority (source before declaration) wins when
+    // several siblings share one extensionless stem. An exact extension-bearing
+    // or arbitrary-extension spelling is unambiguous (only the named file
+    // produces it), so it short-circuits immediately.
+    let mut best_file: Option<(usize, usize)> = None;
+    let mut best_dir: Option<(usize, usize)> = None;
     for target in &index.targets {
-        if let Some(rel) = relative_file_specifier(src_dir, target.abs_path)
-            && (rel.stem == specifier.text
-                || rel.with_extension.as_deref() == Some(specifier.text.as_str())
-                || rel.user_alt.as_deref() == Some(specifier.text.as_str()))
-        {
-            return Some(target.tgt_idx);
+        if let Some(rel) = relative_file_specifier(src_dir, target.abs_path) {
+            if rel.with_extension.as_deref() == Some(specifier.text.as_str())
+                || rel.user_alt.as_deref() == Some(specifier.text.as_str())
+            {
+                return Some(target.tgt_idx);
+            }
+            if rel.stem == specifier.text {
+                keep_higher_priority(&mut best_file, target);
+                continue;
+            }
         }
         if let Some(idx_dir) = target.index_dir
             && let Some(dir) = directory_specifier(src_dir, idx_dir)
             && (dir.primary == specifier.text
                 || dir.alt.as_deref() == Some(specifier.text.as_str()))
         {
-            return Some(target.tgt_idx);
+            keep_higher_priority(&mut best_dir, target);
         }
     }
-    None
+    best_file.or(best_dir).map(|(_, tgt_idx)| tgt_idx)
+}
+
+/// Update `best` to hold `target` when it has a strictly higher `tsc`
+/// resolution priority (lower [`resolution_priority`] value) than the current
+/// winner, leaving earlier equal-priority entries in place for determinism.
+/// `best` tracks `(priority, tgt_idx)`.
+fn keep_higher_priority(best: &mut Option<(usize, usize)>, target: &IndexedTarget<'_>) {
+    let priority = target_resolution_priority(target);
+    let replace = match best {
+        Some((current, _)) => priority < *current,
+        None => true,
+    };
+    if replace {
+        *best = Some((priority, target.tgt_idx));
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,11 +568,23 @@ pub fn build_module_resolution_maps(
 
     let index = build_target_index(file_names);
 
+    // Register targets lowest-`tsc`-priority first so that, when several
+    // siblings share one extensionless stem (`foo.ts` + `foo.d.ts`), the
+    // higher-priority implementation file is registered last and wins the
+    // `insert` overwrite — matching tsc's source-before-declaration order.
+    // Unambiguous forms (extension-bearing specifiers, distinct stems) occupy
+    // distinct keys, so the reordering does not affect them. The sort is
+    // stable, so equal-priority siblings keep their original file order.
+    let mut ordered: Vec<&IndexedTarget<'_>> = index.targets.iter().collect();
+    // `sort_by_cached_key` computes each target's priority once rather than the
+    // O(n log n) times a plain `sort_by_key` closure would.
+    ordered.sort_by_cached_key(|target| std::cmp::Reverse(target_resolution_priority(target)));
+
     for (src_idx, src_name) in file_names.iter().enumerate() {
         let Some(src_dir) = Path::new(src_name.as_str()).parent() else {
             continue;
         };
-        for target in &index.targets {
+        for &target in &ordered {
             register_canonical_forms(src_idx, src_dir, target, &mut map, &mut modules);
         }
     }
@@ -918,7 +1000,7 @@ pub fn resolve_specifier_via_file_index(
     // specifiers. A trailing slash (`./foo/`) or dot-chain (`.`, `./`) signals
     // that the user explicitly wants the directory index, not a same-name file.
     if !is_directory_hint {
-        for ext in TS_EXTENSIONS {
+        for ext in RESOLUTION_EXTENSIONS {
             buf.clear();
             buf.push_str(stem);
             buf.push_str(ext);
@@ -941,7 +1023,7 @@ pub fn resolve_specifier_via_file_index(
     // probe the stem, not `base`, to also cover `./lib.ts` → `./lib/index.ts`
     // (unusual, but cheap and symmetric with the extension fan-out).
     if !stem.is_empty() {
-        for ext in TS_EXTENSIONS {
+        for ext in RESOLUTION_EXTENSIONS {
             buf.clear();
             buf.push_str(stem);
             buf.push_str("/index");
@@ -977,7 +1059,7 @@ pub fn probe_file_name_index(specifier: &str, filename_idx: &FileNameIndex) -> O
 
     let stem = strip_ts_extension(&spec_norm);
     let mut buf = String::with_capacity(stem.len() + 8);
-    for ext in TS_EXTENSIONS {
+    for ext in RESOLUTION_EXTENSIONS {
         buf.clear();
         buf.push_str(stem);
         buf.push_str(ext);
@@ -994,7 +1076,7 @@ pub fn probe_file_name_index(specifier: &str, filename_idx: &FileNameIndex) -> O
     }
 
     if !stem.is_empty() {
-        for ext in TS_EXTENSIONS {
+        for ext in RESOLUTION_EXTENSIONS {
             buf.clear();
             buf.push_str(stem);
             buf.push_str("/index");

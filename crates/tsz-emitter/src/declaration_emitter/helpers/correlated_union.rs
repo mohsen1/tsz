@@ -1096,7 +1096,7 @@ impl<'a> DeclarationEmitter<'a> {
             return Some(Vec::new());
         }
         Some(
-            Self::split_top_level_semicolon_members(inner)
+            Self::split_top_level_object_members(inner)
                 .into_iter()
                 .map(|member| member.trim().to_string())
                 .filter(|member| !member.is_empty())
@@ -1104,7 +1104,7 @@ impl<'a> DeclarationEmitter<'a> {
         )
     }
 
-    fn split_top_level_semicolon_members(text: &str) -> Vec<&str> {
+    fn split_top_level_object_members(text: &str) -> Vec<&str> {
         let mut parts = Vec::new();
         let mut start = 0usize;
         let mut angle_depth = 0usize;
@@ -1121,10 +1121,11 @@ impl<'a> DeclarationEmitter<'a> {
                 ']' => bracket_depth = bracket_depth.saturating_sub(1),
                 '(' => paren_depth += 1,
                 ')' => paren_depth = paren_depth.saturating_sub(1),
-                ';' if angle_depth == 0
-                    && brace_depth == 0
-                    && bracket_depth == 0
-                    && paren_depth == 0 =>
+                ';' | ','
+                    if angle_depth == 0
+                        && brace_depth == 0
+                        && bracket_depth == 0
+                        && paren_depth == 0 =>
                 {
                     parts.push(&text[start..idx]);
                     start = idx + 1;
@@ -1319,6 +1320,9 @@ impl<'a> DeclarationEmitter<'a> {
         arg_idx: NodeIndex,
         type_param_constraint: Option<&str>,
     ) -> Option<String> {
+        if let Some(type_text) = self.lexical_parameter_declared_type_annotation_text(arg_idx) {
+            return Some(type_text);
+        }
         if let Some(type_text) = self.referenced_parameter_declared_type_annotation_text(arg_idx) {
             return Some(type_text);
         }
@@ -1353,6 +1357,54 @@ impl<'a> DeclarationEmitter<'a> {
                     .filter(|text| text != "any" && text != "unknown" && !text.contains("any"))
             })
             .or_else(|| self.infer_fallback_type_text_at(arg_idx, 0))
+    }
+
+    fn lexical_parameter_declared_type_annotation_text(
+        &self,
+        arg_idx: NodeIndex,
+    ) -> Option<String> {
+        let arg_idx = self.skip_parenthesized_expression(arg_idx)?;
+        let arg_node = self.arena.get(arg_idx)?;
+        if arg_node.kind != SyntaxKind::Identifier as u16 {
+            return None;
+        }
+        let arg_name = self.get_identifier_text(arg_idx)?;
+
+        let mut current = arg_idx;
+        for _ in 0..32 {
+            let Some(parent) = self.arena.parent_of(current) else {
+                break;
+            };
+            current = parent;
+            let Some(parent_node) = self.arena.get(current) else {
+                continue;
+            };
+            let Some(func) = self.arena.get_function(parent_node) else {
+                continue;
+            };
+            for &param_idx in &func.parameters.nodes {
+                let Some(param_node) = self.arena.get(param_idx) else {
+                    continue;
+                };
+                let Some(param) = self.arena.get_parameter(param_node) else {
+                    continue;
+                };
+                if self.get_identifier_text(param.name).as_deref() != Some(arg_name.as_str())
+                    || !param.type_annotation.is_some()
+                {
+                    continue;
+                }
+                let type_text = self
+                    .emit_type_node_text(param.type_annotation)
+                    .or_else(|| self.source_slice_from_arena(self.arena, param.type_annotation))?;
+                let trimmed = type_text.trim_end();
+                let trimmed = trimmed.strip_suffix(';').unwrap_or(trimmed).trim_end();
+                let trimmed = trimmed.strip_suffix('=').unwrap_or(trimmed).trim_end();
+                return Some(trimmed.to_string());
+            }
+        }
+
+        None
     }
 
     fn call_argument_type_texts_for_rest_substitution(
@@ -1601,6 +1653,33 @@ type Entry<Key extends keyof Registry> = { [Choice in Key]: {
                 .interface_member_type_text_from_arena(arena, "Registry", "alpha")
                 .as_deref(),
             Some("AlphaEvent")
+        );
+    }
+
+    #[test]
+    fn mapped_argument_object_members_split_commas_and_semicolons() {
+        assert_eq!(
+            DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+                "{ a: Box<number>, b: Box<string[]> }",
+                "Box"
+            )
+            .as_deref(),
+            Some("{\n    a: number;\n    b: string[];\n}")
+        );
+        assert_eq!(
+            DeclarationEmitter::infer_required_from_partial_argument_text(
+                "{ a: number | undefined, b?: string[] }",
+            )
+            .as_deref(),
+            Some("{\n    a: number;\n    b: string[];\n}")
+        );
+        assert_eq!(
+            DeclarationEmitter::infer_unwrapped_isomorphic_mapped_argument_text(
+                "{ a: Box<{ nested: string, count: number }>; b: Box<Array<string, number>> }",
+                "Box"
+            )
+            .as_deref(),
+            Some("{\n    a: { nested: string, count: number };\n    b: Array<string, number>;\n}")
         );
     }
 }

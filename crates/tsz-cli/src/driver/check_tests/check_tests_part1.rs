@@ -88,6 +88,462 @@
         parallel::merge_bind_results(bind_results)
     }
 
+    #[test]
+    fn project_mode_cross_file_class_type_reference_uses_instance_type() {
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export abstract class Base {
+  abstract self(): Base;
+}
+"#,
+                ),
+                (
+                    "/p/derived.ts",
+                    r#"
+import { Base } from "./base";
+
+export class Derived extends Base {
+  self(): Derived {
+    return this;
+  }
+}
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2416),
+            "project mode should resolve imported class type annotations to the instance type, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_cross_file_generic_class_self_reference_uses_instance_type() {
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export abstract class Box<T> {
+  value!: T;
+  abstract self(): Box<T>;
+}
+"#,
+                ),
+                (
+                    "/p/derived.ts",
+                    r#"
+import { Box } from "./base";
+
+export class StringBox extends Box<string> {
+  self(): StringBox {
+    return this;
+  }
+}
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert!(
+            diagnostics.iter().all(|diagnostic| diagnostic.code != 2416),
+            "project mode should resolve generic imported class self references to the instance type, got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_annotation_and_typeof_keep_instance_constructor_split() {
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/base.ts",
+                    r#"
+export class Token {
+  value = 1;
+  static create(): Token {
+    return new Token();
+  }
+}
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { Token } from "./base";
+
+let okInstance: Token = Token.create();
+let okCtor: typeof Token = Token;
+let badCtor: typeof Token = Token.create();
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        assert_eq!(
+            diagnostics.len(),
+            1,
+            "only the typeof constructor mismatch should be reported, got: {diagnostics:?}"
+        );
+        assert_eq!(
+            diagnostics[0].code, 2739,
+            "typeof Token should remain constructor-shaped, got: {diagnostics:?}"
+        );
+    }
+
+    // Kysely-shape regression coverage for the cross-file class instance-type
+    // resolution fixed by #10686. These tests pin down adjacent shapes from
+    // issue #10672 (Readonly mapped-type members, PromiseLike conformance via
+    // a `then` method, merged interface + const value, private class fields)
+    // that share the cross-file class identity root cause but were not yet
+    // covered by the three project_mode_* tests #10686 added.
+    //
+    // Structural rule under test:
+    //   In project mode, a cross-file class reference used in a type position
+    //   (including as the argument of a mapped/utility type, as the
+    //   constraint of a PromiseLike conformance check, or as a private-field
+    //   annotation) must resolve to the class's instance type, not the
+    //   constructor (static) type.
+    //
+    // Renamed identifiers (different class names, different property names,
+    // different generic parameter names) are used across the matrix to prove
+    // the rule is structural and not name-keyed.
+
+    fn project_mode_es2015_strict_options() -> ResolvedCompilerOptions {
+        let mut args = default_cli_args_for_test();
+        args.ignore_config = true;
+        args.no_emit = true;
+        args.strict = true;
+        args.target = Some(crate::args::Target::Es2015);
+
+        let mut resolved = crate::config::resolve_compiler_options(None)
+            .expect("resolve default compiler options");
+        crate::driver::apply_cli_overrides(&mut resolved, &args).expect("apply cli overrides");
+        if matches!(resolved.printer.module, ModuleKind::None) {
+            resolved.printer.module = ModuleKind::ES2015;
+            resolved.checker.module = ModuleKind::ES2015;
+        }
+        resolved
+    }
+
+    #[test]
+    fn project_mode_readonly_imported_class_preserves_instance_members() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available to provide Readonly<T>"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/node.ts",
+                    r#"
+export class AlterNode {
+  readonly kind: 'AlterNode' = 'AlterNode';
+  cloneWithProps(props: unknown): AlterNode {
+    return this;
+  }
+  cloneWithAlt(alt: unknown): AlterNode {
+    return this;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/builder.ts",
+                    r#"
+import { AlterNode } from "./node";
+
+export class Builder {
+  // Cross-file class as the argument of Readonly<T>: the mapped instantiation
+  // must preserve the instance methods declared on AlterNode.
+  readonly node: Readonly<AlterNode>;
+
+  constructor(node: Readonly<AlterNode>) {
+    this.node = node;
+  }
+
+  // Reading members through Readonly<X> must see X's instance methods.
+  clone(): Builder {
+    const next = this.node.cloneWithProps({});
+    return new Builder(next);
+  }
+
+  // Readonly<X> assignable to X (instance) is the structural rule under test.
+  unwrap(): AlterNode {
+    return this.node;
+  }
+}
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2339 | 2345 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Readonly<ImportedClass> must preserve instance members; cross-file class identity in mapped-type position must resolve to the instance type. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_with_then_method_is_promise_like() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts + es2015.d.ts must be available to provide PromiseLike and Promise"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/builder.ts",
+                    r#"
+export class SchemaBuilder<O> {
+  then<TResult1 = O, TResult2 = never>(
+    onfulfilled?: ((value: O) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return Promise.resolve(undefined as unknown as O).then(onfulfilled, onrejected);
+  }
+}
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { SchemaBuilder } from "./builder";
+
+declare function expectPromiseLike<U>(p: PromiseLike<U>): void;
+
+declare const b: SchemaBuilder<number>;
+
+// Cross-file class is used in PromiseLike<U> argument position; the relation
+// must see the class's instance `then` method to accept the conformance.
+expectPromiseLike(b);
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Cross-file class with a structural `then` method must be recognized as PromiseLike. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_imported_class_with_private_field_assignable_across_files() {
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+        assert!(
+            !lib_files.is_empty(),
+            "es5.d.ts must be available to provide Array<T>"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/store.ts",
+                    r#"
+export class Store<V> {
+  #items: V[] = [];
+  push(value: V): void {
+    this.#items.push(value);
+  }
+  size(): number {
+    return this.#items.length;
+  }
+}
+"#,
+                ),
+                (
+                    "/p/consumer.ts",
+                    r#"
+import { Store } from "./store";
+
+declare function consume(s: Store<number>): void;
+
+const s: Store<number> = new Store<number>();
+s.push(1);
+consume(s);
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2339 | 2739))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Cross-file class with a private (#) field must remain assignable through type annotations. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_cross_file_kysely_shape_negative_still_reports_genuine_mismatch() {
+        // The cross-file class instance-type fix must not silence genuine
+        // mismatches. Each kysely-shape pattern below still surfaces its
+        // ordinary diagnostic when the source/target really differ.
+        let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts", "es2015.d.ts"]);
+        assert!(
+            lib_files.len() >= 2,
+            "es5.d.ts + es2015.d.ts must be available for negative coverage"
+        );
+        let options = project_mode_es2015_strict_options();
+
+        let diagnostics = collect_test_diagnostics_with_lib_files_and_options(
+            &[
+                (
+                    "/p/lib.ts",
+                    r#"
+export class NodeA {
+  readonly kind: 'A' = 'A';
+  alpha(): number {
+    return 1;
+  }
+}
+
+export class NodeB {
+  readonly kind: 'B' = 'B';
+  beta(): string {
+    return "b";
+  }
+}
+
+export class NotAwaitable {
+  describe(): string {
+    return "no then here";
+  }
+}
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { NodeA, NodeB, NotAwaitable } from "./lib";
+
+// Cross-file class identity preserved on the negative direction:
+// NodeA and NodeB are distinct cross-file classes, so assigning one to
+// Readonly<the other> must still report TS2322.
+declare const a: NodeA;
+const wrong: Readonly<NodeB> = a;
+
+// Cross-file class without a `then` method is not PromiseLike: assigning it
+// to PromiseLike<unknown> must still report TS2322.
+declare const na: NotAwaitable;
+const notPL: PromiseLike<unknown> = na;
+"#,
+                ),
+            ],
+            &lib_files,
+            &options,
+        );
+
+        // tsc emits TS2741 (missing required property) for these specific
+        // missing-member assignability failures. The fix must still produce a
+        // mismatch diagnostic — accept TS2322 or TS2741, which both represent
+        // a real cross-file assignability failure preserved by the fix.
+        let mismatches = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2741))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            mismatches.len(),
+            2,
+            "genuine cross-file Readonly mismatch and missing-then PromiseLike mismatch must still emit a mismatch diagnostic. Got: {diagnostics:?}"
+        );
+    }
+
+    #[test]
+    fn project_mode_merged_interface_and_const_value_keep_distinct_shapes_across_files() {
+        let options = project_mode_es2015_strict_options();
+
+        // Kysely-shape: an interface `Op` declares the data shape;
+        // a const `Op` carries static-like helpers (`is` / `create`). Cross-file
+        // consumers must see the interface (no helpers) when `Op` is in a type
+        // position, and the const (with helpers) when it is in a value position.
+        let diagnostics = collect_test_diagnostics_with_options(
+            &[
+                (
+                    "/p/op.ts",
+                    r#"
+export interface Op {
+  readonly kind: string;
+}
+
+export const Op = {
+  is(value: unknown): value is Op {
+    return typeof value === "object" && value !== null && "kind" in value;
+  },
+  create(kind: string): Op {
+    return { kind };
+  },
+};
+"#,
+                ),
+                (
+                    "/p/use.ts",
+                    r#"
+import { Op } from "./op";
+
+// `Op` in a type position is the interface (no helpers).
+declare const item: Op;
+const k: string = item.kind;
+
+// `Op` in a value position is the const (helpers available).
+const made: Op = Op.create("X");
+const checked: boolean = Op.is(made);
+"#,
+                ),
+            ],
+            &options,
+            Path::new("/p"),
+        );
+
+        let blocking: Vec<_> = diagnostics
+            .iter()
+            .filter(|d| matches!(d.code, 2322 | 2345 | 2339 | 2739 | 2306))
+            .collect();
+        assert!(
+            blocking.is_empty(),
+            "Merged interface + const must keep distinct cross-file shapes; type-position and value-position resolutions must not collapse. Blocking diagnostics: {blocking:?}. All: {diagnostics:?}"
+        );
+    }
+
     /// Asserts the post-PR-#7521 file-session reuse env policy: OFF unless
     /// the user opts back in via `TSZ_FILE_SESSION_REUSE=1`. Before
     /// PR #7521 the default was ON (set by PRs #6870 / #6893) which
@@ -400,6 +856,87 @@ interface Window {
             resolved.checker.module = ModuleKind::ES2015;
         }
         resolved
+    }
+
+    /// A cross-file alias whose body nests a homomorphic utility type over an
+    /// imported type (`Omit<Partial<X>, "k">`) must resolve to the real object
+    /// shape, even when the consumer reaches the alias first through a property
+    /// access (so the alias is first evaluated in a nested context).
+    ///
+    /// Regression for #10682 (kysely): while computing `keyof T` for the
+    /// enclosing `Omit`, `Partial`'s structural body has not been registered
+    /// yet, so the resolver hands back `Partial`'s own self-lazy wrapper.
+    /// Substituting the argument into that wrapper dropped it, collapsing
+    /// `Partial<X>` to bare `Partial` and the whole alias to `{}`; a fresh
+    /// object literal with a valid optional subset then failed with a false
+    /// `TS2345`, and the cached degenerate result poisoned later uses. The fix
+    /// keeps the application opaque until the body is ready.
+    ///
+    /// The helper runs two unrelated name/key choices so a fix keyed to a
+    /// single spelling (the interface name, property names, or the omitted
+    /// key) would not satisfy it.
+    #[test]
+    fn cross_file_omit_partial_alias_param_resolves_via_property_access() {
+        // `iface` gains a required `omit_key: string` plus optional number
+        // members `props`; the alias drops `omit_key` via `Omit<Partial<_>, _>`.
+        fn run(case: &str, iface: &str, omit_key: &str, props: &[&str], good: &str) {
+            let lib_files = tsz::checker::test_utils::load_lib_files(&["es5.d.ts"]);
+            assert!(
+                !lib_files.is_empty(),
+                "[{case}] es5.d.ts must be available for this regression"
+            );
+            let members = props
+                .iter()
+                .map(|p| format!("  readonly {p}?: number;\n"))
+                .collect::<String>();
+            let wrong_prop = props[0];
+            let defs = format!(
+                "export interface {iface} {{\n  readonly {omit_key}: string;\n{members}}}\n\
+                 export type Props = Omit<Partial<{iface}>, \"{omit_key}\">;\n\
+                 // type/value name collision, as in kysely's frozen node factories.\n\
+                 export declare const {iface}: {{ with(p: Props): {iface} }};\n"
+            );
+            // Consumer file listed first so the alias is first evaluated through
+            // the nested property-access path (the order that triggered #10682).
+            let use_src = format!(
+                "import {{ {iface} }} from \"./defs.js\";\n\
+                 export const okMulti = {iface}.with({{ {good} }});\n\
+                 export const okEmpty = {iface}.with({{}});\n\
+                 export const wrong = {iface}.with({{ {wrong_prop}: \"not-a-number\" }});\n\
+                 export const excess = {iface}.with({{ definitelyNotAKey: 1 }});\n"
+            );
+            let files = [("/p/use.ts", use_src.as_str()), ("/p/defs.ts", defs.as_str())];
+            let diagnostics = collect_test_diagnostics_with_lib_files(&files, &lib_files);
+
+            // The fix: the nested-utility alias no longer collapses to `{}`, so
+            // valid optional-subset literals (and `{}`) produce no false TS2345.
+            assert!(
+                !diagnostics.iter().any(|d| d.code == 2345),
+                "[{case}] valid optional-subset literals must be assignable to \
+                 Omit<Partial<{iface}>, \"{omit_key}\"> resolved through property \
+                 access; no TS2345 expected. Diagnostics: {diagnostics:?}"
+            );
+
+            // The alias must still resolve to a real object (not `any`/`{}`):
+            // an unknown property and a wrong-typed value are still rejected.
+            assert!(
+                diagnostics
+                    .iter()
+                    .any(|d| d.code == 2353 && d.message_text.contains("definitelyNotAKey")),
+                "[{case}] an unknown property must still be rejected (TS2353), \
+                 proving the alias resolved to a structural object. \
+                 Diagnostics: {diagnostics:?}"
+            );
+            assert!(
+                diagnostics.iter().any(|d| d.code == 2322),
+                "[{case}] a wrong-typed property must still be rejected (TS2322). \
+                 Diagnostics: {diagnostics:?}"
+            );
+        }
+
+        // Two unrelated spellings prove the fix is structural, not name-keyed.
+        run("widget", "Widget", "kind", &["w", "label"], "w: 1, label: 2");
+        run("record", "RecordNode", "tag", &["alpha", "beta"], "alpha: 2");
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //!
 //! This module is organized into several submodules:
 //! - `context` - `CheckerContext` for shared state
+//! - `dispatch` - Expression type computation dispatcher (with companion submodules)
 //! - `expr` - Expression type checking
 //! - `statements` - Statement type checking
 //! - `declarations` - Declaration type checking
@@ -19,8 +20,6 @@ extern crate self as tsz_checker;
 
 pub mod context;
 pub mod dispatch;
-mod dispatch_helpers;
-mod dispatch_yield;
 pub mod error_reporter;
 pub mod expr;
 pub mod module_resolution;
@@ -136,6 +135,9 @@ mod control_flow_tests;
 #[path = "../tests/control_flow_type_guard_tests.rs"]
 mod control_flow_type_guard_tests;
 #[cfg(test)]
+#[path = "tests/cross_module_class_self_member_tests.rs"]
+mod cross_module_class_self_member_tests;
+#[cfg(test)]
 #[path = "tests/decorator_return_relation_routing_arch_tests.rs"]
 mod decorator_return_relation_routing_arch_tests;
 #[cfg(test)]
@@ -177,6 +179,9 @@ mod generator_yield_identity_tests;
 #[cfg(test)]
 #[path = "tests/generic_default_application_arg_preservation_tests.rs"]
 mod generic_default_application_arg_preservation_tests;
+#[cfg(test)]
+#[path = "tests/generic_method_override_variance_tests.rs"]
+mod generic_method_override_variance_tests;
 #[cfg(test)]
 #[path = "../tests/heritage_type_only_tests.rs"]
 mod heritage_type_only_tests;
@@ -601,6 +606,9 @@ mod for_in_lhs_relation_routing_arch_tests;
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
+mod fresh_const_array_mutable_assignment_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]
@@ -808,6 +816,9 @@ mod object_spread_optional_merge_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]
+#[path = "tests/optional_private_field_undefined_tests.rs"]
+mod optional_private_field_undefined_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]
@@ -822,6 +833,9 @@ mod predicate_narrowed_lib_union_access_tests;
 #[cfg(test)]
 #[path = "../tests/private_brands.rs"]
 mod private_brands;
+#[cfg(test)]
+#[path = "tests/private_optional_field_undefined_tests.rs"]
+mod private_optional_field_undefined_tests;
 #[cfg(test)]
 #[path = "tests/promise_like_infer_tests.rs"]
 mod promise_like_infer_tests;
@@ -921,6 +935,9 @@ mod ts2590_array_literal_identity_skip_tests;
 #[cfg(test)]
 #[path = "tests/ts2739_alias_unfold_display_tests.rs"]
 mod ts2739_alias_unfold_display_tests;
+#[cfg(test)]
+#[path = "tests/type_alias_primitive_display_tests.rs"]
+mod type_alias_primitive_display_tests;
 #[cfg(test)]
 #[path = "tests/type_param_default_relation_routing_arch_tests.rs"]
 mod type_param_default_relation_routing_arch_tests;

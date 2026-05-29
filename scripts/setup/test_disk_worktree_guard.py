@@ -38,6 +38,7 @@ class DiskWorktreeGuardTests(unittest.TestCase):
         self.run_git(["init"], fake_repo)
         self.run_git(["config", "user.email", "studio-f@example.invalid"], fake_repo)
         self.run_git(["config", "user.name", "Studio F"], fake_repo)
+        self.run_git(["config", "commit.gpgsign", "false"], fake_repo)
         (fake_repo / "README.md").write_text("# fake repo\n", encoding="utf-8")
         self.run_git(["add", "README.md"], fake_repo)
         self.run_git(["commit", "-m", "initial"], fake_repo)

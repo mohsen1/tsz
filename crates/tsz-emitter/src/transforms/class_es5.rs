@@ -88,6 +88,9 @@ pub struct ClassES5Emitter<'a> {
     externally_hoisted_decls: rustc_hash::FxHashSet<String>,
     block_scope_shadowed_names: Vec<String>,
     block_scope_reserved_names: Vec<String>,
+    /// Outer names (e.g. a class-expression alias) excluded from generator state
+    /// variable selection inside `__awaiter`/`__generator` method bodies.
+    outer_reserved_for_generator_state: Vec<String>,
 }
 
 impl<'a> ClassES5Emitter<'a> {
@@ -110,6 +113,7 @@ impl<'a> ClassES5Emitter<'a> {
             externally_hoisted_decls: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
             block_scope_reserved_names: Vec::new(),
+            outer_reserved_for_generator_state: Vec::new(),
             tc39_wrap_output: true,
         }
     }
@@ -144,6 +148,12 @@ impl<'a> ClassES5Emitter<'a> {
             .extend(printer.block_scope_reserved_names());
         self.block_scope_reserved_names.sort();
         self.block_scope_reserved_names.dedup();
+    }
+
+    /// Set names that must not be chosen as the `__generator` state variable in
+    /// any async method body emitted by this class emitter.
+    pub fn set_outer_reserved_for_generator_state(&mut self, names: Vec<String>) {
+        self.outer_reserved_for_generator_state = names;
     }
 
     pub fn set_outer_rename_map(&mut self, map: rustc_hash::FxHashMap<String, String>) {
@@ -507,6 +517,11 @@ impl<'a> ClassES5Emitter<'a> {
         }
         printer.set_block_scope_shadowed_names(self.block_scope_shadowed_names.clone());
         printer.set_block_scope_reserved_names(self.block_scope_reserved_names.clone());
+        if !self.outer_reserved_for_generator_state.is_empty() {
+            printer.set_outer_reserved_for_generator_state(
+                self.outer_reserved_for_generator_state.clone(),
+            );
+        }
         printer
     }
 

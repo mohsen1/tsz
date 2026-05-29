@@ -909,6 +909,76 @@ const b = <video data-\u0076ideo />;"#;
         );
     }
 
+    /// Intrinsic tag names emit as JS string literals; unicode escapes in the
+    /// name must be cooked because `tsc` rebuilds the argument as a fresh JS
+    /// string. Covers `\uXXXX` and `\u{X...}` escape forms, both at the head of
+    /// the name and inside hyphenated kebab segments.
+    ///
+    /// Witness: `unicodeEscapesInJsxtags.tsx` (`@jsx react`) expects
+    /// `React.createElement("a", null)`, `React.createElement("a-b", null)`,
+    /// and `React.createElement("a-c", null)` for the source
+    /// `<a/>`, `<a-b/>`, `<a-c/>` (and their `\u{...}` variants).
+    #[test]
+    fn jsx_classic_unicode_escape_intrinsic_tag_name_is_cooked() {
+        let source = r#"const a = <a/>;
+const b = <a-b/>;
+const c = <a-c/>;
+const d = <\u{0061}/>;
+const e = <\u{0061}-b/>;
+const f = <a-\u{0063}/>;"#;
+        let output = emit_jsx_react(source);
+        // Anchor each assertion to the originating `const` binding so a regression
+        // in only the `\u{...}` path can't be masked by the plain `<a/>` path
+        // emitting the same `React.createElement("a", null)` fragment.
+        for (label, fragment) in [
+            (r"a head", r#"const a = React.createElement("a", null)"#),
+            (
+                r"a head, hyphen tail",
+                r#"const b = React.createElement("a-b", null)"#,
+            ),
+            (
+                r"hyphen head, c tail",
+                r#"const c = React.createElement("a-c", null)"#,
+            ),
+            (
+                r"\u{0061} head",
+                r#"const d = React.createElement("a", null)"#,
+            ),
+            (
+                r"\u{0061} head, hyphen tail",
+                r#"const e = React.createElement("a-b", null)"#,
+            ),
+            (
+                r"hyphen head, \u{0063} tail",
+                r#"const f = React.createElement("a-c", null)"#,
+            ),
+        ] {
+            assert!(
+                output.contains(fragment),
+                "Intrinsic JSX tag with unicode escape ({label}) should emit cooked string `{fragment}`.\nOutput: {output}"
+            );
+        }
+    }
+
+    /// Component tag references emit as JS expressions; unicode escapes in the
+    /// component identifier (including the extended `\u{X...}` form) must be
+    /// preserved verbatim because the identifier is a value reference, not a
+    /// string. Mirrors the existing
+    /// `jsx_classic_unicode_escape_component_and_member_names_are_preserved`
+    /// coverage for the `\uXXXX` form.
+    ///
+    /// Witness: `unicodeEscapesInJsxtags.tsx` expects
+    /// `React.createElement(Comp\u{0061}, { x: 12 })` for `<Comp\u{0061} x={12} />`.
+    #[test]
+    fn jsx_classic_extended_unicode_escape_component_name_is_preserved() {
+        let source = r#"const a = <Comp\u{0061} x={12} />;"#;
+        let output = emit_jsx_react(source);
+        assert!(
+            output.contains(r#"React.createElement(Comp\u{0061}, { x: 12 })"#),
+            "Component tag identifier extended-escape spelling should be preserved in expression emit.\nOutput: {output}"
+        );
+    }
+
     #[test]
     fn jsx_classic_self_closing_trailing_line_comment_is_preserved() {
         let source = "const x = (<Item value={1} /> // kept\n);";
@@ -1149,5 +1219,99 @@ const b = <video data-\u0076ideo />;"#;
         assert_eq!(super::decode_jsx_entities("&#233;"), "\u{00E9}");
         assert_eq!(super::decode_jsx_entities("&#xE9;"), "\u{00E9}");
         assert_eq!(super::decode_jsx_entities("&#x2026;"), "\u{2026}");
+    }
+
+    /// Emit a `.tsx` source through the full lowering + automatic-runtime
+    /// injection path with the global `jsx` mode set to classic `react`.
+    ///
+    /// This exercises `effective_jsx_emit`: a per-file `@jsxImportSource`
+    /// pragma must upgrade the file to the automatic runtime even though the
+    /// global mode is classic.
+    fn emit_jsx_global_react(source: &str) -> String {
+        let mut parser = ParserState::new("index.tsx".to_string(), source.to_string());
+        let root = parser.parse_source_file();
+        let options = PrinterOptions {
+            jsx: JsxEmit::React,
+            target: ScriptTarget::ES2015,
+            ..Default::default()
+        };
+        let ctx = EmitContext::with_options(options.clone());
+        let emit_plan = LoweringPass::new(&parser.arena, &ctx).run_plan(root);
+        let mut printer =
+            EmitPrinter::with_emit_plan_and_options(&parser.arena, emit_plan, options);
+        printer.set_source_text(source);
+        printer.emit(root);
+        printer.get_output().to_string()
+    }
+
+    #[test]
+    fn jsx_import_source_pragma_upgrades_classic_global_to_automatic() {
+        // Structural rule: with global `jsx: react` (classic) but a per-file
+        // `@jsxImportSource` pragma, tsc routes the file through the automatic
+        // jsx-runtime import path rather than `React.createElement`.
+        let source = "/* @jsxImportSource preact */\nexport const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("jsx-runtime") && output.contains("preact"),
+            "Automatic runtime import for the pragma source expected.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("React.createElement"),
+            "Classic createElement must not be emitted when @jsxImportSource is present.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn jsx_import_source_pragma_upgrade_is_not_source_name_specific() {
+        // Same rule, a different (multi-segment) import source. Keying on the
+        // pragma's mere presence — not a hardcoded package name — must drive
+        // the automatic-runtime upgrade.
+        let source = "/* @jsxImportSource @emotion/react */\nexport const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("@emotion/react/jsx-runtime"),
+            "Automatic runtime import for the multi-segment source expected.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("React.createElement"),
+            "Classic createElement must not be emitted for any @jsxImportSource source.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn explicit_jsx_runtime_classic_pragma_overrides_import_source() {
+        // Precedence: an explicit `@jsxRuntime classic` keeps the classic
+        // transform even alongside a `@jsxImportSource` pragma. The explicit
+        // runtime pragma wins.
+        let source = concat!(
+            "/* @jsxRuntime classic */\n",
+            "/* @jsxImportSource preact */\n",
+            "export const Comp = () => <div/>;"
+        );
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("React.createElement"),
+            "Explicit @jsxRuntime classic must keep the classic transform.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("jsx-runtime"),
+            "No automatic jsx-runtime import when @jsxRuntime classic is set.\nOutput:\n{output}"
+        );
+    }
+
+    #[test]
+    fn classic_global_without_import_source_stays_classic() {
+        // Negative case: classic global mode and no `@jsxImportSource` pragma
+        // must keep the classic `React.createElement` transform.
+        let source = "export const Comp = () => <div/>;";
+        let output = emit_jsx_global_react(source);
+        assert!(
+            output.contains("React.createElement"),
+            "Classic transform expected without a pragma.\nOutput:\n{output}"
+        );
+        assert!(
+            !output.contains("jsx-runtime"),
+            "No automatic jsx-runtime import without @jsxImportSource.\nOutput:\n{output}"
+        );
     }
 }

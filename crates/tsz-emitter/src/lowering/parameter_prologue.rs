@@ -230,13 +230,18 @@ impl<'a> LoweringPass<'a> {
                 }
 
                 if target_needs_field_lowering {
-                    let is_static = self.arena.is_static(&prop.modifiers);
-                    let is_computed = self
-                        .arena
-                        .get(prop.name)
-                        .is_some_and(|name| name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
-                    if is_static || is_computed {
-                        return true;
+                    // A field that lowers to no runtime statement (a bare type-only
+                    // declaration) needs no captured class temp; only fields with
+                    // runtime state (initializer, auto-accessor, or decorator) emit
+                    // assignments that require the temporary.
+                    if emit_utils::class_field_decl_has_runtime_state(self.arena, prop) {
+                        let is_static = self.arena.is_static(&prop.modifiers);
+                        let is_computed = self.arena.get(prop.name).is_some_and(|name| {
+                            name.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME
+                        });
+                        if is_static || is_computed {
+                            return true;
+                        }
                     }
                 }
             }

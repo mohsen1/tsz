@@ -807,6 +807,22 @@ fn test_equal_never_any_is_false() {
     );
 }
 
+/// `Equal<any, boolean>` — `any` is not identity-equivalent to `boolean`.
+/// Pairs with `test_equal_any_any_is_true` (the only `any` case that is
+/// `true`) to pin the extends-clause identity rule to `any ≡ any` exactly,
+/// independent of which concrete type sits opposite the `any`.
+#[test]
+fn test_equal_any_boolean_is_false() {
+    let interner = TypeInterner::new();
+    let result = make_equal_outer(&interner, TypeId::ANY, TypeId::BOOLEAN);
+    assert_eq!(
+        result,
+        TypeId::BOOLEAN_FALSE,
+        "Equal<any, boolean> must evaluate to false, got {:?}",
+        interner.lookup(result)
+    );
+}
+
 /// `Equal<string, string>` — identical concrete types remain `true` even after
 /// `Equal<any, X>` evaluations (regression gate for issue #6742 cache corruption).
 #[test]

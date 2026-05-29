@@ -48,6 +48,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "workflow_dispatch redeploy requested — allowing it to queue behind any active deploy"
+            echo "in_flight=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           IN_FLIGHT=$(gh api \
             "repos/${{ github.repository }}/actions/workflows/gh-pages.yml/runs?status=in_progress&per_page=20" \
             --jq "[.workflow_runs[] | select(.id != ${{ github.run_id }})] | length")
@@ -201,31 +207,18 @@ jobs:
         run: |
           set -euo pipefail
 
-          RUN_ID="$(
-            gh run list \
-              --workflow bench.yml \
-              --branch main \
-              --status success \
-              --limit 50 \
-              --json databaseId \
-              --jq '.[].databaseId' |
-            while IFS= read -r candidate_run_id; do
-              artifact_id="$(gh api \
-                "repos/${{ github.repository }}/actions/runs/${candidate_run_id}/artifacts" \
-                --jq '.artifacts[]? | select(.name == "bench-results-merged" and .expired == false) | .id' |
-                head -n 1)"
-
-              if [[ -n "$artifact_id" ]]; then
-                echo "$candidate_run_id"
-                break
-              fi
-            done
-          )"
+          artifact_record="$(gh api \
+            "repos/${{ github.repository }}/actions/artifacts?name=bench-results-merged&per_page=20" \
+            --jq '[.artifacts[]? | select(.expired == false and (.workflow_run.head_branch // "") == "main")] | first | if . == null then "" else [.workflow_run.id, .id, .created_at] | @tsv end')"
+          RUN_ID="$(cut -f1 <<<"${artifact_record}")"
+          ARTIFACT_ID="$(cut -f2 <<<"${artifact_record}")"
+          ARTIFACT_CREATED="$(cut -f3 <<<"${artifact_record}")"
           echo "run_id=${RUN_ID}" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=${ARTIFACT_ID}" >> "$GITHUB_OUTPUT"
           if [[ -n "$RUN_ID" ]]; then
-            echo "Latest benchmark run with merged artifact: ${RUN_ID}"
+            echo "Latest benchmark merged artifact: run=${RUN_ID} artifact=${ARTIFACT_ID} created=${ARTIFACT_CREATED}"
           else
-            echo "No recent successful benchmark run has a bench-results-merged artifact."
+            echo "No non-expired main benchmark run has a bench-results-merged artifact."
           fi
         continue-on-error: true
 
@@ -237,6 +230,62 @@ jobs:
           path: artifacts
           run-id: ${{ steps.latest-benchmark.outputs.run_id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+
+      - name: Download latest benchmark data from GCS
+        env:
+          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          BUCKET="thirdface-ai-oauth_cloudbuild"
+
+          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
+            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
+            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
+          fi
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
+
+          if [[ -z "$TOKEN" ]]; then
+            echo "No OAuth token — GCP auth step may have failed or secret is missing"
+            exit 0
+          fi
+
+          mkdir -p artifacts
+          download_object() {
+            local object="$1"
+            local out="$2"
+            local label="$3"
+            local url="https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${object//\//%2F}?alt=media"
+            local http status
+            http=$(curl -s -w "\n%{http_code}" -o "${out}.tmp" \
+              -H "Authorization: Bearer ${TOKEN}" "$url")
+            status=$(echo "$http" | tail -1)
+            if [[ "$status" == "200" ]] && jq -e type "${out}.tmp" >/dev/null 2>&1; then
+              mv "${out}.tmp" "$out"
+              echo "Downloaded ${label} from GCS"
+              return 0
+            fi
+            rm -f "${out}.tmp"
+            echo "No ${label} from GCS (HTTP ${status})"
+            return 1
+          }
+
+          if download_object \
+            "tsz-ci-cache/bench-runs/latest.json" \
+            "artifacts/bench-vs-tsgo-gcs-latest.json" \
+            "latest benchmark data"; then
+            rows=$(jq '[.results[]?] | length' artifacts/bench-vs-tsgo-gcs-latest.json 2>/dev/null || echo "0")
+            if [[ "${rows}" -le 0 ]]; then
+              rm -f artifacts/bench-vs-tsgo-gcs-latest.json
+              echo "GCS benchmark artifact has no result rows; skipping it."
+            fi
+          fi
+
+          download_object \
+            "tsz-ci-cache/bench-runs/latest.tsgo-winners.json" \
+            "artifacts/bench-vs-tsgo-gcs-latest.tsgo-winners.json" \
+            "latest benchmark winner report" || true
         continue-on-error: true
 
       - name: Prepare benchmark data for website
@@ -253,7 +302,11 @@ jobs:
 
           if [[ ! -f artifacts/bench-results.json ]]; then
             rm -f artifacts/bench-results-tsgo-winners.json
-            echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
+            if [[ -f artifacts/bench-vs-tsgo-gcs-latest.json ]]; then
+              echo "No GitHub benchmark artifact downloaded; bench charts will use GCS latest data."
+            else
+              echo "No benchmark artifact downloaded; bench charts will use repository/local fallback data."
+            fi
             exit 0
           fi
 
@@ -276,7 +329,16 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           readiness_out="artifacts/bench-readiness-status.json"
-          artifact="artifacts/bench-vs-tsgo-github-latest.json"
+          artifact="$(node --input-type=module <<'NODE'
+          import { selectLatestBenchmarkArtifact } from "./scripts/bench/benchmark-artifact-selection.mjs";
+
+          const selected = selectLatestBenchmarkArtifact([
+            "artifacts/bench-vs-tsgo-github-latest.json",
+            "artifacts/bench-vs-tsgo-gcs-latest.json",
+          ]);
+          process.stdout.write(selected?.file ?? "artifacts/bench-vs-tsgo-github-latest.json");
+          NODE
+          )"
 
           node scripts/bench/check-artifact-readiness.mjs "${artifact}" --json \
             > "${readiness_out}" || true
@@ -284,8 +346,17 @@ jobs:
         continue-on-error: true
 
       - name: Download latest suite metrics from GCS
+        env:
+          SCCACHE_GCS_KEY_JSON: ${{ secrets.SCCACHE_GCS_KEY_JSON }}
         run: |
+          set -euo pipefail
           BUCKET="thirdface-ai-oauth_cloudbuild"
+
+          if [[ -n "${SCCACHE_GCS_KEY_JSON:-}" ]]; then
+            key_file="${RUNNER_TEMP:-/tmp}/tsz-gcs-key.json"
+            printf '%s' "${SCCACHE_GCS_KEY_JSON}" > "${key_file}"
+            gcloud auth activate-service-account --key-file="${key_file}" >/dev/null 2>&1 || true
+          fi
           TOKEN=$(gcloud auth print-access-token 2>/dev/null || echo "")
 
           if [[ -z "$TOKEN" ]]; then

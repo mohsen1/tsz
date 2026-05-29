@@ -641,6 +641,15 @@ impl<'a> CheckerState<'a> {
                     );
                 }
             }
+
+            // Mark specifiers that re-export type-only symbols for emit elision.
+            // When `export { A } from "mod"` and A is type-only in mod (interface,
+            // type alias, uninstantiated namespace, const enum without preserveConstEnums),
+            // the emitter must skip it — mark the specifier NodeIndex so the emitter
+            // can filter it in `collect_export_names_with_options` and the re-export path.
+            if self.import_binding_is_type_only(module_name, &export_name) {
+                self.ctx.type_only_nodes.insert(specifier_idx);
+            }
         }
     }
 
@@ -1039,6 +1048,33 @@ impl<'a> CheckerState<'a> {
                     crate::diagnostics::diagnostic_codes::TYPES_CANNOT_APPEAR_IN_EXPORT_DECLARATIONS_IN_JAVASCRIPT_FILES,
                 );
                 continue;
+            }
+
+            // Mark local re-export specifiers for emit elision when the re-exported
+            // local binding resolves to a type-only symbol (interface, type alias,
+            // uninstantiated namespace, or a const enum without preserveConstEnums).
+            // This covers `import { I1 as I } from "mod"; export { I }` — the import
+            // checker marks the import specifier, but the export specifier has a
+            // different NodeIndex that the emitter checks separately.
+            //
+            // For import-alias bindings, use `import_binding_is_type_only` which has
+            // full const-enum awareness. For other local symbols, `is_local_symbol_type_only`
+            // handles interfaces, type aliases, and uninstantiated namespaces.
+            if is_local && !enclosing_export_is_type_only && !specifier.is_type_only {
+                use tsz_binder::symbol_flags;
+                let is_type_only = if let Some(sym_id) = self.ctx.binder.file_locals.get(&name_str)
+                    && let Some(sym) = self.ctx.binder.get_symbol(sym_id)
+                    && sym.has_any_flags(symbol_flags::ALIAS)
+                    && let Some(ref module_spec) = sym.import_module
+                {
+                    let import_name = sym.import_name.as_deref().unwrap_or(&name_str);
+                    self.import_binding_is_type_only(module_spec, import_name)
+                } else {
+                    self.is_local_symbol_type_only(&name_str)
+                };
+                if is_type_only {
+                    self.ctx.type_only_nodes.insert(specifier_idx);
+                }
             }
 
             if !is_local {

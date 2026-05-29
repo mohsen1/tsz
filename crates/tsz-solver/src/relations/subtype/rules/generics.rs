@@ -8,6 +8,7 @@
 //! - Type expansion and instantiation
 
 use super::super::{SubtypeChecker, SubtypeResult, TypeResolver};
+pub(crate) use super::mapped_chain::flatten_mapped_chain;
 use crate::def::DefId;
 use crate::instantiation::instantiate::fill_application_defaults;
 use crate::types::{MappedModifier, MappedType, TypeData, TypeParamInfo};
@@ -283,9 +284,19 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             }
         }
 
-        // Resolve DefIds to their structural forms
+        // Resolve DefIds to their structural forms. A `None` here means the
+        // body is not yet registered (re-entrant lib resolution); record an
+        // undetermined-result event so the enclosing `check_subtype`'s
+        // cache write is skipped instead of caching a False that depended on
+        // a transiently-unresolvable ref.
         let s_resolved = self.resolver.resolve_lazy(s_def, self.interner);
+        if s_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
         let t_resolved = self.resolver.resolve_lazy(t_def, self.interner);
+        if t_resolved.is_none() {
+            crate::relations::subtype::cache::note_lazy_resolve_failure();
+        }
 
         // Detect self-referencing Lazy types (namespace circular references).
         // When a namespace's DefId resolves back to Lazy(same_DefId), it means
@@ -985,7 +996,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
@@ -1284,19 +1306,28 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return SubtypeResult::False;
         }
 
-        if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
+        let source_param = self.interner.type_param(source_mapped.type_param);
+        let target_param = self.interner.type_param(target_mapped.type_param);
+        let equiv_start = self.type_param_equivalences.len();
+        self.type_param_equivalences
+            .push((source_param, target_param));
+
+        let result = if let (Some(s_inner_mapped), Some(t_inner_mapped)) = (
             mapped_type_id(self.interner, source_template),
             mapped_type_id(self.interner, target_template),
         ) {
-            return self.check_mapped_to_mapped(
+            self.check_mapped_to_mapped(
                 source_template,
                 target_template,
                 s_inner_mapped,
                 t_inner_mapped,
-            );
-        }
+            )
+        } else {
+            self.check_subtype(source_template, target_template)
+        };
+        self.type_param_equivalences.truncate(equiv_start);
 
-        self.check_subtype(source_template, target_template)
+        result
     }
 
     /// Check Mapped expansion to target (one-sided Mapped case).
@@ -1748,7 +1779,18 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
 
         let def_id = self.application_base_def_id(app.base)?;
         let type_params = self.resolver.get_lazy_type_params(def_id)?;
-        let resolved_body = self.resolver.resolve_lazy(def_id, self.interner)?;
+        let resolved_body = match self.resolver.resolve_lazy(def_id, self.interner) {
+            Some(body) => body,
+            None => {
+                // Re-entrant lib resolution: the application's base def has
+                // no body registered yet. The caller propagates `None` into a
+                // structural fallback that can produce a cacheable False —
+                // record the undetermined-result event so the enclosing
+                // `check_subtype` call skips caching for this pair.
+                crate::relations::subtype::cache::note_lazy_resolve_failure();
+                return None;
+            }
+        };
         let effective_body = if matches!(
             self.resolver.get_def_kind(def_id),
             Some(crate::def::DefKind::Class)
@@ -1847,85 +1889,6 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             instantiated
         })
     }
-}
-
-/// Result of flattening a chain of nested homomorphic mapped types.
-pub(crate) struct FlattenedMapped {
-    /// The ultimate source type (e.g., T in Partial<Readonly<T>>)
-    pub source: TypeId,
-    /// The outer mapped key constraint (e.g., `keyof T` or `K`).
-    pub key_constraint: TypeId,
-    /// Whether any mapped type in the chain adds optional (?)
-    pub has_optional: bool,
-    /// Whether any mapped type in the chain adds readonly
-    pub has_readonly: bool,
-}
-
-/// Flatten a chain of nested homomorphic mapped types into a single descriptor.
-///
-/// For `Partial<Readonly<T>>`, this produces:
-///   source=T, `has_optional=true` (from Partial), `has_readonly=true` (from Readonly)
-///
-/// For `Required<Partial<T>>`, this produces:
-///   source=T, `has_optional=false` (Remove cancels Add), `has_readonly=false`
-///
-/// Returns None if the mapped type isn't in homomorphic form (e.g., has name remapping,
-/// or template isn't `X[K]` where K is the iteration param).
-pub(crate) fn flatten_mapped_chain(
-    interner: &dyn crate::construction::TypeDatabase,
-    mapped_id: MappedTypeId,
-) -> Option<FlattenedMapped> {
-    use crate::types::MappedModifier;
-
-    let mapped = interner.mapped_type(mapped_id);
-
-    // Can't flatten mapped types with name remapping (as clause)
-    if mapped.name_type.is_some() {
-        return None;
-    }
-
-    let has_optional = mapped.optional_modifier == Some(MappedModifier::Add);
-    let has_readonly = mapped.readonly_modifier == Some(MappedModifier::Add);
-    let removes_optional = mapped.optional_modifier == Some(MappedModifier::Remove);
-    let removes_readonly = mapped.readonly_modifier == Some(MappedModifier::Remove);
-
-    // Check if template is X[K] where K is the iteration param (homomorphic form)
-    let (obj, idx) = index_access_parts(interner, mapped.template)?;
-    let param = type_param_info(interner, idx)?;
-    if param.name != mapped.type_param.name {
-        return None;
-    }
-
-    // Try to flatten through the source object if it's itself a mapped type.
-    // Evaluate first to normalize Application types (e.g. Application(Partial, [T]))
-    // to their Mapped form, so nested chains like Readonly<Partial<T>> flatten correctly.
-    let obj_eval = crate::evaluation::evaluate::evaluate_type(interner, obj);
-    if let Some(inner_mapped_id) = mapped_type_id(interner, obj_eval)
-        && let Some(inner) = flatten_mapped_chain(interner, inner_mapped_id)
-    {
-        return Some(FlattenedMapped {
-            source: inner.source,
-            key_constraint: mapped.constraint,
-            has_optional: if removes_optional {
-                false
-            } else {
-                has_optional || inner.has_optional
-            },
-            has_readonly: if removes_readonly {
-                false
-            } else {
-                has_readonly || inner.has_readonly
-            },
-        });
-    }
-
-    // Base case: source object is not a mapped type
-    Some(FlattenedMapped {
-        source: obj,
-        key_constraint: mapped.constraint,
-        has_optional,
-        has_readonly,
-    })
 }
 
 /// Check if a mapped type's `name_type` (as-clause) is a "filtering" conditional.

@@ -636,6 +636,15 @@ pub struct Printer<'a> {
     /// as `var _a, _b, ...;`. Used for assignment targets in helper expressions.
     pub(crate) hoisted_assignment_temps: Vec<String>,
 
+    /// Depth of converted-loop IIFE bodies currently being emitted. Greater than
+    /// zero while emitting directly inside a `_loop_N` body.
+    pub(crate) loop_iife_body_depth: u32,
+
+    /// Spread-call receiver temps (`var _a;`) that belong to the converted-loop
+    /// IIFE body currently being emitted, flushed at that body's top. Saved and
+    /// restored per IIFE so nested loops keep their own.
+    pub(crate) loop_iife_pending_hoisted_temps: Vec<String>,
+
     /// File-level class temps reserved ahead of legacy decorator computed-name temps.
     pub(crate) hoisted_file_level_class_temps: Vec<String>,
 
@@ -775,6 +784,11 @@ pub struct Printer<'a> {
     /// Whether the active ES5 `super` home is a static class member.
     pub(crate) es5_super_home_is_static: bool,
 
+    /// Whether the active ES5 `super` home is an object-literal member (method or
+    /// accessor). Object-literal super accesses bind directly to the literal's
+    /// `__proto__` and are emitted as `_super.X`, never `_super.prototype.X`.
+    pub(crate) es5_super_home_is_object_literal: bool,
+
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
 
@@ -806,6 +820,17 @@ pub struct Printer<'a> {
     /// When non-empty, property accesses with private identifiers are lowered to
     /// `__classPrivateFieldGet`/`__classPrivateFieldSet` helper calls.
     pub(crate) private_field_weakmaps: FxHashMap<String, String>,
+
+    /// File-wide uniquing set for generated private-element helper names.
+    /// Every generated private-helper variable name (WeakMap/WeakSet storage,
+    /// method/accessor function vars, class-identity prefixes) across all classes
+    /// in the same enclosing lexical scope is accumulated here so nested classes
+    /// that reuse a class name (`class A { #foo; constructor() { class A { #foo } } }`)
+    /// receive `_N`-suffixed helper names instead of colliding. Seeded once from
+    /// `collect_enclosing_source_binding_names`; kept and extended across sibling
+    /// classes; snapshot/restored around nested-class emission like
+    /// `private_field_weakmaps`.
+    pub(crate) generated_private_names: Option<FxHashSet<String>>,
 
     /// Private member kind info for ES2015-ES2021 lowering.
     /// Maps `field_name` (without `#`) → `PrivateMemberKind`.
@@ -847,6 +872,7 @@ pub struct Printer<'a> {
     pub(crate) private_members_to_skip: FxHashSet<String>,
 
     pub(crate) private_static_class_alias: Option<(String, String)>,
+    pub(crate) private_static_class_alias_shadow_depth: u32,
 
     /// When true, class emitter defers static block IIFEs.
     pub(crate) defer_class_static_blocks: bool,

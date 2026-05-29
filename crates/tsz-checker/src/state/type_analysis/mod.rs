@@ -12,6 +12,7 @@ mod computed_loops;
 mod core;
 mod core_type_query;
 pub(crate) mod cross_file;
+mod cross_file_alias_cycle;
 mod cross_file_cache;
 pub(crate) mod cross_file_direct;
 mod cross_file_direct_actual_lib;

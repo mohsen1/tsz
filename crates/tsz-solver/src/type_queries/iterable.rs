@@ -112,8 +112,12 @@ pub fn classify_full_iterable_type(db: &dyn TypeDatabase, type_id: TypeId) -> Fu
 pub enum AsyncIterableTypeKind {
     /// Union type - all members must be async iterable
     Union(Vec<TypeId>),
+    /// Intersection type - at least one member must be async iterable
+    Intersection(Vec<TypeId>),
     /// Object type - check for [Symbol.asyncIterator] method
     Object(crate::types::ObjectShapeId),
+    /// Type parameter - check constraint (apparent type) if present
+    TypeParameter { constraint: Option<TypeId> },
     /// Readonly wrapper - check inner type
     Readonly(TypeId),
     /// Not async iterable
@@ -121,6 +125,14 @@ pub enum AsyncIterableTypeKind {
 }
 
 /// Classify a type for async iterable checking.
+///
+/// Mirrors [`classify_full_iterable_type`] for the structural arms that need
+/// recursion in the checker (union, intersection, type parameter, readonly).
+/// `for await ... of` accepts a type parameter when its apparent type (the
+/// constraint, transitively) is async iterable, exactly like the sync
+/// `for ... of` path — so the `TypeParameter` arm carries the constraint
+/// instead of falling back to `[Symbol.asyncIterator]` property access on the
+/// bare parameter (which cannot see through a generic `Application` constraint).
 pub fn classify_async_iterable_type(
     db: &dyn TypeDatabase,
     type_id: TypeId,
@@ -137,8 +149,17 @@ pub fn classify_async_iterable_type(
             let members = db.type_list(members_id);
             AsyncIterableTypeKind::Union(members.to_vec())
         }
+        TypeData::Intersection(members_id) => {
+            let members = db.type_list(members_id);
+            AsyncIterableTypeKind::Intersection(members.to_vec())
+        }
         TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id) => {
             AsyncIterableTypeKind::Object(shape_id)
+        }
+        TypeData::TypeParameter(info) | TypeData::Infer(info) => {
+            AsyncIterableTypeKind::TypeParameter {
+                constraint: info.constraint,
+            }
         }
         TypeData::ReadonlyType(inner) => AsyncIterableTypeKind::Readonly(inner),
         _ => AsyncIterableTypeKind::NotAsyncIterable,

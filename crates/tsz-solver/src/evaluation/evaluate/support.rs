@@ -762,6 +762,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         !Self::is_opaque_under_bypass_eval(self.interner, members[i])
                             && checker.is_subtype_of(members[j], members[i])
                             && !Self::has_unique_properties_cached(&prop_names[i], &prop_names[j])
+                            // Index-signature guard: when member[i] carries an index
+                            // signature that member[j] lacks, member[i] is NOT redundant
+                            // even though its declared property set is structurally
+                            // subsumed. tsc keeps the index signature in the intersection
+                            // so that indexing the intersection by an unknown key still
+                            // returns the indexed value type. Dropping the member would
+                            // silently turn `{a: number} & Record<string, unknown>` into
+                            // `{a: number}` and emit false TS7053 / TS2536 diagnostics on
+                            // generic index accesses through that intersection.
+                            //
+                            // Mirrors the same guard in the SourceSubsumedByOther arm above
+                            // for unions — both directions must preserve members whose
+                            // index signature carries unique structural information.
+                            && !Self::has_index_signature_not_in(self.interner, members[i], members[j])
                             // Branded-primitive idiom: keep `{}` paired with a widening
                             // primitive intrinsic so `string & {}` (and friends) stay as
                             // Intersection rather than collapsing to the bare primitive.
@@ -892,14 +906,45 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// `[index: string]: T` can fail assignability to `{[index: string]: U}`
     /// even though the plain `{}` supertype passes. Preserving the index-signature
     /// member ensures tsz matches tsc's per-member union assignability semantics.
+    ///
+    /// In an intersection, the same guard prevents indexed-access on the
+    /// intersection from collapsing through a structurally-subsuming member that
+    /// lacks the index signature — e.g. `{a: number} & Record<string, unknown>`
+    /// must not simplify to `{a: number}`, since the indexability of the
+    /// intersection on a `string` key depends on the `Record` member's index
+    /// signature.
+    ///
+    /// Detects index signatures across the shapes the rest of the type system
+    /// treats as carrying one:
+    /// - `TypeData::ObjectWithIndex` — explicit string/number index signature.
+    /// - `TypeData::Mapped` — implicit string/number index from its constraint.
+    ///   Even an opaque deferred mapped acts as a string-indexed object in
+    ///   `classify_element_indexable`, so it must survive intersection
+    ///   simplification too.
+    /// - `TypeData::Callable` with a string/number index on its shape.
+    ///
+    /// Application / Lazy wrappers are intentionally NOT inspected here —
+    /// the existing `is_opaque_under_bypass_eval` guard at the call site
+    /// already preserves them, and forcing resolution from this hot path
+    /// would re-enter the evaluator with the wrong cache scope.
     fn has_index_signature_not_in(
         db: &dyn crate::caches::db::TypeDatabase,
         candidate: TypeId,
         subsuming: TypeId,
     ) -> bool {
-        let candidate_has_idx = matches!(db.lookup(candidate), Some(TypeData::ObjectWithIndex(_)));
-        let subsuming_has_idx = matches!(db.lookup(subsuming), Some(TypeData::ObjectWithIndex(_)));
-        candidate_has_idx && !subsuming_has_idx
+        Self::carries_index_signature(db, candidate)
+            && !Self::carries_index_signature(db, subsuming)
+    }
+
+    fn carries_index_signature(db: &dyn crate::caches::db::TypeDatabase, type_id: TypeId) -> bool {
+        match db.lookup(type_id) {
+            Some(TypeData::ObjectWithIndex(_) | TypeData::Mapped(_)) => true,
+            Some(TypeData::Callable(shape_id)) => {
+                let shape = db.callable_shape(shape_id);
+                shape.string_index.is_some() || shape.number_index.is_some()
+            }
+            _ => false,
+        }
     }
 
     /// Collect property name atoms from an object type into the provided set.

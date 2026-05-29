@@ -977,7 +977,7 @@ impl<'a> CheckerState<'a> {
             .any(|node_idx| self.type_node_contains_scoped_type_parameter_for_depth_check(node_idx))
     }
 
-    fn type_node_contains_scoped_type_parameter_for_depth_check(
+    pub(crate) fn type_node_contains_scoped_type_parameter_for_depth_check(
         &self,
         node_idx: NodeIndex,
     ) -> bool {

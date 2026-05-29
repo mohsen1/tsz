@@ -183,6 +183,24 @@ fn test_namespace_es5_enum_emit_lowered() {
 }
 
 #[test]
+fn test_namespace_es5_enum_empty_string_member_emitted() {
+    // The IR enum transformer (used for namespace-nested enums) must emit a
+    // member explicitly named with the empty string literal, whose name node is
+    // a `StringLiteral`, rather than dropping it as a parse-error recovery node.
+    // Vary the enum/namespace names vs. the conformance witness.
+    let output = transform_and_emit("namespace N { export enum Tag { Open, Close, \"\" } }");
+    assert!(
+        output.contains("Tag[Tag[\"\"] = 2] = \"\";"),
+        "namespace-nested empty-string member must emit reverse mapping, got:\n{output}"
+    );
+    assert!(
+        output.contains("Tag[Tag[\"Open\"] = 0] = \"Open\";")
+            && output.contains("Tag[Tag[\"Close\"] = 1] = \"Close\";"),
+        "surrounding members must still emit, got:\n{output}"
+    );
+}
+
+#[test]
 fn test_namespace_es5_exported_empty_namespace_skipped() {
     let ir = transform_namespace("export namespace M { }");
     assert!(

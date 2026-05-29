@@ -1180,3 +1180,149 @@ export class Person extends Base {
         "Expected inherited this-indexed method call surface: {output}"
     );
 }
+
+// =============================================================================
+// JS heritage references to imported / re-exported classes
+//
+// Structural rule: when a JS class `extends X` and `X` resolves (through an
+// import alias or `export =` re-export) to a class constructor — including the
+// classic `namespace N { class N {} } export = N` value-meaning merge — tsc
+// emits `extends X` directly instead of synthesizing a `declare const X_base`
+// alias. The synthetic `_base` alias is only for non-nameable heritage
+// expressions (mixin calls, anonymous constructors, `any` values, etc.).
+// =============================================================================
+
+#[test]
+fn test_js_extends_export_equals_namespace_class_merge_stays_nameable() {
+    // `import { EventEmitter }` resolves through `export = EventEmitter` to the
+    // namespace whose self-named member is `class EventEmitter`. Its value
+    // meaning is a class constructor, so no `_base` alias is synthesized.
+    let source = r#"
+declare module "events" {
+    namespace EventEmitter {
+        class EventEmitter {
+            constructor();
+        }
+    }
+    export = EventEmitter;
+}
+import { EventEmitter } from "events";
+export class Listener extends EventEmitter {
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+    assert!(
+        output.contains("export class Listener extends EventEmitter {"),
+        "Expected imported namespace+class merge heritage to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("Listener_base"),
+        "Did not expect a synthetic base alias for an imported class constructor: {output}"
+    );
+}
+
+#[test]
+fn test_js_extends_export_equals_namespace_class_merge_rename_independent() {
+    // Same rule, different identifier spellings: the match is structural
+    // (member name equals the namespace's own name), not keyed on a specific
+    // identifier such as `EventEmitter`.
+    let source = r#"
+declare module "ui-widget" {
+    namespace Gadget {
+        class Gadget {
+            constructor();
+        }
+    }
+    export = Gadget;
+}
+import { Gadget } from "ui-widget";
+export class Panel extends Gadget {
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+    assert!(
+        output.contains("export class Panel extends Gadget {"),
+        "Expected the rule to hold for arbitrary identifier spellings: {output}"
+    );
+    assert!(
+        !output.contains("Panel_base"),
+        "Did not expect a synthetic base alias for a renamed imported class: {output}"
+    );
+}
+
+#[test]
+fn test_js_extends_imported_nested_namespace_class_stays_nameable() {
+    // `import { Inner }` re-exported as `export = a.b` resolves to the class
+    // `Inner` declared in the nested namespace — a class constructor, so the
+    // heritage stays nameable.
+    let source = r#"
+declare module "nested-mod" {
+    namespace a.b {
+        class Inner { }
+    }
+    export = a.b;
+}
+import { Inner } from "nested-mod";
+export class Outer extends Inner {
+}
+"#;
+    let output = emit_js_dts_with_usage_analysis(source);
+    assert!(
+        output.contains("export class Outer extends Inner {"),
+        "Expected nested-namespace re-exported class heritage to stay nameable: {output}"
+    );
+    assert!(
+        !output.contains("Outer_base"),
+        "Did not expect a synthetic base alias for a nested re-exported class: {output}"
+    );
+}
+
+#[test]
+fn test_js_extends_imported_namespace_without_class_member_is_not_class_constructor() {
+    // Negative case: the imported namespace's self-named member is a *variable*,
+    // not a class, so its value meaning is NOT a class constructor. The new
+    // nameability rule keys on a class member, so it must not flip on here and
+    // produce a `class Probe` declaration in the heritage merge. (`tsc` would
+    // error on extending a non-constructor; we only assert tsz does not treat
+    // the value-meaning as a class.)
+    let with_class = emit_js_dts_with_usage_analysis(
+        r#"
+declare module "klass-mod" {
+    namespace Probe {
+        class Probe {
+            constructor();
+        }
+    }
+    export = Probe;
+}
+import { Probe } from "klass-mod";
+export class C1 extends Probe {
+}
+"#,
+    );
+    let with_value = emit_js_dts_with_usage_analysis(
+        r#"
+declare module "value-mod" {
+    namespace Probe {
+        let Probe: number;
+    }
+    export = Probe;
+}
+import { Probe } from "value-mod";
+export class C2 extends Probe {
+}
+"#,
+    );
+    // The class-member case stays nameable (no `_base` alias).
+    assert!(
+        with_class.contains("export class C1 extends Probe {") && !with_class.contains("C1_base"),
+        "Expected the class-member merge to keep heritage nameable: {with_class}"
+    );
+    // The non-class-member case must NOT be recognized by the class-constructor
+    // value-meaning rule: it does not get the nameable-class treatment that the
+    // class case does. The two outputs must differ in heritage handling.
+    assert!(
+        with_value.contains("C2_base") || !with_value.contains("extends Probe {"),
+        "Expected a non-class same-named member to not be treated as a class constructor: {with_value}"
+    );
+}

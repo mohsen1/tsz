@@ -264,9 +264,7 @@ pub(crate) fn add_reexported_module_augmentation_enum_conflict_diagnostics(
     }
 
     for result in file_results {
-        result
-            .diagnostics
-            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        result.diagnostics.sort_by(|a, b| a.compare(b));
     }
 }
 
@@ -405,9 +403,7 @@ pub(crate) fn add_parallel_global_augmentation_member_conflict_diagnostics(
     }
 
     for result in file_results {
-        result
-            .diagnostics
-            .sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+        result.diagnostics.sort_by(|a, b| a.compare(b));
         result
             .diagnostics
             .dedup_by(|a, b| a.start == b.start && a.code == b.code);

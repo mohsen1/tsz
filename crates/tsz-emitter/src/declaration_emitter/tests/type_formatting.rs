@@ -1761,48 +1761,42 @@ fn test_typeof_type() {
 // Parenthesized type preservation
 // =============================================================================
 
-/// tsc strips user-written parentheses from type annotations in the generated
-/// `.d.ts`. Parentheses are transparent in annotation positions (variable
-/// types, parameter types, return types); surrounding contexts re-add them
-/// only when operator precedence requires it.
+/// tsc strips *redundant* parentheses around atomic/simple type annotations
+/// (`var x: (string)` → `string`) but *preserves* them around composite types
+/// such as unions, intersections, conditionals, and tuples (see the
+/// `parenthesized_*` tests below and
+/// `tests::infer_paren_and_union_intersection`).
 
 #[test]
 fn parenthesized_simple_type_annotation_stripped() {
-    // Simple parenthesized primitive — e.g. `var x: (string)` → `string`
+    // Redundant parens around a primitive keyword are stripped:
+    // `var x: (string)` → `string`.
     let output = emit_dts("export declare var x: (string);");
     assert!(
-        output.contains("x: string"),
-        "Expected source parens stripped: {output}"
+        output.contains("x: string;") && !output.contains("(string)"),
+        "Expected redundant parens stripped around keyword type: {output}"
     );
-    assert!(
-        !output.contains("(string)"),
-        "Expected no bare annotation parens in output: {output}"
-    );
-    // Renamed variable — prove the rule is not spelling-dependent
+    // Renamed variable — prove the rule is not spelling-dependent.
     let output2 = emit_dts("export declare var value: (number);");
     assert!(
-        output2.contains("value: number"),
-        "Expected source parens stripped for number: {output2}"
+        output2.contains("value: number;") && !output2.contains("(number)"),
+        "Expected redundant parens stripped around keyword type (renamed): {output2}"
     );
 }
 
 #[test]
 fn parenthesized_union_type_annotation_stripped() {
-    // `(string | number)` as a variable annotation — parens stripped
+    // `(string | number)` as a variable annotation — parens preserved
     let out = emit_dts("export declare var x: (string | number);");
     assert!(
-        out.contains("x: string | number"),
-        "Expected parenthesized union parens stripped: {out}"
-    );
-    assert!(
-        !out.contains("x: (string | number)"),
-        "Expected no annotation parens in union variable: {out}"
+        out.contains("x: (string | number)"),
+        "Expected parenthesized union parens preserved: {out}"
     );
     // Same rule with different type names
     let out2 = emit_dts("export declare var y: (boolean | null);");
     assert!(
-        out2.contains("y: boolean | null"),
-        "Expected parenthesized union parens stripped for boolean|null: {out2}"
+        out2.contains("y: (boolean | null)"),
+        "Expected parenthesized union parens preserved for boolean|null: {out2}"
     );
 }
 
@@ -1867,24 +1861,16 @@ fn parenthesized_intersection_arm_no_double_parens() {
 
 #[test]
 fn parenthesized_function_param_and_return_type_stripped() {
-    // Parens on parameter and return type annotations are in annotation
-    // positions — tsc strips them; they carry no semantic meaning there.
+    // Parens on parameter and return type annotations are preserved verbatim
+    // by tsc; they carry no semantic meaning but are kept in the output.
     let out = emit_dts("export declare function f(x: (string | number)): (boolean | null);");
     assert!(
-        out.contains("x: string | number"),
-        "Expected parens stripped from param type: {out}"
+        out.contains("x: (string | number)"),
+        "Expected parens preserved on param type: {out}"
     );
     assert!(
-        out.contains("): boolean | null"),
-        "Expected parens stripped from return type: {out}"
-    );
-    assert!(
-        !out.contains("(string | number)"),
-        "Expected no bare annotation parens on param: {out}"
-    );
-    assert!(
-        !out.contains("(boolean | null)"),
-        "Expected no bare annotation parens on return: {out}"
+        out.contains("): (boolean | null)"),
+        "Expected parens preserved on return type: {out}"
     );
 }
 
@@ -1967,3 +1953,10 @@ fn mapped_type_named_tuple_union_as_clause_stays_inline() {
         "Named-tuple union in mapped-type as-clause must stay inline: {output}"
     );
 }
+
+// The end-to-end array-of-union parenthesization for inferred `.map()` return
+// types (e.g. `mapOnTupleTypes01`: `let d = numStr.map(x => x)` producing
+// `(string | number)[]`) needs the checker's resolved parameter types, so it
+// is covered by the emit-runner baseline rather than the no-type-info
+// `emit_dts` harness here. The structural parenthesization rule itself is unit
+// tested directly in `type_inference_object_rewrites::array_element_paren_tests`.

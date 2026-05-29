@@ -2424,11 +2424,10 @@ impl ScannerState {
 
         if self.pos + 4 <= self.end {
             let hex = self.substring(self.pos, self.pos + 4);
-            if let Ok(code) = u32::from_str_radix(&hex, 16) {
+            if hex.len() == 4 && hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                let code = u32::from_str_radix(&hex, 16).unwrap_or(0);
                 self.pos += 4;
-                if let Some(c) = char::from_u32(code) {
-                    return c.to_string();
-                }
+                return Self::decode_fixed_unicode_code_unit(code);
             }
             self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
             return String::from("\\u");
@@ -2436,6 +2435,24 @@ impl ScannerState {
 
         self.token_flags |= TokenFlags::ContainsInvalidEscape as u32;
         String::from("\\u")
+    }
+
+    /// Decode the cooked value of a fixed four-hex-digit `\uXXXX` escape.
+    ///
+    /// A fixed four-hex-digit escape always denotes a single UTF-16 code unit in
+    /// the BMP range `0x0000..=0xFFFF`, so it is always a *valid* escape — even
+    /// when the value is a lone surrogate code unit (`0xD800..=0xDFFF`). `tsc`
+    /// treats such escapes as valid with a real cooked value, so they must not
+    /// set `ContainsInvalidEscape` (which would force tagged-template lowering).
+    ///
+    /// Lone surrogate code units have no standalone Unicode scalar value, so
+    /// they cannot be stored verbatim in a UTF-8 cooked string; they are cooked
+    /// to the replacement character. The cooked text only feeds the downlevel
+    /// cooked array, which this classification now correctly avoids emitting.
+    fn decode_fixed_unicode_code_unit(code: u32) -> String {
+        char::from_u32(code)
+            .unwrap_or(char::REPLACEMENT_CHARACTER)
+            .to_string()
     }
 
     fn scan_template_brace_unicode_escape(&mut self) -> String {

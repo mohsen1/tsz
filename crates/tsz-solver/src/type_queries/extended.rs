@@ -1116,7 +1116,30 @@ pub enum ElementIndexableKind {
 }
 
 /// Classify a type for element indexing capability.
+///
+/// This is a convenience wrapper around [`classify_element_indexable_with_resolver`]
+/// that uses a [`NoopResolver`](crate::def::resolver::NoopResolver). Use the
+/// resolver-aware variant from the checker so that `Lazy(DefId)` and
+/// `Application` wrappers (e.g. `Record<string, V>`) can be expanded through
+/// the checker's [`TypeEnvironment`](crate::relations::subtype::TypeResolver).
 pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> ElementIndexableKind {
+    classify_element_indexable_with_resolver(db, &crate::def::resolver::NoopResolver, type_id)
+}
+
+/// Resolver-aware variant of [`classify_element_indexable`].
+///
+/// Threads the caller's [`TypeResolver`](crate::relations::subtype::TypeResolver)
+/// through to the evaluator so that `Application(Lazy(DefId), args)` shapes —
+/// the canonical form of `Record<K, V>`, user mapped aliases, `Partial<T>`,
+/// `Readonly<T>`, etc. — can be expanded to their structural mapped/object
+/// form before classification. Without a resolver these wrappers stay opaque
+/// and the classifier returns `Other`, producing false TS7053 diagnostics on
+/// type-parameter constraints that mention them.
+pub fn classify_element_indexable_with_resolver<R: crate::relations::subtype::TypeResolver>(
+    db: &dyn TypeDatabase,
+    resolver: &R,
+    type_id: TypeId,
+) -> ElementIndexableKind {
     // Check union on the RAW type BEFORE evaluation.
     // evaluate_type can collapse unions via subtype simplification
     // (e.g. `{ a: number } | { [s: string]: number }` becomes just the indexed type),
@@ -1129,7 +1152,7 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
 
     // Evaluate to resolve Lazy/Application/Conditional wrappers
     // to their underlying structural form (e.g., Application(Boxified, [T]) → Mapped).
-    let evaluated = crate::evaluation::evaluate::evaluate_type(db, type_id);
+    let evaluated = crate::evaluation::evaluate::evaluate_type_with_resolver(db, resolver, type_id);
     match db.lookup(evaluated) {
         Some(TypeData::Array(_)) => ElementIndexableKind::Array,
         Some(TypeData::Tuple(_)) => ElementIndexableKind::Tuple,
@@ -1198,9 +1221,9 @@ pub fn classify_element_indexable(db: &dyn TypeDatabase, type_id: TypeId) -> Ele
         Some(TypeData::Conditional(cond_id)) => {
             let cond = db.conditional_type(cond_id);
             if cond.false_type == TypeId::NEVER {
-                classify_element_indexable(db, cond.true_type)
+                classify_element_indexable_with_resolver(db, resolver, cond.true_type)
             } else if cond.true_type == TypeId::NEVER {
-                classify_element_indexable(db, cond.false_type)
+                classify_element_indexable_with_resolver(db, resolver, cond.false_type)
             } else {
                 ElementIndexableKind::Union(vec![cond.true_type, cond.false_type])
             }

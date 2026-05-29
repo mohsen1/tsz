@@ -1,6 +1,6 @@
 # TSZ Roadmap
 
-Date: 2026-05-27
+Date: 2026-05-28
 
 Status: single living roadmap. Keep durable architecture contracts in
 `docs/architecture/`, behavior specs in `docs/specs/`, product docs in
@@ -53,12 +53,12 @@ denominators.
 | Surface | Current |
 | --- | ---: |
 | Diagnostic conformance | `100.0%` exact (`12,582 / 12,582`) |
-| Accepted-regression strictness | `14` listed tests |
+| Accepted-regression strictness | `13` listed tests |
 | JavaScript emit | `96.8%` (`13,094 / 13,530`) in checked-in emit snapshot and README |
 | Declaration emit | `96.2%` (`1,606 / 1,669`) in checked-in emit snapshot and README |
 | Fourslash / language service | `99.9%` (`6,558 / 6,562`) |
-| Open bug issues | `40` open `bug` issues in live GitHub orientation |
-| Output-surgery audit | red: `1` unallowlisted call, `0` stale allowlist entries (`#10575`) |
+| Open bug issues | `37` open `bug` issues in live GitHub orientation |
+| Output-surgery audit | green: `0` unallowlisted calls, `0` stale allowlist entries; allowlist budget exhausted at `31 / 31` tracked calls |
 
 Conformance remains a hard regression gate. It is no longer the sole readiness
 signal. The primary readiness signal for this phase is whether tsz can
@@ -119,9 +119,10 @@ changes the picture.
    `1,606 / 1,669` in the checked-in snapshot and public README. DTS still
    needs to move away from late semantic discovery during printing toward a
    precomputed declaration/public-API summary.
-8. Output-surgery audit debt is no longer fully behind the allowlist: the
-   current audit reports `1` unallowlisted call and `0` stale allowlist entries,
-   tracked in `#10575`. Treat that as a guardrail for Studio-C/D/F emit work.
+8. Output-surgery audit is green again: the current audit reports `0`
+   unallowlisted calls and `0` stale allowlist entries. The allowlist budget is
+   still exhausted at `31 / 31` tracked calls, so Studio-C/D/F emit work should
+   pay down or justify existing entries before adding new output-surgery calls.
 9. Conformance is no longer the dominant progress signal but it remains a hard
    regression gate. The current diagnostic gap is zero tests; broad
    checker/solver changes must preserve that floor while moving project rows

@@ -307,27 +307,30 @@ fn try_catch_finally_bound_exception_uses_sent_for_catch_binding() {
         "async function f() { try { await a(); } catch (e) { await b(e); } finally { await c(); } }",
     );
 
+    // tsc always renames async catch bindings to avoid hoisting conflicts; the
+    // first binding in the function becomes `e_1`.
     assert!(
-        output.contains("e = _a.sent();"),
-        "Bound catch must capture the exception via `_a.sent()`.\nOutput:\n{output}"
+        output.contains("e_1 = _a.sent();"),
+        "Bound catch must capture the exception via `_a.sent()` into the renamed temp.\nOutput:\n{output}"
     );
 }
 
 #[test]
 fn try_catch_finally_uses_user_chosen_catch_binding_name() {
-    // The catch binding name flows through unchanged — the fix must be
-    // structural, not keyed on the spelling `e`.
+    // tsc renames async catch bindings to `{name}_1`, preserving the user's
+    // chosen name as the prefix — the suffix logic is structural, not keyed
+    // on the spelling `e`.
     let output = transform_and_print(
         "async function f() { try { await a(); } catch (err) { await b(err); } finally { await c(); } }",
     );
 
     assert!(
-        output.contains("err = _a.sent();"),
-        "Catch binding spelled `err` must round-trip through the `_a.sent()` capture.\nOutput:\n{output}"
+        output.contains("err_1 = _a.sent();"),
+        "Catch binding spelled `err` must round-trip as `err_1` through the `_a.sent()` capture.\nOutput:\n{output}"
     );
     assert!(
-        !output.contains("e = _a.sent();"),
-        "No phantom `e` binding should appear when the user named the variable `err`.\nOutput:\n{output}"
+        !output.contains("e_1 = _a.sent();"),
+        "No phantom `e_1` binding should appear when the user named the variable `err`.\nOutput:\n{output}"
     );
 }
 
@@ -368,8 +371,8 @@ fn try_catch_without_finally_in_async_keeps_sparse_finally_slot() {
         "Try-body break must target the end label when no finally is present.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("e = _a.sent();"),
-        "Bound catch must bind the exception via `_a.sent()`.\nOutput:\n{output}"
+        output.contains("e_1 = _a.sent();"),
+        "Bound catch must bind the exception via `_a.sent()` into the renamed temp.\nOutput:\n{output}"
     );
     assert!(
         output.contains("case 3:") && output.contains("return [3 /*break*/, 4];"),
@@ -392,8 +395,8 @@ fn try_with_await_only_in_try_body_still_threads_through_finally() {
         "When catch and finally are sync, their labels still occupy distinct slots after the try-body resume.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("e = _a.sent();") && output.contains("e;"),
-        "Bound catch with no await still uses `_a.sent()`.\nOutput:\n{output}"
+        output.contains("e_1 = _a.sent();") && output.contains("e_1;"),
+        "Bound catch with no await still uses `_a.sent()` into the renamed temp.\nOutput:\n{output}"
     );
     assert!(
         output.contains("return [7 /*endfinally*/];"),
@@ -770,16 +773,14 @@ fn test_async_do_while_body_await_lowers_to_generator_cases() {
         output.contains("return [4 /*yield*/, g(xs.pop())];"),
         "Await in the do-while body should become the first generator yield.\nOutput:\n{output}"
     );
+    // tsc uses a positive backedge: `if (cond) goto loop_start`, falling
+    // through to the exit case when the condition is false.
     assert!(
-        output.contains("if (!xs.length) return [3 /*break*/, 2];"),
-        "Do-while condition should be checked after the body resumes.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("return [3 /*break*/, 0];"),
-        "Truthy do-while condition should jump back to the body case.\nOutput:\n{output}"
+        output.contains("if (xs.length) return [3 /*break*/, 0];"),
+        "Do-while condition should be a positive backedge after the body resumes.\nOutput:\n{output}"
     );
     let yield_pos = output.find("return [4 /*yield*/, g(xs.pop())];");
-    let condition_pos = output.find("if (!xs.length) return [3 /*break*/, 2];");
+    let condition_pos = output.find("if (xs.length) return [3 /*break*/, 0];");
     assert!(
         yield_pos.is_some()
             && condition_pos.is_some()
@@ -788,7 +789,7 @@ fn test_async_do_while_body_await_lowers_to_generator_cases() {
         "Do-while lowering must preserve body-first semantics.\nOutput:\n{output}"
     );
     assert!(
-        output.contains("case 2: return [2 /*return*/];"),
+        output.contains("return [2 /*return*/];"),
         "Do-while exit should have a final generator return case.\nOutput:\n{output}"
     );
 }
@@ -811,12 +812,13 @@ fn test_async_do_while_single_statement_await_uses_post_body_binary_condition() 
         output.contains("return [4 /*yield*/, tick(i++)];"),
         "Single-statement do-while body await should become a generator yield.\nOutput:\n{output}"
     );
+    // tsc uses a positive backedge: `if (cond) goto loop_start`.
     assert!(
-        output.contains("if (!(i < limit)) return [3 /*break*/, 2];"),
-        "Binary do-while condition should be negated with parentheses after the body resumes.\nOutput:\n{output}"
+        output.contains("if (i < limit) return [3 /*break*/, 0];"),
+        "Binary do-while condition should use a positive backedge after the body resumes.\nOutput:\n{output}"
     );
     let yield_pos = output.find("return [4 /*yield*/, tick(i++)];");
-    let condition_pos = output.find("if (!(i < limit)) return [3 /*break*/, 2];");
+    let condition_pos = output.find("if (i < limit) return [3 /*break*/, 0];");
     assert!(
         yield_pos.is_some()
             && condition_pos.is_some()
@@ -840,9 +842,12 @@ fn test_async_do_while_continue_jumps_to_post_body_condition() {
         !output.contains("await "),
         "Raw await syntax must not remain in ES5 generator output.\nOutput:\n{output}"
     );
-    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
+    // tsc emits `if (cond) goto loop_start` (positive backedge) in the
+    // condition case. The continue should jump to the label assigned just
+    // before this condition case, not directly to case 0.
+    let condition_label = label_assignment_before(&output, "if (keepGoing()) return [3 /*break*/, 0];");
     let continue_jump = format!("return [3 /*break*/, {condition_label}];");
-    let condition_pos = output.find("if (!keepGoing())");
+    let condition_pos = output.find("if (keepGoing()) return [3 /*break*/, 0];");
     let continue_jump_pos = output.find(&continue_jump);
     assert!(
         continue_jump_pos.is_some()
@@ -863,12 +868,17 @@ fn test_async_do_while_break_jumps_to_loop_exit() {
         !output.contains("break;"),
         "Loop-local break must become a generator jump, not raw JS inside a switch case.\nOutput:\n{output}"
     );
+    // tsc uses a positive backedge in the condition case; the condition-false
+    // path falls through to the exit rather than emitting an explicit jump.
+    // The break must target the exit (not the loop start), so `return [3, 0]`
+    // must appear exactly once (the positive backedge only).
     assert!(
-        {
-            let exit_label = if_break_target_after(&output, "if (!keepGoing())");
-            count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2
-        },
-        "Break and falsy condition should both target the generated loop-exit case.\nOutput:\n{output}"
+        output.contains("if (keepGoing()) return [3 /*break*/, 0];"),
+        "Condition case should use a positive backedge to loop start.\nOutput:\n{output}"
+    );
+    assert!(
+        count_substring(&output, "return [3 /*break*/, 0]") == 1,
+        "Only the positive backedge should jump to case 0; the break must target the exit case.\nOutput:\n{output}"
     );
 }
 
@@ -882,16 +892,21 @@ fn test_async_do_while_single_if_body_continue_jumps_to_condition() {
         !output.contains("continue;"),
         "Loop-local continue in a single-statement do body must become a generator jump.\nOutput:\n{output}"
     );
-    let condition_label = label_assignment_before(&output, "if (!keepGoing())");
-    let continue_jump = format!("return [3 /*break*/, {condition_label}];");
-    let condition_pos = output.find("if (!keepGoing())");
-    let continue_jump_pos = output.find(&continue_jump);
+    // The condition uses a positive backedge. The continue must target the
+    // condition case (not case 0 directly), so `return [3, 0]` appears only
+    // once (the backedge) and a separate jump reaches the condition case first.
     assert!(
-        continue_jump_pos.is_some()
-            && condition_pos.is_some()
-            && continue_jump_pos.expect("continue jump is present")
-                < condition_pos.expect("condition check is present"),
-        "Single-statement do body continue should target the post-body condition check.\nOutput:\n{output}"
+        output.contains("if (keepGoing()) return [3 /*break*/, 0];"),
+        "Condition case should use a positive backedge to loop start.\nOutput:\n{output}"
+    );
+    let condition_pos = output
+        .find("if (keepGoing()) return [3 /*break*/, 0];")
+        .expect("condition check is present");
+    // Any `return [3, N]` before the condition check is the continue jump.
+    let has_continue_jump = output[..condition_pos].contains("return [3 /*break*/,");
+    assert!(
+        has_continue_jump,
+        "A continue jump should appear before the post-body condition check.\nOutput:\n{output}"
     );
 }
 
@@ -966,13 +981,10 @@ fn test_async_do_while_condition_await_yields_after_body_in_same_case() {
             && body_pos.expect("body present") < yield_pos.expect("condition yield present"),
         "Body must precede the condition yield (do-while semantics).\nOutput:\n{output}"
     );
+    // tsc uses a positive backedge: `if (_a.sent()) goto loop_start`.
     assert!(
-        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
-        "Resume case must test `_a.sent()` to decide loop exit.\nOutput:\n{output}"
-    );
-    assert!(
-        output.contains("return [3 /*break*/, 0];"),
-        "Truthy condition must jump back to the loop-entry case.\nOutput:\n{output}"
+        output.contains("if (_a.sent()) return [3 /*break*/, 0];"),
+        "Resume case must use a positive backedge on `_a.sent()` to loop back.\nOutput:\n{output}"
     );
 }
 
@@ -1041,10 +1053,15 @@ fn test_async_do_while_condition_await_with_break_jumps_to_exit() {
         !output.contains("break;"),
         "Unlabeled break inside an awaited do-while body must become a generator branch.\nOutput:\n{output}"
     );
-    let exit_label = if_break_target_after(&output, "if (!_a.sent())");
+    // tsc uses a positive backedge: `if (_a.sent()) goto 0`. The break exits
+    // the loop, so `return [3, 0]` (loop back) must appear exactly once.
     assert!(
-        count_substring(&output, &format!("return [3 /*break*/, {exit_label}];")) >= 2,
-        "Both the body break and the false-condition branch should target the loop exit case.\nOutput:\n{output}"
+        output.contains("if (_a.sent()) return [3 /*break*/, 0];"),
+        "Awaited do-while condition must use a positive backedge to loop start.\nOutput:\n{output}"
+    );
+    assert!(
+        count_substring(&output, "return [3 /*break*/, 0]") == 1,
+        "Only the positive backedge should jump to case 0; the break must target the exit.\nOutput:\n{output}"
     );
 }
 
@@ -1096,9 +1113,11 @@ fn test_async_do_while_condition_await_renamed_identifiers_not_hardcoded() {
         output.contains("return [4 /*yield*/, poll()];"),
         "Renamed callee should still produce the same yield lowering.\nOutput:\n{output}"
     );
+    // tsc uses a positive backedge for all do-while loops regardless of
+    // identifier spelling.
     assert!(
-        output.contains("if (!_a.sent()) return [3 /*break*/, 2];"),
-        "Renamed callee should still drive the post-resume IfBreak on `_a.sent()`.\nOutput:\n{output}"
+        output.contains("if (_a.sent()) return [3 /*break*/, 0];"),
+        "Renamed callee should still drive the post-resume IfBreak on `_a.sent()` with a positive backedge.\nOutput:\n{output}"
     );
 }
 

@@ -69,8 +69,17 @@ impl<'a> Printer<'a> {
                     return true;
                 }
             } else if !array.elements.nodes.is_empty() {
-                // All elements are NONE (elisions); check for newlines in the array body.
-                let end = std::cmp::min(node.end as usize, text.len());
+                // First element is NONE (elision); only the source span up to the first
+                // top-level comma belongs to the outer array's element separation. A
+                // newline nested inside a later element must not force the outer array
+                // to multi-line, so bound the scan to the first elided element's region.
+                // `find_comma_pos_after` must start *after* the opening `[` so the array's
+                // own bracket does not raise the nesting depth.
+                let scan_end = self
+                    .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                    .map(|c| c as usize)
+                    .unwrap_or(node.end as usize);
+                let end = std::cmp::min(scan_end, text.len());
                 if bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n') {
                     return true;
                 }
@@ -147,9 +156,16 @@ impl<'a> Printer<'a> {
                         let start = std::cmp::min(bracket_pos, end);
                         text[start..end].contains('\n')
                     } else {
-                        // NONE (elision) first element: check for newline in array body after '['
+                        // NONE (elision) first element: only scan the first elided element's
+                        // region (up to the first top-level comma), mirroring the multiline
+                        // detection above so a newline nested in a later element does not
+                        // count as the outer array's first element being on a new line.
                         let bracket_pos = self.skip_trivia_forward(node.pos, node.end) as usize;
-                        let end = std::cmp::min(node.end as usize, text.len());
+                        let scan_end = self
+                            .find_comma_pos_after(bracket_pos as u32 + 1, node.end)
+                            .map(|c| c as usize)
+                            .unwrap_or(node.end as usize);
+                        let end = std::cmp::min(scan_end, text.len());
                         bracket_pos + 1 < end && text[bracket_pos + 1..end].contains('\n')
                     }
                 } else {

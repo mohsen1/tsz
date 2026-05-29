@@ -118,14 +118,14 @@ fn test_optional_parenthesized_parameter_property_strips_annotation_parens() {
     "#,
     );
 
-    // tsc strips user-written parens from annotation positions.
+    // tsc preserves user-written parens from annotation positions verbatim.
     assert!(
-        output.contains("x?: string | undefined;"),
-        "Expected optional parameter property annotation parens stripped: {output}"
+        output.contains("x?: (string | undefined);"),
+        "Expected optional parameter property annotation parens preserved: {output}"
     );
     assert!(
-        output.contains("constructor(x?: string | undefined);"),
-        "Expected constructor parameter annotation parens stripped: {output}"
+        output.contains("constructor(x?: (string | undefined));"),
+        "Expected constructor parameter annotation parens preserved: {output}"
     );
     assert!(
         !output.contains("(string | undefined) | undefined"),

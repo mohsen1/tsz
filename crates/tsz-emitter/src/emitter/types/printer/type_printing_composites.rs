@@ -99,8 +99,13 @@ impl<'a> TypePrinter<'a> {
             // Parenthesize function/constructor types and conditional types in union position.
             // Conditional types need parens because `extends` binds more tightly than `|`:
             // `A | B extends C ? D : E` parses as `(A | B) extends C ? D : E`.
+            // Intersection members need parens so the grouping round-trips
+            // unambiguously: an intersection nested in a union (`A & B | C`)
+            // must render as `(A & B) | C`. Mirrors `print_intersection`,
+            // which parenthesizes nested unions.
             let part = if self.type_needs_parentheses_in_composition(type_id)
                 || visitor::conditional_type_id(self.interner, type_id).is_some()
+                || visitor::intersection_list_id(self.interner, type_id).is_some()
             {
                 format!("({s})")
             } else {

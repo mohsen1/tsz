@@ -1524,3 +1524,94 @@ interface I2 extends Foo {
         "Recovered return from erased interface type body should emit before the leftover semicolon.\nOutput:\n{output}"
     );
 }
+
+// =============================================================================
+// ES5 for-in destructuring head: synthetic `void 0` source materialization
+// =============================================================================
+//
+// Structural rule: an ES5 for-in head whose binding pattern has no real
+// iteration source synthesizes `void 0` as the source. tsc inlines the
+// parenthesized `(void 0)` directly into the single element/member access when
+// the pattern has exactly one element (the source is read once), and only falls
+// back to a shared `_x = void 0` source temp when the pattern has more than one
+// element (the source is read multiple times). The tests below vary the bound
+// names and the pattern shape so they prove the rule, not the spelling.
+
+#[test]
+fn es5_for_in_single_array_binding_with_default_inlines_void0() {
+    let source = "for (let [x = 'a' in {}] in { '': 0 }) console.log(x)";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0)[0]"),
+        "Single-element array for-in head should inline (void 0)[0].\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element array for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_single_object_binding_with_default_inlines_void0() {
+    // Renamed iteration variable (`y` not `x`) to prove the rule is structural.
+    let source = "for (let {y = 'a' in {}} in { '': 0 }) console.log(y)";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0).y"),
+        "Single-element object for-in head should inline (void 0).y.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element object for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_single_array_binding_no_default_inlines_void0() {
+    // Single element without a default still reads the source once -> inline.
+    let source = "for (var [first] in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("(void 0)[0]"),
+        "Single-element no-default array for-in head should inline (void 0)[0].\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("= void 0,"),
+        "Single-element for-in head must not allocate a source temp.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_multi_array_binding_uses_source_temp() {
+    // Two elements read the source twice, so tsc binds it to a shared temp.
+    let source = "for (var [a, b] in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("= void 0,"),
+        "Multi-element array for-in head should allocate a shared source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)["),
+        "Multi-element array for-in head must not inline the synthetic source.\nOutput:\n{output}"
+    );
+}
+
+#[test]
+fn es5_for_in_multi_object_binding_uses_source_temp() {
+    // Renamed members (`p`/`q`) prove the multi-element fallback is structural.
+    let source = "for (var {p, q} in []) {}";
+    let output = parse_and_emit_strict_target(source, "forin.ts", ScriptTarget::ES5);
+
+    assert!(
+        output.contains("= void 0,"),
+        "Multi-element object for-in head should allocate a shared source temp.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("(void 0)."),
+        "Multi-element object for-in head must not inline the synthetic source.\nOutput:\n{output}"
+    );
+}

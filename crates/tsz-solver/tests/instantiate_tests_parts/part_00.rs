@@ -882,6 +882,55 @@ fn test_substitution_from_args_circular_defaults_resolve_to_any() {
     assert_eq!(subst.get(u_name), Some(TypeId::ANY));
 }
 
+/// `from_args` must resolve an earlier-param-referencing default (`B = A`)
+/// independently for each call. Two independent instantiations of the same
+/// `<A, B = A>` parameter list with different first arguments must not let
+/// the default resolved for one call leak into the other — i.e. the defaults
+/// must not "bleed between independent branches" (mohsen1/tsz#11608).
+#[test]
+fn test_substitution_from_args_earlier_param_default_independent_per_call() {
+    let interner = TypeInterner::new();
+    let a_name = interner.intern_string("A");
+    let b_name = interner.intern_string("B");
+
+    // B defaults to A.
+    let a_type = interner.intern(TypeData::TypeParameter(TypeParamInfo {
+        name: a_name,
+        constraint: None,
+        default: None,
+        is_const: false,
+    }));
+    let type_params = vec![
+        TypeParamInfo {
+            name: a_name,
+            constraint: None,
+            default: None,
+            is_const: false,
+        },
+        TypeParamInfo {
+            name: b_name,
+            constraint: None,
+            default: Some(a_type), // B = A
+            is_const: false,
+        },
+    ];
+
+    // Branch 1: A = string -> B resolves to string.
+    let subst_str = TypeSubstitution::from_args(&interner, &type_params, &[TypeId::STRING]);
+    assert_eq!(subst_str.get(a_name), Some(TypeId::STRING));
+    assert_eq!(subst_str.get(b_name), Some(TypeId::STRING));
+
+    // Branch 2: A = number -> B resolves to number, independent of branch 1.
+    let subst_num = TypeSubstitution::from_args(&interner, &type_params, &[TypeId::NUMBER]);
+    assert_eq!(subst_num.get(a_name), Some(TypeId::NUMBER));
+    assert_eq!(subst_num.get(b_name), Some(TypeId::NUMBER));
+
+    // Re-resolving branch 1 after branch 2 must still yield string — there is
+    // no shared/cached default state across calls.
+    let subst_str_again = TypeSubstitution::from_args(&interner, &type_params, &[TypeId::STRING]);
+    assert_eq!(subst_str_again.get(b_name), Some(TypeId::STRING));
+}
+
 // ============================================
 // Template Literal Instantiation Tests
 // ============================================

@@ -900,7 +900,17 @@ impl ParserState {
             return self.arena.add_token(kind as u16, start_pos, end_pos);
         }
 
+        // A bare keyword type (`any`, `string`, `number`, ...) is parsed by tsc as a
+        // keyword-type node via `tryParse(parseKeywordAndNoDot)`, which never accepts
+        // type arguments. Only when the keyword is followed by `.` does tsc fall back
+        // to `parseTypeReference` (a dotted reference that may take type arguments).
+        // We keep the `TYPE_REFERENCE` node shape here but must reproduce that rule:
+        // suppress the `<...>` type-argument parse for a bare keyword type so a trailing
+        // `<` is left for its surrounding context (e.g. the relational `<` operator in
+        // `null as any < 1`) instead of being mis-parsed as a type-argument list.
+        let starts_with_keyword_type = self.is_keyword_type_token();
         let first_name = self.parse_type_identifier_or_keyword();
+        let is_bare_keyword_type = starts_with_keyword_type && !self.is_token(SyntaxKind::DotToken);
         let (type_name, jsdoc_type_arguments) = self.parse_qualified_name_rest(first_name);
         // Only parse type arguments if `<` is on the same line (no preceding line break).
         // A line break before `<` means it's a new construct (e.g., a call signature
@@ -909,10 +919,14 @@ impl ParserState {
         // `jsdoc_type_arguments` is Some when we already consumed `Foo.<T>` JSDoc-legacy
         // type arguments while walking the qualified-name rest — prefer those so the
         // caller sees a clean `Foo<T>` rather than a namespace access.
-        let type_arguments = jsdoc_type_arguments.or_else(|| {
-            (self.is_less_than_or_compound() && !self.scanner.has_preceding_line_break())
-                .then(|| self.parse_type_arguments())
-        });
+        let type_arguments = if is_bare_keyword_type {
+            None
+        } else {
+            jsdoc_type_arguments.or_else(|| {
+                (self.is_less_than_or_compound() && !self.scanner.has_preceding_line_break())
+                    .then(|| self.parse_type_arguments())
+            })
+        };
 
         self.arena.add_type_ref(
             syntax_kind_ext::TYPE_REFERENCE,
@@ -927,6 +941,28 @@ impl ParserState {
 
     const fn is_intrinsic_type_keyword(&self) -> bool {
         matches!(self.token(), SyntaxKind::VoidKeyword)
+    }
+
+    /// Whether the current token begins a built-in keyword type (`any`, `string`,
+    /// `number`, ...). These are matched by `SyntaxKind`, not by identifier text, so
+    /// the rule applies regardless of source spelling. tsc parses bare keyword types
+    /// as keyword-type nodes that never accept type arguments; `void` is handled
+    /// separately via [`Self::is_intrinsic_type_keyword`].
+    const fn is_keyword_type_token(&self) -> bool {
+        matches!(
+            self.token(),
+            SyntaxKind::AnyKeyword
+                | SyntaxKind::UnknownKeyword
+                | SyntaxKind::StringKeyword
+                | SyntaxKind::NumberKeyword
+                | SyntaxKind::BigIntKeyword
+                | SyntaxKind::SymbolKeyword
+                | SyntaxKind::BooleanKeyword
+                | SyntaxKind::ObjectKeyword
+                | SyntaxKind::UndefinedKeyword
+                | SyntaxKind::NeverKeyword
+                | SyntaxKind::NullKeyword
+        )
     }
 
     fn parse_primary_type_array_suffix(

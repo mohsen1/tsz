@@ -504,16 +504,47 @@ impl<'a> Printer<'a> {
             let Some(pattern_node) = self.arena.get(pattern_idx) else {
                 continue;
             };
-            let temp_name = self.get_temp_var_name();
-            if !first {
-                self.write(", ");
+            // There is no real iteration source here (the binding pattern has
+            // no initializer), so the synthetic source is `void 0`. tsc binds
+            // that source to a temp only when the destructuring reads it more
+            // than once, i.e. when the pattern has more than one element. For a
+            // single-element pattern the source is referenced exactly once, so
+            // tsc inlines the parenthesized `(void 0)` directly into that one
+            // element/member access instead of allocating a source temp:
+            //   `for (var _a = (void 0)[0], x = _a === void 0 ? ... : _a ...)`
+            //   `for (var _b = (void 0).x,  x = _b === void 0 ? ... : _b ...)`
+            // Multi-element patterns keep the shared source temp so the source
+            // is evaluated once:
+            //   `for (var _a = void 0, a = _a[0], b = _a[1] in [])`
+            if self.binding_pattern_has_single_element(pattern_node) {
+                self.emit_es5_destructuring_pattern_direct(pattern_node, "(void 0)", &mut first);
+            } else {
+                let temp_name = self.get_temp_var_name();
+                if !first {
+                    self.write(", ");
+                }
+                first = false;
+                self.write(&temp_name);
+                self.write(" = void 0");
+                self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
             }
-            first = false;
-            self.write(&temp_name);
-            self.write(" = void 0");
-            self.emit_es5_destructuring_pattern(pattern_node, &temp_name);
         }
         true
+    }
+
+    /// Returns true when an object/array binding pattern declares exactly one
+    /// element. tsc only inlines a single-use destructuring source (and skips
+    /// the shared source temp) when the pattern reads the source exactly once,
+    /// which corresponds to a single-element pattern.
+    fn binding_pattern_has_single_element(&self, pattern_node: &Node) -> bool {
+        if pattern_node.kind != syntax_kind_ext::OBJECT_BINDING_PATTERN
+            && pattern_node.kind != syntax_kind_ext::ARRAY_BINDING_PATTERN
+        {
+            return false;
+        }
+        self.arena
+            .get_binding_pattern(pattern_node)
+            .is_some_and(|pattern| pattern.elements.nodes.len() == 1)
     }
 
     pub(in crate::emitter) fn emit_for_of_statement(&mut self, node: &Node) {

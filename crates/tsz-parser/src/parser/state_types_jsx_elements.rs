@@ -1624,12 +1624,13 @@ impl ParserState {
         // In JSX mode, </ is scanned as a single LessThanSlashToken
         self.parse_expected(SyntaxKind::LessThanSlashToken);
         if !self.is_js_file() && !self.is_token(SyntaxKind::GreaterThanToken) {
-            if self.is_token(SyntaxKind::Identifier) {
-                self.next_token();
-            }
-            if self.is_token(SyntaxKind::GreaterThanToken) {
-                self.next_token();
-            }
+            // A fragment closed by a mismatched NAMED tag (e.g. `<>...</div>`).
+            // tsc mirrors `parseExpected(GreaterThanToken, /*shouldAdvance*/ false)`
+            // here: the missing `>` is reported non-advancingly (the diagnostics
+            // are emitted by the caller's malformed-closing-fragment recovery), and
+            // the unexpected tag tokens (`div`, `>`) are left UNCONSUMED so they
+            // reparse as the following statement (`div > ...`). Consuming them would
+            // swallow the trailing expression and drop the TS2304 name reference.
             return self.arena.add_token(
                 syntax_kind_ext::JSX_CLOSING_FRAGMENT,
                 start_pos,

@@ -252,8 +252,9 @@ impl Server {
                 .map(to_lsp_diag)
                 .collect();
             if filtered_diagnostics.is_empty()
-                && error_codes
-                    .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME)
+                && (error_codes.is_empty()
+                    || error_codes
+                        .contains(&tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME))
                 && request_span.is_some_and(|(start, end)| {
                     start == end && start.line == 0 && start.character == 0
                 })
@@ -1731,20 +1732,32 @@ impl Server {
             return vec![];
         }
 
-        // Find TS9010 diagnostic at the requested span (if any)
-        let Some(diag) = diagnostics.iter().find(|d| {
+        // Determine the offset for the variable name. Prefer a server-generated
+        // TS9010 diagnostic (exact name position); fall back to the client-supplied
+        // request span when the server did not emit TS9010 (e.g. because
+        // isolatedDeclarations is not enabled in the server's inferred options but
+        // the client reports the diagnostic at a known span).
+        let name_offset: u32 = if let Some(diag) = diagnostics.iter().find(|d| {
             d.code == TS9010
                 && request_span.is_none_or(|(start, end)| {
                     let diag_pos = line_map.offset_to_position(d.start, content);
                     let diag_end = line_map.offset_to_position(d.start + d.length, content);
                     positions_overlap(start, end, diag_pos, diag_end)
                 })
-        }) else {
+        }) {
+            diag.start
+        } else if let Some((span_start, _)) = request_span {
+            // Client-provided span: convert line/col position to byte offset.
+            let Some(offset) = line_map.position_to_offset(span_start, content) else {
+                return vec![];
+            };
+            offset
+        } else {
             return vec![];
         };
 
-        // Find the name identifier at the diagnostic start position
-        let name_idx = tsz::lsp::utils::find_node_at_offset(arena, diag.start);
+        // Find the name identifier at the variable name offset
+        let name_idx = tsz::lsp::utils::find_node_at_offset(arena, name_offset);
         if name_idx.is_none() {
             return vec![];
         }

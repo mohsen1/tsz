@@ -79,6 +79,10 @@ pub struct IRPrinter<'a> {
     system_import_meta: bool,
     pub(crate) base_printer_options: Option<PrinterOptions>,
     generator_state_name: &'static str,
+    /// Outer names (e.g. a class-expression alias) excluded from generator state
+    /// variable selection.  Treated as already-allocated hoisted vars so the
+    /// state-name picker skips past them.
+    outer_reserved_for_generator_state: Vec<String>,
     namespace_ast_name: Option<String>,
     namespace_ast_exported_names: rustc_hash::FxHashSet<String>,
     block_scope_shadowed_names: Vec<String>,
@@ -310,6 +314,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
@@ -340,6 +345,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
@@ -370,6 +376,7 @@ impl<'a> IRPrinter<'a> {
             system_import_meta: false,
             base_printer_options: None,
             generator_state_name: "_a",
+            outer_reserved_for_generator_state: Vec::new(),
             namespace_ast_name: None,
             namespace_ast_exported_names: rustc_hash::FxHashSet::default(),
             block_scope_shadowed_names: Vec::new(),
@@ -488,6 +495,11 @@ impl<'a> IRPrinter<'a> {
 
     pub const fn set_generator_state_name(&mut self, name: &'static str) {
         self.generator_state_name = name;
+    }
+
+    /// Set names that must not be chosen as the `__generator` state variable.
+    pub fn set_outer_reserved_for_generator_state(&mut self, names: Vec<String>) {
+        self.outer_reserved_for_generator_state = names;
     }
 
     /// When true, suppress comment annotations like `/** @class */` in output.

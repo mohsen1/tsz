@@ -262,6 +262,7 @@ mod emit_node;
 mod function_analysis;
 mod generic_call_literal;
 mod generic_call_mapped_inference;
+mod generic_call_variadic_tuple;
 mod js_exports;
 mod js_exports_local;
 mod js_exports_namespace;

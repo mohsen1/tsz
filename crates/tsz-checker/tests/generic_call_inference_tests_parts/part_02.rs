@@ -1240,3 +1240,40 @@ branch({
         "primitive literal covariant evidence should be probed as the literal, not widened past its union constraint. Got: {diags:#?}"
     );
 }
+
+#[test]
+fn contextual_generic_builder_chain_preserves_indexed_selection() {
+    // Kysely-style builder reduction from #8773: each chained method call must
+    // keep the selected schema/table instantiation while indexing into `S[K]`.
+    let source = r#"
+type Schema = {
+    user: { id: number; name: string };
+    post: { id: number; userId: number };
+};
+
+declare function build<S, K extends keyof S>(
+    key: K,
+): {
+    select<P extends keyof S[K]>(prop: P): S[K][P];
+};
+
+const userId = build<Schema, "user">("user").select("id");
+const userName = build<Schema, "user">("user").select("name");
+const postUserId = build<Schema, "post">("post").select("userId");
+
+const _userId: number = userId;
+const _userName: string = userName;
+const _postUserId: number = postUserId;
+const bad: string = postUserId;
+"#;
+    let diags = relevant_diagnostics(source);
+    assert_eq!(
+        diagnostic_count(&diags, 2322),
+        1,
+        "post.userId should be number, so only the final string assignment should fail. Got: {diags:#?}"
+    );
+    assert!(
+        lacks_any_diagnostic_code(&diags, &[2339, 2344, 2345, 7006]),
+        "builder-chain contextual instantiation should not lose table keys or callback context. Got: {diags:#?}"
+    );
+}

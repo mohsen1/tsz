@@ -364,6 +364,14 @@ impl<'a> CheckerState<'a> {
     /// Tracks visited `DefIds` (type alias identities) rather than `TypeIds`, since
     /// a recursive type alias like `type T1 = 1 | Promise<T1>` produces
     /// different `TypeIds` at different evaluation stages but shares the same DefId.
+    ///
+    /// A `Lazy(DefId)` re-visit is only treated as a cycle for *non-generic*
+    /// definitions. For a generic alias the bare `Lazy` carries no type arguments,
+    /// so re-encountering the same `DefId` while walking its un-instantiated body
+    /// does not prove that any concrete instantiation diverges; tsc resolves those
+    /// instantiations and only errors when the same instantiation actually recurs
+    /// (which is caught structurally by the `inner == type_id` checks below on the
+    /// instantiated `Application`).
     fn has_promise_fulfillment_cycle(
         &mut self,
         type_id: TypeId,
@@ -379,7 +387,7 @@ impl<'a> CheckerState<'a> {
             query::classify_promise_type(self.ctx.types, type_id)
         {
             if !visited_defs.insert(def_id) {
-                return true;
+                return self.def_revisit_is_genuine_cycle(def_id);
             }
             if let Some(body) = self.ctx.definition_store.get_body(def_id) {
                 return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
@@ -401,7 +409,7 @@ impl<'a> CheckerState<'a> {
                 query::classify_promise_type(self.ctx.types, target)
         {
             if !visited_defs.insert(def_id) {
-                return true;
+                return self.def_revisit_is_genuine_cycle(def_id);
             }
             if let Some(body) = self.ctx.definition_store.get_body(def_id) {
                 return self.has_promise_fulfillment_cycle(body, visited_defs, depth + 1);
@@ -433,5 +441,16 @@ impl<'a> CheckerState<'a> {
         }
 
         false
+    }
+
+    /// A re-visited `Lazy(DefId)` only proves a fulfillment cycle when the
+    /// definition is non-generic. A generic alias reached as a bare `Lazy`
+    /// (no type arguments) may still terminate once instantiated, so re-seeing
+    /// its `DefId` while walking the un-instantiated body is inconclusive.
+    fn def_revisit_is_genuine_cycle(&self, def_id: tsz_solver::def::DefId) -> bool {
+        self.ctx
+            .definition_store
+            .get_type_params(def_id)
+            .is_none_or(|params| params.is_empty())
     }
 }

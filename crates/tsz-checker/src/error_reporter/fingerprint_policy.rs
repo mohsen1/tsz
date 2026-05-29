@@ -53,6 +53,9 @@ impl RelatedInformationPolicy {
         limit: None,
     };
 
+    /// Demote a diagnostic's primary message into the related chain, keeping any
+    /// existing deeper entries. Used when a specific assignability failure (e.g.
+    /// TS2741 missing property) must be nested beneath a wrapping head message.
     pub(crate) const WRAPPED_DIAGNOSTIC: Self = Self {
         include_primary: true,
         dedupe: true,
@@ -533,6 +536,9 @@ impl<'a> CheckerState<'a> {
                 ]
             }
             SubtypeFailureReason::OptionalPropertyRequired { property_name } => {
+                // Present-but-optional source property assigned to a required
+                // target: tsc reports TS2327 ("is optional ... but required"),
+                // not the absent-property message TS2741.
                 let src_str = self.format_type_for_diagnostic_role(
                     source,
                     DiagnosticTypeDisplayRole::DefaultDiagnostic,
@@ -545,12 +551,12 @@ impl<'a> CheckerState<'a> {
                     self.finalize_pair_display_for_diagnostic(source, target, src_str, tgt_str);
                 vec![DiagnosticRelatedInformation {
                     category: DiagnosticCategory::Error,
-                    code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                    code: diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                     file: self.ctx.file_name.clone(),
                     start,
                     length,
                     message_text: format_message(
-                        diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                        diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                         &[
                             &self.ctx.types.resolve_atom_ref(*property_name),
                             &src_str,

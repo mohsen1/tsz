@@ -27,8 +27,40 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [[test]]
+name = "es5_super_object_literal_accessor_tests"
+path = "tests/es5_super_object_literal_accessor_tests.rs"
+
+[[test]]
+name = "super_missing_member_recovery_tests"
+path = "tests/super_missing_member_recovery_tests.rs"
+
+[[test]]
+name = "class_temp_dedup_hoist_buckets_tests"
+path = "tests/class_temp_dedup_hoist_buckets_tests.rs"
+
+[[test]]
+name = "enum_int32_shift_fold_tests"
+path = "tests/enum_int32_shift_fold_tests.rs"
+
+[[test]]
+name = "enum_metadata_number_tests"
+path = "tests/enum_metadata_number_tests.rs"
+
+[[test]]
+name = "private_element_naming_tests"
+path = "tests/private_element_naming_tests.rs"
+
+[[test]]
 name = "comment_tests"
 path = "tests/comment_tests.rs"
+
+[[test]]
+name = "async_awaiter_body_trailing_comment_tests"
+path = "tests/async_awaiter_body_trailing_comment_tests.rs"
+
+[[test]]
+name = "tc39_decorator_extends_multiline_reindent_tests"
+path = "tests/tc39_decorator_extends_multiline_reindent_tests.rs"
 
 [[test]]
 name = "async_method_super_write_tests"
@@ -47,12 +79,20 @@ name = "computed_property_es5_tests"
 path = "tests/computed_property_es5_tests.rs"
 
 [[test]]
+name = "computed_name_no_init_define_field_tests"
+path = "tests/computed_name_no_init_define_field_tests.rs"
+
+[[test]]
 name = "jsx_spread_tests"
 path = "tests/jsx_spread_tests.rs"
 
 [[test]]
 name = "parenthesized_iife_tests"
 path = "tests/parenthesized_iife_tests.rs"
+
+[[test]]
+name = "namespace_iife_param_nonbinding_tests"
+path = "tests/namespace_iife_param_nonbinding_tests.rs"
 
 [[test]]
 name = "export_equals_type_only_namespace"
@@ -133,6 +173,10 @@ path = "tests/cjs_clause_export_live_binding_tests.rs"
 [[test]]
 name = "destructuring_es5_array_nested_order_tests"
 path = "tests/destructuring_es5_array_nested_order_tests.rs"
+
+[[test]]
+name = "destructuring_assignment_es5_shorthand_default_tests"
+path = "tests/destructuring_assignment_es5_shorthand_default_tests.rs"
 
 [[test]]
 name = "destructuring_downlevel_iteration_read_tests"
@@ -225,6 +269,18 @@ path = "tests/async_loop_emit.rs"
 [[test]]
 name = "while_loop_body_capture_tests"
 path = "tests/while_loop_body_capture_tests.rs"
+
+[[test]]
+name = "ternary_trailing_comment_tests"
+path = "tests/ternary_trailing_comment_tests.rs"
+
+[[test]]
+name = "wave3_small_emit_fixes_tests"
+path = "tests/wave3_small_emit_fixes_tests.rs"
+
+[[test]]
+name = "legacy_decorator_member_order_tests"
+path = "tests/legacy_decorator_member_order_tests.rs"
 
 [lints]
 workspace = true
