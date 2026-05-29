@@ -685,6 +685,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut members = Vec::new();
+        let mut emitted_index_signatures = false;
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -692,6 +693,26 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
                 continue;
             };
+
+            // A computed key whose expression cannot be reproduced as a literal
+            // property name (e.g. `[this.a]`) is not a named member in tsc's
+            // output. tsc represents it through the object's synthesized index
+            // signature, so emit that solver-derived signature instead of the
+            // raw source slice. Each index signature is emitted once even when
+            // several members share the same non-nameable key shape.
+            if self.is_non_nameable_computed_member_key(name_idx) {
+                if !emitted_index_signatures
+                    && let Some(index_entries) =
+                        self.object_literal_synthesized_index_signature_entries(object_expr_idx)
+                {
+                    for entry in index_entries {
+                        members.push(ObjectTypeLiteralEntry::Raw(entry));
+                    }
+                    emitted_index_signatures = true;
+                }
+                continue;
+            }
+
             let Some(name) = self.object_literal_member_name_text(name_idx) else {
                 continue;
             };
