@@ -647,9 +647,16 @@ impl ParserState {
         // Skip identifier
         self.next_token();
 
-        // Check if => follows the identifier. Line breaks before => are
-        // allowed here — TS1200 will be emitted during actual parsing.
-        let is_arrow = self.is_token(SyntaxKind::EqualsGreaterThanToken);
+        // For simple (non-parenthesized) arrow parameters, a line terminator between
+        // the parameter and `=>` prevents arrow function parsing. ECMAScript and
+        // TypeScript apply ASI so `x` terminates as its own expression statement,
+        // and the `=>` on the following line is a parse error.
+        //
+        // This is different from parenthesized params `(x)\n=>` where the parentheses
+        // are unambiguous — those are handled by `look_ahead_is_arrow_function` which
+        // correctly accepts the line break and later reports TS1200.
+        let is_arrow = !self.scanner.has_preceding_line_break()
+            && self.is_token(SyntaxKind::EqualsGreaterThanToken);
 
         self.scanner.restore_state(snapshot);
         self.current_token = current;

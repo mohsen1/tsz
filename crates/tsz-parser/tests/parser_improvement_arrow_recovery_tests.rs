@@ -461,3 +461,53 @@ fn test_missing_function_parameter_comma_before_arrow_is_not_suppressed() {
         "Expected missing comma at the arrow token, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn simple_arrow_with_line_break_before_arrow_is_not_parsed_as_arrow_function() {
+    // ECMAScript disallows a line terminator between a simple (non-parenthesized)
+    // arrow parameter and `=>`. The identifier `x` should terminate as an expression
+    // statement via ASI, and `=> body` on the next line should produce a parse error.
+    let source = "x\n=> body;\n";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let source_file = arena.get_source_file_at(root).unwrap();
+    // tsc produces two expression statements, not one arrow function expression
+    assert!(
+        source_file.statements.nodes.len() >= 2,
+        "Line break before `=>` in simple arrow prevents arrow function parsing; \
+         expected >=2 statements (x; and => body;), got {} statements",
+        source_file.statements.nodes.len()
+    );
+
+    // No statement should be an arrow function expression wrapping `x`
+    for &stmt_idx in &source_file.statements.nodes {
+        if let Some(stmt_node) = arena.get(stmt_idx) {
+            assert_ne!(
+                stmt_node.kind,
+                crate::parser::syntax_kind_ext::ARROW_FUNCTION,
+                "Statement should not be a bare arrow function when line break precedes `=>`"
+            );
+        }
+    }
+}
+
+#[test]
+fn parenthesized_arrow_with_line_break_before_arrow_is_parsed_as_arrow_function() {
+    // Unlike simple arrows, a line terminator between `(x)` and `=>` is allowed.
+    // tsc reports TS1200 but still parses it as an arrow function.
+    let source = "(x)\n=> x;\n";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let source_file = arena.get_source_file_at(root).unwrap();
+    // tsc parses `(x)\n=> x` as an arrow function expression (with TS1200)
+    // and keeps it in a single expression statement
+    assert_eq!(
+        source_file.statements.nodes.len(),
+        1,
+        "Parenthesized arrow with line break before `=>` should still parse as one statement, \
+         got {} statements",
+        source_file.statements.nodes.len()
+    );
+}
