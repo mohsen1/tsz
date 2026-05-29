@@ -483,10 +483,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
     def _generic_call_resolver_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == (
-                "Solver engine boundary: generic call resolver must stay at "
-                "current 3381 LOC baseline (#8209)"
-            ):
+            if "generic call resolver" in name and "#8209" in name:
                 return path, limit
         self.fail(
             "generic call resolver size boundary check is missing from "
@@ -495,7 +492,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._generic_call_resolver_size_check()
-        self.assertEqual(limit, 3381)
+        self.assertEqual(limit, 3378)
         self.assertTrue(
             str(path).endswith(
                 "crates/tsz-solver/src/operations/generic_call/resolve.rs"

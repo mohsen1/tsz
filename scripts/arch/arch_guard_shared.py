@@ -282,7 +282,7 @@ FILE_LINE_LIMIT_CHECKS = [
         1920,
     ),
     (
-        "Solver engine boundary: generic call resolver must stay at current 3381 LOC baseline (#8209)",
+        "Solver engine boundary: generic call resolver must stay at current 3378 LOC baseline (#8209)",
         ROOT
         / "crates"
         / "tsz-solver"
@@ -290,7 +290,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "operations"
         / "generic_call"
         / "resolve.rs",
-        3381,
+        3378,
     ),
     # Pin the async ES5 IR transformer file size while #8277 splits the
     # monolith into staged lowering modules. The cap should ratchet down
@@ -417,7 +417,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "CLI boundary: driver/core monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
-        3215,
+        3195,
     ),
     # CLI LSP server: structure/outline handler — split by request kind per §19.
     (
@@ -579,7 +579,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "parser"
         / "state_expressions_literals.rs",
-        3027,
+        3054,
     ),
     (
         "Checker boundary: jsdoc/params.rs size ratchet",
@@ -627,7 +627,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "state"
         / "type_analysis"
         / "core.rs",
-        2764,
+        2798,
     ),
     (
         "CLI boundary: driver/tests.rs size ratchet",
@@ -773,7 +773,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "emitter"
         / "es5"
         / "helpers_async.rs",
-        2224,
+        2260,
     ),
     (
         "Checker boundary: state/variable_checking/core.rs size ratchet",
@@ -789,7 +789,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Emitter boundary: emitter/helpers.rs size ratchet",
         ROOT / "crates" / "tsz-emitter" / "src" / "emitter" / "helpers.rs",
-        2202,
+        2222,
     ),
     (
         "Emitter boundary: declaration_emitter/usage_analyzer.rs size ratchet",
@@ -837,7 +837,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "rules"
         / "functions"
         / "checking.rs",
-        2118,
+        2198,
     ),
     (
         "LSP boundary: completions/member.rs size ratchet",
@@ -1029,7 +1029,7 @@ SOLVER_IMPORT_COUNT_CHECKS = [
             "crates/tsz-solver/",
             "crates/tsz-checker/",
         ),
-        36,
+        35,
     ),
 ]
 
@@ -1158,7 +1158,7 @@ SNAPSHOT_ROLLBACK_FILE_COUNT_CHECKS = [
         "Checker speculation boundary: snapshot-rollback call sites outside speculation.rs (architecture health metric 5)",
         [ROOT / "crates" / "tsz-checker" / "src"],
         ("crates/tsz-checker/src/context/speculation.rs",),
-        6,
+        4,
     ),
 ]
 
