@@ -91,7 +91,17 @@ fn transform_enum_members(
         };
 
         let member_name = crate::transforms::emit_utils::enum_member_name(arena, member_data.name);
-        if member_name.is_empty() {
+        // An empty resolved name means either a legitimate empty string-literal
+        // member (`enum E { "" }`, whose name node is a `StringLiteral`/
+        // `NoSubstitutionTemplateLiteral`) or a parse-error recovery node (an
+        // empty `Identifier`, e.g. from an invalid character). tsc emits the
+        // former (`E[E[""] = n] = "";`) and discards the latter. Distinguish by
+        // the name node's syntax kind, not by the resolved text.
+        let is_string_literal_name = arena.get(member_data.name).is_some_and(|n| {
+            n.kind == SyntaxKind::StringLiteral as u16
+                || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+        });
+        if member_name.is_empty() && !is_string_literal_name {
             continue;
         }
 

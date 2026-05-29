@@ -530,13 +530,29 @@ impl<'a> EnumES5Transformer<'a> {
             // Skip members whose name resolved to empty and are not a
             // `PrivateIdentifier` (which gets its own error-recovery emit path).
             // This covers parse-error recovery nodes such as invalid characters
-            // (e.g. `¬`) inside an enum body: tsc discards those members entirely
-            // rather than emitting a spurious `E[E[""] = 0] = "";` line.
+            // (e.g. `¬`) inside an enum body: those recover into an empty
+            // `Identifier` node, and tsc discards the member entirely rather
+            // than emitting a spurious `E[E[""] = 0] = "";` line.
+            //
+            // A member explicitly named with the empty string literal
+            // (`enum E { "" }`) is a *legitimate* member whose name node is a
+            // `StringLiteral`/`NoSubstitutionTemplateLiteral`. tsc emits it as
+            // `E[E[""] = n] = "";`, so we must not treat that empty name as a
+            // recovery node. Distinguish by the name node's syntax kind, not by
+            // the resolved text.
             let is_private_identifier = self
                 .arena
                 .get(member_data.name)
                 .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
-            if member_name.is_empty() && !is_computed && !is_private_identifier {
+            let is_string_literal_name = self.arena.get(member_data.name).is_some_and(|n| {
+                n.kind == SyntaxKind::StringLiteral as u16
+                    || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            });
+            if member_name.is_empty()
+                && !is_computed
+                && !is_private_identifier
+                && !is_string_literal_name
+            {
                 continue;
             }
 
