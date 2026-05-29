@@ -7,8 +7,12 @@
 //! - **Enum nominality**: Different enums are not assignable even if structurally
 //!   identical. String enums are strictly nominal; numeric enums allow number
 //!   assignability.
-//! - **Private brand checking**: Classes with private/protected fields use nominal
-//!   typing — the `parent_id` on each property must match exactly.
+//! - **Private brand checking**: Classes with private/protected fields use
+//!   nominal typing. `private` requires an exact `parent_id` match (declaration
+//!   identity); `protected` is hierarchical — the source property's declaring
+//!   class must derive from (or equal) the target's protected-declaring class,
+//!   so widening `protected` to `public` in a subclass stays assignable. See
+//!   `nominal_member_origin_ok`.
 //! - **Redeclaration compatibility**: Variable redeclarations (`var x: T; var x: U`)
 //!   require nominal identity for enums and bidirectional structural subtyping for
 //!   other types.
@@ -217,28 +221,37 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
             .object_shape(crate::types::ObjectShapeId(target_shape_id));
 
         // Check Target requirements (Nominality)
-        // If Target has a private/protected property, Source MUST match its origin exactly.
+        // If Target has a private/protected property, Source must satisfy the
+        // matching nominal rule: `private` demands declaration identity, while
+        // `protected` is hierarchical (a derived class may widen it to `public`).
+        // Both are decided by the shared `nominal_member_origin_ok`.
         for target_prop in &target_shape.properties {
-            if target_prop.visibility == Visibility::Private
-                || target_prop.visibility == Visibility::Protected
-            {
-                let source_prop = crate::utils::lookup_property(
-                    self.interner,
-                    &source_shape.properties,
-                    Some(crate::types::ObjectShapeId(source_shape_id)),
-                    target_prop.name,
-                );
+            if !matches!(
+                target_prop.visibility,
+                Visibility::Private | Visibility::Protected
+            ) {
+                continue;
+            }
 
-                match source_prop {
-                    Some(sp) => {
-                        // CRITICAL: The parent_id must match exactly.
-                        if sp.parent_id != target_prop.parent_id {
-                            return Some(false);
-                        }
-                    }
-                    None => {
+            let source_prop = crate::utils::lookup_property(
+                self.interner,
+                &source_shape.properties,
+                Some(crate::types::ObjectShapeId(source_shape_id)),
+                target_prop.name,
+            );
+
+            match source_prop {
+                Some(sp) => {
+                    if !self.subtype.nominal_member_origin_ok(
+                        sp.parent_id,
+                        target_prop.parent_id,
+                        target_prop.visibility,
+                    ) {
                         return Some(false);
                     }
+                }
+                None => {
+                    return Some(false);
                 }
             }
         }
