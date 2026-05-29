@@ -1,51 +1,14 @@
 //! Readonly array/tuple diagnostic preflights for assignment reporting.
 
 use crate::query_boundaries::common::{
-    array_element_type, is_array_type, is_tuple_type, readonly_inner_type, tuple_list_id,
-    type_param_info,
+    array_element_type, constraint_allows_mutable_array_like, is_array_type, is_tuple_type,
+    readonly_inner_type, tuple_list_id, type_param_info,
 };
 use crate::state::CheckerState;
-use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::syntax_kind_ext;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
-    /// A *mutable* (not `readonly`-wrapped) array or tuple type. `[...T]` counts
-    /// because a spread tuple is a mutable `Tuple`; `readonly number[]` does not.
-    fn is_mutable_array_or_tuple_type(&mut self, ty: TypeId) -> bool {
-        let evaluated = self.evaluate_type_for_assignability(ty);
-        for candidate in [ty, evaluated] {
-            if readonly_inner_type(self.ctx.types, candidate).is_none()
-                && (is_array_type(self.ctx.types, candidate)
-                    || is_tuple_type(self.ctx.types, candidate))
-            {
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Whether a contextual type asks for a mutable array/tuple value — either
-    /// directly (`number[]`, `[number, number]`, `[...T]`) or via a type
-    /// parameter whose constraint is one (`T extends unknown[]`). A `readonly`
-    /// contextual type (`readonly number[]`, `T extends readonly unknown[]`) does
-    /// not, so the source's const-ness is preserved there.
-    fn contextual_demands_mutable_array_or_tuple(&mut self, contextual: TypeId) -> bool {
-        if self.is_mutable_array_or_tuple_type(contextual) {
-            return true;
-        }
-        let evaluated = self.evaluate_type_for_assignability(contextual);
-        for candidate in [contextual, evaluated] {
-            if let Some(constraint) =
-                type_param_info(self.ctx.types, candidate).and_then(|info| info.constraint)
-                && self.is_mutable_array_or_tuple_type(constraint)
-            {
-                return true;
-            }
-        }
-        false
-    }
-
     /// Whether `expr_idx` is a *fresh* array literal whose `readonly`-ness comes
     /// from `as const` — either the array literal itself (when called with the
     /// assertion's operand) or an `[...] as const` wrapper (when called with the
@@ -55,20 +18,19 @@ impl<'a> CheckerState<'a> {
         let Some(node) = self.ctx.arena.get(idx) else {
             return false;
         };
+        // The assertion operand itself (the `as const` dispatch passes it directly).
         if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
             return true;
         }
-        (node.kind == syntax_kind_ext::AS_EXPRESSION
-            || node.kind == syntax_kind_ext::TYPE_ASSERTION)
+        // An `[...] as const` wrapper (the call-argument site passes the whole
+        // expression) whose operand is an array literal.
+        self.expression_is_const_assertion(idx)
             && self
                 .ctx
                 .arena
                 .get_type_assertion(node)
-                .filter(|assertion| self.is_const_assertion_type_node(assertion.type_node))
-                .and_then(|assertion| {
-                    let inner = self.ctx.arena.skip_parenthesized(assertion.expression);
-                    self.ctx.arena.get(inner)
-                })
+                .map(|assertion| self.ctx.arena.skip_parenthesized(assertion.expression))
+                .and_then(|inner| self.ctx.arena.get(inner))
                 .is_some_and(|inner| inner.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
     }
 
@@ -88,7 +50,10 @@ impl<'a> CheckerState<'a> {
     /// while an aliased `readonly` value (a variable) is still rejected by the
     /// normal relation. `expr_idx` may be the array literal itself or the
     /// enclosing `as const` expression. Returns the readonly-peeled (mutable)
-    /// type when the modifier should be dropped.
+    /// type when the modifier should be dropped. The mutable-context test reuses
+    /// [`constraint_allows_mutable_array_like`], which already handles arrays,
+    /// non-empty tuples, type-parameter/`infer` constraints, union members, and
+    /// lazy/application aliases, and rejects `readonly` targets.
     pub(crate) fn const_assertion_array_literal_drops_readonly(
         &mut self,
         expr_idx: NodeIndex,
@@ -103,8 +68,7 @@ impl<'a> CheckerState<'a> {
         if !self.is_fresh_const_assertion_array_literal(expr_idx) {
             return None;
         }
-        self.contextual_demands_mutable_array_or_tuple(contextual)
-            .then_some(inner)
+        constraint_allows_mutable_array_like(self.ctx.types, contextual).then_some(inner)
     }
 
     fn is_array_or_tuple_like_for_readonly_assignment(&mut self, type_id: TypeId) -> bool {

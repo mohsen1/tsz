@@ -20,6 +20,13 @@ fn codes(source: &str) -> Vec<u32> {
         .collect()
 }
 
+fn messages(source: &str) -> Vec<String> {
+    check_source_diagnostics(source)
+        .into_iter()
+        .map(|d| d.message_text)
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // Accepted: fresh `as const` literal into a mutable target.
 // ---------------------------------------------------------------------------
@@ -188,6 +195,23 @@ fn element_mismatch_still_reported_after_dropping_readonly() {
     assert!(
         !cs.contains(&4104),
         "must not report the readonly-to-mutable error (TS4104) for a fresh literal, got: {cs:?}"
+    );
+}
+
+#[test]
+fn readonly_constrained_type_param_keeps_modifier_in_inferred_type() {
+    // `T extends readonly unknown[]` does not demand mutability, so the fresh
+    // literal stays `readonly [1, 2]` and the inferred `T` is revealed as such
+    // (guards the type-parameter-constraint path against over-stripping).
+    let src = r#"
+declare function f<T extends readonly unknown[]>(t: T): T;
+const r = f([1, 2] as const);
+const bad: null = r;
+"#;
+    assert!(
+        messages(src).iter().any(|m| m.contains("readonly [1, 2]")),
+        "readonly-constrained type param must keep the readonly modifier, got: {:?}",
+        messages(src)
     );
 }
 
