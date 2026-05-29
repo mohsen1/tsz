@@ -298,6 +298,7 @@ mod export_specifiers;
 mod fix_verification;
 mod fix_verification_returned;
 mod generics_and_ambient;
+mod infer_paren_and_union_intersection;
 mod js_define_property;
 mod js_expando_features;
 mod jsdoc_template_defaults;

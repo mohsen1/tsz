@@ -19,6 +19,31 @@ mod type_printing_composites;
 #[path = "type_printing_references.rs"]
 mod type_printing_references;
 
+/// Re-escape a cooked template-literal text span so it can be placed back
+/// inside backtick delimiters. The solver stores the cooked value (e.g. a
+/// real tab/newline for `\t`/`\n`), so this converts the characters that are
+/// significant in a backtick-delimited context back into escape sequences,
+/// analogous to `escape_string_for_double_quote` for double-quoted strings.
+fn escape_text_for_backtick(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 4);
+    let mut chars = s.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '`' => out.push_str("\\`"),
+            // Escape the `$` of a `${` sequence so it is not re-read as the
+            // start of a substitution when the text round-trips.
+            '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 impl<'a> TypePrinter<'a> {
     pub(crate) fn property_is_hidden_in_declaration_shape(
         &self,
@@ -1063,7 +1088,12 @@ impl<'a> TypePrinter<'a> {
         for span in spans.iter() {
             match span {
                 tsz_solver::types::TemplateSpan::Text(atom) => {
-                    result.push_str(&self.resolve_atom(*atom));
+                    // Resolved atoms hold the *cooked* text span, so control
+                    // characters and template-significant characters (`` ` ``,
+                    // `\`, `${`) must be re-escaped for the backtick-delimited
+                    // context — otherwise a cooked `\t`/`\r\n` would be written
+                    // as a literal tab/newline.
+                    result.push_str(&escape_text_for_backtick(&self.resolve_atom(*atom)));
                 }
                 tsz_solver::types::TemplateSpan::Type(type_id) => {
                     let printed = self.print_type(*type_id);
