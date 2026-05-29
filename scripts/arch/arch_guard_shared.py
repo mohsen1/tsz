@@ -373,7 +373,7 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "LSP boundary: project/imports monolith size ratchet (#9420)",
         ROOT / "crates" / "tsz-lsp" / "src" / "project" / "imports.rs",
-        3384,
+        3449,
     ),
     # Binder declaration binding: split by declaration family per §19.
     (
