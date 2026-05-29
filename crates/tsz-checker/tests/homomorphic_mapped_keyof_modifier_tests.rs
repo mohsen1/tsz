@@ -117,6 +117,43 @@ fn readonly_tuple_property_through_alias_is_clean() {
     );
 }
 
+/// Identity key remapping (`as K`) remains homomorphic: when the mapped result
+/// is intersected with extra members, `readonly` from the source still applies.
+#[test]
+fn remapped_identity_intersection_preserves_readonly_modifier() {
+    let src = r#"
+        type Rename<T> = { [K in keyof T as K]: T[K] };
+        type Source = { readonly a?: number; b?: string; c: boolean };
+        type Wrapped = Rename<Source> & { d: number };
+        let x: Wrapped = { c: true, d: 1 };
+        x.a = 1;
+    "#;
+    assert_eq!(
+        codes(src),
+        vec![2540],
+        "expected only TS2540 for writing through remapped readonly property"
+    );
+}
+
+/// Same structural rule with renamed binders: optionality inherited from the
+/// homomorphic source must survive the `as Key` remap and intersection merge.
+#[test]
+fn remapped_identity_intersection_preserves_optional_modifier() {
+    let src = r#"
+        type CopyShape<Item> = { [Field in keyof Item as Field]: Item[Field] };
+        type Input = { readonly a?: number; b?: string; c: boolean };
+        type Output = CopyShape<Input> & { d: number };
+        declare const out: Output;
+        const mustBeNumber: number = out.a;
+        const ok: Output = { c: false, d: 1 };
+    "#;
+    assert_eq!(
+        codes(src),
+        vec![2322],
+        "expected only TS2322 because remapped optional property reads as number | undefined"
+    );
+}
+
 /// Regression guard: a mutable array property continued to work before the fix
 /// and must keep working (covariant assignability to inherited `unknown`).
 #[test]

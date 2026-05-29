@@ -150,10 +150,17 @@ pub enum SubtypeFailureReason {
         target_count: usize,
     },
     /// Tuple element type mismatch.
+    ///
+    /// tsc elaborates a failing tuple element with the outer
+    /// `Type 'S' is not assignable to type 'T'.` line, then TS2626
+    /// `Type at position <index> in source is not compatible with type at
+    /// position <index> in target.`, then the inner element failure carried in
+    /// `nested_reason`.
     TupleElementTypeMismatch {
         index: usize,
         source_element: TypeId,
         target_element: TypeId,
+        nested_reason: Option<Box<Self>>,
     },
     /// Array element type mismatch.
     ArrayElementMismatch {
@@ -437,6 +444,7 @@ pub mod codes {
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
+    pub use dc::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_OPTIONAL_BUT_REQUIRED;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
     pub use dc::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE as READONLY_TO_MUTABLE;
@@ -446,6 +454,7 @@ pub mod codes {
 
     pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
     pub use dc::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE as TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE;
+    pub use dc::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET as TUPLE_ELEMENT_POSITION_MISMATCH;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
     // Function/call errors
@@ -540,9 +549,10 @@ impl SubtypeFailureReason {
     /// `render_failure_reason` should use this to stay in sync.
     pub const fn diagnostic_code(&self) -> u32 {
         match self {
-            Self::MissingProperty { .. } | Self::OptionalPropertyRequired { .. } => {
-                codes::PROPERTY_MISSING
-            }
+            Self::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            // A present-but-optional source property assigned to a required
+            // target is TS2327, not the absent-property message TS2741.
+            Self::OptionalPropertyRequired { .. } => codes::PROPERTY_OPTIONAL_BUT_REQUIRED,
             Self::MissingProperties { .. } => codes::MISSING_PROPERTIES,
             Self::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
             Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
@@ -630,13 +640,16 @@ impl SubtypeFailureReason {
             }
 
             Self::OptionalPropertyRequired { property_name } => {
-                // This is a specific case of type not assignable
+                // The source property is present but optional while the target
+                // requires it. tsc reports TS2327 ("Property 'x' is optional in
+                // type 'S' but required in type 'T'."), not the absent-property
+                // message TS2741.
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![source.into(), target.into()],
                 )
                 .with_related(PendingDiagnostic::error(
-                    codes::PROPERTY_MISSING, // Close enough - property is "missing" because it's optional
+                    codes::PROPERTY_OPTIONAL_BUT_REQUIRED,
                     vec![(*property_name).into(), source.into(), target.into()],
                 ))
             }
@@ -742,11 +755,36 @@ impl SubtypeFailureReason {
             )),
 
             Self::TupleElementTypeMismatch {
-                index: _,
+                index,
                 source_element,
                 target_element,
+                nested_reason,
+            } => {
+                // tsc elaborates a failing tuple element with TS2626
+                // "Type at position N in source is not compatible with type at
+                // position N in target." (both positions are the element index
+                // for fixed tuples), followed by the inner element failure.
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::TUPLE_ELEMENT_POSITION_MISMATCH,
+                    vec![(*index).into(), (*index).into()],
+                ));
+                if let Some(nested) = nested_reason {
+                    diag =
+                        diag.with_related(nested.to_diagnostic(*source_element, *target_element));
+                } else {
+                    diag = diag.with_related(PendingDiagnostic::error(
+                        codes::TYPE_NOT_ASSIGNABLE,
+                        vec![(*source_element).into(), (*target_element).into()],
+                    ));
+                }
+                diag
             }
-            | Self::ArrayElementMismatch {
+
+            Self::ArrayElementMismatch {
                 source_element,
                 target_element,
             } => PendingDiagnostic::error(

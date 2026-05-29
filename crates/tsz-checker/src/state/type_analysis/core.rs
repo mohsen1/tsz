@@ -1995,6 +1995,17 @@ impl<'a> CheckerState<'a> {
     /// The reuse is guarded on full `TypeParamInfo` equality so the
     /// refinement pass can install a constrained variant when the user
     /// wrote `T extends C`.
+    ///
+    /// For type parameters that have no `DefId` registration (class, method,
+    /// and interface type parameters are not emitted into `semantic_defs` by
+    /// the binder), a secondary node-keyed cache (`type_param_node_cache`) is
+    /// consulted. Without it, `get_class_instance_type_inner` and the outer
+    /// `check_class_declaration` each call `push_type_parameters` independently,
+    /// producing different `TypeIds` for the same `T`. That discrepancy causes
+    /// `MappedType.constraint = KeyOf(T_id_instance)` to differ from
+    /// `K.constraint = KeyOf(T_id_check)`, silently defeating
+    /// `type_param_constraint_matches` in the solver's `visit_mapped` and
+    /// producing a false TS2349 on `this.map[key]()` patterns.
     fn intern_type_param_for_decl(
         &mut self,
         name_node: tsz_parser::parser::NodeIndex,
@@ -2015,7 +2026,23 @@ impl<'a> CheckerState<'a> {
                 None
             }
         });
+
+        // Fallback: for type params with no DefId (class/method/interface type params
+        // omitted from semantic_defs), use the node-keyed cache so repeated
+        // push_type_parameters calls for the same declaration converge on the same TypeId.
+        let cached = cached.or_else(|| {
+            if registered_def.is_none() {
+                self.ctx
+                    .type_param_node_cache
+                    .get(&(name_node.0, info))
+                    .copied()
+            } else {
+                None
+            }
+        });
+
         let type_id = cached.unwrap_or_else(|| self.ctx.types.fresh_type_param(info));
+
         if let Some(def_id) = registered_def {
             self.ctx
                 .definition_store
@@ -2023,7 +2050,14 @@ impl<'a> CheckerState<'a> {
             self.ctx
                 .definition_store
                 .register_type_param_for_def(def_id, type_id);
+        } else {
+            // Keep the node-keyed cache up to date so the next push_type_parameters
+            // call for this same declaration returns the same TypeId.
+            self.ctx
+                .type_param_node_cache
+                .insert((name_node.0, info), type_id);
         }
+
         type_id
     }
 

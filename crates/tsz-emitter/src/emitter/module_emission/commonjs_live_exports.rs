@@ -213,6 +213,7 @@ impl<'a> Printer<'a> {
                 if is_statement {
                     if aliases.is_empty() {
                         self.write_export_property_access(local_name);
+                        self.write(get_operator_text(operator));
                     } else {
                         self.write_export_property_chain(&aliases);
                         self.write("(");

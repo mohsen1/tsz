@@ -333,10 +333,26 @@ impl<'a> LoweringPass<'a> {
         let init_has_binding_pattern =
             self.for_of_initializer_has_binding_pattern(for_in_of.initializer);
 
-        if init_has_binding_pattern {
-            // Mark __read helper when destructuring is used with downlevelIteration
-            // TypeScript emits __read to convert iterator results to arrays for destructuring
-            if self.ctx.target_es5 && self.ctx.options.downlevel_iteration {
+        // A for-of whose initializer is a bare expression (not a
+        // VARIABLE_DECLARATION_LIST) is a destructuring-ASSIGNMENT target, e.g.
+        // `for ([a, ...rest] of xs)` / `for ({ a = d } of xs)`. The LHS
+        // array/object literal is a pattern, not a fresh array/object, so the
+        // in-assignment-target flag must be set during its visit. Otherwise a
+        // spread element like `[...rest]` is mis-classified as array
+        // construction and spuriously pulls in the `__spreadArray` helper.
+        let init_is_assignment_target =
+            self.for_of_initializer_is_assignment_target(for_in_of.initializer);
+
+        if init_has_binding_pattern || init_is_assignment_target {
+            // Mark __read helper when binding-pattern destructuring is used with
+            // downlevelIteration. TypeScript emits __read to convert iterator
+            // results to arrays for binding-pattern destructuring. (Bare
+            // assignment targets keep the existing array-indexing lowering and
+            // do not add __read here.)
+            if init_has_binding_pattern
+                && self.ctx.target_es5
+                && self.ctx.options.downlevel_iteration
+            {
                 self.transforms.helpers_mut().mark_read();
             }
             // Set in_assignment_target to prevent spread in destructuring from triggering __spreadArray

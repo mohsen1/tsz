@@ -1,13 +1,76 @@
 //! Readonly array/tuple diagnostic preflights for assignment reporting.
 
 use crate::query_boundaries::common::{
-    array_element_type, is_array_type, is_tuple_type, readonly_inner_type, tuple_list_id,
-    type_param_info,
+    array_element_type, constraint_allows_mutable_array_like, is_array_type, is_tuple_type,
+    readonly_inner_type, tuple_list_id, type_param_info,
 };
 use crate::state::CheckerState;
+use tsz_parser::parser::{NodeIndex, syntax_kind_ext};
 use tsz_solver::TypeId;
 
 impl<'a> CheckerState<'a> {
+    /// Whether `expr_idx` is a *fresh* array literal whose `readonly`-ness comes
+    /// from `as const` — either the array literal itself (when called with the
+    /// assertion's operand) or an `[...] as const` wrapper (when called with the
+    /// whole assertion expression). An aliased value (a variable) is not fresh.
+    fn is_fresh_const_assertion_array_literal(&self, expr_idx: NodeIndex) -> bool {
+        let idx = self.ctx.arena.skip_parenthesized(expr_idx);
+        let Some(node) = self.ctx.arena.get(idx) else {
+            return false;
+        };
+        // The assertion operand itself (the `as const` dispatch passes it directly).
+        if node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION {
+            return true;
+        }
+        // An `[...] as const` wrapper (the call-argument site passes the whole
+        // expression) whose operand is an array literal.
+        self.expression_is_const_assertion(idx)
+            && self
+                .ctx
+                .arena
+                .get_type_assertion(node)
+                .map(|assertion| self.ctx.arena.skip_parenthesized(assertion.expression))
+                .and_then(|inner| self.ctx.arena.get(inner))
+                .is_some_and(|inner| inner.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+    }
+
+    /// tsc drops the `readonly` modifier from a *fresh* array/tuple literal
+    /// written with `as const` when its contextual type is a mutable array/tuple
+    /// (or a type parameter constrained to one). A fresh literal is not aliased,
+    /// so its const-ness is not binding at a mutable consumption site:
+    ///
+    /// ```text
+    /// const a: number[] = [1, 2] as const;          // ok ([1, 2] is mutable here)
+    /// declare function f<T extends readonly unknown[]>(t: [...T]): T;
+    /// const r = f([1, 2] as const);                 // ok, infers T = [1, 2]
+    /// ```
+    ///
+    /// while keeping it where the target is itself `readonly` or not an
+    /// array/tuple (`const x = [1, 2] as const` stays `readonly [1, 2]`), and
+    /// while an aliased `readonly` value (a variable) is still rejected by the
+    /// normal relation. `expr_idx` may be the array literal itself or the
+    /// enclosing `as const` expression. Returns the readonly-peeled (mutable)
+    /// type when the modifier should be dropped. The mutable-context test reuses
+    /// [`constraint_allows_mutable_array_like`], which already handles arrays,
+    /// non-empty tuples, type-parameter/`infer` constraints, union members, and
+    /// lazy/application aliases, and rejects `readonly` targets.
+    pub(crate) fn const_assertion_array_literal_drops_readonly(
+        &mut self,
+        expr_idx: NodeIndex,
+        result_type: TypeId,
+        contextual: Option<TypeId>,
+    ) -> Option<TypeId> {
+        let contextual = contextual?;
+        let inner = readonly_inner_type(self.ctx.types, result_type)?;
+        if !(is_array_type(self.ctx.types, inner) || is_tuple_type(self.ctx.types, inner)) {
+            return None;
+        }
+        if !self.is_fresh_const_assertion_array_literal(expr_idx) {
+            return None;
+        }
+        constraint_allows_mutable_array_like(self.ctx.types, contextual).then_some(inner)
+    }
+
     fn is_array_or_tuple_like_for_readonly_assignment(&mut self, type_id: TypeId) -> bool {
         let evaluated = self.evaluate_type_for_assignability(type_id);
         for candidate in [type_id, evaluated] {

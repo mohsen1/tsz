@@ -1790,3 +1790,46 @@ let gResult3 = g(helloOrWorld);
         );
     }
 }
+
+// When an array element access produces a union of object types, the DTS emitter
+// formats the union at the current output indent level (depth=0 at top level),
+// giving 4-space member indentation — matching tsc's output.
+#[test]
+fn fix_array_element_access_union_uses_top_level_indent_depth() {
+    let output = emit_dts(
+        r#"
+let x1 = [{ a: 0 }, { a: 1, b: "x" }][0];
+let x2 = [{ a: 1, b: 2 }, { a: "abc" }, {}][0];
+"#,
+    );
+
+    // 4-space member indentation (depth=0) at top level, matching tsc
+    assert!(
+        output.contains("declare let x1: {\n    a: number;\n    b?: undefined;\n} | {\n    a: number;\n    b: string;\n}"),
+        "array element union must use top-level 4-space indent:\n{output}"
+    );
+    assert!(
+        output.contains("declare let x2: {\n    a: number;\n    b: number;\n} | {\n    a: string;\n    b?: undefined;\n} | {\n    a?: undefined;\n    b?: undefined;\n}"),
+        "3-member union from array element must use 4-space indent:\n{output}"
+    );
+    // Ensure no 8-space indentation (depth=1 was the old wrong behavior)
+    assert!(
+        !output.contains("        a: number;"),
+        "must not use 8-space (depth=1) indentation for top-level array element union:\n{output}"
+    );
+}
+
+// Renamed variable to prove the rule is not spelling-dependent.
+#[test]
+fn fix_array_element_access_union_indent_name_independent() {
+    let output = emit_dts(
+        r#"
+let renamed_k = [{ p: 0 }, { p: 1, q: "x" }][0];
+"#,
+    );
+
+    assert!(
+        output.contains("declare let renamed_k: {\n    p: number;\n    q?: undefined;\n} | {\n    p: number;\n    q: string;\n}"),
+        "renamed variable still gets 4-space indent:\n{output}"
+    );
+}

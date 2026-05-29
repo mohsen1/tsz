@@ -94,6 +94,13 @@ impl<'a> DeclarationEmitter<'a> {
             None
         };
 
+        if func.body.is_some()
+            && let Some(predicate_text) = self.function_source_type_predicate_text(func)
+        {
+            self.write(&predicate_text);
+            return true;
+        }
+
         if let (Some(interner), Some(cache)) = (&self.type_interner, &self.type_cache) {
             let func_type_id = cache
                 .node_types
@@ -352,6 +359,15 @@ impl<'a> DeclarationEmitter<'a> {
             .function_parameter_type_text(func, returned_identifier)
             .or_else(|| self.returned_function_initializer_type_text(func, returned_identifier))
             .or_else(|| {
+                // A multi-line object type literal annotation should be printed
+                // structurally rather than copied from source text, which would
+                // preserve source indentation/ordering and can capture trailing
+                // tokens when the annotation has no terminator.
+                if self.referenced_declared_annotation_is_multiline_object_type(returned_identifier)
+                    && let Some(type_id) = self.reference_declared_type_id(returned_identifier)
+                {
+                    return Some(self.print_type_id_for_inferred_declaration(type_id));
+                }
                 let type_text =
                     self.reference_declared_source_type_annotation_text(returned_identifier)?;
                 if let Some(type_id) = self.reference_declared_type_id(returned_identifier)
@@ -455,6 +471,58 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         None
+    }
+
+    /// True when the referenced value's declared type annotation is an object
+    /// type literal (`{ ... }`) whose source span covers more than one physical
+    /// line. Raw source-text reconstruction of such annotations preserves the
+    /// original indentation, source member ordering, and can capture trailing
+    /// tokens when the annotation is not terminated; the normalizing structural
+    /// type printer avoids all of that, so callers should prefer it.
+    pub(in crate::declaration_emitter) fn referenced_declared_annotation_is_multiline_object_type(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let Some(binder) = self.binder else {
+            return false;
+        };
+        let Some(sym_id) = self.value_reference_symbol(expr_idx) else {
+            return false;
+        };
+        let Some(symbol) = binder.symbols.get(sym_id) else {
+            return false;
+        };
+
+        for decl_idx in symbol.declarations.iter().copied() {
+            let Some(decl_node) = self.arena.get(decl_idx) else {
+                continue;
+            };
+            let type_annotation = self
+                .arena
+                .get_variable_declaration(decl_node)
+                .map(|decl| decl.type_annotation)
+                .or_else(|| {
+                    self.arena
+                        .get_property_decl(decl_node)
+                        .map(|decl| decl.type_annotation)
+                })
+                .filter(|type_idx| type_idx.is_some());
+            let Some(type_annotation) = type_annotation else {
+                continue;
+            };
+            let Some(type_node) = self.arena.get(type_annotation) else {
+                continue;
+            };
+            if type_node.kind != syntax_kind_ext::TYPE_LITERAL {
+                continue;
+            }
+            if let Some(slice) = self.get_source_slice(type_node.pos, type_node.end)
+                && slice.contains('\n')
+            {
+                return true;
+            }
+        }
+        false
     }
 
     pub(in crate::declaration_emitter) fn template_index_signature_element_access_type_text(

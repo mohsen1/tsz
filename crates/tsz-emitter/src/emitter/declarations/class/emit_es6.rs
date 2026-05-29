@@ -606,8 +606,15 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        // Generated private-helper names are uniquified against a single file-wide
+        // set so nested or sibling classes that reuse a class name receive
+        // `_N`-suffixed helpers instead of colliding (matches tsc's per-file name
+        // generator). Seed once from the enclosing source bindings, then keep the
+        // accumulated set on the emitter and reuse it for every later class.
         let mut used_private_names = if needs_private_field_lowering {
-            collect_enclosing_source_binding_names(self.arena, _idx)
+            self.generated_private_names
+                .take()
+                .unwrap_or_else(|| collect_enclosing_source_binding_names(self.arena, _idx))
         } else {
             rustc_hash::FxHashSet::default()
         };
@@ -678,6 +685,13 @@ impl<'a> Printer<'a> {
             None
         };
 
+        // Publish the accumulated generated-name set back onto the emitter so any
+        // nested classes emitted while printing this class body (and later sibling
+        // classes) uniquify their private helpers against the names allocated here.
+        if needs_private_field_lowering {
+            self.generated_private_names = Some(std::mem::take(&mut used_private_names));
+        }
+
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
         let is_class_expression = node.kind == syntax_kind_ext::CLASS_EXPRESSION;
@@ -743,6 +757,9 @@ impl<'a> Printer<'a> {
             && static_initializer_alias_source_nodes
                 .iter()
                 .any(|idx| self.node_text_contains_identifier(*idx, &class_name));
+        let static_initializer_directly_uses_private_name = static_initializer_alias_source_nodes
+            .iter()
+            .any(|idx| self.expression_directly_contains_private_identifier(*idx));
         let static_initializer_needs_class_alias = static_initializer_contains_class_name
             && (static_initializer_needs_this_alias
                 || has_static_privates
@@ -825,37 +842,21 @@ impl<'a> Printer<'a> {
             }
 
             // Private members in source order. Walk `class.members.nodes`
-            // once and look up each member's pre-computed info entry by
-            // private-identifier name. Accessors share a private name across
-            // get/set, so we dedupe within an accessor pair.
-            let mut emitted_accessor_names: rustc_hash::FxHashSet<String> =
+            // once and look up each member's pre-computed info entry by source
+            // member identity, not by private clean-name. When several members
+            // share a clean-name (an instance and a static `#foo`, or duplicate
+            // declarations in an error case), each member owns a distinct
+            // `_N`-suffixed helper; matching by identity keeps this hoisted
+            // var-decl list in agreement with the initializer/assignment paths
+            // that iterate the same collections. Accessors collapse a get/set
+            // pair into one entry, so we emit each accessor entry once when its
+            // first member is reached.
+            let mut emitted_accessor_entries: rustc_hash::FxHashSet<usize> =
                 rustc_hash::FxHashSet::default();
             for &member_idx in &class.members.nodes {
                 let Some(member_node) = self.arena.get(member_idx) else {
                     continue;
                 };
-                let private_name = match member_node.kind {
-                    k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
-                        .arena
-                        .get_property_decl(member_node)
-                        .and_then(|p| get_private_field_name(self.arena, p.name)),
-                    k if k == syntax_kind_ext::METHOD_DECLARATION => self
-                        .arena
-                        .get_method_decl(member_node)
-                        .and_then(|m| get_private_field_name(self.arena, m.name)),
-                    k if k == syntax_kind_ext::GET_ACCESSOR
-                        || k == syntax_kind_ext::SET_ACCESSOR =>
-                    {
-                        self.arena
-                            .get_accessor(member_node)
-                            .and_then(|a| get_private_field_name(self.arena, a.name))
-                    }
-                    _ => None,
-                };
-                let Some(private_name) = private_name else {
-                    continue;
-                };
-                let clean_name = private_name.strip_prefix('#').unwrap_or(&private_name);
                 match member_node.kind {
                     k if k == syntax_kind_ext::PROPERTY_DECLARATION => {
                         if let Some(accessor) = private_auto_accessors
@@ -865,13 +866,14 @@ impl<'a> Printer<'a> {
                             var_names.push(accessor.get_var_name.clone());
                             var_names.push(accessor.set_var_name.clone());
                         } else if let Some(field) =
-                            private_fields.iter().find(|f| f.name == clean_name)
+                            private_fields.iter().find(|f| f.member_idx == member_idx)
                         {
                             var_names.push(field.weakmap_name.clone());
                         }
                     }
                     k if k == syntax_kind_ext::METHOD_DECLARATION => {
-                        if let Some(method) = private_methods.iter().find(|m| m.name == clean_name)
+                        if let Some(method) =
+                            private_methods.iter().find(|m| m.member_idx == member_idx)
                         {
                             var_names.push(method.fn_var_name.clone());
                         }
@@ -879,12 +881,14 @@ impl<'a> Printer<'a> {
                     k if k == syntax_kind_ext::GET_ACCESSOR
                         || k == syntax_kind_ext::SET_ACCESSOR =>
                     {
-                        if !emitted_accessor_names.insert(clean_name.to_string()) {
-                            continue;
-                        }
-                        if let Some(accessor) =
-                            private_accessors.iter().find(|a| a.name == clean_name)
+                        if let Some((entry_pos, accessor)) = private_accessors
+                            .iter()
+                            .enumerate()
+                            .find(|(_, a)| a.member_indices.contains(&member_idx))
                         {
+                            if !emitted_accessor_entries.insert(entry_pos) {
+                                continue;
+                            }
                             if let Some(ref name) = accessor.get_var_name
                                 && accessor.getter_body.is_some()
                             {
@@ -1151,7 +1155,15 @@ impl<'a> Printer<'a> {
                             let has_accessor = self
                                 .arena
                                 .has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword);
-                            prop.initializer.is_none() && !is_private && !has_accessor
+                            // A no-initializer field is erased *unless* it is still
+                            // runtime-materialized as a defined field (define
+                            // semantics). Use the shared predicate so this stays in
+                            // lockstep with the runtime field-lowering site, which
+                            // would otherwise reference a temp that was never recorded.
+                            prop.initializer.is_none()
+                                && !is_private
+                                && !has_accessor
+                                && !self.no_init_property_is_runtime_materialized(prop)
                         };
                         (&prop.modifiers, prop.name, Some(is_erased))
                     }
@@ -1266,7 +1278,11 @@ impl<'a> Printer<'a> {
                 if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
                     return false;
                 }
-                true
+                // A static field that lowers to no runtime statement (a bare type-only
+                // declaration) neither needs a comma-expr temp nor a `__setFunctionName`
+                // helper item. Fields with runtime state (initializer, auto-accessor, or
+                // decorator) still carry static state.
+                crate::transforms::emit_utils::class_field_decl_has_runtime_state(self.arena, prop)
             });
         let has_static_block_comma_expr = target_needs_static_block_lowering
             && class.members.nodes.iter().any(|&member_idx| {
@@ -1483,6 +1499,10 @@ impl<'a> Printer<'a> {
                 .hoisted_assignment_temps
                 .iter()
                 .any(|name| name == alias)
+            && !self
+                .hoisted_file_level_class_temps
+                .iter()
+                .any(|name| name == alias)
         {
             self.hoisted_assignment_temps.push(alias.clone());
         }
@@ -1689,8 +1709,7 @@ impl<'a> Printer<'a> {
                     // Without that flag the typed-only declaration has no
                     // runtime effect, so skip it.
                     let no_initializer_node = prop.initializer.is_none();
-                    let materialize_no_init =
-                        no_initializer_node && self.ctx.options.use_define_for_class_fields;
+                    let materialize_no_init = self.no_init_property_is_runtime_materialized(prop);
                     if !materialize_no_init
                         && (no_initializer_node
                             || !self.class_property_initializer_has_equals(member_node, prop))
@@ -1883,6 +1902,13 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
+            // Temps allocated while emitting field initializers in this synthesized
+            // constructor body (e.g. a class-expression lowered inside a private-field
+            // initializer needing `_a`) must be declared in this constructor's scope,
+            // not leak to the enclosing function/file hoist list. Push a body temp
+            // scope and capture the insertion anchor for the `var` line.
+            self.push_temp_scope();
+            let synth_ctor_hoist_anchor = self.capture_hoist_anchor();
             // Emit _X_instances.add(this) for private methods/accessors
             if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
                 self.write(ws_name);
@@ -2012,6 +2038,26 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
+            // Insert any temps hoisted while emitting field initializers (e.g.
+            // `_a` for a class expression lowered inside a private-field init) at
+            // the top of this synthesized constructor body, then drop the scope.
+            if !self.hoisted_assignment_temps.is_empty() {
+                let indent = self
+                    .writer
+                    .indent_string_at(synth_ctor_hoist_anchor.indent_level);
+                let var_decl = format!(
+                    "{}var {};",
+                    indent,
+                    self.hoisted_assignment_temps.join(", ")
+                );
+                self.writer.insert_line_at(
+                    synth_ctor_hoist_anchor.byte_offset,
+                    synth_ctor_hoist_anchor.line_no,
+                    &var_decl,
+                );
+                self.hoisted_assignment_temps.clear();
+            }
+            self.pop_temp_scope();
             self.decrease_indent();
             self.write("}");
             self.write_line();
@@ -2865,7 +2911,9 @@ impl<'a> Printer<'a> {
         // For class declarations: use separate statements `ClassName.field = value;`
         let emit_private_inits_before_static_elements = !needs_private_comma_expr
             && has_any_private_lowering
-            && (static_initializer_class_alias.is_some() || has_static_privates)
+            && (static_initializer_class_alias.is_some()
+                || has_static_privates
+                || static_initializer_directly_uses_private_name)
             && (!static_field_inits.is_empty() || !deferred_static_blocks.is_empty());
         let mut emitted_private_auto_accessors_pre_static = false;
         if emit_private_inits_before_static_elements {
@@ -2874,7 +2922,10 @@ impl<'a> Printer<'a> {
             let instances_ws = self.pending_instances_weakset_add.take();
             let method_defs = std::mem::take(&mut self.pending_private_method_defs);
             let accessor_defs = std::mem::take(&mut self.pending_private_accessor_defs);
-            let weakmap_inits = self.pending_weakmap_inits.clone();
+            // Consume the pending WeakMap inits here so the later post-class
+            // emission path (which re-checks `pending_weakmap_inits`) does not
+            // emit the same `_X = new WeakMap()` lines a second time.
+            let weakmap_inits = std::mem::take(&mut self.pending_weakmap_inits);
             let private_auto_instance_storage_inits: Vec<String> = private_auto_accessors
                 .iter()
                 .filter(|a| !a.is_static)
@@ -3905,6 +3956,28 @@ impl<'a> Printer<'a> {
                 self.declared_namespace_names.insert(class_name);
             }
         }
+    }
+
+    /// Structural predicate: is this initializer-less `PROPERTY_DECLARATION`
+    /// still runtime-materialized as a *defined* field?
+    ///
+    /// Under `useDefineForClassFields` a field declared without an initializer is
+    /// not erased: `tsc` materializes it with
+    /// `Object.defineProperty(this, <name>, { ... value: void 0 })`. A computed
+    /// name on such a field is therefore hoisted into a temp exactly like a
+    /// computed-name field that *does* have an initializer.
+    ///
+    /// This is the single source of truth shared by the computed-name
+    /// hoisting-classification pass and the runtime field-lowering site so the
+    /// two cannot disagree about whether a no-initializer field survives to
+    /// runtime. It keys purely on structural facts (no initializer + define
+    /// semantics enabled) and intentionally does not re-check abstract/declare/
+    /// private/accessor — those are filtered independently at each call site.
+    const fn no_init_property_is_runtime_materialized(
+        &self,
+        prop: &tsz_parser::parser::node::PropertyDeclData,
+    ) -> bool {
+        prop.initializer.is_none() && self.ctx.options.use_define_for_class_fields
     }
 
     fn class_property_initializer_has_equals(

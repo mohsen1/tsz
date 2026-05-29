@@ -426,6 +426,31 @@ function f(x: ReadonlyArray<number> | number) {
     );
 }
 
+/// A local alias named `ReadonlyArray` is not the lib `ReadonlyArray`
+/// protocol. `Array.isArray` may intersect it with the predicate array type,
+/// but it must not preserve the alias member solely because of the spelling.
+#[test]
+fn array_isarray_shadowed_readonlyarray_alias_does_not_use_lib_identity() {
+    let source = r#"
+export {};
+type ReadonlyArray<T> = { value: T };
+declare const x: ReadonlyArray<number> | number;
+if (Array.isArray(x)) {
+    x.value;
+}
+"#;
+    let diags = check_strict_es5(source);
+    let property_errors: Vec<_> = diags
+        .iter()
+        .filter(|(c, m)| matches!(*c, 2339 | 2551) && m.contains("value"))
+        .collect();
+    assert_eq!(
+        property_errors.len(),
+        1,
+        "shadowed ReadonlyArray alias must not retain `.value` after Array.isArray: {diags:?}"
+    );
+}
+
 /// `ArrayLike<T>` from the lib (alongside the built-in `Array`) is handled
 /// correctly when lib is loaded.
 #[test]

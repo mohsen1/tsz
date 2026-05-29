@@ -15,7 +15,8 @@
     "@11ty/eleventy": "^3.0.0",
     "marked": "^15.0.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "esbuild": "^0.25.2"

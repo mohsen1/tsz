@@ -792,6 +792,38 @@ pub(crate) fn is_computed_property_member(arena: &NodeArena, idx: NodeIndex) -> 
     false
 }
 
+/// True when a class field declaration carries runtime state that must be
+/// lowered into a comma-expression / class temporary (and therefore a
+/// `__setFunctionName` helper item for anonymous class expressions).
+///
+/// A field has runtime state when any of the following hold:
+/// - it has an initializer (`static prop = x` emits an assignment),
+/// - it is an auto-accessor (`accessor` keyword, which generates backing
+///   storage even without an initializer),
+/// - it is decorated (the decorator application runs regardless of an
+///   initializer).
+///
+/// A bare type-only declaration such as `static prop: T` lowers to nothing
+/// and therefore needs no temporary or helper.
+pub(crate) fn class_field_decl_has_runtime_state(
+    arena: &NodeArena,
+    prop: &tsz_parser::parser::node::PropertyDeclData,
+) -> bool {
+    if prop.initializer.is_some() {
+        return true;
+    }
+    if arena.has_modifier(&prop.modifiers, SyntaxKind::AccessorKeyword) {
+        return true;
+    }
+    prop.modifiers.as_ref().is_some_and(|mods| {
+        mods.nodes.iter().any(|&mod_idx| {
+            arena
+                .get(mod_idx)
+                .is_some_and(|node| node.kind == syntax_kind_ext::DECORATOR)
+        })
+    })
+}
+
 /// Get the text content of a string literal node.
 ///
 /// Returns `None` if the index is null, the node doesn't exist, or the node

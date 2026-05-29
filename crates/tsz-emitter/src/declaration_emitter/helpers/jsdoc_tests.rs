@@ -121,3 +121,58 @@ fn typedef_alias_renders_constrained_template_default_with_description() {
         "rendered alias should keep the constrained default:\n{rendered}"
     );
 }
+
+#[test]
+fn satisfies_param_facts_require_real_tag_boundary() {
+    let jsdoc = "\
+@satisfiesx {(bad: number) => void}
+@satisfies_inner {(alsoBad: boolean) => void}
+@satisfies$foo {(alsoBad: boolean) => void}
+@satisfies {(value: string, count: number) => void}
+";
+
+    assert!(DeclarationEmitter::jsdoc_has_satisfies_tag(jsdoc));
+    let params = DeclarationEmitter::parse_jsdoc_satisfies_param_decls(jsdoc);
+    assert_eq!(params.len(), 2);
+    assert_eq!(params[0].name, "value");
+    assert_eq!(params[0].type_text, "string");
+    assert_eq!(params[1].name, "count");
+    assert_eq!(params[1].type_text, "number");
+    assert!(!params[1].rest);
+}
+
+#[test]
+fn satisfies_param_facts_ignore_longer_tag_names() {
+    for jsdoc in [
+        "@satisfiesx {(value: string) => void}",
+        "@satisfies_inner {(value: string) => void}",
+        "@satisfies$foo {(value: string) => void}",
+    ] {
+        assert!(!DeclarationEmitter::jsdoc_has_satisfies_tag(jsdoc));
+        assert!(DeclarationEmitter::parse_jsdoc_satisfies_param_decls(jsdoc).is_empty());
+    }
+}
+
+#[test]
+fn jsdoc_type_expression_requires_real_tag_boundary() {
+    for jsdoc in [
+        "@typex {string}",
+        "@type_inner {number}",
+        "@type$foo {boolean}",
+    ] {
+        assert_eq!(
+            DeclarationEmitter::extract_jsdoc_type_expression(jsdoc),
+            None
+        );
+        assert_eq!(DeclarationEmitter::parse_jsdoc_type_text(jsdoc), None);
+    }
+
+    assert_eq!(
+        DeclarationEmitter::extract_jsdoc_type_expression("@type {string}"),
+        Some("string")
+    );
+    assert_eq!(
+        DeclarationEmitter::parse_jsdoc_type_text("@type {string}"),
+        Some("string".to_string())
+    );
+}

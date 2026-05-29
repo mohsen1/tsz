@@ -912,6 +912,18 @@ impl<'a> CheckerState<'a> {
                 if self.type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args) {
                     return false;
                 }
+                if self
+                    .type_args_contain_subtractive_alias_guard_for_depth_check(alias_sid, type_args)
+                {
+                    return false;
+                }
+                if self
+                    .type_args_reset_defaulted_alias_params_with_scoped_transform_for_depth_check(
+                        alias_sid, type_args,
+                    )
+                {
+                    return true;
+                }
                 if type_args.nodes.iter().copied().all(|arg_idx| {
                     self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                         || self.type_node_is_bounded_indexed_descent_for_depth_check(
@@ -954,6 +966,9 @@ impl<'a> CheckerState<'a> {
                     !self.type_args_match_alias_params(alias_sid, type_args)
                         && !self
                             .type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args)
+                        && !self.type_args_contain_subtractive_alias_guard_for_depth_check(
+                            alias_sid, type_args,
+                        )
                         && type_args.nodes.iter().copied().any(|arg_idx| {
                             !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                                 && !self.type_node_is_bounded_indexed_descent_for_depth_check(
@@ -1059,6 +1074,8 @@ impl<'a> CheckerState<'a> {
             if resolved == Some(alias_sid)
                 && let Some(type_args) = &type_ref.type_arguments
                 && !self.type_args_match_alias_params(alias_sid, type_args)
+                && !self
+                    .type_args_contain_subtractive_alias_guard_for_depth_check(alias_sid, type_args)
                 && type_args.nodes.iter().copied().any(|arg_idx| {
                     !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                         && self

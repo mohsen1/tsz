@@ -31,6 +31,7 @@ fn test_private_field_state() {
 fn test_generate_weakmap_var_declaration() {
     let fields = vec![
         PrivateFieldInfo {
+            member_idx: NodeIndex::NONE,
             name: "value".to_string(),
             weakmap_name: "_C_value".to_string(),
             has_initializer: true,
@@ -38,6 +39,7 @@ fn test_generate_weakmap_var_declaration() {
             is_static: false,
         },
         PrivateFieldInfo {
+            member_idx: NodeIndex::NONE,
             name: "count".to_string(),
             weakmap_name: "_C_count".to_string(),
             has_initializer: false,
@@ -54,6 +56,7 @@ fn test_generate_weakmap_var_declaration() {
 fn test_generate_weakmap_instantiation() {
     let fields = vec![
         PrivateFieldInfo {
+            member_idx: NodeIndex::NONE,
             name: "value".to_string(),
             weakmap_name: "_C_value".to_string(),
             has_initializer: true,
@@ -61,6 +64,7 @@ fn test_generate_weakmap_instantiation() {
             is_static: false,
         },
         PrivateFieldInfo {
+            member_idx: NodeIndex::NONE,
             name: "count".to_string(),
             weakmap_name: "_C_count".to_string(),
             has_initializer: false,

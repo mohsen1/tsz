@@ -692,6 +692,10 @@ pub struct ShorthandPropertyData {
     /// Position of a `!` (definite assignment assertion) that was parsed and skipped.
     /// 0 means no exclamation token was present.
     pub exclamation_token_pos: u32,
+    /// Position of a `?` (optional marker) that was parsed and skipped.
+    /// This is a grammar error (TS1162), but tsc still infers an optional property
+    /// for the object type. 0 means no question token was present.
+    pub question_token_pos: u32,
     pub object_assignment_initializer: NodeIndex,
 }
 

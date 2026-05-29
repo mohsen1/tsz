@@ -130,7 +130,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.get_node_type_or_names(&[elem_idx])
                         .map(|type_id| self.print_type_id(type_id))
                 })
-                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level + 1))?;
+                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level))?;
             element_types.push(elem_type);
             element_sources.push(elem_idx);
         }
@@ -150,7 +150,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         if let Some(source_union_text) =
-            self.source_object_literal_union_text(&distinct_sources, self.indent_level + 1)
+            self.source_object_literal_union_text(&distinct_sources, self.indent_level)
         {
             return Some(source_union_text);
         }
@@ -685,6 +685,7 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         let mut members = Vec::new();
+        let mut emitted_index_signatures = false;
         for &member_idx in &object.elements.nodes {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
@@ -692,6 +693,26 @@ impl<'a> DeclarationEmitter<'a> {
             let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
                 continue;
             };
+
+            // A computed key whose expression cannot be reproduced as a literal
+            // property name (e.g. `[this.a]`) is not a named member in tsc's
+            // output. tsc represents it through the object's synthesized index
+            // signature, so emit that solver-derived signature instead of the
+            // raw source slice. Each index signature is emitted once even when
+            // several members share the same non-nameable key shape.
+            if self.is_non_nameable_computed_member_key(name_idx) {
+                if !emitted_index_signatures
+                    && let Some(index_entries) =
+                        self.object_literal_synthesized_index_signature_entries(object_expr_idx)
+                {
+                    for entry in index_entries {
+                        members.push(ObjectTypeLiteralEntry::Raw(entry));
+                    }
+                    emitted_index_signatures = true;
+                }
+                continue;
+            }
+
             let Some(name) = self.object_literal_member_name_text(name_idx) else {
                 continue;
             };
@@ -752,6 +773,14 @@ impl<'a> DeclarationEmitter<'a> {
         if own_members.is_empty() {
             return None;
         }
+        // Object spread merges duplicate keys (the spread overrides earlier
+        // own members, widening optional members to `T | <own>`) and strips
+        // `readonly`. The AST-based reconstruction below cannot model either,
+        // so when the spread source structurally requires that handling, bail
+        // and let the caller fall back to the solver-computed spread type.
+        if self.object_spread_collides_or_strips_readonly(object, spread_expr) {
+            return None;
+        }
         if let Some(spread_arms) = self.object_spread_type_literal_arms(spread_expr) {
             return Self::prepend_members_to_object_type_literal_arm_texts(
                 spread_arms,
@@ -778,6 +807,56 @@ impl<'a> DeclarationEmitter<'a> {
 
         let spread_arms = self.object_spread_type_literal_arms(spread_expr)?;
         Self::prepend_members_to_object_type_literal_arm_texts(spread_arms, &own_members, depth)
+    }
+
+    /// Returns `true` when declaration emit of `{ ...own, ...spread }` cannot be
+    /// reconstructed verbatim from the source AST and must use the
+    /// solver-computed spread type instead. Two structural conditions trigger
+    /// this: (1) an own member key collides with a key on the spread source
+    /// (spread overrides earlier members, widening optionals to a union), or
+    /// (2) the spread source carries `readonly` members (spread strips them).
+    fn object_spread_collides_or_strips_readonly(
+        &self,
+        object: &tsz_parser::parser::node::LiteralExprData,
+        spread_expr: NodeIndex,
+    ) -> bool {
+        let Some(interner) = self.type_interner else {
+            return false;
+        };
+        let Some(spread_type) = self
+            .get_node_type_or_names(&[spread_expr])
+            .or_else(|| self.get_symbol_cached_type(spread_expr))
+            .or_else(|| self.get_type_via_symbol(spread_expr))
+        else {
+            return false;
+        };
+
+        if tsz_solver::type_queries::object_spread_source_has_readonly_member(interner, spread_type)
+        {
+            return true;
+        }
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                continue;
+            }
+            let Some(name_idx) = self.object_literal_member_name_idx(member_node) else {
+                continue;
+            };
+            let Some(name) = self.object_literal_member_name_text(name_idx) else {
+                continue;
+            };
+            if name.is_empty() || name == ":" {
+                continue;
+            }
+            if tsz_solver::type_queries::type_has_property_by_str(interner, spread_type, &name) {
+                return true;
+            }
+        }
+        false
     }
 
     fn prepend_members_to_object_type_literal_arm_texts(
@@ -938,6 +1017,16 @@ impl<'a> DeclarationEmitter<'a> {
                 spread_object_text.or_else(|| Some("{}".to_string()))
             }
             tsz_solver::type_queries::ObjectSpreadDtsProjection::PreserveSource => {
+                // Spreading a `readonly` source (e.g. `{ ...x }` where `x` is
+                // `as const`) produces *mutable* members. The source-preserving
+                // text below would keep the `readonly` modifiers, so defer to
+                // the solver-computed spread type instead.
+                if tsz_solver::type_queries::object_spread_source_has_readonly_member(
+                    interner,
+                    spread_type,
+                ) {
+                    return None;
+                }
                 if !self.expression_references_parameter(spread.expression)
                     && self
                         .local_variable_initializer_type_text(spread.expression)
@@ -1115,9 +1204,17 @@ impl<'a> DeclarationEmitter<'a> {
                 }
                 .or_else(|| self.preferred_object_member_initializer_type_text(initializer, depth))
                 .unwrap_or_else(|| "any".to_string());
+                // When `{ y? }` is written (grammar error TS1162), tsc still infers an
+                // optional property. Mirror that by using `y?` as the prefix when the
+                // question token position was recorded during parsing.
+                let prefix = if data.question_token_pos != 0 {
+                    format!("{name}?")
+                } else {
+                    name.to_string()
+                };
                 Some(ObjectTypeLiteralMember::typed(
                     name.to_string(),
-                    name.to_string(),
+                    prefix,
                     type_text,
                 ))
             }

@@ -122,6 +122,20 @@ impl<'a> DeclarationEmitter<'a> {
                 self.preferred_expression_type_text(unary.expression)
                     .or_else(|| self.infer_fallback_type_text_at(unary.expression, depth + 1))
             }
+            // A type-asserted expression (`expr as T`, `<T>expr`) reuses the
+            // source assertion *type node* in tsc's declaration output, exactly
+            // as the annotation-position emitter does. Reusing the node (not the
+            // solver-resolved type) preserves entity-name computed property keys
+            // (`{ [n]: T }`) and other source-only spellings that type
+            // resolution would otherwise flatten to literal values.
+            // `explicit_asserted_type_text` returns `None` for `as const`, so
+            // those continue to flow through the default solver path below.
+            k if k == syntax_kind_ext::AS_EXPRESSION || k == syntax_kind_ext::TYPE_ASSERTION => {
+                self.explicit_asserted_type_text(node_id).or_else(|| {
+                    self.get_node_type(node_id)
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
@@ -761,8 +775,34 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             let type_text = if func.type_annotation.is_some() {
-                self.emit_type_node_text(func.type_annotation)
-            } else if func.body.is_some() {
+                // When the callee is generic and its return annotation mentions its own
+                // type parameters (e.g. `boxify<T>(obj: T): Boxified<T>`), the raw
+                // annotation text still carries the bare type parameter. Substitute the
+                // inferred type arguments so the returned text reflects the call site
+                // (`Boxified<A | B | C | undefined>`), mirroring
+                // call_expression_source_return_type_text. Fall back to the raw
+                // annotation when substitution is not applicable.
+                let raw = self.emit_type_node_text(func.type_annotation);
+                match raw {
+                    Some(raw_text)
+                        if call.type_arguments.is_none()
+                            && self.source_return_type_mentions_type_parameter(
+                                self.arena, func, &raw_text,
+                            ) =>
+                    {
+                        self.substitute_source_call_type_parameters(
+                            self.arena, func, call, raw_text,
+                        )
+                    }
+                    other => other,
+                }
+            } else if func.body.is_some()
+                && !self.source_function_body_contains_direct_call_to_name(
+                    self.arena,
+                    func,
+                    &symbol.escaped_name,
+                )
+            {
                 self.function_body_single_return_expression(func.body)
                     .and_then(|return_expr| {
                         self.declaration_summary_primitive_expression_type_text(
@@ -934,6 +974,12 @@ impl<'a> DeclarationEmitter<'a> {
                 if let Some(type_text) = self.flat_map_array_subclass_return_type_text(expr_idx) {
                     return Some(type_text);
                 }
+                if let Some(type_text) = self.array_map_callback_return_type_text(expr_idx) {
+                    return Some(type_text);
+                }
+                if let Some(type_text) = self.array_filter_typeof_type_text(expr_idx) {
+                    return Some(type_text);
+                }
                 // Synthesise the source-side intersection text for a
                 // generic mixin call like `Mix(A, B)` whose declared
                 // return is `T1 & … & Tn` or `T & X`. tsz's inference
@@ -1013,6 +1059,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .or_else(|| self.conditional_unique_symbol_union_type_text(expr_idx)),
             k if k == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION => self
                 .array_literal_element_access_type_text(expr_idx)
+                .or_else(|| self.element_access_array_element_type_text(expr_idx))
                 .or_else(|| self.template_index_signature_element_access_type_text(expr_idx))
                 .or_else(|| self.class_static_computed_index_access_type_text(expr_idx)),
             k if k == syntax_kind_ext::CLASS_EXPRESSION => {

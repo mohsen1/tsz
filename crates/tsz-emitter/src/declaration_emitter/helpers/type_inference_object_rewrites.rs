@@ -178,6 +178,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if computed_members.is_empty() && overridden_members.is_empty() {
+            // Every member was a non-emittable computed key (e.g. `["" + ""]`).
+            // The syntax-recovery path has nothing concrete to inject, but the
+            // checker already collapsed those dynamic computed members into
+            // index signatures on the solver type. Serialize that structural
+            // type rather than dropping to an empty `{}` via the source-text
+            // object-literal fallback.
+            if has_non_emittable_computed_members {
+                let printed = self.print_type_id(type_id);
+                return (!printed.trim().is_empty()).then_some(printed);
+            }
             return None;
         }
 
@@ -772,6 +782,143 @@ impl<'a> DeclarationEmitter<'a> {
             .or_else(|| self.infer_fallback_type_text_at(initializer, self.indent_level + 1))
     }
 
+    /// Parenthesize `element_text` when it appears as the element of an array
+    /// shorthand (`T[]` / `readonly T[]`).
+    ///
+    /// Mirrors the solver's `requires_array_element_parens` rule: postfix `[]`
+    /// requires its operand to be a `PrimaryType`, so any top-level union,
+    /// intersection, function/constructor type, conditional, `infer`, or
+    /// `keyof` must be wrapped — those all bind looser than `[]` and would
+    /// otherwise let the brackets attach to the inner form (`string |
+    /// number[]` instead of `(string | number)[]`). The check is structural:
+    /// it splits on *top-level* separators only, so nested `Box<a | b>` does
+    /// not trigger spurious parens.
+    pub(super) fn parenthesize_type_text_in_array_element_position(element_text: &str) -> String {
+        let trimmed = element_text.trim();
+        if trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+        let already_wrapped = trimmed.starts_with('(') && trimmed.ends_with(')');
+        if already_wrapped {
+            return trimmed.to_string();
+        }
+        if Self::array_element_text_needs_parens(trimmed) {
+            format!("({trimmed})")
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    /// Structural predicate behind `parenthesize_type_text_in_array_element_position`.
+    /// Returns `true` when the element text describes a non-`PrimaryType` whose
+    /// top-level form binds looser than postfix `[]`.
+    fn array_element_text_needs_parens(trimmed: &str) -> bool {
+        // Top-level union / intersection (split respects nesting depth).
+        if Self::split_top_level_union_type_parts(trimmed).len() > 1
+            || Self::split_top_level_separator_parts(trimmed, b'&').len() > 1
+        {
+            return true;
+        }
+        // Function / constructor types and conditional (`extends ... ?`) bind
+        // looser than `[]`. `=>`, leading `new `, and a top-level `extends`
+        // (only meaningful inside a conditional at this position) all qualify.
+        trimmed.starts_with("new ")
+            || trimmed.starts_with("keyof ")
+            || trimmed.starts_with("infer ")
+            || Self::contains_top_level_token(trimmed, "=>")
+            || Self::contains_top_level_token(trimmed, " extends ")
+    }
+
+    /// Split `text` on a single-byte top-level separator, ignoring separators
+    /// nested inside parens, brackets, braces, or angle brackets.
+    fn split_top_level_separator_parts(text: &str, sep: u8) -> Vec<String> {
+        let bytes = text.as_bytes();
+        let mut depth_paren = 0usize;
+        let mut depth_bracket = 0usize;
+        let mut depth_brace = 0usize;
+        let mut depth_angle = 0usize;
+        let mut start = 0usize;
+        let mut parts = Vec::new();
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => depth_paren += 1,
+                b')' => depth_paren = depth_paren.saturating_sub(1),
+                b'[' => depth_bracket += 1,
+                b']' => depth_bracket = depth_bracket.saturating_sub(1),
+                b'{' => depth_brace += 1,
+                b'}' => depth_brace = depth_brace.saturating_sub(1),
+                b'<' => depth_angle += 1,
+                b'>' if i == 0 || bytes[i - 1] != b'=' => {
+                    depth_angle = depth_angle.saturating_sub(1);
+                }
+                c if c == sep
+                    && depth_paren == 0
+                    && depth_bracket == 0
+                    && depth_brace == 0
+                    && depth_angle == 0 =>
+                {
+                    if let Some(part) = text.get(start..i) {
+                        let trimmed = part.trim();
+                        if !trimmed.is_empty() {
+                            parts.push(trimmed.to_string());
+                        }
+                    }
+                    start = i + 1;
+                }
+                _ => {}
+            }
+            i += 1;
+        }
+        if let Some(part) = text.get(start..) {
+            let trimmed = part.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+        }
+        parts
+    }
+
+    /// Returns `true` when `needle` appears in `text` outside any paren,
+    /// bracket, brace, or angle-bracket nesting.
+    fn contains_top_level_token(text: &str, needle: &str) -> bool {
+        let bytes = text.as_bytes();
+        let needle_bytes = needle.as_bytes();
+        if needle_bytes.is_empty() {
+            return false;
+        }
+        let mut depth_paren = 0usize;
+        let mut depth_bracket = 0usize;
+        let mut depth_brace = 0usize;
+        let mut depth_angle = 0usize;
+        let mut i = 0usize;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'(' => depth_paren += 1,
+                b')' => depth_paren = depth_paren.saturating_sub(1),
+                b'[' => depth_bracket += 1,
+                b']' => depth_bracket = depth_bracket.saturating_sub(1),
+                b'{' => depth_brace += 1,
+                b'}' => depth_brace = depth_brace.saturating_sub(1),
+                b'<' => depth_angle += 1,
+                b'>' if i == 0 || bytes[i - 1] != b'=' => {
+                    depth_angle = depth_angle.saturating_sub(1);
+                }
+                _ => {}
+            }
+            if depth_paren == 0
+                && depth_bracket == 0
+                && depth_brace == 0
+                && depth_angle == 0
+                && bytes[i..].starts_with(needle_bytes)
+            {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
     pub(super) fn parenthesize_type_text_in_union_position(type_text: &str) -> String {
         let trimmed = type_text.trim();
         if (trimmed.contains("=>") || trimmed.starts_with("new "))
@@ -1255,5 +1402,127 @@ impl<'a> DeclarationEmitter<'a> {
             })
             .unwrap_or(trimmed);
         normalized.parse::<f64>().is_ok()
+    }
+}
+
+#[cfg(test)]
+mod array_element_paren_tests {
+    use super::DeclarationEmitter;
+
+    fn paren(s: &str) -> String {
+        DeclarationEmitter::parenthesize_type_text_in_array_element_position(s)
+    }
+
+    // --- Top-level union must be parenthesized in array-element position. ---
+    // Rule: postfix `[]` binds tighter than `|`, so `string | number` rendered
+    // as an array element becomes `(string | number)[]`, never `string |
+    // number[]`. Varies the member spellings to prove it is structural.
+
+    #[test]
+    fn top_level_union_is_parenthesized() {
+        assert_eq!(paren("string | number"), "(string | number)");
+        assert_eq!(
+            paren("boolean | bigint | symbol"),
+            "(boolean | bigint | symbol)"
+        );
+    }
+
+    #[test]
+    fn top_level_union_with_object_members_is_parenthesized() {
+        assert_eq!(paren("{ a: 1 } | { b: 2 }"), "({ a: 1 } | { b: 2 })");
+    }
+
+    // --- A union nested inside another constructor must NOT trigger parens. ---
+    // `Box<string | number>` is already a `PrimaryType`; the `|` is nested
+    // inside the angle brackets, so the array element stays bare.
+
+    #[test]
+    fn nested_union_inside_application_is_not_parenthesized() {
+        assert_eq!(paren("Box<string | number>"), "Box<string | number>");
+        assert_eq!(paren("Map<string, A | B>"), "Map<string, A | B>");
+    }
+
+    #[test]
+    fn nested_union_inside_tuple_is_not_parenthesized() {
+        assert_eq!(
+            paren("[string | number, boolean]"),
+            "[string | number, boolean]"
+        );
+    }
+
+    // --- Top-level intersection must be parenthesized. ---
+
+    #[test]
+    fn top_level_intersection_is_parenthesized() {
+        assert_eq!(paren("A & B"), "(A & B)");
+        assert_eq!(paren("{ x: 1 } & { y: 2 }"), "({ x: 1 } & { y: 2 })");
+    }
+
+    #[test]
+    fn nested_intersection_inside_application_is_not_parenthesized() {
+        assert_eq!(paren("Foo<A & B>"), "Foo<A & B>");
+    }
+
+    // --- Function / constructor types bind looser than `[]`. ---
+
+    #[test]
+    fn function_type_is_parenthesized() {
+        assert_eq!(paren("() => void"), "(() => void)");
+        assert_eq!(paren("(x: number) => string"), "((x: number) => string)");
+    }
+
+    #[test]
+    fn constructor_type_is_parenthesized() {
+        assert_eq!(paren("new () => Foo"), "(new () => Foo)");
+    }
+
+    // --- Conditional / keyof / infer bind looser than `[]`. ---
+
+    #[test]
+    fn conditional_type_is_parenthesized() {
+        assert_eq!(
+            paren("T extends string ? 1 : 0"),
+            "(T extends string ? 1 : 0)"
+        );
+        // Renamed bound variable: proves the rule is not keyed on `T`.
+        assert_eq!(
+            paren("Elem extends number ? A : B"),
+            "(Elem extends number ? A : B)"
+        );
+    }
+
+    #[test]
+    fn keyof_type_is_parenthesized() {
+        assert_eq!(paren("keyof T"), "(keyof T)");
+        assert_eq!(paren("keyof SomeOther"), "(keyof SomeOther)");
+    }
+
+    #[test]
+    fn infer_type_is_parenthesized() {
+        assert_eq!(paren("infer E"), "(infer E)");
+        assert_eq!(paren("infer Q9"), "(infer Q9)");
+    }
+
+    // --- Primary types stay bare; already-parenthesized text is untouched. ---
+
+    #[test]
+    fn primary_types_stay_bare() {
+        assert_eq!(paren("number"), "number");
+        assert_eq!(paren("string"), "string");
+        assert_eq!(paren("Box<number>"), "Box<number>");
+        assert_eq!(paren("[number, string]"), "[number, string]");
+        assert_eq!(paren("{ a: number }"), "{ a: number }");
+    }
+
+    #[test]
+    fn already_parenthesized_text_is_not_double_wrapped() {
+        assert_eq!(paren("(string | number)"), "(string | number)");
+        assert_eq!(paren("(() => void)"), "(() => void)");
+    }
+
+    #[test]
+    fn empty_text_is_passed_through() {
+        assert_eq!(paren(""), "");
+        assert_eq!(paren("   "), "");
     }
 }

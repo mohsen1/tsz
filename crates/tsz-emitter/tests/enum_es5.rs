@@ -770,3 +770,98 @@ fn line_comments_without_source_text_fall_back_safely() {
         "no comments without source text, got:\n{output}"
     );
 }
+
+#[test]
+fn invalid_char_member_in_enum_body_is_skipped() {
+    // When an invalid character (e.g. U+00AC NOT SIGN `¬`) appears as an enum
+    // member due to parse-error recovery, tsc discards that member entirely
+    // rather than emitting a spurious line such as `E[E[""] = 0] = "";`.
+    // The fix: skip enum members whose resolved name is empty and whose name
+    // node is not a PrivateIdentifier or computed property.
+    let output = transform_enum("enum E {\n    \u{00AC}\n}");
+    assert!(
+        !output.contains("\"\""),
+        "invalid-char member should not emit an empty-string key, got:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_char_member_between_valid_members_is_skipped() {
+    // Valid members before and after an invalid-char recovery node must still
+    // be emitted correctly; only the invalid member is silently dropped.
+    let output = transform_enum("enum X {\n    A,\n    \u{00AC},\n    B\n}");
+    assert!(
+        output.contains("X[X[\"A\"] = 0] = \"A\""),
+        "member A must still emit, got:\n{output}"
+    );
+    assert!(
+        output.contains("X[X[\"B\"] = 1] = \"B\""),
+        "member B must still emit (auto-increment past invalid member), got:\n{output}"
+    );
+    assert!(
+        !output.contains("\"\""),
+        "invalid member must not emit an empty-string key, got:\n{output}"
+    );
+}
+
+#[test]
+fn empty_string_literal_member_name_is_emitted() {
+    // A member explicitly named with the empty string literal (`enum E { "" }`)
+    // is a legitimate member. tsc emits `E[E[""] = n] = "";`. The empty-name
+    // skip (for parse-error recovery) must NOT swallow it, because its name node
+    // is a real `StringLiteral`, not an empty recovery `Identifier`.
+    // Vary the enum name and surrounding members vs. the conformance witness so
+    // the assertion proves the structural rule rather than one spelling.
+    let output = transform_enum("enum Color { A, B, \"\" }");
+    assert!(
+        output.contains("Color[Color[\"\"] = 2] = \"\";"),
+        "empty-string-named member must emit reverse mapping, got:\n{output}"
+    );
+    assert!(
+        output.contains("Color[Color[\"A\"] = 0] = \"A\";")
+            && output.contains("Color[Color[\"B\"] = 1] = \"B\";"),
+        "surrounding members must still emit, got:\n{output}"
+    );
+}
+
+#[test]
+fn empty_string_literal_member_name_emits_when_first() {
+    // The empty-string member can appear in any position, including first, and
+    // auto-increment must continue normally for later members. Use a different
+    // enum name and member spellings to keep the test keyed to the node kind,
+    // not a fixed layout.
+    let output = transform_enum("enum E2 { \"\", First, Second }");
+    assert!(
+        output.contains("E2[E2[\"\"] = 0] = \"\";"),
+        "leading empty-string member must emit at index 0, got:\n{output}"
+    );
+    assert!(
+        output.contains("E2[E2[\"First\"] = 1] = \"First\";")
+            && output.contains("E2[E2[\"Second\"] = 2] = \"Second\";"),
+        "members after empty-string member must auto-increment, got:\n{output}"
+    );
+}
+
+#[test]
+fn empty_string_member_emits_but_invalid_char_member_is_skipped() {
+    // The empty-string literal member (legitimate, name node = StringLiteral)
+    // must emit, while an invalid-char parse-error member (name node = empty
+    // Identifier) in the same enum is still discarded. This proves the fix
+    // distinguishes the two empty-name cases by node kind, not resolved text.
+    let output = transform_enum("enum Mix {\n    \"\",\n    \u{00AC},\n    Tail\n}");
+    assert!(
+        output.contains("Mix[Mix[\"\"] = 0] = \"\";"),
+        "empty-string member must emit, got:\n{output}"
+    );
+    assert!(
+        output.contains("Mix[Mix[\"Tail\"] = 1] = \"Tail\";"),
+        "trailing member must auto-increment past the skipped invalid member, got:\n{output}"
+    );
+    // Exactly one empty-string key (the legitimate member). The invalid-char
+    // recovery member must not add a second `[""]` mapping.
+    assert_eq!(
+        output.matches("[\"\"]").count(),
+        1,
+        "invalid-char member must not emit an additional empty-string key, got:\n{output}"
+    );
+}

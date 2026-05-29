@@ -1234,7 +1234,7 @@ impl<'a> CheckerState<'a> {
             // contextual receiver. A cache entry produced under an earlier
             // generic inference pass must not be reused after Round 2 installs
             // a more concrete contextual `this` type.
-            if let Some((name, _)) = crate::dispatch_helpers::keyword_type_mapping(node_kind)
+            if let Some((name, _)) = crate::dispatch::helpers::keyword_type_mapping(node_kind)
                 && self.is_keyword_type_used_as_value_position(idx)
             {
                 use crate::query_boundaries::name_resolution::NameLookupKind;

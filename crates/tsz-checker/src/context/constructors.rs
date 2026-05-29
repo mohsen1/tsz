@@ -301,6 +301,7 @@ impl<'a> CheckerContext<'a> {
             emitted_ts2411_for_iface_prop: FxHashSet::default(),
             type_resolution_fuel: Cell::new(crate::state::MAX_TYPE_RESOLUTION_OPS),
             typeof_resolution_stack: RefCell::new(FxHashSet::default()),
+            type_param_node_cache: FxHashMap::default(),
         }
     }
 

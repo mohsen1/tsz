@@ -94,6 +94,12 @@ impl<'a> Printer<'a> {
             return name;
         }
 
+        // Honour pre-allocated names reserved by reserve_es5_computed_key_inner_class_temps
+        // so that the class alias gets the same slot that was counted before the key temp.
+        if let Some(name) = self.preallocated_temp_names.pop_front() {
+            return name;
+        }
+
         self.make_unique_name_reserved_for_nested()
     }
 

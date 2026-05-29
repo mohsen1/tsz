@@ -360,7 +360,14 @@ impl<'a> CheckerState<'a> {
     }
 
     fn numeric_index_surfaces(&self, object_type: TypeId) -> Option<(bool, bool)> {
-        match query::classify_element_indexable(self.ctx.types, object_type) {
+        // Resolver-aware so that intersection/union members containing
+        // `Application(Lazy(DefId), args)` wrappers (e.g. `Record<string, V>`)
+        // resolve to their structural index surface instead of `Other`.
+        match query::classify_element_indexable_with_resolver(
+            self.ctx.types,
+            &self.ctx,
+            object_type,
+        ) {
             query::ElementIndexableKind::ObjectWithIndex {
                 has_string,
                 has_number,

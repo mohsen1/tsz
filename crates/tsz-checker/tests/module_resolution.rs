@@ -1485,3 +1485,156 @@ fn test_non_directory_hint_still_uses_extension_fan_out() {
         "'./a' (no slash) must resolve to a/a.ts via extension fan-out",
     );
 }
+
+// ---------------------------------------------------------------------------
+// Extension resolution priority: source before declaration (tsc parity)
+//
+// Regression guard for #11572 (and the #11633 / #11476 family). For an
+// extensionless / stem-form import, tsc resolves the implementation (source)
+// sibling ahead of its declaration counterpart (`.ts` before `.d.ts`, `.tsx`
+// before declaration, `.mts` before `.d.mts`, …). The fan-out and the
+// driver-side resolution map must agree on that order regardless of the file
+// order they happen to see.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_resolution_priority_ranks_source_before_declaration() {
+    // `.d.ts` must be detected as a declaration, never mistaken for `.ts`.
+    assert!(resolution_priority("foo.ts") < resolution_priority("foo.d.ts"));
+    assert!(resolution_priority("foo.tsx") < resolution_priority("foo.d.ts"));
+    assert!(resolution_priority("foo.mts") < resolution_priority("foo.d.mts"));
+    assert!(resolution_priority("foo.cts") < resolution_priority("foo.d.cts"));
+    // TypeScript surfaces outrank JavaScript ones.
+    assert!(resolution_priority("foo.ts") < resolution_priority("foo.js"));
+    assert!(resolution_priority("foo.d.ts") < resolution_priority("foo.js"));
+    // Unknown extensions sort last.
+    assert_eq!(
+        resolution_priority("foo.unknown"),
+        RESOLUTION_EXTENSIONS.len()
+    );
+}
+
+#[test]
+fn test_fan_out_extension_priority_variants() {
+    // Each row places the declaration sibling *before* the source so a
+    // declaration-first fan-out would (wrongly) win; the source must still be
+    // chosen. The final row is the negative/fallback case: with only a
+    // declaration present, the fan-out reorders candidates but never drops it.
+    let cases: &[(&[&str], &str, usize, &str)] = &[
+        (
+            &["/proj/main.ts", "/proj/types.d.ts", "/proj/types.ts"],
+            "./types",
+            2,
+            "extensionless ./types → source types.ts",
+        ),
+        (
+            &["/proj/main.ts", "/proj/widget.d.ts", "/proj/widget.tsx"],
+            "./widget",
+            2,
+            "./widget → source widget.tsx (not the `.ts` spelling)",
+        ),
+        (
+            &["/proj/main.ts", "/proj/esm.d.mts", "/proj/esm.mts"],
+            "./esm",
+            2,
+            "./esm → source esm.mts",
+        ),
+        (
+            &[
+                "/proj/main.ts",
+                "/proj/lib/index.d.ts",
+                "/proj/lib/index.ts",
+            ],
+            "./lib",
+            2,
+            "directory index ./lib → lib/index.ts",
+        ),
+        (
+            &["/proj/main.ts", "/proj/only.d.ts"],
+            "./only",
+            1,
+            "declaration-only ./only still resolves to only.d.ts",
+        ),
+    ];
+    for (files, specifier, expected, label) in cases {
+        let idx = file_index_from(files);
+        assert_eq!(
+            resolve_specifier_via_file_index("/proj/main.ts", specifier, &idx),
+            Some(*expected),
+            "{label}",
+        );
+    }
+}
+
+#[test]
+fn test_probe_file_name_index_prefers_source_over_declaration() {
+    // Project-relative bare path (`probe_file_name_index` path) obeys the same
+    // rule. File order is reversed here to prove order-independence.
+    let files = ["pkg/src/types.ts", "pkg/src/types.d.ts"];
+    let idx = file_index_from(&files);
+    assert_eq!(
+        probe_file_name_index("pkg/src/types", &idx),
+        Some(0),
+        "pkg/src/types must resolve to the source .ts regardless of file order",
+    );
+}
+
+#[test]
+fn test_resolution_map_prefers_source_over_declaration_independent_of_order() {
+    // Driver-side map (`build_module_resolution_maps`, used by the CLI and
+    // server). The extensionless stem `./types` must map to the source file in
+    // BOTH file orderings — a fixture-order-only fix would pass one and fail
+    // the other.
+    for (files, source_idx) in [
+        (
+            vec![
+                "/proj/main.ts".to_string(),
+                "/proj/types.d.ts".to_string(),
+                "/proj/types.ts".to_string(),
+            ],
+            2usize,
+        ),
+        (
+            vec![
+                "/proj/main.ts".to_string(),
+                "/proj/types.ts".to_string(),
+                "/proj/types.d.ts".to_string(),
+            ],
+            1usize,
+        ),
+    ] {
+        let (paths, _modules) = build_module_resolution_maps(&files);
+        assert_eq!(
+            paths.get(&(0, "./types".to_string())),
+            Some(&source_idx),
+            "./types must map to the source sibling for files {files:?}",
+        );
+        // Explicit spellings stay unambiguous and addressable.
+        assert!(paths.contains_key(&(0, "./types.d.ts".to_string())));
+        assert!(paths.contains_key(&(0, "./types.ts".to_string())));
+    }
+}
+
+#[test]
+fn test_resolve_from_source_prefers_source_over_declaration() {
+    // The `TargetIndex`-based resolver mirrors the same priority rule.
+    let files = vec![
+        "/proj/src/main.ts".to_string(),
+        "/proj/src/api.d.ts".to_string(),
+        "/proj/src/api.ts".to_string(),
+    ];
+    let index = build_target_index(&files);
+    let spec = normalize_import_specifier("./api").unwrap();
+    assert_eq!(
+        resolve_from_source("/proj/src/main.ts", &spec, &index),
+        Some(2),
+        "./api must resolve to source api.ts, not api.d.ts",
+    );
+    // Explicit declaration spelling still selects the declaration file.
+    let dts_spec = normalize_import_specifier("./api.d.ts").unwrap();
+    assert_eq!(
+        resolve_from_source("/proj/src/main.ts", &dts_spec, &index),
+        Some(1),
+        "./api.d.ts must still resolve to the declaration file",
+    );
+}

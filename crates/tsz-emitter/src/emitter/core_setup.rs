@@ -340,6 +340,8 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            loop_iife_body_depth: 0,
+            loop_iife_pending_hoisted_temps: Vec::new(),
             hoisted_file_level_class_temps: Vec::new(),
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),
@@ -372,6 +374,7 @@ impl<'a> Printer<'a> {
             class_member_emit_depth: 0,
             es5_super_home_function_depth: None,
             es5_super_home_is_static: false,
+            es5_super_home_is_object_literal: false,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),
@@ -379,6 +382,7 @@ impl<'a> Printer<'a> {
             prior_enum_string_members: FxHashMap::default(),
             prior_enum_string_values: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
+            generated_private_names: None,
             private_member_info: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
             pending_static_private_inits: Vec::new(),
@@ -389,6 +393,7 @@ impl<'a> Printer<'a> {
             pending_private_accessor_defs: Vec::new(),
             private_members_to_skip: FxHashSet::default(),
             private_static_class_alias: None,
+            private_static_class_alias_shadow_depth: 0,
             defer_class_static_blocks: false,
             deferred_class_static_blocks: Vec::new(),
             jsx_dev_file_name: None,
@@ -752,6 +757,9 @@ impl<'a> Printer<'a> {
                 || file_name.ends_with(".mjs")
                 || file_name.ends_with(".cjs");
             self.set_current_root_js_source(is_js_source);
+            // The generated private-helper name set is file-scoped: reset it so a
+            // reused printer re-seeds from this file's enclosing source bindings.
+            self.generated_private_names = None;
         }
 
         if let Some(source) = self.arena.get_source_file(node)

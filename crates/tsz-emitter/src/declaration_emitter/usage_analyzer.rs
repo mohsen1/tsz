@@ -625,9 +625,18 @@ impl<'a> UsageAnalyzer<'a> {
         let Some(ident) = self.arena.get_identifier(name_node) else {
             return;
         };
-        // Look up the symbol by name: first in file_locals, then in scope tables
-        // (needed for import aliases inside namespaces).
-        let sym_id = if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
+        // Prefer lexical, scope-aware resolution of this exact reference node:
+        // it resolves to the in-scope binding (e.g. the namespace-local
+        // `import c = x.c` alias) rather than the ambiguous result of a global
+        // name-only scan that could match a same-named declaration in an
+        // unrelated scope (such as the underlying class `x.c`). Fall back to
+        // the bound node symbol and then name lookup when scope resolution is
+        // unavailable.
+        let sym_id = if let Some(sym_id) = self.binder.resolve_identifier(self.arena, name_idx) {
+            sym_id
+        } else if let Some(sym_id) = self.binder.get_node_symbol(name_idx) {
+            sym_id
+        } else if let Some(sym_id) = self.binder.file_locals.get(&ident.escaped_text) {
             sym_id
         } else {
             let mut found = None;

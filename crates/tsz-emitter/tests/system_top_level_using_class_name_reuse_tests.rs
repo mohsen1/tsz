@@ -124,6 +124,43 @@ fn exported_decorated_class_in_top_level_using_region_exports_hoisted_name() {
 }
 
 #[test]
+fn exported_decorated_self_ref_class_in_using_region_uses_outer_alias() {
+    // A class that references itself in value position (e.g. `new C()`) requires
+    // the outer-alias pattern.  tsc emits two separate exports_1 calls:
+    //   exports_1("C", C = C_1 = /** @class */ (function () { … C_1 = C; … }()));
+    //   exports_1("C", C = C_1 = __decorate([dec], C));
+    // The inner `C_1 = C;` captures the alias so self-references inside the IIFE
+    // body resolve correctly once the outer `C_1` is reassigned by `__decorate`.
+    let source = "export {};\ndeclare var dec: any;\nusing before = null;\n@dec\nexport class C {\n    method() { return new C(); }\n}\n";
+    let output = parse_lower_emit(source, system_es5_opts(true));
+    // Must use the outer-alias variable (C_1) hoisted alongside C.
+    assert!(
+        output.contains("var before, C_1, C,") || output.contains("var before, C_1, C"),
+        "C_1 must be hoisted as a module-level var.\n{output}"
+    );
+    // First export_1 call: C = C_1 = IIFE
+    assert!(
+        output.contains("exports_1(\"C\", C = C_1 = /** @class */ (function () {"),
+        "first exports_1 must assign the IIFE to both C and C_1.\n{output}"
+    );
+    // Methods inside IIFE use C_1 for self-references.
+    assert!(
+        output.contains("return new C_1()"),
+        "method self-reference must use alias C_1.\n{output}"
+    );
+    // Second export_1 call: re-export after __decorate.
+    assert!(
+        output.contains("exports_1(\"C\", C = C_1 = __decorate(["),
+        "second exports_1 must reassign both C and C_1 after __decorate.\n{output}"
+    );
+    // Must not produce a C_2 rename.
+    assert!(
+        !output.contains("C_2"),
+        "must not produce a synthetic C_2 rename.\n{output}"
+    );
+}
+
+#[test]
 fn class_before_top_level_using_reuses_hoisted_name() {
     // The class precedes the `using` declaration but is still emitted through
     // the top-level-using region; it must reuse `C` too.

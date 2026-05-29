@@ -179,6 +179,13 @@ impl<'a> Printer<'a> {
             && self.pending_object_rest_param_defaults.is_empty();
 
         if should_emit_single_line {
+            let private_static_shadow = self.block_shadows_private_static_class_alias(
+                &block.statements.nodes,
+                is_function_body_block,
+            );
+            if private_static_shadow {
+                self.private_static_class_alias_shadow_depth += 1;
+            }
             if is_function_body_block {
                 self.ctx.block_scope_state.enter_function_scope();
                 self.register_pending_function_body_parameters();
@@ -212,10 +219,20 @@ impl<'a> Printer<'a> {
             self.map_closing_brace(node);
             self.write(" }");
             self.ctx.block_scope_state.exit_scope();
+            if private_static_shadow {
+                self.private_static_class_alias_shadow_depth -= 1;
+            }
             // Trailing comments are handled by the calling context
             return;
         }
 
+        let private_static_shadow = self.block_shadows_private_static_class_alias(
+            &block.statements.nodes,
+            is_function_body_block,
+        );
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth += 1;
+        }
         if is_function_body_block {
             self.ctx.block_scope_state.enter_function_scope();
             self.register_pending_function_body_parameters();
@@ -356,6 +373,146 @@ impl<'a> Printer<'a> {
         // stmt_node.end past the statement boundary into the next statement's tokens,
         // so using next_stmt.pos as the scan limit prevents over-scanning.
         let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        self.emit_block_statement_list_with_comments(
+            &stmts,
+            directive_prologue_count,
+            block_close_pos,
+            is_function_body_block,
+        );
+
+        if let Some(anchor) = hoisted_var_anchor {
+            self.insert_function_body_hoisted_temps_at(anchor);
+        }
+
+        if let Some(anchor) = block_scoped_private_anchor
+            && !self.block_scoped_private_temps.is_empty()
+        {
+            let indent = self.writer.indent_string_at(anchor.indent_level);
+            let let_decl = format!(
+                "{}let {};",
+                indent,
+                self.block_scoped_private_temps.join(", ")
+            );
+            self.writer
+                .insert_line_at(anchor.byte_offset, anchor.line_no, &let_decl);
+            self.block_scoped_private_temps.clear();
+        }
+
+        // Close the block-level using try/catch/finally if active
+        if let Some((env_name, error_name, result_name, using_async)) = block_using_names {
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("catch (");
+            self.write(&error_name);
+            self.write(") {");
+            self.write_line();
+            self.increase_indent();
+            self.write(&env_name);
+            self.write(".error = ");
+            self.write(&error_name);
+            self.write(";");
+            self.write_line();
+            self.write(&env_name);
+            self.write(".hasError = true;");
+            self.write_line();
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            self.write("finally {");
+            self.write_line();
+            self.increase_indent();
+            if using_async {
+                // tsc emits: const result_N = __disposeResources(env_N);
+                //            if (result_N) await result_N;
+                // (inside __awaiter generator, `await` becomes `yield`)
+                let await_kw = if self.ctx.emit_await_as_yield {
+                    "yield"
+                } else {
+                    "await"
+                };
+                self.write(if self.ctx.target_es5 { "var" } else { "const" });
+                self.write(" ");
+                self.write(&result_name);
+                self.write(" = ");
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+                self.write("if (");
+                self.write(&result_name);
+                self.write(")");
+                self.write_line();
+                self.increase_indent();
+                self.write(await_kw);
+                self.write(" ");
+                self.write(&result_name);
+                self.write(";");
+                self.write_line();
+                self.decrease_indent();
+            } else {
+                self.write_helper("__disposeResources");
+                self.write("(");
+                self.write(&env_name);
+                self.write(");");
+                self.write_line();
+            }
+            self.decrease_indent();
+            self.write("}");
+            self.write_line();
+            // Restore previous block_using_env
+            self.block_using_env = prev_block_using_env;
+        } else {
+            self.block_using_env = prev_block_using_env;
+        }
+
+        // Emit comments between the last statement and the closing `}`.
+        // tsc preserves these comments inside the block at the block's
+        // indentation level for both function bodies and control-flow blocks.
+        if !self.ctx.options.remove_comments {
+            self.emit_comments_before_pos(block_close_pos);
+        }
+        self.restore_static_super_scope(static_super_scope);
+        self.decrease_indent();
+        self.map_closing_brace(node);
+        self.write_with_end_marker("}");
+        self.ctx.block_scope_state.exit_scope();
+        if private_static_shadow {
+            self.private_static_class_alias_shadow_depth -= 1;
+        }
+        // Restore declared_namespace_names for non-function blocks to prevent
+        // block-scoped let declarations from leaking to sibling blocks.
+        if let Some(prev) = prev_declared_ns {
+            self.declared_namespace_names = prev;
+        }
+        // Trailing comments after the block's closing brace are handled by
+        // the calling context (class member loop, statement loop, etc.)
+    }
+
+    /// Emit a block's statement list with full leading/trailing comment
+    /// handling and `comment_emit_idx` advancement, matching the canonical
+    /// `emit_block` per-statement loop.
+    ///
+    /// This is the single shared per-statement emission loop. `emit_block`
+    /// delegates to it, and the downleveled async-body `__awaiter` wrappers
+    /// (`function* () { ... }`) call it instead of a naive
+    /// `self.emit(stmt); self.write_line();` loop so that same-line trailing
+    /// comments on wrapped body statements (e.g. `const req = yield foo; // ONE`)
+    /// are preserved exactly as tsc emits them.
+    ///
+    /// `stmts` is the full statement list; `directive_prologue_count` statements
+    /// at the front are assumed to have already been emitted (e.g. by
+    /// `emit_leading_directive_prologue_statements`) and are skipped here.
+    /// `block_close_pos` is the source position of the block's closing `}` and
+    /// caps trailing-comment scanning for the final statement.
+    pub(in crate::emitter) fn emit_block_statement_list_with_comments(
+        &mut self,
+        stmts: &[NodeIndex],
+        directive_prologue_count: usize,
+        block_close_pos: u32,
+        is_function_body_block: bool,
+    ) {
         let prev_recovered_module_syntax_block_depth = self.recovered_module_syntax_block_depth;
         self.recovered_module_syntax_block_depth += 1;
         let prev_lexical_block_missing_initializer_function_depth =
@@ -538,112 +695,6 @@ impl<'a> Printer<'a> {
             prev_lexical_block_missing_initializer_function_depth;
         self.lexical_block_missing_initializer_is_loop_body =
             prev_lexical_block_missing_initializer_is_loop_body;
-
-        if let Some(anchor) = hoisted_var_anchor {
-            self.insert_function_body_hoisted_temps_at(anchor);
-        }
-
-        if let Some(anchor) = block_scoped_private_anchor
-            && !self.block_scoped_private_temps.is_empty()
-        {
-            let indent = self.writer.indent_string_at(anchor.indent_level);
-            let let_decl = format!(
-                "{}let {};",
-                indent,
-                self.block_scoped_private_temps.join(", ")
-            );
-            self.writer
-                .insert_line_at(anchor.byte_offset, anchor.line_no, &let_decl);
-            self.block_scoped_private_temps.clear();
-        }
-
-        // Close the block-level using try/catch/finally if active
-        if let Some((env_name, error_name, result_name, using_async)) = block_using_names {
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-            self.write("catch (");
-            self.write(&error_name);
-            self.write(") {");
-            self.write_line();
-            self.increase_indent();
-            self.write(&env_name);
-            self.write(".error = ");
-            self.write(&error_name);
-            self.write(";");
-            self.write_line();
-            self.write(&env_name);
-            self.write(".hasError = true;");
-            self.write_line();
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-            self.write("finally {");
-            self.write_line();
-            self.increase_indent();
-            if using_async {
-                // tsc emits: const result_N = __disposeResources(env_N);
-                //            if (result_N) await result_N;
-                // (inside __awaiter generator, `await` becomes `yield`)
-                let await_kw = if self.ctx.emit_await_as_yield {
-                    "yield"
-                } else {
-                    "await"
-                };
-                self.write(if self.ctx.target_es5 { "var" } else { "const" });
-                self.write(" ");
-                self.write(&result_name);
-                self.write(" = ");
-                self.write_helper("__disposeResources");
-                self.write("(");
-                self.write(&env_name);
-                self.write(");");
-                self.write_line();
-                self.write("if (");
-                self.write(&result_name);
-                self.write(")");
-                self.write_line();
-                self.increase_indent();
-                self.write(await_kw);
-                self.write(" ");
-                self.write(&result_name);
-                self.write(";");
-                self.write_line();
-                self.decrease_indent();
-            } else {
-                self.write_helper("__disposeResources");
-                self.write("(");
-                self.write(&env_name);
-                self.write(");");
-                self.write_line();
-            }
-            self.decrease_indent();
-            self.write("}");
-            self.write_line();
-            // Restore previous block_using_env
-            self.block_using_env = prev_block_using_env;
-        } else {
-            self.block_using_env = prev_block_using_env;
-        }
-
-        // Emit comments between the last statement and the closing `}`.
-        // tsc preserves these comments inside the block at the block's
-        // indentation level for both function bodies and control-flow blocks.
-        if !self.ctx.options.remove_comments {
-            self.emit_comments_before_pos(block_close_pos);
-        }
-        self.restore_static_super_scope(static_super_scope);
-        self.decrease_indent();
-        self.map_closing_brace(node);
-        self.write_with_end_marker("}");
-        self.ctx.block_scope_state.exit_scope();
-        // Restore declared_namespace_names for non-function blocks to prevent
-        // block-scoped let declarations from leaking to sibling blocks.
-        if let Some(prev) = prev_declared_ns {
-            self.declared_namespace_names = prev;
-        }
-        // Trailing comments after the block's closing brace are handled by
-        // the calling context (class member loop, statement loop, etc.)
     }
 
     pub(in crate::emitter) fn emit_function_body_hoisted_temps(&mut self) {
@@ -1086,7 +1137,23 @@ impl<'a> Printer<'a> {
                 {
                     let comment_end = semi_after.saturating_sub(1);
                     if !last_initializer_has_deferred_arrow_comment {
-                        self.emit_comments_in_range(last_end, comment_end, true, false);
+                        // When the declaration has no source semicolon adjacent to
+                        // its value, the `;` recovered here is a separate
+                        // ASI-elidable empty statement that the parser merged into
+                        // this statement's range. Comments that appear AFTER a line
+                        // break following the declaration value are leading trivia
+                        // of that elided empty statement (e.g. `const x = {}\n// c\n;`),
+                        // and tsc elides them together with the empty statement —
+                        // exactly as it would with no comments at all. Only emit
+                        // comments up to the first line break (genuine same-line
+                        // trailing comments such as `const x = 1 /* c */;`); skip the
+                        // rest so they don't break the statement onto extra lines.
+                        let trailing_comment_end =
+                            self.line_end_after_declaration_value(last_end, comment_end);
+                        self.emit_comments_in_range(last_end, trailing_comment_end, true, false);
+                        if trailing_comment_end < comment_end {
+                            self.skip_comments_in_range(trailing_comment_end, comment_end);
+                        }
                     }
                 }
             }

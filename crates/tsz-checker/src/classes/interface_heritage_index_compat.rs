@@ -7,6 +7,7 @@ use tsz_parser::parser::node::NodeArena;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
+use tsz_solver::TypeParamInfo;
 
 impl<'a> CheckerState<'a> {
     pub(super) fn is_direct_this_type(&self, type_id: TypeId) -> bool {
@@ -49,6 +50,113 @@ impl<'a> CheckerState<'a> {
         }
 
         self.type_base_def_id(source_return) == Some(current_iface_def_id)
+    }
+
+    /// Build a combined callable per overloaded derived method name so the
+    /// cross-file interface heritage path can compare an overloaded override as
+    /// a whole rather than signature-by-signature (the strict relation rejects a
+    /// single derived overload against the base's combined overload set even for
+    /// valid specializations). Names with a single signature are skipped.
+    pub(super) fn collect_overloaded_derived_method_callables(
+        &self,
+        derived_members: &[(String, TypeId, NodeIndex, u16, bool, bool)],
+        derived_method_counts: &rustc_hash::FxHashMap<String, usize>,
+    ) -> rustc_hash::FxHashMap<String, TypeId> {
+        let mut by_name: rustc_hash::FxHashMap<String, Vec<TypeId>> =
+            rustc_hash::FxHashMap::default();
+        for (name, member_type, _, kind, _, _) in derived_members {
+            if *kind == syntax_kind_ext::METHOD_SIGNATURE
+                && derived_method_counts.get(name).copied().unwrap_or(0) > 1
+            {
+                by_name.entry(name.clone()).or_default().push(*member_type);
+            }
+        }
+        let mut result: rustc_hash::FxHashMap<String, TypeId> = rustc_hash::FxHashMap::default();
+        for (name, object_types) in by_name {
+            if let Some(callable) =
+                crate::query_boundaries::class::combine_overloaded_method_callable(
+                    self.ctx.types,
+                    &object_types,
+                    &name,
+                )
+            {
+                result.insert(name, callable);
+            }
+        }
+        result
+    }
+
+    /// Resolve the base interface's type parameters and the heritage clause's
+    /// type arguments, padding with defaults/constraints to the base arity. The
+    /// cross-file interface heritage path uses these to instantiate base member
+    /// types that still reference the base's own parameters. Returns `None` when
+    /// there are no type arguments or the base is non-generic.
+    pub(super) fn base_heritage_params_and_args(
+        &mut self,
+        base_sym_id: SymbolId,
+        type_arguments: Option<&tsz_parser::parser::base::NodeList>,
+    ) -> Option<(Vec<TypeParamInfo>, Vec<TypeId>)> {
+        let args = type_arguments?;
+        let mut arg_ids: Vec<TypeId> = args
+            .nodes
+            .iter()
+            .map(|&arg_idx| self.get_type_from_type_node(arg_idx))
+            .collect();
+        if arg_ids.is_empty() {
+            return None;
+        }
+        let base_params = self.get_type_params_for_symbol(base_sym_id);
+        if base_params.is_empty() {
+            return None;
+        }
+        if arg_ids.len() < base_params.len() {
+            for param in base_params.iter().skip(arg_ids.len()) {
+                arg_ids.push(
+                    param
+                        .default
+                        .or(param.constraint)
+                        .unwrap_or(TypeId::UNKNOWN),
+                );
+            }
+        }
+        arg_ids.truncate(base_params.len());
+        Some((base_params, arg_ids))
+    }
+
+    /// For interface heritage (TS2430), the strict no-erase-generics relation
+    /// can reject alpha-equivalent generic method signatures whose method-local
+    /// type parameters are represented with different `TypeId`s on each side —
+    /// e.g. a base member resolved from a lowered interface type (cross-file
+    /// `get_type_of_symbol`, which yields a `Callable` shape) vs a derived member
+    /// computed directly from its AST (a `Function` shape). When both members are
+    /// callables and at least one carries method-local type parameters, and the
+    /// derived signature is assignable to the base signature under fresh
+    /// method-local generic instantiation (the standard relation), the override
+    /// is a valid specialization and tsc does not report TS2430 (matching
+    /// `compareSignaturesRelated`). This is keyed on the structural shape of the
+    /// signatures, not on any identifier name, so renaming the method-local type
+    /// parameter does not change the decision. Non-generic members are excluded
+    /// so the strict relation continues to govern ordinary property/method
+    /// overrides.
+    pub(super) fn generic_method_override_is_valid_specialization(
+        &mut self,
+        derived: TypeId,
+        base: TypeId,
+    ) -> bool {
+        let Some(derived_generic) =
+            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, derived)
+        else {
+            return false;
+        };
+        let Some(base_generic) =
+            crate::query_boundaries::class::callable_signature_is_generic(self.ctx.types, base)
+        else {
+            return false;
+        };
+        if !derived_generic && !base_generic {
+            return false;
+        }
+        self.diagnostic_relation_boolean_guard(derived, base)
     }
 
     pub(super) fn type_base_def_id(&self, type_id: TypeId) -> Option<tsz_solver::def::DefId> {

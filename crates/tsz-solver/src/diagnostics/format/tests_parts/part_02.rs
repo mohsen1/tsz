@@ -1227,9 +1227,14 @@ fn union_array_of_intrinsic_stays_after_primitive_builtin() {
     let union_id = db.union_preserve_members(vec![react_child_ref, any_array, TypeId::BOOLEAN]);
 
     let mut fmt = TypeFormatter::new(&db).with_def_store(&def_store);
+    // `ReactChild = string` is a primitive-bodied alias, so it renders as
+    // `string` (tsc attaches no `aliasSymbol` to the shared intrinsic). The
+    // point of this test is the union member ordering: the array of an
+    // intrinsic element type must not inherit `any`'s low builtin key, so it
+    // stays after the `boolean` primitive rather than sorting to the front.
     assert_eq!(
         fmt.format(union_id),
-        "boolean | any[] | ReactChild",
+        "boolean | any[] | string",
         "Arrays of intrinsic element types should not inherit `any`'s low builtin key"
     );
 }

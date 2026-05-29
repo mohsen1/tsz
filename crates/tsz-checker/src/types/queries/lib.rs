@@ -192,49 +192,63 @@ impl<'a> CheckerState<'a> {
                 };
 
                 if !symbol.declarations.is_empty() {
-                    // Use lower_merged_interface_declarations for proper multi-arena support
-                    let (ty, params) =
-                        lowering.lower_merged_interface_declarations(&decls_with_arenas);
+                    // Type aliases (e.g. `type ElementTagNameMap = HTMLElementTagNameMap & ...`,
+                    // `type SVGMatrix = DOMMatrix`) must NOT go through interface lowering:
+                    // `lower_merged_interface_declarations` treats a type-alias declaration node
+                    // as an interface with no members and returns a non-ERROR empty object `{}`,
+                    // which then shadows the real alias body. `resolve_lib_type_by_name` already
+                    // guards this the same way; keep both lib resolution paths consistent.
+                    let is_type_alias = symbol.has_any_flags(symbol_flags::TYPE_ALIAS);
 
-                    // If interface lowering succeeded (not ERROR), use the result
-                    if ty != TypeId::ERROR {
-                        // For the first definition, record canonical type parameter TypeIds
-                        if first_params.is_none() && !params.is_empty() {
-                            first_params = Some(params.clone());
-                            // Compute TypeIds for these canonical params (reuse outer factory)
-                            canonical_param_type_ids =
-                                params.iter().map(|p| factory.type_param(*p)).collect();
+                    if !is_type_alias {
+                        // Use lower_merged_interface_declarations for proper multi-arena support
+                        let (ty, params) =
+                            lowering.lower_merged_interface_declarations(&decls_with_arenas);
 
-                            // Cache type parameters for Application expansion.
-                            // Use the canonical (merged-binder) SymbolId so the DefId
-                            // matches what type reference resolution produces.
-                            self.ctx
-                                .cache_canonical_lib_type_params(name, sym_id, params.clone());
+                        // If interface lowering succeeded (not ERROR), use the result
+                        if ty != TypeId::ERROR {
+                            // For the first definition, record canonical type parameter TypeIds
+                            if first_params.is_none() && !params.is_empty() {
+                                first_params = Some(params.clone());
+                                // Compute TypeIds for these canonical params (reuse outer factory)
+                                canonical_param_type_ids =
+                                    params.iter().map(|p| factory.type_param(*p)).collect();
 
-                            lib_types.push(ty);
-                        } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
-                            // For subsequent definitions with type params, substitute them
-                            // with the canonical TypeIds to ensure consistency.
-                            // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
-                            let mut subst = TypeSubstitution::new();
-                            for (i, p) in params.iter().enumerate() {
-                                if i < canonical_param_type_ids.len() {
-                                    subst.insert(p.name, canonical_param_type_ids[i]);
+                                // Cache type parameters for Application expansion.
+                                // Use the canonical (merged-binder) SymbolId so the DefId
+                                // matches what type reference resolution produces.
+                                self.ctx.cache_canonical_lib_type_params(
+                                    name,
+                                    sym_id,
+                                    params.clone(),
+                                );
+
+                                lib_types.push(ty);
+                            } else if !params.is_empty() && !canonical_param_type_ids.is_empty() {
+                                // For subsequent definitions with type params, substitute them
+                                // with the canonical TypeIds to ensure consistency.
+                                // This fixes the Array<T1> & Array<T2> problem where T1 != T2.
+                                let mut subst = TypeSubstitution::new();
+                                for (i, p) in params.iter().enumerate() {
+                                    if i < canonical_param_type_ids.len() {
+                                        subst.insert(p.name, canonical_param_type_ids[i]);
+                                    }
                                 }
-                            }
-                            if !subst.is_empty() {
-                                let substituted_ty = instantiate_type(self.ctx.types, ty, &subst);
-                                lib_types.push(substituted_ty);
+                                if !subst.is_empty() {
+                                    let substituted_ty =
+                                        instantiate_type(self.ctx.types, ty, &subst);
+                                    lib_types.push(substituted_ty);
+                                } else {
+                                    lib_types.push(ty);
+                                }
                             } else {
                                 lib_types.push(ty);
                             }
-                        } else {
-                            lib_types.push(ty);
+                            continue;
                         }
-                        continue;
                     }
 
-                    // Interface lowering returned ERROR - try as type alias
+                    // Type alias, or interface lowering returned ERROR - lower as type alias
                     for (decl_idx, decl_arena) in &decls_with_arenas {
                         if let Some(node) = decl_arena.get(*decl_idx)
                             && let Some(alias) = decl_arena.get_type_alias(node)

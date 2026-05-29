@@ -13,6 +13,8 @@
 //! 4. The empty / identity short-circuit runs BEFORE cache-key construction,
 //!    leaving the cache untouched on no-op substitutions.
 //! 5. Results from a `depth_exceeded` walk are NOT cached.
+//! 6. Semantically equal substitutions hit the same cache slot even if their
+//!    `FxHashMap` insertion order differs.
 //!
 //! Tests use `TypeInterner` + `QueryCache` and route the cache parameter
 //! explicitly through the `_cached` overloads, mirroring how the hot evaluator
@@ -57,6 +59,43 @@ fn object_with(interner: &TypeInterner, t_id: TypeId) -> TypeId {
         single_quoted_name: false,
     };
     interner.object(vec![prop])
+}
+
+/// Build an object type `{ a: T; b: U }` over two given type-ids.
+fn object_with_pair(interner: &TypeInterner, t_id: TypeId, u_id: TypeId) -> TypeId {
+    let a = interner.intern_string("a");
+    let b = interner.intern_string("b");
+    let prop_a = PropertyInfo {
+        name: a,
+        type_id: t_id,
+        write_type: t_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 0,
+        is_string_named: true,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    let prop_b = PropertyInfo {
+        name: b,
+        type_id: u_id,
+        write_type: u_id,
+        optional: false,
+        readonly: false,
+        is_method: false,
+        is_class_prototype: false,
+        visibility: Visibility::Public,
+        parent_id: None,
+        declaration_order: 1,
+        is_string_named: true,
+        is_symbol_named: false,
+        single_quoted_name: false,
+    };
+    interner.object(vec![prop_a, prop_b])
 }
 
 #[test]
@@ -122,6 +161,48 @@ fn cache_distinct_substitutions_do_not_alias() {
     assert!(
         entries >= 2,
         "expected >= 2 distinct cache entries, got {entries}"
+    );
+}
+
+#[test]
+fn cache_canonicalizes_substitution_insertion_order() {
+    // The cache key is the canonical substitution payload, not the source
+    // FxHashMap's insertion order. Rebuilding the same semantic substitution in
+    // reverse order must hit the first cache entry instead of creating a second.
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+
+    let (t_atom, t_id) = type_param(&interner, "T");
+    let (u_atom, u_id) = type_param(&interner, "U");
+    let body = object_with_pair(&interner, t_id, u_id);
+
+    let mut subst_tu = TypeSubstitution::new();
+    subst_tu.insert(t_atom, TypeId::STRING);
+    subst_tu.insert(u_atom, TypeId::NUMBER);
+
+    let mut subst_ut = TypeSubstitution::new();
+    subst_ut.insert(u_atom, TypeId::NUMBER);
+    subst_ut.insert(t_atom, TypeId::STRING);
+
+    let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst_tu);
+    let stats_after_first = db.statistics();
+    assert_eq!(
+        stats_after_first.instantiation_cache_entries, 1,
+        "first non-leaf instantiation should create one cache entry"
+    );
+
+    let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst_ut);
+    let stats_after_second = db.statistics();
+
+    assert_eq!(r1, r2, "equal substitutions must produce equal results");
+    assert_eq!(
+        stats_after_second.instantiation_cache_entries,
+        stats_after_first.instantiation_cache_entries,
+        "reversed insertion order must reuse the canonical cache slot"
+    );
+    assert!(
+        stats_after_second.instantiation_cache_hits > stats_after_first.instantiation_cache_hits,
+        "reversed insertion order should register a cache hit"
     );
 }
 
@@ -308,43 +389,45 @@ fn mode_bits_isolate_preserving_from_default() {
 
 #[test]
 fn depth_exceeded_result_is_not_cached() {
-    // Build a self-referential mapped-like body that should trip the
-    // MAX_INSTANTIATION_DEPTH guard. The TypeId::ERROR returned in that
-    // case must NOT poison the cache so that a later, well-bounded call
-    // on the same input would still recompute.
-    //
-    // Construction trick: a TypeParameter substituted to itself many
-    // levels deep is contrived; instead we measure the simpler invariant
-    // that the cache does NOT grow when depth_exceeded fires.
-    //
-    // We build N nested ReadonlyType wrappers (well below MAX_DEPTH so
-    // the walk succeeds) and verify the cache populates normally. This
-    // mainly guards the *insert* discipline for the success path; the
-    // depth_exceeded branch is exercised by the existing instantiator
-    // tests in tests/instantiate_tests.rs and the unit assertion below
-    // is structural.
+    // A depth-overflow walk returns TypeId::ERROR, but that recovery value
+    // must not poison the cross-call cache. Repeating the same request should
+    // miss again and recompute instead of hitting a cached ERROR.
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
 
     let (t_atom, t_id) = type_param(&interner, "T");
 
-    // Wrap T many times: ReadonlyType<ReadonlyType<...<T>...>>
-    let depth = (MAX_INSTANTIATION_DEPTH as usize).saturating_sub(2);
+    // Wrap T many times: Array<Array<...<T>...>>
+    let depth = (MAX_INSTANTIATION_DEPTH as usize) + 2;
     let mut body = t_id;
     for _ in 0..depth {
-        body = interner.readonly_type(body);
+        body = interner.array(body);
     }
 
     let mut subst = TypeSubstitution::new();
     subst.insert(t_atom, TypeId::STRING);
 
-    let r = instantiate_type_cached(&interner, Some(&db), body, &subst);
+    let stats0 = db.statistics();
 
-    // Bounded depth -> success. Cache must contain the entry.
-    assert_ne!(r, TypeId::ERROR);
-    assert!(
-        db.statistics().instantiation_cache_entries >= 1,
-        "successful instantiation at MAX_DEPTH-2 must be cached"
+    let r1 = instantiate_type_cached(&interner, Some(&db), body, &subst);
+    let r2 = instantiate_type_cached(&interner, Some(&db), body, &subst);
+
+    assert_eq!(r1, TypeId::ERROR);
+    assert_eq!(r2, TypeId::ERROR);
+
+    let stats1 = db.statistics();
+    assert_eq!(
+        stats1.instantiation_cache_entries, stats0.instantiation_cache_entries,
+        "depth-overflow results must not populate the instantiation cache"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_hits, stats0.instantiation_cache_hits,
+        "a repeated depth-overflow request must not hit a cached ERROR"
+    );
+    assert_eq!(
+        stats1.instantiation_cache_misses,
+        stats0.instantiation_cache_misses + 2,
+        "both depth-overflow requests should probe and miss independently"
     );
 }
 

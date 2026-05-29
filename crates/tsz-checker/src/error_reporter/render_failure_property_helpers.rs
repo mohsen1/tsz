@@ -192,6 +192,12 @@ impl<'a> CheckerState<'a> {
         }
     }
 
+    /// Render an `OptionalPropertyRequired` failure: a source property that is
+    /// present but optional assigned to a required target property. tsc reports
+    /// TS2327 ("Property '_' is optional in type '_' but required in type '_'."),
+    /// not the absent-property message TS2741. The rule is structural, so it
+    /// covers inline `{ x?: T }` and mapped (`Partial<T>`, `{ [K in keyof T]?:
+    /// T[K] }`) sources alike.
     pub(super) fn render_optional_property_required(
         &mut self,
         ctx: &RenderContext,
@@ -219,7 +225,7 @@ impl<'a> CheckerState<'a> {
                 .checked_js_global_element_access_fallback_target_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(target));
             let detail = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
             );
             let mut diag = Diagnostic::error(
@@ -235,7 +241,7 @@ impl<'a> CheckerState<'a> {
                 length,
                 message_text: detail,
                 category: DiagnosticCategory::Message,
-                code: diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                code: diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             });
             diag
         } else {
@@ -247,7 +253,7 @@ impl<'a> CheckerState<'a> {
                 .checked_js_global_element_access_fallback_target_display(idx)
                 .unwrap_or_else(|| self.format_type_diagnostic(target));
             let message = format_message(
-                diagnostic_messages::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_messages::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
                 &[&prop_name, &source_str, &target_str],
             );
             Diagnostic::error(
@@ -255,7 +261,7 @@ impl<'a> CheckerState<'a> {
                 start,
                 length,
                 message,
-                diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE,
+                diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE,
             )
         }
     }

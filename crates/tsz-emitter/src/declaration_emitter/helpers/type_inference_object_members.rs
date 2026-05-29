@@ -8,7 +8,7 @@ use super::super::DeclarationEmitter;
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_scanner::SyntaxKind;
+use tsz_scanner::{SyntaxKind, string_to_token, token_is_reserved_word};
 
 impl<'a> DeclarationEmitter<'a> {
     pub(in crate::declaration_emitter) fn format_object_member_type_text(
@@ -288,11 +288,36 @@ impl<'a> DeclarationEmitter<'a> {
     }
 
     pub(in crate::declaration_emitter) fn format_property_name_literal_text(text: &str) -> String {
-        if Self::is_unquoted_property_name(text) {
+        Self::format_property_name_with_quote(text, "\"")
+    }
+
+    /// Render a property name, deciding bare-vs-quoted via the canonical rule
+    /// and, when quoting is required, using `quote` (`"` or `'`) as the quote
+    /// character. `tsc` preserves the original quote character of a quoted
+    /// source name that must remain quoted (e.g. `'foo bar'` stays
+    /// single-quoted), while a bare name forced to quote (e.g. a reserved word)
+    /// uses double quotes.
+    pub(in crate::declaration_emitter) fn format_property_name_with_quote(
+        text: &str,
+        quote: &str,
+    ) -> String {
+        if Self::can_emit_bare_property_name(text) {
             text.to_string()
+        } else if quote == "'" {
+            format!("'{}'", super::escape_string_for_single_quote(text))
         } else {
             format!("\"{}\"", super::escape_string_for_double_quote(text))
         }
+    }
+
+    /// Canonical decision for whether a property name may be emitted bare in a
+    /// declaration file: it must be a syntactically valid identifier *and* not
+    /// a reserved word. This is independent of how the source spelled the name
+    /// (bare vs. quoted): `tsc` re-derives the canonical form, so a bare
+    /// reserved word (`new`) becomes `"new"` and a quoted valid identifier
+    /// (`"__proto__"`) becomes bare `__proto__`.
+    pub(in crate::declaration_emitter) fn can_emit_bare_property_name(text: &str) -> bool {
+        Self::is_unquoted_property_name(text) && !token_is_reserved_word(string_to_token(text))
     }
 
     pub(in crate::declaration_emitter) fn is_unquoted_property_name(text: &str) -> bool {
@@ -391,6 +416,52 @@ impl<'a> DeclarationEmitter<'a> {
             .flatten()
     }
 
+    /// Returns an AST-based type text for an object literal whose members
+    /// include at least one optional method declaration (`a?() {}`).
+    ///
+    /// The solver prints optional methods as property-function-types
+    /// (`a?: () => void`), but tsc emits them as method signatures
+    /// (`a?(): void`). When at least one optional method is present, use the
+    /// AST-based inference path so the output matches tsc.
+    ///
+    /// No-spread check mirrors `object_literal_declared_shorthand_type_text`.
+    pub(in crate::declaration_emitter) fn object_literal_optional_method_type_text(
+        &self,
+        initializer: NodeIndex,
+        depth: u32,
+    ) -> Option<String> {
+        let init_node = self.arena.get(initializer)?;
+        if init_node.kind != syntax_kind_ext::OBJECT_LITERAL_EXPRESSION {
+            return None;
+        }
+        let object = self.arena.get_literal_expr(init_node)?;
+        let mut has_optional_method = false;
+
+        for &member_idx in &object.elements.nodes {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            // Spread members prevent reliable AST-based inference.
+            if member_node.kind == syntax_kind_ext::SPREAD_ASSIGNMENT {
+                return None;
+            }
+            if member_node.kind == syntax_kind_ext::METHOD_DECLARATION {
+                if let Some(method) = self.arena.get_method_decl(member_node) {
+                    // Only trigger when there is at least one optional method;
+                    // non-optional methods are already handled correctly via the
+                    // solver-printed type in most contexts.
+                    if method.question_token {
+                        has_optional_method = true;
+                    }
+                }
+            }
+        }
+
+        has_optional_method
+            .then(|| self.infer_object_literal_type_text_at(initializer, depth))
+            .flatten()
+    }
+
     pub(in crate::declaration_emitter) fn enum_member_widened_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -418,6 +489,122 @@ impl<'a> DeclarationEmitter<'a> {
         self.nameable_constructor_expression_text(enum_expr)
     }
 
+    /// Returns `true` when `name_idx` is a computed property name whose key
+    /// expression cannot be reproduced as a literal property name inside a
+    /// `.d.ts` file.
+    ///
+    /// A computed key is *nameable* when its expression is a string/numeric
+    /// literal (including a `+`/`-` prefixed numeric literal) or an entity name
+    /// that resolves to a single literal value or enum member
+    /// (`resolved_computed_property_name_text`). Everything else — for example
+    /// `[this.a]`, `[fn()]`, or `[someValue]` whose type is not a literal —
+    /// is *non-nameable*: tsc drops the named member and represents the object
+    /// through its synthesized index signature instead.
+    ///
+    /// The decision is keyed on the structural shape of the key expression and
+    /// the solver-resolved key type, never on the spelling of an identifier.
+    pub(in crate::declaration_emitter) fn is_non_nameable_computed_member_key(
+        &self,
+        name_idx: NodeIndex,
+    ) -> bool {
+        let Some(name_node) = self.arena.get(name_idx) else {
+            return false;
+        };
+        if name_node.kind != syntax_kind_ext::COMPUTED_PROPERTY_NAME {
+            return false;
+        }
+        let Some(computed) = self.arena.get_computed_property(name_node) else {
+            return false;
+        };
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(computed.expression);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+
+        // Literal key expressions are always reproducible as property names.
+        if expr_node.kind == SyntaxKind::StringLiteral as u16
+            || expr_node.kind == SyntaxKind::NumericLiteral as u16
+        {
+            return false;
+        }
+        if expr_node.kind == syntax_kind_ext::PREFIX_UNARY_EXPRESSION
+            && let Some(unary) = self.arena.get_unary_expr(expr_node)
+        {
+            let operand_idx = self
+                .arena
+                .skip_parenthesized_and_assertions_and_comma(unary.operand);
+            if self
+                .arena
+                .get(operand_idx)
+                .is_some_and(|n| n.kind == SyntaxKind::NumericLiteral as u16)
+            {
+                return false;
+            }
+        }
+
+        // Entity-name keys that resolve to a single literal value or an enum
+        // member are reproducible (`[E.A]`, `[SOME_CONST]`, unique symbols).
+        if self
+            .resolved_computed_property_name_text(name_idx)
+            .is_some()
+        {
+            return false;
+        }
+
+        // Any other computed key (a property access like `this.a`, a call, a
+        // non-literal value reference) is non-nameable.
+        true
+    }
+
+    /// Render the solver-synthesized index signature entries for an inferred
+    /// object literal whose computed key could not be reproduced as a literal
+    /// property name. The key/value types are read from the object literal
+    /// expression's solver `TypeId`, so the output matches the type the checker
+    /// inferred (e.g. `[x: number]: string`) rather than the raw source slice.
+    ///
+    /// Returns `None` when the solver type is unavailable or carries no index
+    /// signature, leaving the caller on its existing path.
+    pub(in crate::declaration_emitter) fn object_literal_synthesized_index_signature_entries(
+        &self,
+        object_expr_idx: NodeIndex,
+    ) -> Option<Vec<String>> {
+        let interner = self.type_interner?;
+        let type_id = self
+            .get_node_type(object_expr_idx)
+            .or_else(|| self.get_node_type_or_names(&[object_expr_idx]))?;
+        let shape_id = tsz_solver::visitor::object_with_index_shape_id(interner, type_id)
+            .or_else(|| tsz_solver::visitor::object_shape_id(interner, type_id))?;
+        let shape = interner.object_shape(shape_id);
+
+        let mut entries = Vec::new();
+        for index in [shape.string_index.as_ref(), shape.number_index.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            let key_text = self.print_type_id(index.key_type);
+            let value_text = self.print_type_id(index.value_type);
+            let param_name = index
+                .param_name
+                .map(|atom| interner.resolve_atom(atom))
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| Self::default_index_signature_param_name(&key_text).to_string());
+            let readonly = if index.readonly { "readonly " } else { "" };
+            entries.push(format!(
+                "{readonly}[{param_name}: {key_text}]: {value_text}"
+            ));
+        }
+
+        (!entries.is_empty()).then_some(entries)
+    }
+
+    /// Pick the conventional index-signature parameter name tsc uses when the
+    /// solver did not preserve one: `x` for number keys, `key` otherwise.
+    fn default_index_signature_param_name(key_text: &str) -> &'static str {
+        if key_text == "number" { "x" } else { "key" }
+    }
+
     pub(in crate::declaration_emitter) fn infer_property_name_text(
         &self,
         node_id: NodeIndex,
@@ -431,9 +618,13 @@ impl<'a> DeclarationEmitter<'a> {
             let expr_node = self.arena.get(expr_idx)?;
             match expr_node.kind {
                 k if k == SyntaxKind::StringLiteral as u16 => {
+                    // A computed string-literal name (`["new"]`, `["__proto__"]`)
+                    // resolves to a string property name; canonicalize it the
+                    // same way as a written string-literal property name,
+                    // preserving the source quote character when quoting.
                     let literal = self.arena.get_literal(expr_node)?;
                     let quote = self.original_quote_char(expr_node);
-                    return Some(format!("{}{}{}", quote, literal.text, quote));
+                    return Some(Self::format_property_name_with_quote(&literal.text, quote));
                 }
                 k if k == SyntaxKind::NumericLiteral as u16 => {
                     let literal = self.arena.get_literal(expr_node)?;
@@ -482,12 +673,22 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         if let Some(ident) = self.arena.get_identifier(node) {
-            return Some(ident.escaped_text.clone());
+            // The source wrote a bare property name; canonicalize so a bare
+            // reserved word (`new`) is quoted in the declaration file.
+            return Some(Self::format_property_name_literal_text(&ident.escaped_text));
         }
         if let Some(literal) = self.arena.get_literal(node) {
+            // The source wrote a quoted property name; canonicalize so a quoted
+            // valid identifier (`"__proto__"`) is emitted bare, while a name
+            // that must stay quoted preserves the original quote character
+            // (`'foo bar'` stays single-quoted).
             let quote = self.original_quote_char(node);
-            return Some(format!("{}{}{}", quote, literal.text, quote));
+            return Some(Self::format_property_name_with_quote(&literal.text, quote));
         }
         self.get_source_slice(node.pos, node.end)
     }
 }
+
+#[cfg(test)]
+#[path = "type_inference_object_members_tests.rs"]
+mod type_inference_object_members_tests;

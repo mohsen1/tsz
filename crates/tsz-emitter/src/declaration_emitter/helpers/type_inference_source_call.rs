@@ -31,14 +31,24 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        let mut search = body_text;
-        while let Some(offset) = search.find(name) {
-            let after_name = &search[offset + name.len()..];
-            let after_ws = after_name.trim_start();
-            if after_ws.starts_with('(') || after_ws.starts_with('<') {
-                return true;
+        let mut pos = 0usize;
+        while let Some(found) = body_text[pos..].find(name) {
+            let abs_start = pos + found;
+            let abs_end = abs_start + name.len();
+            // Left word boundary: the character before `name` must not be an identifier char.
+            // This prevents e.g. a function named "f" from matching the "f" inside "if (".
+            let at_word_start = abs_start == 0 || {
+                let prev = body_text.as_bytes()[abs_start - 1];
+                !prev.is_ascii_alphanumeric() && prev != b'_' && prev != b'$'
+            };
+            if at_word_start {
+                let after_name = &body_text[abs_end..];
+                let after_ws = after_name.trim_start();
+                if after_ws.starts_with('(') || after_ws.starts_with('<') {
+                    return true;
+                }
             }
-            search = after_name;
+            pos = abs_end;
         }
         false
     }
@@ -104,6 +114,78 @@ impl<'a> DeclarationEmitter<'a> {
                 .and_then(|param_node| source_arena.get_type_parameter(param_node))
                 .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
                 .is_some_and(|name| Self::contains_whole_word_in_text(type_text, &name))
+        })
+    }
+
+    /// True when the function's return type annotation is a *simple* type-
+    /// parameter surface: a bare reference to one of its own declared type
+    /// parameters (the `T` in `unboxify<T>(x: Boxified<T>): T` or `foo1<T>(…): T`),
+    /// or an array of such a reference (the `U[]` in `map<T,U>(…): U[]`).
+    ///
+    /// In those shapes the inferred return type IS just the resolved type
+    /// parameter (optionally inside an array), so tsc emits exactly that type
+    /// with no surrounding *source* structure to preserve. Composite returns
+    /// such as `D & M` (intersection), `T | U` (union), or `Foo<T>`
+    /// (application) are intentionally excluded: tsc keeps their source-level
+    /// structure, which the canonical printer would flatten, reorder, or merge.
+    pub(in crate::declaration_emitter) fn source_return_is_bare_type_parameter(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+    ) -> bool {
+        let Some(annotation_idx) = func.type_annotation.into_option() else {
+            return false;
+        };
+        self.type_node_is_type_parameter_or_array_of(source_arena, func, annotation_idx)
+    }
+
+    fn type_node_is_type_parameter_or_array_of(
+        &self,
+        source_arena: &NodeArena,
+        func: &tsz_parser::parser::node::FunctionData,
+        type_idx: tsz_parser::parser::NodeIndex,
+    ) -> bool {
+        let Some(type_node) = source_arena.get(type_idx) else {
+            return false;
+        };
+        // `T[]` — recurse on the element type so `U[]` (and `U[][]`) qualify
+        // while keeping the same "no composite structure" guarantee.
+        if type_node.kind == syntax_kind_ext::ARRAY_TYPE {
+            let Some(array) = source_arena.get_array_type(type_node) else {
+                return false;
+            };
+            return self.type_node_is_type_parameter_or_array_of(
+                source_arena,
+                func,
+                array.element_type,
+            );
+        }
+        // A bare type-parameter reference is a plain identifier or a type
+        // reference with no type arguments naming a declared type parameter.
+        let name = if type_node.kind == SyntaxKind::Identifier as u16 {
+            self.identifier_text_from_arena(source_arena, type_idx)
+        } else if type_node.kind == syntax_kind_ext::TYPE_REFERENCE {
+            let Some(type_ref) = source_arena.get_type_ref(type_node) else {
+                return false;
+            };
+            if type_ref.type_arguments.is_some() {
+                return false;
+            }
+            self.identifier_text_from_arena(source_arena, type_ref.type_name)
+        } else {
+            None
+        };
+        let Some(name) = name else {
+            return false;
+        };
+        func.type_parameters.as_ref().is_some_and(|type_params| {
+            type_params.nodes.iter().copied().any(|param_idx| {
+                source_arena
+                    .get(param_idx)
+                    .and_then(|param_node| source_arena.get_type_parameter(param_node))
+                    .and_then(|param| self.identifier_text_from_arena(source_arena, param.name))
+                    .is_some_and(|param_name| param_name == name)
+            })
         })
     }
 

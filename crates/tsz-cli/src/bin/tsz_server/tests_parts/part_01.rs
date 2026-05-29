@@ -328,7 +328,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
     let resp = server.handle_tsserver_request(make_request(
         "open",
         serde_json::json!({
-            "file": "/foo.ts",
+            "file": "/project/foo.ts",
             "fileContent": "export function bar() { return 1; }\n"
         }),
     ));
@@ -336,7 +336,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
     let resp = server.handle_tsserver_request(make_request(
         "open",
         serde_json::json!({
-            "file": "/index.ts",
+            "file": "/project/index.ts",
             "fileContent": "var x1 = import(\"./foo\");\nx1.then(foo => {\n   var s: string = foo.bar();\n})\n"
         }),
     ));
@@ -344,7 +344,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
 
     let req = make_request(
         "semanticDiagnosticsSync",
-        serde_json::json!({ "file": "/index.ts" }),
+        serde_json::json!({ "file": "/project/index.ts" }),
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);
@@ -354,12 +354,12 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
         .as_array()
         .expect("semanticDiagnosticsSync body should be an array")
         .clone();
-    assert_eq!(diagnostics.len(), 1, "expected one diagnostic before edit");
+    assert_eq!(diagnostics.len(), 1, "expected one diagnostic before edit, got: {diagnostics:?}");
 
     let resp = server.handle_tsserver_request(make_request(
         "change",
         serde_json::json!({
-            "file": "/index.ts",
+            "file": "/project/index.ts",
             "line": 5,
             "offset": 1,
             "endLine": 5,
@@ -371,7 +371,7 @@ fn test_semantic_diagnostics_dynamic_import_trailing_whitespace_is_stable() {
 
     let req = make_request(
         "semanticDiagnosticsSync",
-        serde_json::json!({ "file": "/index.ts" }),
+        serde_json::json!({ "file": "/project/index.ts" }),
     );
     let resp = server.handle_tsserver_request(req);
     assert!(resp.success);

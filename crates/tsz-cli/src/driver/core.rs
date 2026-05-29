@@ -1558,12 +1558,7 @@ fn compile_inner(
         diagnostics.extend(config_diagnostics);
         diagnostics.extend(binary_file_diagnostics);
         diagnostics.extend(type_file_diagnostics);
-        diagnostics.sort_by(|left, right| {
-            left.file
-                .cmp(&right.file)
-                .then(left.start.cmp(&right.start))
-                .then(left.code.cmp(&right.code))
-        });
+        diagnostics.sort_by(|left, right| left.compare(right));
 
         return Ok(CompilationResult {
             diagnostics,
@@ -1658,12 +1653,7 @@ fn compile_inner(
         diagnostics.extend(config_diagnostics);
         diagnostics.extend(binary_file_diagnostics);
         diagnostics.extend(type_file_diagnostics);
-        diagnostics.sort_by(|left, right| {
-            left.file
-                .cmp(&right.file)
-                .then(left.start.cmp(&right.start))
-                .then(left.code.cmp(&right.code))
-        });
+        diagnostics.sort_by(|left, right| left.compare(right));
 
         return Ok(CompilationResult {
             diagnostics,
@@ -1905,12 +1895,7 @@ fn compile_inner(
         }
     }
 
-    diagnostics.sort_by(|left, right| {
-        left.file
-            .cmp(&right.file)
-            .then(left.start.cmp(&right.start))
-            .then(left.code.cmp(&right.code))
-    });
+    diagnostics.sort_by(|left, right| left.compare(right));
 
     let has_error = diagnostics
         .iter()
@@ -1985,12 +1970,7 @@ fn compile_inner(
     // The initial has_error was computed before emit for should_emit gating.
     normalize_ts2883_diagnostics_in_place(&mut diagnostics);
     // Re-sort since emit diagnostics were appended after the initial sort.
-    diagnostics.sort_by(|left, right| {
-        left.file
-            .cmp(&right.file)
-            .then(left.start.cmp(&right.start))
-            .then(left.code.cmp(&right.code))
-    });
+    diagnostics.sort_by(|left, right| left.compare(right));
     let has_error = diagnostics
         .iter()
         .any(|diag| diag.category == DiagnosticCategory::Error);
@@ -3148,6 +3128,10 @@ use plan::{
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cross_file_circular_alias_tests.rs"]
+mod cross_file_circular_alias_tests;
 
 #[cfg(test)]
 mod explain_files_reason_tests {

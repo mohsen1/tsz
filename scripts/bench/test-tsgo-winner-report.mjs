@@ -594,6 +594,41 @@ assert.match(
   /createTsgoWinnerReport\(benchmarkData, latestBenchmarkArtifact\)/,
   "website should synthesize the green tsgo winner report when the selected benchmark has no prebuilt report",
 );
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfSvg\(benchmarkData\)/,
+  "website should render the README performance SVG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfPng\(benchmarkData\)/,
+  "website should render the README performance PNG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /renderReadmePerfPng\(benchmarkData, \{ theme: "dark" \}\)/,
+  "website should render a dark-mode README performance PNG from the selected benchmark data",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf\.svg"/,
+  "website should publish the README performance SVG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf\.png"/,
+  "website should publish the README performance PNG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf-light\.png"/,
+  "website should publish the light-mode README performance PNG beside benchmark-data/latest.json",
+);
+assert.match(
+  eleventyConfig,
+  /"benchmark-data", "readme-perf-dark\.png"/,
+  "website should publish the dark-mode README performance PNG beside benchmark-data/latest.json",
+);
 
 withTempDir((dir) => {
   const script = [
@@ -611,11 +646,26 @@ withTempDir((dir) => {
     "});",
     "assert.ok(passthrough.some((copy) => copy['bench-snapshot.json'] === 'benchmark-data/latest.json'));",
     "fs.mkdirSync(process.env.TSZ_TEST_DIST, { recursive: true });",
-    "for (const callback of callbacks) callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
+    "for (const callback of callbacks) await callback({ dir: { output: process.env.TSZ_TEST_DIST } });",
     "const reportPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'latest.tsgo-winners.json');",
     "const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));",
     "assert.equal(report.worst.name, 'ts-toolbelt-project');",
     "assert.equal(report.totals.green_tsgo_winners, 6);",
+    "const svgPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf.svg');",
+    "const svg = fs.readFileSync(svgPath, 'utf8');",
+    "assert.doesNotMatch(svg, />Latest benchmark snapshot</);",
+    "assert.doesNotMatch(svg, />successful micro rows</);",
+    "assert.match(svg, /#cf222e/);",
+    "const pngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf.png');",
+    "const png = fs.readFileSync(pngPath);",
+    "assert.equal(png.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "const lightPngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf-light.png');",
+    "const darkPngPath = path.join(process.env.TSZ_TEST_DIST, 'benchmark-data', 'readme-perf-dark.png');",
+    "const lightPng = fs.readFileSync(lightPngPath);",
+    "const darkPng = fs.readFileSync(darkPngPath);",
+    "assert.equal(lightPng.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "assert.equal(darkPng.slice(0, 8).toString('hex'), '89504e470d0a1a0a');",
+    "assert.notEqual(lightPng.toString('base64'), darkPng.toString('base64'));",
     "",
   ].join("\n");
 
