@@ -31,14 +31,24 @@ impl<'a> DeclarationEmitter<'a> {
             return false;
         };
 
-        let mut search = body_text;
-        while let Some(offset) = search.find(name) {
-            let after_name = &search[offset + name.len()..];
-            let after_ws = after_name.trim_start();
-            if after_ws.starts_with('(') || after_ws.starts_with('<') {
-                return true;
+        let mut pos = 0usize;
+        while let Some(found) = body_text[pos..].find(name) {
+            let abs_start = pos + found;
+            let abs_end = abs_start + name.len();
+            // Left word boundary: the character before `name` must not be an identifier char.
+            // This prevents e.g. a function named "f" from matching the "f" inside "if (".
+            let at_word_start = abs_start == 0 || {
+                let prev = body_text.as_bytes()[abs_start - 1];
+                !prev.is_ascii_alphanumeric() && prev != b'_' && prev != b'$'
+            };
+            if at_word_start {
+                let after_name = &body_text[abs_end..];
+                let after_ws = after_name.trim_start();
+                if after_ws.starts_with('(') || after_ws.starts_with('<') {
+                    return true;
+                }
             }
-            search = after_name;
+            pos = abs_end;
         }
         false
     }
