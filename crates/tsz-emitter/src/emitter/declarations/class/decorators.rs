@@ -312,6 +312,95 @@ impl<'a> Printer<'a> {
         result
     }
 
+    /// Collect parameter decorators across every accessor (getter + setter) that
+    /// shares the same structural name and static-ness as the given accessor.
+    ///
+    /// `tsc` merges a getter/setter pair into a single `__decorate` call, so the
+    /// setter's `@dec param` decorators must be appended to the getter's member
+    /// decorators. Matching is keyed on the structural member name and the
+    /// static modifier, never on a user-chosen identifier spelling.
+    fn collect_accessor_param_decorators(
+        &self,
+        members: &[NodeIndex],
+        name_idx: NodeIndex,
+        is_static: bool,
+    ) -> Vec<(usize, Vec<NodeIndex>)> {
+        let Some(target_name) = self.get_decorator_member_name(name_idx) else {
+            return Vec::new();
+        };
+        let target_key = target_name.dedupe_key();
+        let mut result = Vec::new();
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+            let Some(accessor) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            if self.arena.is_static(&accessor.modifiers) != is_static {
+                continue;
+            }
+            let Some(member_name) = self.get_decorator_member_name(accessor.name) else {
+                continue;
+            };
+            if member_name.dedupe_key() != target_key {
+                continue;
+            }
+            result.extend(self.collect_param_decorators(&accessor.parameters));
+        }
+        result
+    }
+
+    /// Member-level decorators for a getter/setter pair sharing the given
+    /// structural name and static-ness. `tsc` emits a single `__decorate` call
+    /// for the pair whose member decorators come from the **first accessor in
+    /// declaration order that has any decorators** (legacy decorators may only
+    /// validly appear on one accessor; if both are decorated, the first declared
+    /// one wins). Matching is keyed structurally on the name and static modifier.
+    fn collect_accessor_member_decorators(
+        &self,
+        members: &[NodeIndex],
+        name_idx: NodeIndex,
+        is_static: bool,
+    ) -> Vec<NodeIndex> {
+        let Some(target_name) = self.get_decorator_member_name(name_idx) else {
+            return Vec::new();
+        };
+        let target_key = target_name.dedupe_key();
+        for &member_idx in members {
+            let Some(member_node) = self.arena.get(member_idx) else {
+                continue;
+            };
+            if member_node.kind != syntax_kind_ext::GET_ACCESSOR
+                && member_node.kind != syntax_kind_ext::SET_ACCESSOR
+            {
+                continue;
+            }
+            let Some(accessor) = self.arena.get_accessor(member_node) else {
+                continue;
+            };
+            if self.arena.is_static(&accessor.modifiers) != is_static {
+                continue;
+            }
+            let Some(member_name) = self.get_decorator_member_name(accessor.name) else {
+                continue;
+            };
+            if member_name.dedupe_key() != target_key {
+                continue;
+            }
+            let decorators = self.collect_class_decorators(&accessor.modifiers);
+            if !decorators.is_empty() {
+                return decorators;
+            }
+        }
+        Vec::new()
+    }
+
     pub(in crate::emitter) fn legacy_member_decorator_needs_private_name_scope(
         &self,
         member_idx: NodeIndex,
@@ -1241,6 +1330,27 @@ impl<'a> Printer<'a> {
         );
     }
 
+    /// Whether a class member node carries the `static` modifier. Works for the
+    /// member kinds that can be legacy-decorated (methods, properties/auto
+    /// accessors, get/set accessors); other kinds report non-static.
+    fn member_node_is_static(&self, member_node: &Node) -> bool {
+        match member_node.kind {
+            k if k == syntax_kind_ext::METHOD_DECLARATION => self
+                .arena
+                .get_method_decl(member_node)
+                .is_some_and(|m| self.arena.is_static(&m.modifiers)),
+            k if k == syntax_kind_ext::PROPERTY_DECLARATION => self
+                .arena
+                .get_property_decl(member_node)
+                .is_some_and(|p| self.arena.is_static(&p.modifiers)),
+            k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => self
+                .arena
+                .get_accessor(member_node)
+                .is_some_and(|a| self.arena.is_static(&a.modifiers)),
+            _ => false,
+        }
+    }
+
     fn emit_legacy_member_decorator_calls_filtered(
         &mut self,
         class_name: &str,
@@ -1273,7 +1383,35 @@ impl<'a> Printer<'a> {
             },
         }
 
+        // `tsc` emits per-member `__decorate` calls for all decorated
+        // instance/prototype members (in declaration order) before any decorated
+        // static members (in declaration order). Pre-partition the members into
+        // instance-first then static order, preserving source order within each
+        // partition. The split is keyed structurally on the `static` modifier,
+        // not on member names.
+        let mut ordered_members: Vec<NodeIndex> = Vec::with_capacity(members.len());
         for &member_idx in members {
+            let is_static = self
+                .arena
+                .get(member_idx)
+                .map(|n| self.member_node_is_static(n))
+                .unwrap_or(false);
+            if !is_static {
+                ordered_members.push(member_idx);
+            }
+        }
+        for &member_idx in members {
+            let is_static = self
+                .arena
+                .get(member_idx)
+                .map(|n| self.member_node_is_static(n))
+                .unwrap_or(false);
+            if is_static {
+                ordered_members.push(member_idx);
+            }
+        }
+
+        for &member_idx in &ordered_members {
             let Some(member_node) = self.arena.get(member_idx) else {
                 continue;
             };
@@ -1336,23 +1474,33 @@ impl<'a> Printer<'a> {
                 _ => continue,
             };
 
-            // Collect decorator nodes from modifiers
-            let decorators = self.collect_class_decorators(modifiers);
+            let is_static = self.arena.is_static(modifiers);
 
-            // Collect parameter decorators for methods
-            let param_decorators: Vec<(usize, Vec<NodeIndex>)> =
-                if let MemberMetadata::Method { ref parameters, .. } = metadata {
-                    self.collect_param_decorators(parameters)
-                } else {
-                    Vec::new()
-                };
+            // Collect member-level decorators. Accessors merge the member
+            // decorators from the whole getter/setter pair into the single
+            // `__decorate` call `tsc` emits; other members use their own.
+            let decorators = if is_accessor {
+                self.collect_accessor_member_decorators(members, name_idx, is_static)
+            } else {
+                self.collect_class_decorators(modifiers)
+            };
+
+            // Collect parameter decorators. Methods use their own parameters.
+            // Accessors merge the parameter decorators from the whole
+            // getter/setter pair (the setter's `@dec param`) into the single
+            // `__decorate` call `tsc` emits for the accessor.
+            let param_decorators: Vec<(usize, Vec<NodeIndex>)> = if is_accessor {
+                self.collect_accessor_param_decorators(members, name_idx, is_static)
+            } else if let MemberMetadata::Method { ref parameters, .. } = metadata {
+                self.collect_param_decorators(parameters)
+            } else {
+                Vec::new()
+            };
 
             // Skip members with no decorators at all (neither member nor parameter level)
             if decorators.is_empty() && param_decorators.is_empty() {
                 continue;
             }
-
-            let is_static = self.arena.is_static(modifiers);
 
             let Some(member_name) = self.get_decorator_member_name(name_idx) else {
                 continue;
@@ -1360,7 +1508,8 @@ impl<'a> Printer<'a> {
             let member_key = member_name.dedupe_key();
 
             // For getter/setter pairs, tsc emits only one __decorate call
-            // for the first accessor that has decorators. Skip the second.
+            // for the first accessor of the pair. Skip the second; its parameter
+            // decorators were already merged in above.
             if is_accessor && !emitted_accessor_names.insert(member_key) {
                 continue;
             }

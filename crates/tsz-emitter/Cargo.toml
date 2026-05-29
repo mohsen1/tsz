@@ -266,6 +266,10 @@ path = "tests/ternary_trailing_comment_tests.rs"
 name = "wave3_small_emit_fixes_tests"
 path = "tests/wave3_small_emit_fixes_tests.rs"
 
+[[test]]
+name = "legacy_decorator_member_order_tests"
+path = "tests/legacy_decorator_member_order_tests.rs"
+
 [lints]
 workspace = true
 
