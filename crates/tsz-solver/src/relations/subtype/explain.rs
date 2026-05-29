@@ -987,8 +987,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 //
                 // Always emit OptionalPropertyRequired when source is optional and target is
                 // required, regardless of exactOptionalPropertyTypes mode. This matches tsc's
-                // diagnostic priority: the optional-vs-required message ("Property 'x' is
-                // missing in type") takes precedence over a type-level mismatch message.
+                // diagnostic priority: the optional-vs-required message (TS2327, "Property 'x'
+                // is optional in type 'S' but required in type 'T'.") takes precedence over a
+                // type-level mismatch message. The property is present-but-optional, not
+                // absent, so this is TS2327 rather than the missing-property TS2741.
                 // The main subtype check gates whether the assignment is actually compatible
                 // (e.g., {a?: T} vs {a: T|undefined} passes in standard mode and never
                 // reaches this explain path).

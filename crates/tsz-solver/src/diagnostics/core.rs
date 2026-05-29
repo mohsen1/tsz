@@ -437,6 +437,7 @@ pub mod codes {
     pub use dc::CANNOT_ASSIGN_TO_BECAUSE_IT_IS_A_READ_ONLY_PROPERTY as READONLY_PROPERTY;
     pub use dc::OBJECT_LITERAL_MAY_ONLY_SPECIFY_KNOWN_PROPERTIES_AND_DOES_NOT_EXIST_IN_TYPE as EXCESS_PROPERTY;
     pub use dc::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_MISSING;
+    pub use dc::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE as PROPERTY_OPTIONAL_BUT_REQUIRED;
     pub use dc::PROPERTY_IS_PRIVATE_AND_ONLY_ACCESSIBLE_WITHIN_CLASS as PROPERTY_VISIBILITY_MISMATCH;
     pub use dc::PROPERTY_IS_PROTECTED_AND_ONLY_ACCESSIBLE_THROUGH_AN_INSTANCE_OF_CLASS_THIS_IS_A as PROPERTY_NOMINAL_MISMATCH;
     pub use dc::THE_TYPE_IS_READONLY_AND_CANNOT_BE_ASSIGNED_TO_THE_MUTABLE_TYPE as READONLY_TO_MUTABLE;
@@ -540,9 +541,10 @@ impl SubtypeFailureReason {
     /// `render_failure_reason` should use this to stay in sync.
     pub const fn diagnostic_code(&self) -> u32 {
         match self {
-            Self::MissingProperty { .. } | Self::OptionalPropertyRequired { .. } => {
-                codes::PROPERTY_MISSING
-            }
+            Self::MissingProperty { .. } => codes::PROPERTY_MISSING,
+            // A present-but-optional source property assigned to a required
+            // target is TS2327, not the absent-property message TS2741.
+            Self::OptionalPropertyRequired { .. } => codes::PROPERTY_OPTIONAL_BUT_REQUIRED,
             Self::MissingProperties { .. } => codes::MISSING_PROPERTIES,
             Self::PropertyTypeMismatch { .. } => codes::PROPERTY_TYPE_MISMATCH,
             Self::ReadonlyPropertyMismatch { .. } => codes::READONLY_PROPERTY,
@@ -630,13 +632,16 @@ impl SubtypeFailureReason {
             }
 
             Self::OptionalPropertyRequired { property_name } => {
-                // This is a specific case of type not assignable
+                // The source property is present but optional while the target
+                // requires it. tsc reports TS2327 ("Property 'x' is optional in
+                // type 'S' but required in type 'T'."), not the absent-property
+                // message TS2741.
                 PendingDiagnostic::error(
                     codes::TYPE_NOT_ASSIGNABLE,
                     vec![source.into(), target.into()],
                 )
                 .with_related(PendingDiagnostic::error(
-                    codes::PROPERTY_MISSING, // Close enough - property is "missing" because it's optional
+                    codes::PROPERTY_OPTIONAL_BUT_REQUIRED,
                     vec![(*property_name).into(), source.into(), target.into()],
                 ))
             }
