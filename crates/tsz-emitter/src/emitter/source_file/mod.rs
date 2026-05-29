@@ -26,4 +26,6 @@ mod private_field_helper_order_tests;
 mod private_tagged_template_tests;
 
 #[cfg(test)]
+mod empty_statement_comment_elision_tests;
+#[cfg(test)]
 mod es5_emit_tests;
