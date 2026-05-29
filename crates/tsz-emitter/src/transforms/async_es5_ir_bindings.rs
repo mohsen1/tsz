@@ -6,6 +6,42 @@ use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::syntax_kind_ext;
 
 impl AsyncES5Transformer<'_> {
+    /// Build the wrapper-function body for an async arrow lowered to ES5.
+    ///
+    /// Arrow functions do not own an `arguments` binding, so when the arrow
+    /// body references `arguments` it must be captured into a temp in the
+    /// outer wrapper function (`var arguments_1 = arguments;`) before the
+    /// `__awaiter` call, since the generator callback rewrote those references
+    /// to the capture name. This mirrors `transform_async_function`, which
+    /// already emits the capture for ordinary async functions; the class-member
+    /// async-arrow path previously omitted it.
+    ///
+    /// Returns the statement list for the wrapper `FunctionExpr` body: an
+    /// optional `var arguments_N = arguments;` declaration followed by the
+    /// `__awaiter` call. Unlike ordinary async functions, async arrows keep the
+    /// compact inline-generator callback form (`multiline_callback: false`)
+    /// even when they capture `arguments`; only the outer wrapper picks up the
+    /// extra capture statement.
+    pub(crate) fn build_async_arrow_awaiter_body(
+        &self,
+        this_arg: IRNode,
+        generator_body: IRNode,
+        hoisted_var_groups: Vec<Vec<String>>,
+    ) -> Vec<IRNode> {
+        let mut body = Vec::new();
+        self.emit_arguments_capture_decl(&mut body);
+        body.push(IRNode::AwaiterCall {
+            this_arg: Box::new(this_arg),
+            needs_lexical_this_capture: generator_body.contains_captured_this_reference(),
+            generator_body: Box::new(generator_body),
+            hoisted_var_groups,
+            promise_constructor: None,
+            multiline_callback: false,
+            directives: Vec::new(),
+        });
+        body
+    }
+
     pub(super) fn emit_arguments_capture_decl(&self, body: &mut Vec<IRNode>) {
         if self.state.captures_arguments {
             body.push(IRNode::VarDecl {
