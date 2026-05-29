@@ -226,16 +226,7 @@ impl<'a> CheckerState<'a> {
                     base,
                     diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 );
-                diag.related_information.push(DiagnosticRelatedInformation {
-                    file: nested_diag.file,
-                    start: nested_diag.start,
-                    length: nested_diag.length,
-                    message_text: nested_diag.message_text,
-                    category: DiagnosticCategory::Message,
-                    code: nested_diag.code,
-                });
-                diag.related_information
-                    .extend(nested_diag.related_information);
+                Self::push_nested_chain(&mut diag, nested_diag);
                 return diag;
             }
             let prop_name = self.ctx.types.resolve_atom_ref(property_name);
@@ -278,16 +269,7 @@ impl<'a> CheckerState<'a> {
                         idx,
                         depth + 1,
                     );
-                    diag.related_information.push(DiagnosticRelatedInformation {
-                        file: nested_diag.file,
-                        start: nested_diag.start,
-                        length: nested_diag.length,
-                        message_text: nested_diag.message_text,
-                        category: DiagnosticCategory::Message,
-                        code: nested_diag.code,
-                    });
-                    diag.related_information
-                        .extend(nested_diag.related_information);
+                    Self::push_nested_chain(&mut diag, nested_diag);
                 }
             }
             return diag;
@@ -311,17 +293,145 @@ impl<'a> CheckerState<'a> {
             );
             let nested_diag =
                 self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
-            diag.related_information.push(DiagnosticRelatedInformation {
-                file: nested_diag.file,
-                start: nested_diag.start,
-                length: nested_diag.length,
-                message_text: nested_diag.message_text,
-                category: DiagnosticCategory::Message,
-                code: nested_diag.code,
-            });
-            diag.related_information
-                .extend(nested_diag.related_information);
+            Self::push_nested_chain(&mut diag, nested_diag);
         }
         diag
+    }
+
+    /// Render a tuple element type mismatch.
+    ///
+    /// tsc elaborates a failing tuple element with TS2626
+    /// `Type at position <index> in source is not compatible with type at
+    /// position <index> in target.` (both positions are the element index for
+    /// fixed tuples), nested beneath the outer
+    /// `Type 'S' is not assignable to type 'T'.` line, then the inner element
+    /// failure. This mirrors the chain shape of
+    /// [`Self::render_property_type_mismatch`] but keyed by position instead of
+    /// a property name.
+    pub(super) fn render_tuple_element_type_mismatch(
+        &mut self,
+        ctx: &RenderContext,
+        index: usize,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) -> Diagnostic {
+        let source = ctx.source;
+        let target = ctx.target;
+        let idx = ctx.idx;
+        let depth = ctx.depth;
+        let start = ctx.start;
+        let length = ctx.length;
+        let file_name = ctx.file_name.clone();
+        let index_str = index.to_string();
+
+        // TS2626: source and target positions are both the element index for a
+        // fixed tuple element mismatch.
+        let detail = format_message(
+            diagnostic_messages::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+            &[&index_str, &index_str],
+        );
+
+        let mut diag = if depth == 0 {
+            let (source_str, target_str) =
+                self.format_top_level_assignability_message_types_at(source, target, idx);
+            let base = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            let mut diag = Diagnostic::error(
+                file_name,
+                start,
+                length,
+                base,
+                diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            );
+            diag.related_information.push(DiagnosticRelatedInformation {
+                file: diag.file.clone(),
+                start,
+                length,
+                message_text: detail,
+                category: DiagnosticCategory::Message,
+                code: diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+            });
+            diag
+        } else {
+            Diagnostic::error(
+                file_name,
+                start,
+                length,
+                detail,
+                diagnostic_codes::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET,
+            )
+        };
+
+        if depth < 5 {
+            self.push_tuple_element_inner_failure(
+                &mut diag,
+                idx,
+                depth,
+                source_element,
+                target_element,
+                nested_reason,
+            );
+        }
+
+        diag
+    }
+
+    /// Append the inner element failure line beneath a tuple element mismatch.
+    ///
+    /// Uses the structured `nested_reason` when present so deeply nested element
+    /// failures keep elaborating; otherwise falls back to a direct
+    /// `Type 'S' is not assignable to type 'T'.` line for the element pair so the
+    /// chain never stops at the bare `Types of property` header.
+    fn push_tuple_element_inner_failure(
+        &mut self,
+        diag: &mut Diagnostic,
+        idx: tsz_parser::parser::NodeIndex,
+        depth: u32,
+        source_element: TypeId,
+        target_element: TypeId,
+        nested_reason: Option<&tsz_solver::SubtypeFailureReason>,
+    ) {
+        if let Some(nested) = nested_reason {
+            let (nested_source, nested_target) =
+                Self::nested_failure_display_types(nested, source_element, target_element);
+            let nested_diag =
+                self.render_failure_reason(nested, nested_source, nested_target, idx, depth + 1);
+            Self::push_nested_chain(diag, nested_diag);
+        } else {
+            let source_str = self.format_type_diagnostic(source_element);
+            let target_str = self.format_type_diagnostic(target_element);
+            let message = format_message(
+                diagnostic_messages::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+                &[&source_str, &target_str],
+            );
+            diag.related_information.push(DiagnosticRelatedInformation {
+                file: diag.file.clone(),
+                start: diag.start,
+                length: diag.length,
+                message_text: message,
+                category: DiagnosticCategory::Message,
+                code: diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
+            });
+        }
+    }
+
+    /// Flatten a fully-rendered nested failure into `diag`'s related
+    /// information: the nested diagnostic's own message line followed by its
+    /// related chain. This is the shared shape every elaboration step uses to
+    /// append a child reason.
+    fn push_nested_chain(diag: &mut Diagnostic, nested_diag: Diagnostic) {
+        diag.related_information.push(DiagnosticRelatedInformation {
+            file: nested_diag.file,
+            start: nested_diag.start,
+            length: nested_diag.length,
+            message_text: nested_diag.message_text,
+            category: DiagnosticCategory::Message,
+            code: nested_diag.code,
+        });
+        diag.related_information
+            .extend(nested_diag.related_information);
     }
 }

@@ -150,10 +150,17 @@ pub enum SubtypeFailureReason {
         target_count: usize,
     },
     /// Tuple element type mismatch.
+    ///
+    /// tsc elaborates a failing tuple element with the outer
+    /// `Type 'S' is not assignable to type 'T'.` line, then TS2626
+    /// `Type at position <index> in source is not compatible with type at
+    /// position <index> in target.`, then the inner element failure carried in
+    /// `nested_reason`.
     TupleElementTypeMismatch {
         index: usize,
         source_element: TypeId,
         target_element: TypeId,
+        nested_reason: Option<Box<Self>>,
     },
     /// Array element type mismatch.
     ArrayElementMismatch {
@@ -446,6 +453,7 @@ pub mod codes {
 
     pub use dc::INDEX_SIGNATURE_FOR_TYPE_IS_MISSING_IN_TYPE as MISSING_INDEX_SIGNATURE;
     pub use dc::IS_ASSIGNABLE_TO_THE_CONSTRAINT_OF_TYPE_BUT_COULD_BE_INSTANTIATED_WITH_A_DIFFERE as TYPE_PARAM_INSTANTIATED_WITH_DIFFERENT_SUBTYPE;
+    pub use dc::TYPE_AT_POSITION_IN_SOURCE_IS_NOT_COMPATIBLE_WITH_TYPE_AT_POSITION_IN_TARGET as TUPLE_ELEMENT_POSITION_MISMATCH;
     pub use dc::TYPES_OF_PROPERTY_ARE_INCOMPATIBLE as PROPERTY_TYPE_MISMATCH;
 
     // Function/call errors
@@ -742,11 +750,36 @@ impl SubtypeFailureReason {
             )),
 
             Self::TupleElementTypeMismatch {
-                index: _,
+                index,
                 source_element,
                 target_element,
+                nested_reason,
+            } => {
+                // tsc elaborates a failing tuple element with TS2626
+                // "Type at position N in source is not compatible with type at
+                // position N in target." (both positions are the element index
+                // for fixed tuples), followed by the inner element failure.
+                let mut diag = PendingDiagnostic::error(
+                    codes::TYPE_NOT_ASSIGNABLE,
+                    vec![source.into(), target.into()],
+                )
+                .with_related(PendingDiagnostic::error(
+                    codes::TUPLE_ELEMENT_POSITION_MISMATCH,
+                    vec![(*index).into(), (*index).into()],
+                ));
+                if let Some(nested) = nested_reason {
+                    diag =
+                        diag.with_related(nested.to_diagnostic(*source_element, *target_element));
+                } else {
+                    diag = diag.with_related(PendingDiagnostic::error(
+                        codes::TYPE_NOT_ASSIGNABLE,
+                        vec![(*source_element).into(), (*target_element).into()],
+                    ));
+                }
+                diag
             }
-            | Self::ArrayElementMismatch {
+
+            Self::ArrayElementMismatch {
                 source_element,
                 target_element,
             } => PendingDiagnostic::error(
