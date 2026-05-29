@@ -316,10 +316,12 @@ FILE_LINE_LIMIT_CHECKS = [
     ),
     # Config monolith: tsconfig/compiler-options parser. Issue #8280 tracks
     # splitting into option-domain submodules. Ratchet down as each domain lands.
+    # Ratcheted 8206→4981 after extracting the 3.2k-LOC test module into
+    # config/tests/{options_parsing,module_resolution,strict_lib_extends}.rs.
     (
         "Core boundary: tsconfig/config monolith size ratchet (#8280)",
         ROOT / "crates" / "tsz-core" / "src" / "config" / "mod.rs",
-        8206,
+        4981,
     ),
     # LSP signature-help: carries TypeData and direct lookup() baseline debt
     # (see arch_guard_policy.toml exclusions). Ratchet down per §19 splitting
