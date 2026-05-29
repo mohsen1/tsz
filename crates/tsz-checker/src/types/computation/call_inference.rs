@@ -131,7 +131,10 @@ impl<'a> CheckerState<'a> {
             };
 
             let constraint = common::instantiate_type(self.ctx.types, raw_constraint, &constrained);
-            if !self.is_assignable_to_with_env(candidate, constraint) {
+            if !self
+                .assign_relation_outcome_with_env(candidate, constraint)
+                .related
+            {
                 constrained.insert(tp.name, constraint);
             }
         }
@@ -275,8 +278,12 @@ impl<'a> CheckerState<'a> {
                     substitution,
                 );
                 let evaluated_constraint = self.evaluate_type_with_env(instantiated_constraint);
-                if !self.is_assignable_to(widened_current, evaluated_constraint)
-                    && self.is_assignable_to(current, evaluated_constraint)
+                if !self
+                    .assign_relation_outcome(widened_current, evaluated_constraint)
+                    .related
+                    && self
+                        .assign_relation_outcome(current, evaluated_constraint)
+                        .related
                 {
                     current
                 } else {
@@ -319,11 +326,15 @@ impl<'a> CheckerState<'a> {
             let fallback_name = self
                 .named_type_display_name(instantiated)
                 .unwrap_or_default();
-            let resolved_fallback = self
-                .is_well_known_lib_type_name(&fallback_name)
-                .then(|| self.resolve_lib_type_by_name(&fallback_name))
-                .flatten()
-                .unwrap_or(instantiated);
+            // Only resolve to the lib's canonical type when `instantiated` is a
+            // bare named reference (e.g., plain `Promise`). A generic application
+            // (`Promise<string>`) is already fully specified; resolving it to the
+            // unparameterized lib type would discard the type arguments.
+            let resolved_fallback = (!common::is_generic_type(self.ctx.types, instantiated)
+                && self.is_well_known_lib_type_name(&fallback_name))
+            .then(|| self.resolve_lib_type_by_name(&fallback_name))
+            .flatten()
+            .unwrap_or(instantiated);
             let evaluated = self.evaluate_type_with_env(resolved_fallback);
             let contextual_fallback =
                 if evaluated == TypeId::ANY && resolved_fallback != TypeId::ANY {
@@ -1182,8 +1193,12 @@ impl<'a> CheckerState<'a> {
                 // Different `TypeId`s can still represent the same type
                 // (alias unfoldings, interner aliasing, etc.). Treat as equal
                 // when each side is mutually assignable to the other.
-                let mutually_assignable = self.is_assignable_to_with_env(probed, params[i].type_id)
-                    && self.is_assignable_to_with_env(params[i].type_id, probed);
+                let mutually_assignable = self
+                    .assign_relation_outcome_with_env(probed, params[i].type_id)
+                    .related
+                    && self
+                        .assign_relation_outcome_with_env(params[i].type_id, probed)
+                        .related;
                 if !mutually_assignable {
                     all_match = false;
                     break;
@@ -1232,7 +1247,10 @@ impl<'a> CheckerState<'a> {
             // Final guard: only adopt when the checker's instantiation is a
             // fresh subtype of the solver's. This rejects any widening the
             // filtered substitution might still introduce.
-            if self.is_assignable_to_with_env(new_type, params[i].type_id) {
+            if self
+                .assign_relation_outcome_with_env(new_type, params[i].type_id)
+                .related
+            {
                 params[i].type_id = new_type;
             }
         }
@@ -1270,7 +1288,10 @@ impl<'a> CheckerState<'a> {
             if current == literal_type {
                 continue;
             }
-            if self.is_assignable_to_with_env(literal_type, current) {
+            if self
+                .assign_relation_outcome_with_env(literal_type, current)
+                .related
+            {
                 params[i].type_id = literal_type;
             }
         }
