@@ -122,6 +122,112 @@ class Box {
 }
 
 // ---------------------------------------------------------------------------
+// Rule 1b: members of one class that share a private clean-name (an instance
+// and a static `#foo`, or two same-named declarations) each own a distinct
+// `_N`-suffixed helper. The hoisted var-decl list is built from the same
+// per-member collections as the initializer/assignment paths (keyed on member
+// identity), so it must never declare a duplicate helper name nor reference a
+// helper it failed to declare.
+// ---------------------------------------------------------------------------
+
+/// Extract the module-level `var ...;` hoist line that declares the generated
+/// private helpers for the first class.
+fn hoist_var_line(output: &str) -> String {
+    output
+        .lines()
+        .find(|l| l.trim_start().starts_with("var ") && l.contains("_foo"))
+        .or_else(|| output.lines().find(|l| l.trim_start().starts_with("var ")))
+        .unwrap_or("")
+        .to_string()
+}
+
+/// An instance `#foo` and a static `#foo` share a clean-name. Each must receive
+/// its own helper (`_C_foo` and `_C_foo_1`) in the single hoisted var-decl list,
+/// and the suffixed helper must actually be declared there (not only referenced
+/// by the static initializer on a separate path).
+#[test]
+fn instance_and_static_same_private_name_get_distinct_helpers() {
+    let source = r#"
+class Box {
+    #foo = 1;
+    static #foo = true;
+}
+"#;
+    let output = parse_lower_emit(source, es2015_esnext());
+    let var_line = hoist_var_line(&output);
+
+    assert!(
+        var_line.contains("_Box_foo,") || var_line.contains("_Box_foo;"),
+        "Instance helper keeps the un-suffixed name in the hoist list.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+    assert!(
+        var_line.contains("_Box_foo_1"),
+        "Static helper takes the suffixed name in the hoist list.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+    // The old bug declared `_Box_foo` twice (instance + static both resolved to
+    // the first field's name) and left `_Box_foo_1` undeclared.
+    assert_eq!(
+        count_occurrences(&var_line, "_Box_foo,"),
+        1,
+        "The hoist list must not declare the same helper twice.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+    // Every `_Box_foo_1` reference must be backed by its declaration in the
+    // hoist list.
+    assert!(
+        count_occurrences(&output, "_Box_foo_1") >= 2,
+        "Suffixed helper must be both declared and used.\nOutput:\n{output}"
+    );
+}
+
+/// Same rule, different class/member spelling: keying is on the structural
+/// collision (instance vs static sharing a clean-name), not on `Box`/`foo`.
+#[test]
+fn instance_and_static_same_private_name_get_distinct_helpers_renamed() {
+    let source = r#"
+class Widget {
+    #handle = 1;
+    static #handle = true;
+}
+"#;
+    let output = parse_lower_emit(source, es2015_esnext());
+    let var_line = hoist_var_line(&output);
+
+    assert!(
+        var_line.contains("_Widget_handle_1"),
+        "Static helper must be suffixed regardless of names.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+    assert_eq!(
+        count_occurrences(&var_line, "_Widget_handle,"),
+        1,
+        "No duplicate helper declaration regardless of names.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+}
+
+/// An instance field and an instance method sharing a clean-name also collide;
+/// each owns a distinct helper in the single hoist list.
+#[test]
+fn field_and_method_same_private_name_get_distinct_helpers() {
+    let source = r#"
+class Repo {
+    #foo = 1;
+    #foo() { return 2; }
+}
+"#;
+    let output = parse_lower_emit(source, es2015_esnext());
+    let var_line = hoist_var_line(&output);
+
+    assert!(
+        var_line.contains("_Repo_foo_1"),
+        "Second same-named member must take the suffixed helper.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+    assert_eq!(
+        count_occurrences(&var_line, "_Repo_foo,"),
+        1,
+        "No duplicate helper declaration for field/method collision.\nvar line: {var_line}\nOutput:\n{output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Rule 2: class-expression temp scope inside a private-field initializer of a
 // class with a synthesized constructor.
 // ---------------------------------------------------------------------------
