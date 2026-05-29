@@ -151,40 +151,67 @@ function collectExamples(rows, limit) {
   return examples;
 }
 
-function linkedIssues(subsystem, codes, issues) {
-  if (issues.length === 0) return [];
+// Maximum number of issues linked to a single reduction task. Kept as a named
+// constant so the matcher can stop scanning issues once the cap is reached.
+const LINKED_ISSUES_PER_TASK = 5;
+
+// Normalize the open-issue list exactly once so issue linking does not
+// re-lowercase every issue's title and labels for every diagnostic-pattern
+// group. `buildReductionTasks` reuses one index across all groups, turning the
+// old O(groups × issues × title-length) rescan into O(issues) setup plus
+// O(issues) cheap comparisons per group. Closed issues are dropped here so the
+// per-group matcher never reconsiders them. Original issue order is preserved
+// so `linkedIssues` keeps yielding the same first-N matches as before.
+export function buildIssueIndex(issues) {
+  const index = [];
+  for (const issue of issues) {
+    if (issue.state && issue.state !== "open") continue;
+    const normalizedLabels = Array.isArray(issue.labels)
+      ? issue.labels.map((l) => String(l).toLowerCase().replace(/-/g, " "))
+      : [];
+    index.push({
+      issue,
+      labelSet: new Set(normalizedLabels),
+      titleLower: String(issue.title ?? "").toLowerCase(),
+    });
+  }
+  return index;
+}
+
+function linkIssue(issue) {
+  return {
+    number: issue.number,
+    title: issue.title,
+    labels: Array.isArray(issue.labels) ? issue.labels : [],
+    state: issue.state ?? "open",
+    url: issue.html_url ?? `https://github.com/mohsen1/tsz/issues/${issue.number}`,
+  };
+}
+
+function linkedIssues(subsystem, codes, issueIndex) {
+  if (issueIndex.length === 0) return [];
   const codesArray = codes.map((c) => c.toLowerCase());
   const subsystemLower = subsystem.toLowerCase();
   const normalizedSub = subsystem.replace(/-/g, " ").toLowerCase();
   const subsystemWords = normalizedSub.split(/[/\s]+/).filter((w) => w.length > 3);
 
-  return issues
-    .filter((issue) => {
-      if (issue.state && issue.state !== "open") return false;
-
-      const labels = Array.isArray(issue.labels)
-        ? issue.labels.map((l) => String(l).toLowerCase().replace(/-/g, " "))
-        : [];
-      if (labels.some((l) => l === normalizedSub || l === subsystemLower)) return true;
-
-      const title = String(issue.title ?? "").toLowerCase();
-      if (codesArray.some((code) => title.includes(code))) return true;
-      if (subsystemWords.some((word) => title.includes(word))) return true;
-
-      return false;
-    })
-    .slice(0, 5)
-    .map((issue) => ({
-      number: issue.number,
-      title: issue.title,
-      labels: Array.isArray(issue.labels) ? issue.labels : [],
-      state: issue.state ?? "open",
-      url: issue.html_url ?? `https://github.com/mohsen1/tsz/issues/${issue.number}`,
-    }));
+  const linked = [];
+  for (const { issue, labelSet, titleLower } of issueIndex) {
+    const matches =
+      labelSet.has(normalizedSub) ||
+      labelSet.has(subsystemLower) ||
+      codesArray.some((code) => titleLower.includes(code)) ||
+      subsystemWords.some((word) => titleLower.includes(word));
+    if (!matches) continue;
+    linked.push(linkIssue(issue));
+    if (linked.length >= LINKED_ISSUES_PER_TASK) break;
+  }
+  return linked;
 }
 
 export function buildReductionTasks(groups, issues = [], { minRows = 1 } = {}) {
   const tasks = [];
+  const issueIndex = buildIssueIndex(issues);
 
   for (const group of groups.values()) {
     if (group.rows.length < minRows) continue;
@@ -225,7 +252,7 @@ export function buildReductionTasks(groups, issues = [], { minRows = 1 } = {}) {
       },
       suggested_issue_title: suggestedTitle,
       suggested_labels: [...new Set(["bench", ...baseLabels])],
-      linked_issues: linkedIssues(subsystem, codes, issues),
+      linked_issues: linkedIssues(subsystem, codes, issueIndex),
     });
   }
 
