@@ -770,3 +770,36 @@ fn line_comments_without_source_text_fall_back_safely() {
         "no comments without source text, got:\n{output}"
     );
 }
+
+#[test]
+fn invalid_char_member_in_enum_body_is_skipped() {
+    // When an invalid character (e.g. U+00AC NOT SIGN `¬`) appears as an enum
+    // member due to parse-error recovery, tsc discards that member entirely
+    // rather than emitting a spurious line such as `E[E[""] = 0] = "";`.
+    // The fix: skip enum members whose resolved name is empty and whose name
+    // node is not a PrivateIdentifier or computed property.
+    let output = transform_enum("enum E {\n    \u{00AC}\n}");
+    assert!(
+        !output.contains("\"\""),
+        "invalid-char member should not emit an empty-string key, got:\n{output}"
+    );
+}
+
+#[test]
+fn invalid_char_member_between_valid_members_is_skipped() {
+    // Valid members before and after an invalid-char recovery node must still
+    // be emitted correctly; only the invalid member is silently dropped.
+    let output = transform_enum("enum X {\n    A,\n    \u{00AC},\n    B\n}");
+    assert!(
+        output.contains("X[X[\"A\"] = 0] = \"A\""),
+        "member A must still emit, got:\n{output}"
+    );
+    assert!(
+        output.contains("X[X[\"B\"] = 1] = \"B\""),
+        "member B must still emit (auto-increment past invalid member), got:\n{output}"
+    );
+    assert!(
+        !output.contains("\"\""),
+        "invalid member must not emit an empty-string key, got:\n{output}"
+    );
+}

@@ -527,6 +527,19 @@ impl<'a> EnumES5Transformer<'a> {
                 .get(member_data.name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
+            // Skip members whose name resolved to empty and are not a
+            // `PrivateIdentifier` (which gets its own error-recovery emit path).
+            // This covers parse-error recovery nodes such as invalid characters
+            // (e.g. `¬`) inside an enum body: tsc discards those members entirely
+            // rather than emitting a spurious `E[E[""] = 0] = "";` line.
+            let is_private_identifier = self
+                .arena
+                .get(member_data.name)
+                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+            if member_name.is_empty() && !is_computed && !is_private_identifier {
+                continue;
+            }
+
             // For computed property names, get the expression as an IR node
             let computed_key = if is_computed {
                 self.arena
