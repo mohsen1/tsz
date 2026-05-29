@@ -1,6 +1,9 @@
 //! Modifier, member access, and query methods for `CheckerState`.
 
-use crate::query_boundaries::common::contains_type_parameters;
+use crate::query_boundaries::common::{
+    TypeQueryKind, classify_type_query, contains_error_type, contains_type_parameters,
+    split_nullish_type,
+};
 use crate::state::{CheckerState, MemberAccessLevel};
 use tsz_binder::symbol_flags;
 use tsz_parser::parser::NodeIndex;
@@ -1308,7 +1311,7 @@ impl<'a> CheckerState<'a> {
     /// - Max depth protection (20 levels)
     /// - Comprehensive type traversal including function parameters
     pub(crate) fn type_contains_error(&self, type_id: TypeId) -> bool {
-        crate::query_boundaries::common::contains_error_type(self.ctx.types, type_id)
+        contains_error_type(self.ctx.types, type_id)
     }
 
     /// Returns whether a type references type parameters.
@@ -1353,10 +1356,7 @@ impl<'a> CheckerState<'a> {
             return cached;
         }
 
-        let split = crate::query_boundaries::common::split_nullish_type(
-            self.ctx.types.as_type_database(),
-            type_id,
-        );
+        let split = split_nullish_type(self.ctx.types.as_type_database(), type_id);
         self.ctx
             .narrowing_cache
             .split_nullish_cache
@@ -1596,11 +1596,8 @@ impl<'a> CheckerState<'a> {
         }
         self.get_class_name_from_expression(object_expr)
             .or_else(|| {
-                if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
-                    crate::query_boundaries::common::classify_type_query(
-                        self.ctx.types,
-                        object_type,
-                    )
+                if let TypeQueryKind::TypeQuery(sym_ref) =
+                    classify_type_query(self.ctx.types, object_type)
                 {
                     let sym_id = tsz_binder::SymbolId(sym_ref.0);
                     self.get_cross_file_symbol(sym_id)
