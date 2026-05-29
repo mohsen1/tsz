@@ -807,6 +807,17 @@ pub struct Printer<'a> {
     /// `__classPrivateFieldGet`/`__classPrivateFieldSet` helper calls.
     pub(crate) private_field_weakmaps: FxHashMap<String, String>,
 
+    /// File-wide uniquing set for generated private-element helper names.
+    /// Every generated private-helper variable name (WeakMap/WeakSet storage,
+    /// method/accessor function vars, class-identity prefixes) across all classes
+    /// in the same enclosing lexical scope is accumulated here so nested classes
+    /// that reuse a class name (`class A { #foo; constructor() { class A { #foo } } }`)
+    /// receive `_N`-suffixed helper names instead of colliding. Seeded once from
+    /// `collect_enclosing_source_binding_names`; kept and extended across sibling
+    /// classes; snapshot/restored around nested-class emission like
+    /// `private_field_weakmaps`.
+    pub(crate) generated_private_names: Option<FxHashSet<String>>,
+
     /// Private member kind info for ES2015-ES2021 lowering.
     /// Maps `field_name` (without `#`) → `PrivateMemberKind`.
     /// Used to determine the correct kind argument ("f", "m", "a") and

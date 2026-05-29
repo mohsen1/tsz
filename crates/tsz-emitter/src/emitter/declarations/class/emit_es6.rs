@@ -606,8 +606,15 @@ impl<'a> Printer<'a> {
         // Private field lowering: when target < ES2022, transform #fields to WeakMap pattern
         let needs_private_field_lowering = !self.ctx.options.target.supports_es2022()
             && self.ctx.options.target != ScriptTarget::ESNext;
+        // Generated private-helper names are uniquified against a single file-wide
+        // set so nested or sibling classes that reuse a class name receive
+        // `_N`-suffixed helpers instead of colliding (matches tsc's per-file name
+        // generator). Seed once from the enclosing source bindings, then keep the
+        // accumulated set on the emitter and reuse it for every later class.
         let mut used_private_names = if needs_private_field_lowering {
-            collect_enclosing_source_binding_names(self.arena, _idx)
+            self.generated_private_names
+                .take()
+                .unwrap_or_else(|| collect_enclosing_source_binding_names(self.arena, _idx))
         } else {
             rustc_hash::FxHashSet::default()
         };
@@ -677,6 +684,13 @@ impl<'a> Printer<'a> {
         } else {
             None
         };
+
+        // Publish the accumulated generated-name set back onto the emitter so any
+        // nested classes emitted while printing this class body (and later sibling
+        // classes) uniquify their private helpers against the names allocated here.
+        if needs_private_field_lowering {
+            self.generated_private_names = Some(std::mem::take(&mut used_private_names));
+        }
 
         let target_needs_static_block_lowering =
             (self.ctx.options.target as u32) < (ScriptTarget::ES2022 as u32);
@@ -1897,6 +1911,13 @@ impl<'a> Printer<'a> {
                 self.write_line();
                 self.increase_indent();
             }
+            // Temps allocated while emitting field initializers in this synthesized
+            // constructor body (e.g. a class-expression lowered inside a private-field
+            // initializer needing `_a`) must be declared in this constructor's scope,
+            // not leak to the enclosing function/file hoist list. Push a body temp
+            // scope and capture the insertion anchor for the `var` line.
+            self.push_temp_scope();
+            let synth_ctor_hoist_anchor = self.capture_hoist_anchor();
             // Emit _X_instances.add(this) for private methods/accessors
             if let Some(ref ws_name) = self.pending_instances_weakset_add.clone() {
                 self.write(ws_name);
@@ -2026,6 +2047,26 @@ impl<'a> Printer<'a> {
                 }
                 self.write_line();
             }
+            // Insert any temps hoisted while emitting field initializers (e.g.
+            // `_a` for a class expression lowered inside a private-field init) at
+            // the top of this synthesized constructor body, then drop the scope.
+            if !self.hoisted_assignment_temps.is_empty() {
+                let indent = self
+                    .writer
+                    .indent_string_at(synth_ctor_hoist_anchor.indent_level);
+                let var_decl = format!(
+                    "{}var {};",
+                    indent,
+                    self.hoisted_assignment_temps.join(", ")
+                );
+                self.writer.insert_line_at(
+                    synth_ctor_hoist_anchor.byte_offset,
+                    synth_ctor_hoist_anchor.line_no,
+                    &var_decl,
+                );
+                self.hoisted_assignment_temps.clear();
+            }
+            self.pop_temp_scope();
             self.decrease_indent();
             self.write("}");
             self.write_line();
