@@ -209,11 +209,6 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<tsz_binder::SymbolId> {
-        // Use the structural identifier name rather than the rendered display string.
-        // `named_type_display_name` returns the type's declared identifier (symbol/def
-        // name) or None for non-named types. This avoids rendering side effects and
-        // "globalThis." prefix artifacts that the previous format_type_diagnostic path
-        // had to strip manually.
         let name = self.named_type_display_name(type_id)?;
 
         if let Some(index) = &self.ctx.global_file_locals_index
