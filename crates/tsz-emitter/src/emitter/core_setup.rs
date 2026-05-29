@@ -340,6 +340,8 @@ impl<'a> Printer<'a> {
             preallocated_logical_assignment_value_temps: VecDeque::new(),
             preallocated_assignment_temps: VecDeque::new(),
             hoisted_assignment_temps: Vec::new(),
+            loop_iife_body_depth: 0,
+            loop_iife_pending_hoisted_temps: Vec::new(),
             hoisted_file_level_class_temps: Vec::new(),
             block_scoped_private_temps: Vec::new(),
             cjs_destructuring_export_temps: Vec::new(),

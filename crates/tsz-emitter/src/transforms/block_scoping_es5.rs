@@ -473,7 +473,7 @@ pub fn analyze_loop_capture(
         return info;
     }
 
-    let var_set: FxHashSet<&str> = loop_vars.iter().map(std::string::String::as_str).collect();
+    let var_set: FxHashSet<String> = loop_vars.iter().cloned().collect();
 
     // Recursively check for closures that capture loop variables
     check_closure_capture(arena, body_idx, &var_set, &mut info, false);
@@ -481,15 +481,113 @@ pub fn analyze_loop_capture(
     info
 }
 
+/// Collect the binding identifier names declared by a binding name node
+/// (identifier or destructuring pattern) into `out`.
+fn collect_binding_pattern_names(arena: &NodeArena, name_idx: NodeIndex, out: &mut Vec<String>) {
+    let Some(name_node) = arena.get(name_idx) else {
+        return;
+    };
+    if name_node.is_identifier() {
+        if let Some(ident) = arena.get_identifier(name_node) {
+            out.push(ident.escaped_text.clone());
+        }
+    } else if matches!(
+        name_node.kind,
+        syntax_kind_ext::ARRAY_BINDING_PATTERN | syntax_kind_ext::OBJECT_BINDING_PATTERN
+    ) && let Some(pattern) = arena.get_binding_pattern(name_node)
+    {
+        for &elem_idx in &pattern.elements.nodes {
+            if let Some(elem_node) = arena.get(elem_idx)
+                && let Some(elem) = arena.get_binding_element(elem_node)
+            {
+                collect_binding_pattern_names(arena, elem.name, out);
+            }
+        }
+    }
+}
+
+/// Names introduced by a loop's own iteration binding (for-of/for-in binding,
+/// or a for-statement let/const initializer). These shadow same-named loop
+/// variables of an enclosing loop within the nested loop's subtree.
+fn loop_binding_shadow_names(arena: &NodeArena, node: &Node) -> Vec<String> {
+    let mut names = Vec::new();
+    let init_idx = if node.kind == syntax_kind_ext::FOR_OF_STATEMENT
+        || node.kind == syntax_kind_ext::FOR_IN_STATEMENT
+    {
+        arena.get_for_in_of(node).map(|f| f.initializer)
+    } else {
+        arena.get_loop(node).map(|l| l.initializer)
+    };
+    let Some(init_idx) = init_idx else {
+        return names;
+    };
+    if init_idx.is_none() {
+        return names;
+    }
+    let Some(init_node) = arena.get(init_idx) else {
+        return names;
+    };
+    if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST
+        && let Some(decl_list) = arena.get_variable(init_node)
+    {
+        for &decl_idx in &decl_list.declarations.nodes {
+            if let Some(decl_node) = arena.get(decl_idx)
+                && let Some(decl) = arena.get_variable_declaration(decl_node)
+            {
+                collect_binding_pattern_names(arena, decl.name, &mut names);
+            }
+        }
+    }
+    names
+}
+
+/// Function parameter names that shadow same-named loop variables within the
+/// function body.
+fn function_param_shadow_names(arena: &NodeArena, params: &[NodeIndex]) -> Vec<String> {
+    let mut names = Vec::new();
+    for &param_idx in params {
+        if let Some(param_node) = arena.get(param_idx)
+            && let Some(param) = arena.get_parameter(param_node)
+        {
+            collect_binding_pattern_names(arena, param.name, &mut names);
+        }
+    }
+    names
+}
+
+/// Return a reduced copy of `loop_vars` with `shadowed` names removed, or
+/// `None` when nothing was shadowed (so the caller can reuse the borrow and
+/// avoid an allocation). Capture is tracked by binding, not by name: a nested
+/// scope that re-declares a loop variable name shields the enclosing loop
+/// variable of that name from being seen as captured inside that subtree.
+fn reduce_loop_vars(
+    loop_vars: &FxHashSet<String>,
+    shadowed: &[String],
+) -> Option<FxHashSet<String>> {
+    if shadowed.iter().any(|n| loop_vars.contains(n)) {
+        let mut reduced = loop_vars.clone();
+        for n in shadowed {
+            reduced.remove(n);
+        }
+        Some(reduced)
+    } else {
+        None
+    }
+}
+
 /// Recursively check for closures that capture variables from the loop
 fn check_closure_capture(
     arena: &NodeArena,
     idx: NodeIndex,
-    loop_vars: &FxHashSet<&str>,
+    loop_vars: &FxHashSet<String>,
     info: &mut LoopCaptureInfo,
     inside_closure: bool,
 ) {
     let Some(node) = arena.get(idx) else { return };
+
+    if loop_vars.is_empty() {
+        return;
+    }
 
     match node.kind {
         // Function declarations/expressions/arrows create closures
@@ -499,12 +597,17 @@ fn check_closure_capture(
         {
             // Inside this function, we're in a closure
             if let Some(func) = arena.get_function(node) {
-                // Check parameters
+                // Check parameters (initializers are evaluated in the function's
+                // own scope; references there are still inside the closure).
                 for &param_idx in &func.parameters.nodes {
                     check_closure_capture(arena, param_idx, loop_vars, info, true);
                 }
-                // Check body
-                check_closure_capture(arena, func.body, loop_vars, info, true);
+                // Parameters shadow same-named loop vars within the body.
+                let shadow = function_param_shadow_names(arena, &func.parameters.nodes);
+                match reduce_loop_vars(loop_vars, &shadow) {
+                    Some(reduced) => check_closure_capture(arena, func.body, &reduced, info, true),
+                    None => check_closure_capture(arena, func.body, loop_vars, info, true),
+                }
             }
         }
 
@@ -513,7 +616,13 @@ fn check_closure_capture(
                 for &param_idx in &method.parameters.nodes {
                     check_closure_capture(arena, param_idx, loop_vars, info, true);
                 }
-                check_closure_capture(arena, method.body, loop_vars, info, true);
+                let shadow = function_param_shadow_names(arena, &method.parameters.nodes);
+                match reduce_loop_vars(loop_vars, &shadow) {
+                    Some(reduced) => {
+                        check_closure_capture(arena, method.body, &reduced, info, true)
+                    }
+                    None => check_closure_capture(arena, method.body, loop_vars, info, true),
+                }
             }
         }
 
@@ -522,7 +631,13 @@ fn check_closure_capture(
                 for &param_idx in &accessor.parameters.nodes {
                     check_closure_capture(arena, param_idx, loop_vars, info, true);
                 }
-                check_closure_capture(arena, accessor.body, loop_vars, info, true);
+                let shadow = function_param_shadow_names(arena, &accessor.parameters.nodes);
+                match reduce_loop_vars(loop_vars, &shadow) {
+                    Some(reduced) => {
+                        check_closure_capture(arena, accessor.body, &reduced, info, true)
+                    }
+                    None => check_closure_capture(arena, accessor.body, loop_vars, info, true),
+                }
             }
         }
 
@@ -533,6 +648,27 @@ fn check_closure_capture(
                 for &member_idx in &class_data.members.nodes {
                     check_class_member_capture(arena, member_idx, loop_vars, info, inside_closure);
                 }
+            }
+        }
+
+        // Nested loops introduce their own iteration bindings, which shadow any
+        // same-named loop variable of the enclosing loop inside the nested
+        // loop's subtree. A reference to that name there refers to the inner
+        // binding, so the enclosing loop is not captured by it.
+        k if k == syntax_kind_ext::FOR_OF_STATEMENT
+            || k == syntax_kind_ext::FOR_IN_STATEMENT
+            || k == syntax_kind_ext::FOR_STATEMENT
+            || k == syntax_kind_ext::WHILE_STATEMENT
+            || k == syntax_kind_ext::DO_STATEMENT =>
+        {
+            let shadow = loop_binding_shadow_names(arena, node);
+            match reduce_loop_vars(loop_vars, &shadow) {
+                Some(reduced) => visit_children(arena, node, |child_idx| {
+                    check_closure_capture(arena, child_idx, &reduced, info, inside_closure);
+                }),
+                None => visit_children(arena, node, |child_idx| {
+                    check_closure_capture(arena, child_idx, loop_vars, info, inside_closure);
+                }),
             }
         }
 
@@ -562,7 +698,7 @@ fn check_closure_capture(
 fn check_class_member_capture(
     arena: &NodeArena,
     idx: NodeIndex,
-    loop_vars: &FxHashSet<&str>,
+    loop_vars: &FxHashSet<String>,
     info: &mut LoopCaptureInfo,
     inside_closure: bool,
 ) {
@@ -579,7 +715,13 @@ fn check_class_member_capture(
                 for &param_idx in &method.parameters.nodes {
                     check_closure_capture(arena, param_idx, loop_vars, info, true);
                 }
-                check_closure_capture(arena, method.body, loop_vars, info, true);
+                let shadow = function_param_shadow_names(arena, &method.parameters.nodes);
+                match reduce_loop_vars(loop_vars, &shadow) {
+                    Some(reduced) => {
+                        check_closure_capture(arena, method.body, &reduced, info, true)
+                    }
+                    None => check_closure_capture(arena, method.body, loop_vars, info, true),
+                }
             }
         }
         k if k == syntax_kind_ext::GET_ACCESSOR || k == syntax_kind_ext::SET_ACCESSOR => {
@@ -587,7 +729,13 @@ fn check_class_member_capture(
                 for &param_idx in &accessor.parameters.nodes {
                     check_closure_capture(arena, param_idx, loop_vars, info, true);
                 }
-                check_closure_capture(arena, accessor.body, loop_vars, info, true);
+                let shadow = function_param_shadow_names(arena, &accessor.parameters.nodes);
+                match reduce_loop_vars(loop_vars, &shadow) {
+                    Some(reduced) => {
+                        check_closure_capture(arena, accessor.body, &reduced, info, true)
+                    }
+                    None => check_closure_capture(arena, accessor.body, loop_vars, info, true),
+                }
             }
         }
         k if k == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION => {
@@ -712,6 +860,17 @@ fn visit_children<F: FnMut(NodeIndex)>(arena: &NodeArena, node: &Node, mut visit
                 visitor(loop_data.condition);
                 visitor(loop_data.incrementor);
                 visitor(loop_data.statement);
+            }
+        }
+        // for-of / for-in use a distinct payload. A closure that captures an
+        // outer loop variable can be buried inside a nested for-of/for-in body
+        // (e.g. `for (let x of xs) for (let y of ys) f(() => x)`), so capture
+        // analysis must descend into these statements too.
+        k if k == syntax_kind_ext::FOR_OF_STATEMENT || k == syntax_kind_ext::FOR_IN_STATEMENT => {
+            if let Some(for_in_of) = arena.get_for_in_of(node) {
+                visitor(for_in_of.initializer);
+                visitor(for_in_of.expression);
+                visitor(for_in_of.statement);
             }
         }
         k if k == syntax_kind_ext::RETURN_STATEMENT => {
