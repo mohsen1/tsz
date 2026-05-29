@@ -289,7 +289,7 @@ impl<'a> CheckerState<'a> {
                 // including through alias chains (`type A = B; type B = string`
                 // renders as `string`). `evaluate_type_with_env` collapses the
                 // chain, so a single check on the evaluated form covers the family.
-                if crate::query_boundaries::common::is_intrinsic_or_literal_type(
+                if crate::query_boundaries::type_predicates::is_intrinsic_or_literal_type(
                     self.ctx.types.as_type_database(),
                     evaluated,
                 ) {

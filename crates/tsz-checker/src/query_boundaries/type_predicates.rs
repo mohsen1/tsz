@@ -22,6 +22,14 @@ pub(crate) fn contains_conditional_with_application_extends(
     tsz_solver::type_queries::contains_conditional_with_application_extends(db, type_id)
 }
 
+/// True when `type_id` is a bare intrinsic keyword type or a literal type — the
+/// types tsc does not attach an `aliasSymbol` to. A non-generic type alias whose
+/// body resolves to one of these renders structurally in diagnostics rather than
+/// by the alias name.
+pub(crate) fn is_intrinsic_or_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_intrinsic_or_literal_type(db, type_id)
+}
+
 /// Primitive index-key types: the only types tsc treats as valid bare keys for
 /// `keyof`/index-signature constraint membership.
 const PRIMITIVE_INDEX_KEYS: [TypeId; 3] = [TypeId::STRING, TypeId::NUMBER, TypeId::SYMBOL];
