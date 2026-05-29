@@ -325,14 +325,14 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Scanner boundary: scanner_impl monolith size ratchet (#9431)",
         ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
-        4173,
+        4190,
     ),
-    # CLI driver resolution: source/module-resolution and program build setup.
-    # Ratchet down as resolution phases are extracted per §19.
+    # CLI driver resolution: split into discovery/exports_imports/package_resolution/
+    # path_resolution/type_packages submodules; ratchet holds the orchestrator at 301.
     (
         "CLI boundary: driver/resolution monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "resolution.rs",
-        4109,
+        301,
     ),
     # Emitter class declarations: split by emit feature family per §19.
     (
@@ -345,7 +345,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "class"
         / "emit_es6.rs",
-        4110,
+        4191,
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
@@ -374,7 +374,8 @@ FILE_LINE_LIMIT_CHECKS = [
         3038,
     ),
     # Emitter class ES5 AST-to-IR: issue #10638 tracks splitting alongside
-    # async_es5_ir.rs.
+    # async_es5_ir.rs. Partially split (comments/control-flow/expressions/for-in-of
+    # submodules already extracted); ratchet holds orchestrator at 1869.
     (
         "Emitter boundary: class ES5 AST-to-IR engine size ratchet (#10638)",
         ROOT
@@ -383,7 +384,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "transforms"
         / "class_es5_ast_to_ir.rs",
-        2985,
+        1869,
     ),
 ]
 
