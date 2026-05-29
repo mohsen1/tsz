@@ -957,6 +957,18 @@ impl<'a> CheckerState<'a> {
             }
             let arg_snap = DiagnosticSpeculationSnapshot::new(&self.ctx);
             let raw_arg_type = self.get_type_of_node_with_request(arg_idx, &request);
+            // A fresh `[...] as const` argument drops its `readonly` modifier when
+            // the parameter expects a mutable array/tuple (including a generic
+            // `[...T]` inference site), matching tsc. The contextual type is not
+            // routed through `request` for as-const literals, so apply the same
+            // rule here on the computed argument type.
+            let raw_arg_type = self
+                .const_assertion_array_literal_drops_readonly(
+                    arg_idx,
+                    raw_arg_type,
+                    expected_context_type.or(expected_type),
+                )
+                .unwrap_or(raw_arg_type);
             let arg_type = if let Some(expected) = expected_context_type.or(expected_type) {
                 let expected_eval = self.evaluate_type_with_env(expected);
                 let expected_shape =
