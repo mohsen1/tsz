@@ -32,3 +32,26 @@ fn jsx_single_child_precise_type_uses_relation_outcome_boundary() {
         "the synthesized-child to precise-children relation should route through RelationOutcome"
     );
 }
+
+#[test]
+fn jsx_single_child_zero_param_callback_recheck_uses_relation_outcome_boundary() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/checkers/jsx/children.rs");
+    let source = fs::read_to_string(&source_path).expect("read JSX children source");
+
+    let branch_start = source
+        .find("raw_zero_param_child_type")
+        .expect("find raw zero-param child recheck branch");
+    let branch_end = source[branch_start..]
+        .find("self.check_jsx_single_child_assignable")
+        .expect("find zero-param child diagnostic call");
+    let branch = &source[branch_start..branch_start + branch_end];
+
+    assert!(
+        branch.contains("assign_relation_outcome(raw_zero_param_child_type, children_type)"),
+        "zero-param JSX child callback recheck must use the shared relation outcome boundary"
+    );
+    assert!(
+        !branch.contains("diagnostic_relation_boolean_guard"),
+        "zero-param JSX child callback recheck must not use the raw diagnostic boolean guard"
+    );
+}

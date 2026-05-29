@@ -284,7 +284,10 @@ pub(crate) fn mapped_key_constraint_semantically_filters_current_object_keys(
 ) -> bool {
     let constraint_eval = checker.evaluate_type_with_env(constraint_type);
     let keyof_object_param = checker.ctx.types.factory().keyof(object_type);
-    if checker.diagnostic_relation_boolean_guard(constraint_eval, keyof_object_param) {
+    if checker
+        .assign_relation_outcome(constraint_eval, keyof_object_param)
+        .related
+    {
         return true;
     }
 
@@ -313,7 +316,10 @@ pub(crate) fn mapped_key_constraint_semantically_filters_current_object_keys(
         {
             return true;
         }
-        if checker.diagnostic_relation_boolean_guard(next_eval, keyof_object_param) {
+        if checker
+            .assign_relation_outcome(next_eval, keyof_object_param)
+            .related
+        {
             return true;
         }
         if !crate::query_boundaries::common::is_type_parameter_like(checker.ctx.types, next_eval) {
@@ -354,7 +360,9 @@ fn mapped_key_constraint_filters_current_object_keys(
                         evaluated,
                         object_type,
                         object_type_for_check,
-                    ) || checker.diagnostic_relation_boolean_guard(evaluated, keyof_object)
+                    ) || checker
+                        .assign_relation_outcome(evaluated, keyof_object)
+                        .related
                 });
         }
 
@@ -840,5 +848,24 @@ mod tests {
         db.store_display_alias(evaluated, keyof);
 
         assert!(!constraint_has_keyof_surface(&db, evaluated));
+    }
+
+    #[test]
+    fn mapped_key_constraint_filtering_uses_relation_outcome_boundary() {
+        let source = include_str!("generic.rs");
+        let legacy = concat!("diagnostic_relation", "_boolean_guard(");
+
+        assert!(
+            source.contains(".assign_relation_outcome(constraint_eval, keyof_object_param)")
+                && source.contains(".assign_relation_outcome(next_eval, keyof_object_param)")
+                && source.contains(".assign_relation_outcome(evaluated, keyof_object)"),
+            "mapped-key constraint filtering should route relation probes through \
+             the shared relation outcome boundary"
+        );
+        assert!(
+            !source.contains(legacy),
+            "generic query-boundary helpers should not use raw diagnostic relation \
+             boolean guards"
+        );
     }
 }

@@ -353,7 +353,9 @@ impl<'a> CheckerState<'a> {
         if crate::query_boundaries::common::contains_type_parameters(self.ctx.types, spread_type) {
             outcome.spread_covers_all = true;
         } else if !ctx.skip_prop_checks
-            && self.diagnostic_relation_boolean_guard(spread_type, ctx.props_type)
+            && self
+                .assign_relation_outcome(spread_type, ctx.props_type)
+                .related
         {
             // The solver reports the spread is structurally assignable to the
             // whole props type, so all required members are satisfied — including
@@ -709,7 +711,10 @@ impl<'a> CheckerState<'a> {
             && !suppress_for_primitive_props_with_missing_ia_required
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
-            if !self.diagnostic_relation_boolean_guard(attrs_type, ctx.props_type) {
+            if !self
+                .assign_relation_outcome(attrs_type, ctx.props_type)
+                .related
+            {
                 self.report_jsx_synthesized_props_assignability_error(
                     attrs_type,
                     &opts.display_target,
@@ -778,7 +783,9 @@ impl<'a> CheckerState<'a> {
                 .spread_entries
                 .iter()
                 .any(|&(spread_type, display_spread_type, _, _)| {
-                    self.diagnostic_relation_boolean_guard(spread_type, ctx.props_type)
+                    self
+                        .assign_relation_outcome(spread_type, ctx.props_type)
+                        .related
                         || crate::query_boundaries::checkers::jsx::spread_source_covers_readonly_wrapped_type_parameter(
                             self.ctx.types,
                             &self.ctx.definition_store,
@@ -820,7 +827,10 @@ impl<'a> CheckerState<'a> {
             && !react_alias_spread_only_contributes_children
         {
             let attrs_type = self.build_jsx_provided_attrs_object_type(&outcome.provided_attrs);
-            if !self.diagnostic_relation_boolean_guard(attrs_type, ctx.props_type) {
+            if !self
+                .assign_relation_outcome(attrs_type, ctx.props_type)
+                .related
+            {
                 // tsc uses just the type parameter name here (e.g. "P"), not
                 // the full "IntrinsicAttributes & P" display target. The
                 // IntrinsicAttributes intersection check for spread

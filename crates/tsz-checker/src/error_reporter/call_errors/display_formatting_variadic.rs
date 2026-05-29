@@ -62,7 +62,10 @@ impl<'a> CheckerState<'a> {
             let Some(actual) = arg_elements.get(consumed) else {
                 break;
             };
-            if !self.diagnostic_relation_boolean_guard_with_env(actual.type_id, fixed.type_id) {
+            if !self
+                .assign_relation_outcome_with_env(actual.type_id, fixed.type_id)
+                .related
+            {
                 break;
             }
             consumed += 1;

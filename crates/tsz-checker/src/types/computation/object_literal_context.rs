@@ -1244,8 +1244,12 @@ impl<'a> CheckerState<'a> {
 
         let constraint_resolved = self.resolve_lazy_type(constraint);
         let constraint_evaluated = self.evaluate_type_for_assignability(constraint_resolved);
-        if self.is_assignable_to(key_type, constraint_resolved)
-            || self.is_assignable_to(key_type, constraint_evaluated)
+        if self
+            .assign_relation_outcome(key_type, constraint_resolved)
+            .related
+            || self
+                .assign_relation_outcome(key_type, constraint_evaluated)
+                .related
         {
             let mut substitution = TypeSubstitution::new();
             substitution.insert(mapped.type_param.name, key_type);

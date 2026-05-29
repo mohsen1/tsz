@@ -26,3 +26,29 @@ fn mapped_true_base_constraint_uses_relation_outcome_boundary() {
         "evaluated and resolved true-base constraint relations should route through RelationOutcome"
     );
 }
+
+#[test]
+fn required_mapped_constraint_helpers_use_relation_outcome_boundary() {
+    let source_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/checkers/generic_checker/mapped_constraint_helpers.rs");
+    let source = fs::read_to_string(&source_path).expect("read mapped constraint helper source");
+
+    let function_start = source
+        .find("pub(super) fn required_mapped_constraint_source_is_required_and_arg_satisfies")
+        .expect("find required mapped constraint helper");
+    let rest = &source[function_start..];
+    let function_end = rest
+        .find("\n    fn type_literal_alias_property_nodes")
+        .expect("find next unrelated helper");
+    let function = &rest[..function_end];
+
+    assert!(
+        !function.contains("diagnostic_relation_boolean_guard"),
+        "required mapped constraint relation decisions must use the shared relation outcome boundary"
+    );
+    assert_eq!(
+        function.matches("assign_relation_outcome").count(),
+        3,
+        "argument, collected-property, and alias-property relations should route through RelationOutcome"
+    );
+}

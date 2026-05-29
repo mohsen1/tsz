@@ -188,8 +188,12 @@ impl<'a> CheckerState<'a> {
                 let true_resolved = self.resolve_lazy_type(true_type);
                 let true_evaluated = self.evaluate_type_for_assignability(true_resolved);
                 let constraint_evaluated = self.evaluate_type_for_assignability(constraint);
-                if self.diagnostic_relation_boolean_guard(true_evaluated, constraint_evaluated)
-                    || self.diagnostic_relation_boolean_guard(true_resolved, constraint)
+                if self
+                    .assign_relation_outcome(true_evaluated, constraint_evaluated)
+                    .related
+                    || self
+                        .assign_relation_outcome(true_resolved, constraint)
+                        .related
                 {
                     return true;
                 }
@@ -200,8 +204,11 @@ impl<'a> CheckerState<'a> {
                 let extends_resolved = self.resolve_lazy_type(extends_type);
                 let extends_evaluated = self.evaluate_type_for_assignability(extends_resolved);
                 return self
-                    .diagnostic_relation_boolean_guard(extends_evaluated, constraint_evaluated)
-                    || self.diagnostic_relation_boolean_guard(extends_resolved, constraint);
+                    .assign_relation_outcome(extends_evaluated, constraint_evaluated)
+                    .related
+                    || self
+                        .assign_relation_outcome(extends_resolved, constraint)
+                        .related;
             }
 
             let Some(app) =

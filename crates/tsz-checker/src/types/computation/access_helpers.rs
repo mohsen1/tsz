@@ -476,7 +476,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        !self.diagnostic_relation_boolean_guard(index_type, string_index.key_type)
+        !self
+            .assign_relation_outcome(index_type, string_index.key_type)
+            .related
     }
 
     /// Check if an index type is "generic" — i.e., it cannot be resolved to a
@@ -937,7 +939,8 @@ impl<'a> CheckerState<'a> {
 
         let object_key_space = self.ctx.types.evaluate_keyof(object_constraint);
         let source_key_space = self.ctx.types.evaluate_keyof(key_source);
-        self.diagnostic_relation_boolean_guard(source_key_space, object_key_space)
+        self.assign_relation_outcome(source_key_space, object_key_space)
+            .related
     }
 
     pub(crate) fn should_report_union_generic_key_mismatch_ts2536(
@@ -956,7 +959,9 @@ impl<'a> CheckerState<'a> {
 
         members.iter().any(|&member| {
             let member_keyof = self.ctx.types.evaluate_keyof(member);
-            !self.diagnostic_relation_boolean_guard(index_type, member_keyof)
+            !self
+                .assign_relation_outcome(index_type, member_keyof)
+                .related
         })
     }
 

@@ -190,7 +190,7 @@ impl<'a> CheckerState<'a> {
                         if *attr_type == TypeId::ANY || *attr_type == TypeId::ERROR {
                             return true;
                         }
-                        self.diagnostic_relation_boolean_guard(*attr_type, expected)
+                        self.assign_relation_outcome(*attr_type, expected).related
                     }
                     _ => true,
                 }
@@ -262,7 +262,7 @@ impl<'a> CheckerState<'a> {
             })
             .collect();
         let attrs_type = self.ctx.types.factory().object(properties);
-        if self.diagnostic_relation_boolean_guard(attrs_type, props_type) {
+        if self.assign_relation_outcome(attrs_type, props_type).related {
             return;
         }
         self.report_jsx_synthesized_props_assignability_error(

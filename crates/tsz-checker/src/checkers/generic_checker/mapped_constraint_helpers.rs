@@ -262,7 +262,9 @@ impl<'a> CheckerState<'a> {
         self.ensure_relation_input_ready(type_arg_resolved);
         let type_arg_evaluated = self.evaluate_type_with_resolution(type_arg_resolved);
         type_arg_evaluated == source
-            || self.diagnostic_relation_boolean_guard(type_arg_evaluated, source)
+            || self
+                .assign_relation_outcome(type_arg_evaluated, source)
+                .related
             || self.type_satisfies_required_source_properties(type_arg_resolved, &properties)
             || (type_arg_evaluated != type_arg_resolved
                 && self.type_satisfies_required_source_properties(type_arg_evaluated, &properties))
@@ -334,7 +336,7 @@ impl<'a> CheckerState<'a> {
             if arg_prop.type_id != source_prop.type_id {
                 let arg_type = self.evaluate_type_for_assignability(arg_prop.type_id);
                 let source_type = self.evaluate_type_for_assignability(source_prop.type_id);
-                if !self.diagnostic_relation_boolean_guard(arg_type, source_type) {
+                if !self.assign_relation_outcome(arg_type, source_type).related {
                     return false;
                 }
             }
@@ -372,7 +374,7 @@ impl<'a> CheckerState<'a> {
             let arg_type = self.get_type_from_type_node(arg_type_node);
             let source_type = self.get_type_from_type_node(source_type_node);
             if arg_type != source_type
-                && !self.diagnostic_relation_boolean_guard(arg_type, source_type)
+                && !self.assign_relation_outcome(arg_type, source_type).related
             {
                 return false;
             }

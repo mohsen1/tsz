@@ -13,30 +13,11 @@ use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 use tsz_solver::TypeId;
 
-impl<'a> CheckerState<'a> {
-    pub(crate) fn explicit_annotation_can_defer_implicit_any_context(
-        &self,
-        annotation_idx: NodeIndex,
-    ) -> bool {
-        let Some(node) = self.ctx.arena.get(annotation_idx) else {
-            return false;
-        };
-        if node.kind == syntax_kind_ext::INDEXED_ACCESS_TYPE {
-            return true;
-        }
-        if node.kind == syntax_kind_ext::TYPE_REFERENCE
-            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
-        {
-            return matches!(
-                self.resolve_identifier_symbol_in_type_position_without_tracking(
-                    type_ref.type_name
-                ),
-                crate::symbol_resolver::TypeSymbolResolution::Type(_)
-            );
-        }
-        false
-    }
+impl<'a> CheckerState<'a> {}
 
+include!("core/annotation_context.rs");
+
+impl<'a> CheckerState<'a> {
     pub(super) fn bare_type_alias_annotation_declared_type(
         &mut self,
         annotation_idx: NodeIndex,
@@ -184,68 +165,11 @@ impl<'a> CheckerState<'a> {
             .copied()
             .filter(|&ty| ty != TypeId::ERROR && ty != TypeId::UNKNOWN)
     }
+}
 
-    pub(super) fn check_jsdoc_enum_initializer_values(
-        &mut self,
-        initializer_idx: NodeIndex,
-        enum_element_type: TypeId,
-    ) {
-        if enum_element_type == TypeId::ERROR || enum_element_type == TypeId::ANY {
-            return;
-        }
-        // tsc per-member validates `@enum {T}` only when the initializer is a
-        // direct object literal. `Object.freeze({...})` and other call/wrapper
-        // expressions opt out: the value type stays as the inferred object
-        // literal type and any downstream `T`-typed use site emits its own
-        // diagnostic at the use site.
-        let object_idx = self
-            .ctx
-            .arena
-            .skip_parenthesized_and_assertions(initializer_idx);
-        let object_node = match self.ctx.arena.get(object_idx) {
-            Some(n) if n.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => n,
-            _ => return,
-        };
-        let Some(literal) = self.ctx.arena.get_literal_expr(object_node) else {
-            return;
-        };
-        // Property assignments only: methods, shorthand, accessors, and
-        // spread elements aren't value-positioned literals participating in
-        // tsc's per-member enum-element validation.
-        let property_pairs: Vec<(NodeIndex, NodeIndex)> = literal
-            .elements
-            .nodes
-            .iter()
-            .filter_map(|&element_idx| {
-                let element_node = self.ctx.arena.get(element_idx)?;
-                let property = self.ctx.arena.get_property_assignment(element_node)?;
-                Some((property.name, property.initializer))
-            })
-            .collect();
+include!("core/jsdoc_enum_and_prior_values.rs");
 
-        let request = TypingRequest::with_contextual_type(enum_element_type);
-        for (prop_name_idx, prop_value_idx) in property_pairs {
-            let value_type = self.get_type_of_node_with_request(prop_value_idx, &request);
-            let value_type = self.resolve_lazy_type(value_type);
-            if value_type == TypeId::ERROR || value_type == TypeId::ANY {
-                continue;
-            }
-            // Match tsc's `elaborateElementwise`: anchor TS2322 at the property
-            // name with the offending value's type vs the enum element type.
-            // The default `check_assignable_or_report` path uses
-            // `DiagnosticAnchorKind::RewriteAssignment`, which walks up to the
-            // variable declaration and reformats the source as the whole
-            // object-literal type — emitting one merged `{ … }` vs `T` error
-            // at the binding name. tsc instead reports per-member.
-            self.check_assignable_or_report_at_exact_anchor_without_source_elaboration(
-                value_type,
-                enum_element_type,
-                prop_value_idx,
-                prop_name_idx,
-            );
-        }
-    }
-
+impl<'a> CheckerState<'a> {
     fn cached_inferred_variable_type(
         &self,
         decl_idx: NodeIndex,
@@ -387,140 +311,11 @@ impl<'a> CheckerState<'a> {
             true
         })
     }
+}
 
-    pub(super) fn redeclaration_initializer_request(
-        &mut self,
-        decl_idx: NodeIndex,
-        name_idx: NodeIndex,
-        initializer_idx: NodeIndex,
-    ) -> TypingRequest {
-        if !self.has_prior_value_declaration_for_symbol(decl_idx) {
-            return TypingRequest::NONE;
-        }
+include!("core/precheck_helpers.rs");
 
-        let Some(init_node) = self.ctx.arena.get(
-            self.ctx
-                .arena
-                .skip_parenthesized_and_assertions(initializer_idx),
-        ) else {
-            return TypingRequest::NONE;
-        };
-        // tsc does NOT propagate prior declaration types as contextual type for
-        // call/new expressions. Generic inference in call expressions must rely on
-        // argument types alone, not on the prior declaration's type. Providing
-        // contextual type here would cause inference to succeed (e.g., T=Function
-        // from contextual return type) when tsc would infer T=unknown, suppressing
-        // TS2403 and potentially masking TS2345 argument errors.
-        //
-        // Contextual typing from prior declarations only applies to contextually
-        // sensitive expressions (object/array literals, arrow/function expressions).
-        let initializer_needs_context = matches!(
-            init_node.kind,
-            k if k == syntax_kind_ext::ARROW_FUNCTION
-                || k == syntax_kind_ext::FUNCTION_EXPRESSION
-        ) || is_contextually_sensitive(self, initializer_idx);
-        if !initializer_needs_context {
-            return TypingRequest::NONE;
-        }
-
-        let Some(cached_type) = self.cached_inferred_variable_type(decl_idx, name_idx) else {
-            return TypingRequest::NONE;
-        };
-        if matches!(cached_type, TypeId::ANY | TypeId::ERROR | TypeId::UNKNOWN) {
-            return TypingRequest::NONE;
-        }
-
-        TypingRequest::with_contextual_type(self.contextual_type_for_expression(cached_type))
-    }
-
-    pub(super) fn checked_js_remote_class_declared_type_for_variable(
-        &mut self,
-        decl_idx: NodeIndex,
-    ) -> Option<TypeId> {
-        if !self.is_js_file()
-            || !self.ctx.compiler_options.check_js
-            || self.ctx.binder.is_external_module()
-        {
-            return None;
-        }
-
-        let node = self.ctx.arena.get(decl_idx)?;
-        let var_decl = self.ctx.arena.get_variable_declaration(node)?;
-        if var_decl.initializer.is_none() {
-            return None;
-        }
-        let name = self
-            .ctx
-            .arena
-            .get_identifier_at(var_decl.name)?
-            .escaped_text
-            .clone();
-
-        let all_arenas = self.ctx.all_arenas.clone()?;
-        let all_binders = self.ctx.all_binders.clone()?;
-
-        for (file_idx, binder) in all_binders.iter().enumerate() {
-            if file_idx == self.ctx.current_file_idx || binder.is_external_module() {
-                continue;
-            }
-            let arena = all_arenas.get(file_idx)?;
-            let source_file = arena.source_files.first()?;
-
-            for &stmt_idx in &source_file.statements.nodes {
-                let Some(stmt_node) = arena.get(stmt_idx) else {
-                    continue;
-                };
-                if stmt_node.kind != syntax_kind_ext::CLASS_DECLARATION {
-                    continue;
-                }
-                let Some(class_decl) = arena.get_class(stmt_node) else {
-                    continue;
-                };
-                let Some(ident) = arena.get_identifier_at(class_decl.name) else {
-                    continue;
-                };
-                if ident.escaped_text != name || !arena.is_in_ambient_context(stmt_idx) {
-                    continue;
-                }
-                let Some(sym_id) = binder.get_node_symbol(stmt_idx) else {
-                    continue;
-                };
-                self.ctx.register_symbol_file_index(sym_id, file_idx);
-                let base_type = self.get_type_of_symbol(sym_id);
-                // When a JS-file `const X = ...` merges with a TS-file
-                // `declare class X`, fold JS-side expando assignments
-                // (`X.prop = ...`) into the merged static type so the
-                // initializer assignability check sees every property tsc
-                // reports as missing (TS2739, not TS2741).
-                return Some(self.augment_callable_type_with_expandos(&name, sym_id, base_type));
-            }
-        }
-
-        None
-    }
-
-    pub(super) fn maybe_clear_checked_initializer_type_cache(
-        &mut self,
-        initializer_idx: NodeIndex,
-    ) {
-        // Some initializer forms are first visited during build_type_environment, where we only
-        // want a stable type shape. The later checked pass must revisit them so body/member
-        // diagnostics (for example TS2454 inside class-expression methods or TS2564 on class
-        // fields) are emitted from the canonical checked path.
-        if let Some(init_node) = self.ctx.arena.get(initializer_idx)
-            && matches!(
-                init_node.kind,
-                syntax_kind_ext::FUNCTION_EXPRESSION
-                    | syntax_kind_ext::ARROW_FUNCTION
-                    | syntax_kind_ext::NEW_EXPRESSION
-                    | syntax_kind_ext::CLASS_EXPRESSION
-                    | syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
-            )
-        {
-            self.invalidate_initializer_for_context_change(initializer_idx);
-        }
-    }
-
+impl<'a> CheckerState<'a> {
     /// Check a single variable declaration.
     #[tracing::instrument(level = "trace", skip(self), fields(decl_idx = ?decl_idx))]
     pub(crate) fn check_variable_declaration(&mut self, decl_idx: NodeIndex) {
@@ -2175,32 +1970,9 @@ impl<'a> CheckerState<'a> {
             }
         }
     }
-
-    /// Check whether an async function initializer's type differs from the
-    /// declared JSDoc type only because of Promise wrapping on the return type.
-    /// When that is the case, tsc reports TS1064 (async return type must be
-    /// Promise) but suppresses the assignment-level TS2322.
-    pub(crate) fn async_function_jsdoc_return_type_suppression(
-        &mut self,
-        init_type: TypeId,
-        declared_type: TypeId,
-    ) -> bool {
-        let init_return =
-            crate::query_boundaries::common::return_type_for_type(self.ctx.types, init_type);
-        let declared_return =
-            crate::query_boundaries::common::return_type_for_type(self.ctx.types, declared_type);
-        let (Some(init_ret), Some(decl_ret)) = (init_return, declared_return) else {
-            return false;
-        };
-        // Check if the init return type is Promise<T> where T is assignable
-        // to the declared return type.
-        if let Some(unwrapped) = self.unwrap_promise_type(init_ret) {
-            self.diagnostic_relation_boolean_guard(unwrapped, decl_ret)
-        } else {
-            false
-        }
-    }
 }
+
+include!("core/async_jsdoc_return.rs");
 
 #[cfg(test)]
 #[path = "core_tests.rs"]

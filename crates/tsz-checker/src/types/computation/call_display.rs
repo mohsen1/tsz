@@ -85,7 +85,8 @@ impl<'a> CheckerState<'a> {
 
         let source_fn = self.ctx.types.factory().function(normalize(source_shape));
         let target_fn = self.ctx.types.factory().function(normalize(target_shape));
-        self.is_assignable_to_with_env(source_fn, target_fn)
+        self.assign_relation_outcome_with_env(source_fn, target_fn)
+            .related
     }
 
     pub(crate) fn is_assignable_via_generator_never_yield_callback(
@@ -140,7 +141,10 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if !self.diagnostic_relation_boolean_guard_with_env(source_return, target_return) {
+        if !self
+            .assign_relation_outcome_with_env(source_return, target_return)
+            .related
+        {
             return false;
         }
 
@@ -149,7 +153,8 @@ impl<'a> CheckerState<'a> {
             self.get_generator_next_type_argument(target_return_type),
         ) {
             (Some(source_next), Some(target_next)) => {
-                self.diagnostic_relation_boolean_guard_with_env(target_next, source_next)
+                self.assign_relation_outcome_with_env(target_next, source_next)
+                    .related
             }
             _ => true,
         }

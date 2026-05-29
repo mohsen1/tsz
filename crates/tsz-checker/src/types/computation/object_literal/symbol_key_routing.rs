@@ -139,7 +139,10 @@ impl<'a> CheckerState<'a> {
         else {
             return false;
         };
-        if self.diagnostic_relation_boolean_guard(source_value_type, target_value_type) {
+        if self
+            .assign_relation_outcome(source_value_type, target_value_type)
+            .related
+        {
             return false;
         }
 
