@@ -291,6 +291,22 @@ pub fn is_widening_primitive_intrinsic(types: &dyn TypeDatabase, type_id: TypeId
     }
 }
 
+/// Check if a type is a bare intrinsic keyword type (`any`, `unknown`, `never`,
+/// `void`, `object`, `null`, `undefined`, `boolean`, `number`, `string`,
+/// `bigint`, `symbol`) or a literal type.
+///
+/// These are exactly the types tsc does not attach an `aliasSymbol` to: they
+/// resolve to shared singleton types rather than freshly-constructed structural
+/// types. A type alias whose body resolves to one of them is therefore rendered
+/// structurally (`string`, `42`, `true`, …) in diagnostics rather than by the
+/// alias name, mirroring tsc's display policy.
+pub fn is_intrinsic_or_literal_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    matches!(
+        types.lookup(type_id),
+        Some(TypeData::Intrinsic(_) | TypeData::Literal(_))
+    )
+}
+
 /// Check if a type is a primitive type (intrinsic or literal).
 pub fn is_primitive_type(types: &dyn TypeDatabase, type_id: TypeId) -> bool {
     // Check well-known intrinsic primitive TypeIds first.

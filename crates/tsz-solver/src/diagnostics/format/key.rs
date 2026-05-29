@@ -150,6 +150,20 @@ impl<'a> TypeFormatter<'a> {
                 {
                     return self.format_skipped_type_alias_body(*def_id, body);
                 }
+                // tsc attaches an alias symbol (and therefore renders the alias
+                // name) only to freshly-constructed structural types — unions,
+                // intersections, objects, arrays, tuples, functions, mapped,
+                // conditional, etc. A non-generic type alias whose body resolves
+                // to a primitive `Intrinsic` or a `Literal` points at a shared
+                // singleton type that carries no alias symbol, so tsc shows the
+                // underlying type (`string`, `42`, `true`, ...) rather than the
+                // alias name — including through alias chains such as
+                // `type A = B; type B = string`. Mirror that policy here so
+                // nested elaboration positions (which keep the property type as
+                // `Lazy(def)`) do not leak the alias spelling.
+                if let Some(body) = self.type_alias_body_displayed_as_underlying(*def_id) {
+                    return self.format(body);
+                }
                 self.format_def_id_with_type_params(*def_id, "Lazy").into()
             }
             TypeData::Recursive(idx) => format!("Recursive({idx})").into(),
@@ -761,6 +775,43 @@ impl<'a> TypeFormatter<'a> {
                 format!("typeof import(\"{name}\")").into()
             }
             TypeData::Error => Cow::Borrowed("error"),
+        }
+    }
+
+    /// Mirror tsc's `aliasSymbol` policy for diagnostic display: a non-generic
+    /// type alias whose body resolves to a primitive `Intrinsic` or a `Literal`
+    /// is rendered as the underlying type, not by the alias name.
+    ///
+    /// Returns the resolved primitive/literal `TypeId` to format in place of the
+    /// alias name, or `None` when the alias should keep its name (generic alias,
+    /// or a body that is a union/intersection/object/array/tuple/function/…).
+    /// Alias chains are followed (`type A = B; type B = string` → `string`); a
+    /// bounded visited set guards against cyclic alias definitions.
+    fn type_alias_body_displayed_as_underlying(&self, def_id: crate::def::DefId) -> Option<TypeId> {
+        use crate::def::DefKind;
+
+        let def_store = self.def_store?;
+        let mut current_def = def_id;
+        let mut seen = 0usize;
+        loop {
+            // Bound iteration to avoid spinning on a cyclic alias chain.
+            seen += 1;
+            if seen > 64 {
+                return None;
+            }
+
+            let def = def_store.get(current_def)?;
+            if def.kind != DefKind::TypeAlias || !def.type_params.is_empty() {
+                return None;
+            }
+            let body = def.body?;
+            if crate::visitor::is_intrinsic_or_literal_type(self.interner, body) {
+                return Some(body);
+            }
+            match self.interner.lookup(body) {
+                Some(TypeData::Lazy(next_def)) => current_def = next_def,
+                _ => return None,
+            }
         }
     }
 
