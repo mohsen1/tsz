@@ -782,7 +782,13 @@ impl<'a> DeclarationEmitter<'a> {
                     }
                     other => other,
                 }
-            } else if func.body.is_some() {
+            } else if func.body.is_some()
+                && !self.source_function_body_contains_direct_call_to_name(
+                    self.arena,
+                    func,
+                    &symbol.escaped_name,
+                )
+            {
                 self.function_body_single_return_expression(func.body)
                     .and_then(|return_expr| {
                         self.declaration_summary_primitive_expression_type_text(
