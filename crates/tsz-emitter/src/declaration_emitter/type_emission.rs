@@ -1649,11 +1649,16 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
 
-        // tsc keeps mapped-type name-type expressions on a single line; suppress multiline tuple formatting.
-        let saved_indent = self.indent_level;
-        self.indent_level = 0;
-        self.emit_type(name_type_idx);
-        self.indent_level = saved_indent;
+        // tsc keeps mapped-type name-type expressions on a single line; suppress multiline tuple
+        // formatting. When the as-clause itself contains a nested mapped type, preserve indentation.
+        if self.type_node_contains_mapped_type(name_type_idx, 0) {
+            self.emit_type(name_type_idx);
+        } else {
+            let saved_indent = self.indent_level;
+            self.indent_level = 0;
+            self.emit_type(name_type_idx);
+            self.indent_level = saved_indent;
+        }
     }
 
     pub(in crate::declaration_emitter) fn emit_mapped_type_as_clause(

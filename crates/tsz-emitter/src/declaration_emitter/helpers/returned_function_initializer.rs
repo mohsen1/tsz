@@ -514,6 +514,11 @@ impl<'a> DeclarationEmitter<'a> {
         if inner_func.body.is_none() {
             return None;
         }
+        if let Some(name) = self.get_identifier_text(inner_func.name)
+            && self.source_function_body_contains_direct_call_to_name(self.arena, inner_func, &name)
+        {
+            return None;
+        }
         if self.body_returns_void(inner_func.body) {
             return Some("void".to_string());
         }
