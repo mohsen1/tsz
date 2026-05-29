@@ -1,6 +1,7 @@
 //! Helpers for type-alias recursion depth probes.
 
 use crate::state::CheckerState;
+use tsz_binder::symbol_flags;
 use tsz_parser::parser::node::NodeAccess;
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_parser::parser::{NodeIndex, NodeList};
@@ -63,14 +64,93 @@ impl<'a> CheckerState<'a> {
         alias_sid: tsz_binder::SymbolId,
         node_idx: NodeIndex,
     ) -> bool {
+        self.type_node_is_bounded_indexed_descent_for_depth_check_inner(alias_sid, node_idx, 0)
+    }
+
+    fn type_node_is_bounded_indexed_descent_for_depth_check_inner(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+        node_idx: NodeIndex,
+        depth: u8,
+    ) -> bool {
+        if depth > 8 {
+            return false;
+        }
         let Some(node) = self.ctx.arena.get(node_idx) else {
             return false;
         };
-        let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) else {
-            return false;
-        };
-        self.type_node_is_deferred_passthrough_for_depth_check(indexed.object_type)
-            || self.type_node_is_alias_type_parameter_ref(alias_sid, indexed.object_type)
+        if let Some(indexed) = self.ctx.arena.get_indexed_access_type(node) {
+            return self.type_node_is_deferred_passthrough_for_depth_check(indexed.object_type)
+                || self.type_node_is_alias_type_parameter_ref(alias_sid, indexed.object_type);
+        }
+
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.type_node_is_bounded_indexed_descent_for_depth_check_inner(
+                alias_sid,
+                wrapped.type_node,
+                depth + 1,
+            );
+        }
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let type_name = type_ref.type_name;
+            let arg_nodes = type_ref
+                .type_arguments
+                .as_ref()
+                .map(|args| args.nodes.clone())
+                .unwrap_or_default();
+            if let Some(passthrough_arg) =
+                self.transparent_alias_passthrough_arg_for_depth_check(type_name, &arg_nodes)
+            {
+                return self.type_node_is_bounded_indexed_descent_for_depth_check_inner(
+                    alias_sid,
+                    passthrough_arg,
+                    depth + 1,
+                );
+            }
+        }
+
+        false
+    }
+
+    fn transparent_alias_passthrough_arg_for_depth_check(
+        &mut self,
+        type_name: NodeIndex,
+        arg_nodes: &[NodeIndex],
+    ) -> Option<NodeIndex> {
+        if arg_nodes.is_empty() {
+            return None;
+        }
+
+        let resolved = self
+            .resolve_type_symbol_for_lowering(type_name)
+            .map(tsz_binder::SymbolId)?;
+        let symbol = self.ctx.binder.get_symbol(resolved)?;
+        if !symbol.has_any_flags(symbol_flags::TYPE_ALIAS) {
+            return None;
+        }
+
+        let decl_idx = symbol.primary_declaration()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let alias = self.ctx.arena.get_type_alias(decl_node)?;
+        let params = alias.type_parameters.as_ref()?;
+        let body_name =
+            self.type_node_passthrough_reference_name_for_depth_check(alias.type_node)?;
+        let passthrough_index = params.nodes.iter().copied().position(|param_idx| {
+            self.ctx
+                .arena
+                .get(param_idx)
+                .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                .and_then(|param| self.ctx.arena.get(param.name))
+                .and_then(|name_node| self.ctx.arena.get_identifier(name_node))
+                .is_some_and(|ident| ident.escaped_text == body_name)
+        })?;
+
+        arg_nodes.get(passthrough_index).copied()
     }
 
     pub(crate) fn type_node_contains_unresolved_type_reference_for_depth_check(
@@ -488,5 +568,18 @@ impl<'a> CheckerState<'a> {
             return Some(identifier.escaped_text.as_str());
         }
         None
+    }
+
+    fn type_node_passthrough_reference_name_for_depth_check(
+        &self,
+        node_idx: NodeIndex,
+    ) -> Option<&str> {
+        let node = self.ctx.arena.get(node_idx)?;
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.type_node_passthrough_reference_name_for_depth_check(wrapped.type_node);
+        }
+        self.type_node_bare_reference_name(node_idx)
     }
 }
