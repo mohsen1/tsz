@@ -461,3 +461,23 @@ fn test_missing_function_parameter_comma_before_arrow_is_not_suppressed() {
         "Expected missing comma at the arrow token, got {diagnostics:?}"
     );
 }
+
+#[test]
+fn parenthesized_arrow_with_line_break_before_arrow_is_parsed_as_arrow_function() {
+    // Unlike simple arrows, a line terminator between `(x)` and `=>` is allowed.
+    // tsc reports TS1200 but still parses it as an arrow function.
+    let source = "(x)\n=> x;\n";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+
+    let source_file = arena.get_source_file_at(root).unwrap();
+    // tsc parses `(x)\n=> x` as an arrow function expression (with TS1200)
+    // and keeps it in a single expression statement
+    assert_eq!(
+        source_file.statements.nodes.len(),
+        1,
+        "Parenthesized arrow with line break before `=>` should still parse as one statement, \
+         got {} statements",
+        source_file.statements.nodes.len()
+    );
+}
