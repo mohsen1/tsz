@@ -323,12 +323,29 @@ impl Diagnostic {
 
     /// Canonical total ordering for diagnostics, mirroring the TypeScript
     /// compiler's `compareDiagnostics`: by file, then start, then length, then
-    /// code, then message. This is a *total* order over the observable fields,
-    /// so diagnostics that tie on file and start still have a stable,
-    /// reproducible relative order independent of the order in which they were
-    /// produced. Sorting through this comparator is what keeps reported
-    /// diagnostic order deterministic across equivalent relations.
+    /// code, then message, then related information. This is a *total* order
+    /// over the observable fields, so diagnostics that tie on the
+    /// location/code/message key still have a stable, reproducible relative
+    /// order independent of the order in which they were produced. Sorting
+    /// through this comparator is what keeps reported diagnostic order
+    /// deterministic across equivalent relations.
+    ///
+    /// The related-information tiebreaker is required for that guarantee:
+    /// two diagnostics that share file/start/length/code/message but carry
+    /// different "see also" locations are genuinely distinct in the rendered
+    /// output, so leaving them tied would let a downstream stable sort or
+    /// `dedup` keep whichever happened to be produced first — which varies with
+    /// relation traversal/memoization order. tsc breaks the same tie with
+    /// `compareRelatedInformation`.
     pub fn compare(&self, other: &Self) -> std::cmp::Ordering {
+        self.compare_skip_related_information(other)
+            .then_with(|| compare_related_information(&self.related, &other.related))
+    }
+
+    /// The location/code/message portion of [`Diagnostic::compare`], mirroring
+    /// tsc's `compareDiagnosticsSkipRelatedInformation`. Orders by file, then
+    /// start, then length, then code, then message text.
+    pub fn compare_skip_related_information(&self, other: &Self) -> std::cmp::Ordering {
         self.file_name
             .cmp(&other.file_name)
             .then_with(|| self.span.start.cmp(&other.span.start))
@@ -371,6 +388,32 @@ impl Diagnostic {
     pub fn to_range(&self, source_file: &mut SourceFile) -> Range {
         source_file.span_to_range(self.span)
     }
+}
+
+/// Order two related-information lists, mirroring tsc's
+/// `compareRelatedInformation`: shorter lists sort first, then the lists are
+/// compared element-by-element on file, start, length, and message text.
+///
+/// [`DiagnosticRelatedInfo`] does not carry a diagnostic code (tsc's related
+/// entries are message-only "see also" notes), so the per-element key stops at
+/// the message text.
+fn compare_related_information(
+    a: &[DiagnosticRelatedInfo],
+    b: &[DiagnosticRelatedInfo],
+) -> std::cmp::Ordering {
+    a.len().cmp(&b.len()).then_with(|| {
+        a.iter()
+            .zip(b.iter())
+            .map(|(left, right)| {
+                left.file_name
+                    .cmp(&right.file_name)
+                    .then_with(|| left.span.start.cmp(&right.span.start))
+                    .then_with(|| left.span.len().cmp(&right.span.len()))
+                    .then_with(|| left.message.cmp(&right.message))
+            })
+            .find(|ordering| ordering.is_ne())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    })
 }
 
 impl fmt::Display for Diagnostic {
@@ -919,6 +962,66 @@ mod tests {
         assert_eq!(build([0, 1, 2, 3]), expected);
         assert_eq!(build([3, 2, 1, 0]), expected);
         assert_eq!(build([2, 0, 3, 1]), expected);
+    }
+
+    #[test]
+    fn test_compare_breaks_ties_on_related_information() {
+        // Diagnostics identical on file/start/length/code/message but differing
+        // only in their related "see also" entries are genuinely distinct in the
+        // rendered output. They must order deterministically (shorter related
+        // list first, then element-by-element) instead of falling back to
+        // production order, mirroring tsc's `compareRelatedInformation`.
+        //
+        // Each pool entry shares the primary key and is distinguished only by a
+        // tag passed in `related`, so the assertions exercise the related
+        // tiebreaker alone.
+        let make = |tag: &str, related: &[(&str, u32, &str)]| {
+            let mut diag = Diagnostic::error("a.ts", Span::new(0, 1), "msg", 2304);
+            for &(file, start, message) in related {
+                diag = diag.with_related(DiagnosticRelatedInfo::new(
+                    file,
+                    Span::new(start, start + 1),
+                    message,
+                ));
+            }
+            // Pair the diagnostic with a tag so the test can identify entries
+            // after sorting; the tag lives outside the diagnostic and never
+            // affects the comparator.
+            (tag.to_string(), diag)
+        };
+
+        let bare = make("bare", &[]);
+        let with_one = make("with_one", &[("a.ts", 5, "see a")]);
+        let see_x = make("see_x", &[("a.ts", 5, "see x")]);
+        let see_y = make("see_y", &[("a.ts", 5, "see y")]);
+        let with_two = make("with_two", &[("a.ts", 5, "see a"), ("a.ts", 9, "see b")]);
+
+        let expected = vec!["bare", "with_one", "see_x", "see_y", "with_two"];
+
+        let permute = |order: &[usize]| {
+            let pool = [
+                bare.clone(),
+                with_one.clone(),
+                see_x.clone(),
+                see_y.clone(),
+                with_two.clone(),
+            ];
+            let mut v: Vec<_> = order.iter().map(|&i| pool[i].clone()).collect();
+            v.sort_by(|a, b| a.1.compare(&b.1));
+            v.into_iter().map(|(tag, _)| tag).collect::<Vec<_>>()
+        };
+        assert_eq!(permute(&[0, 1, 2, 3, 4]), expected);
+        assert_eq!(permute(&[4, 3, 2, 1, 0]), expected);
+        assert_eq!(permute(&[2, 4, 0, 3, 1]), expected);
+
+        // Antisymmetry on the related tiebreaker.
+        assert_eq!(bare.1.compare(&with_one.1), std::cmp::Ordering::Less);
+        assert_eq!(with_one.1.compare(&bare.1), std::cmp::Ordering::Greater);
+        assert_eq!(see_x.1.compare(&see_y.1), std::cmp::Ordering::Less);
+        assert_eq!(see_y.1.compare(&see_x.1), std::cmp::Ordering::Greater);
+        // Identical related info ties.
+        let twin = make("with_one_twin", &[("a.ts", 5, "see a")]);
+        assert_eq!(with_one.1.compare(&twin.1), std::cmp::Ordering::Equal);
     }
 
     #[test]

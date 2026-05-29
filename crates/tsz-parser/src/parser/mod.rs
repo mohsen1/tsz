@@ -200,6 +200,10 @@ mod decorator_tests;
 mod modifier_ordering_tests;
 
 #[cfg(test)]
+#[path = "../../tests/parse_diagnostic_order_tests.rs"]
+mod parse_diagnostic_order_tests;
+
+#[cfg(test)]
 #[path = "../../tests/parser_unit_tests.rs"]
 mod parser_unit_tests;
 
