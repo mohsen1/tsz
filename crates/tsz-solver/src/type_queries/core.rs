@@ -449,6 +449,36 @@ pub fn type_has_readonly_members(db: &dyn TypeDatabase, type_id: TypeId) -> bool
     }
 }
 
+/// Check if a spread source object type carries any readonly member at the top
+/// level — either a readonly property or a readonly index signature, including
+/// through a `ReadonlyType` wrapper, union, or intersection.
+///
+/// Object spread (`{ ...x }`) always produces *mutable* members, so when the
+/// spread source has readonly members the resulting type cannot be reconstructed
+/// verbatim from the source AST in declaration emit; the solver-computed spread
+/// type must be used instead.
+pub fn object_spread_source_has_readonly_member(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    if type_id.is_intrinsic() {
+        return false;
+    }
+    match db.lookup(type_id) {
+        Some(TypeData::ReadonlyType(_)) => true,
+        Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
+            let shape = db.object_shape(shape_id);
+            shape.properties.iter().any(|p| p.readonly)
+                || shape.string_index.is_some_and(|s| s.readonly)
+                || shape.number_index.is_some_and(|s| s.readonly)
+        }
+        Some(TypeData::Union(members) | TypeData::Intersection(members)) => {
+            let members = db.type_list(members);
+            members
+                .iter()
+                .any(|&m| object_spread_source_has_readonly_member(db, m))
+        }
+        _ => false,
+    }
+}
+
 /// Check if a type is the polymorphic `this` type.
 ///
 /// `ThisType` represents `this` in class methods and needs to be resolved

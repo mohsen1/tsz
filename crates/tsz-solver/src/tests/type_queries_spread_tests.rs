@@ -12,8 +12,12 @@ use crate::intern::TypeInterner;
 use crate::objects::ObjectLiteralBuilder;
 use crate::type_queries::{
     ObjectSpreadDtsProjection, classify_object_spread_dts_projection, is_valid_spread_type,
+    object_spread_source_has_readonly_member,
 };
-use crate::types::{PropertyInfo, StringIntrinsicKind, TemplateSpan, TypeParamInfo, Visibility};
+use crate::types::{
+    IndexSignature, ObjectFlags, ObjectShape, PropertyInfo, StringIntrinsicKind, TemplateSpan,
+    TypeParamInfo, Visibility,
+};
 
 // =============================================================================
 // Basic spreadable / non-spreadable types
@@ -720,4 +724,155 @@ fn object_spread_dts_projection_matches_falsy_spread_rules() {
         classify_object_spread_dts_projection(&db, object_or_undefined),
         ObjectSpreadDtsProjection::EmptyObject
     );
+}
+
+// =============================================================================
+// object_spread_source_has_readonly_member — object spread strips `readonly`,
+// so the .d.ts reconstruction must fall back to the solver-computed type when
+// the spread source carries any readonly member. Tests vary property/key names
+// and shapes to prove the rule is structural, not name-keyed.
+// =============================================================================
+
+#[test]
+fn readonly_property_member_detected_regardless_of_name() {
+    let db = TypeInterner::new();
+    // `{ readonly a: number }` and `{ readonly something: string }` — the name
+    // choice must not change the result.
+    for name in ["a", "b", "something", "x"] {
+        let obj = db.object(vec![PropertyInfo::readonly(
+            db.intern_string(name),
+            TypeId::NUMBER,
+        )]);
+        assert!(
+            object_spread_source_has_readonly_member(&db, obj),
+            "readonly property `{name}` should be detected"
+        );
+    }
+}
+
+#[test]
+fn mutable_object_has_no_readonly_member() {
+    let db = TypeInterner::new();
+    // `{ a: number; name: string }` — all mutable, nothing to strip.
+    let obj = db.object(vec![
+        PropertyInfo::new(db.intern_string("a"), TypeId::NUMBER),
+        PropertyInfo::new(db.intern_string("name"), TypeId::STRING),
+    ]);
+    assert!(!object_spread_source_has_readonly_member(&db, obj));
+}
+
+#[test]
+fn readonly_string_and_number_index_signatures_detected() {
+    let db = TypeInterner::new();
+    // `{ readonly [x: string]: string }`
+    let ro_string_index = db.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: true,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    assert!(object_spread_source_has_readonly_member(
+        &db,
+        ro_string_index
+    ));
+
+    // `{ readonly [n: number]: number }`
+    let ro_number_index = db.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: None,
+        number_index: Some(IndexSignature {
+            key_type: TypeId::NUMBER,
+            value_type: TypeId::NUMBER,
+            readonly: true,
+            param_name: None,
+        }),
+    });
+    assert!(object_spread_source_has_readonly_member(
+        &db,
+        ro_number_index
+    ));
+
+    // `{ [x: string]: string }` (mutable index) — not detected.
+    let mutable_index = db.object_with_index(ObjectShape {
+        symbol: None,
+        flags: ObjectFlags::empty(),
+        properties: vec![],
+        string_index: Some(IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: TypeId::STRING,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+    });
+    assert!(!object_spread_source_has_readonly_member(
+        &db,
+        mutable_index
+    ));
+}
+
+#[test]
+fn readonly_type_wrapper_detected() {
+    let db = TypeInterner::new();
+    // `Readonly<{ k: number }>` modeled as a `ReadonlyType` wrapper.
+    let inner = db.object(vec![PropertyInfo::new(
+        db.intern_string("k"),
+        TypeId::NUMBER,
+    )]);
+    let wrapped = db.readonly_type(inner);
+    assert!(object_spread_source_has_readonly_member(&db, wrapped));
+}
+
+#[test]
+fn readonly_member_detected_through_union_and_intersection() {
+    let db = TypeInterner::new();
+    let mutable = db.object(vec![PropertyInfo::new(
+        db.intern_string("p"),
+        TypeId::NUMBER,
+    )]);
+    let readonly = db.object(vec![PropertyInfo::readonly(
+        db.intern_string("q"),
+        TypeId::STRING,
+    )]);
+
+    // Union: `{ p: number } | { readonly q: string }` — one arm is readonly.
+    let union = db.union(vec![mutable, readonly]);
+    assert!(object_spread_source_has_readonly_member(&db, union));
+
+    // Intersection: `{ p: number } & { readonly q: string }`.
+    let intersection = db.intersection(vec![mutable, readonly]);
+    assert!(object_spread_source_has_readonly_member(&db, intersection));
+
+    // All-mutable union stays false.
+    let other_mutable = db.object(vec![PropertyInfo::new(
+        db.intern_string("r"),
+        TypeId::BOOLEAN,
+    )]);
+    let mutable_union = db.union(vec![mutable, other_mutable]);
+    assert!(!object_spread_source_has_readonly_member(
+        &db,
+        mutable_union
+    ));
+}
+
+#[test]
+fn intrinsics_have_no_readonly_member() {
+    let db = TypeInterner::new();
+    assert!(!object_spread_source_has_readonly_member(
+        &db,
+        TypeId::OBJECT
+    ));
+    assert!(!object_spread_source_has_readonly_member(&db, TypeId::ANY));
+    assert!(!object_spread_source_has_readonly_member(
+        &db,
+        TypeId::STRING
+    ));
 }
