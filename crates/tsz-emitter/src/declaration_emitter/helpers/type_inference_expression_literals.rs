@@ -130,7 +130,7 @@ impl<'a> DeclarationEmitter<'a> {
                     self.get_node_type_or_names(&[elem_idx])
                         .map(|type_id| self.print_type_id(type_id))
                 })
-                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level + 1))?;
+                .or_else(|| self.infer_fallback_type_text_at(elem_idx, self.indent_level))?;
             element_types.push(elem_type);
             element_sources.push(elem_idx);
         }
@@ -150,7 +150,7 @@ impl<'a> DeclarationEmitter<'a> {
             }
         }
         if let Some(source_union_text) =
-            self.source_object_literal_union_text(&distinct_sources, self.indent_level + 1)
+            self.source_object_literal_union_text(&distinct_sources, self.indent_level)
         {
             return Some(source_union_text);
         }
