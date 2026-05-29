@@ -144,7 +144,7 @@ impl<'a> CheckerState<'a> {
         } else {
             ty
         };
-        let name = self.format_type_diagnostic(ty);
+        let name = self.named_type_display_name(ty).unwrap_or_default();
         if !self.is_nominal_lib_object_type_name(&name) {
             return None;
         }
