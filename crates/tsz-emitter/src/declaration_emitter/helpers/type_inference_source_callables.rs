@@ -351,6 +351,42 @@ impl<'a> DeclarationEmitter<'a> {
         Some(type_text)
     }
 
+    /// Render the canonical `TypeId` for a call expression when, and only when,
+    /// that type is fully resolved: it contains no `infer` placeholders and no
+    /// free type parameters.
+    ///
+    /// Callers must additionally have established that the function's source
+    /// return annotation is a simple type-parameter surface (see
+    /// [`Self::source_return_is_bare_type_parameter`]); together those two facts
+    /// are the structural precondition under which the canonical
+    /// [`TypePrinter`] output is a faithful, reusable declaration type. We can
+    /// then bypass source-text type-parameter substitution, which mangles
+    /// member values containing `<`, `>`, or `,` (e.g. `unboxify(x12)`
+    /// reconstructing `a: number>, b: Box<string[]`).
+    ///
+    /// Returns `None` when type information is unavailable, the type is trivial
+    /// (`any`/`unknown`/`error`), or the type still contains unresolved
+    /// `infer`/type-parameter structure that the canonical printer would
+    /// flatten incorrectly.
+    fn fully_resolved_call_canonical_type_text(&self, expr_idx: NodeIndex) -> Option<String> {
+        let interner = self.type_interner?;
+        self.type_cache.as_ref()?;
+        let call_type_id = self.get_node_type_or_names(&[expr_idx])?;
+        if matches!(call_type_id, TypeId::ANY | TypeId::UNKNOWN | TypeId::ERROR) {
+            return None;
+        }
+        if tsz_solver::visitor::contains_infer_types(interner, call_type_id)
+            || tsz_solver::visitor::contains_type_parameters(interner, call_type_id)
+        {
+            return None;
+        }
+        let type_text = self.print_type_id_for_inferred_declaration(call_type_id);
+        if type_text.is_empty() || matches!(type_text.as_str(), "any" | "unknown" | "error") {
+            return None;
+        }
+        Some(Self::strip_synthetic_anonymous_object_members(&type_text))
+    }
+
     pub(in crate::declaration_emitter) fn call_expression_source_return_type_text(
         &self,
         expr_idx: NodeIndex,
@@ -420,6 +456,23 @@ impl<'a> DeclarationEmitter<'a> {
                             &type_text,
                         )
                     {
+                        // SF-4 reflow guard: when the function's return is a bare
+                        // type-parameter reference (e.g. the `T` in
+                        // `unboxify<T>(x: Boxified<T>): T`) and the checker's
+                        // canonical type for this call is a fully resolved
+                        // anonymous object, the source-text substitution path
+                        // below can mangle member values containing `<`, `>`, or
+                        // `,` (reconstructing `a: number>, b: Box<string[]`).
+                        // Emit the canonical `TypePrinter` render instead. The
+                        // bare-type-parameter precondition keeps composite returns
+                        // (`D & M`, `T | U`, `Foo<T>`) on the text path so their
+                        // tsc-faithful source structure is preserved.
+                        if self.source_return_is_bare_type_parameter(source_arena, func)
+                            && let Some(canonical_text) =
+                                self.fully_resolved_call_canonical_type_text(expr_idx)
+                        {
+                            return Some(canonical_text);
+                        }
                         if let Some(evaluated) = self
                             .evaluate_source_template_infer_conditional_call(
                                 source_arena,
