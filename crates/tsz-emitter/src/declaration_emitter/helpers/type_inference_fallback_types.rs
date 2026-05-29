@@ -122,6 +122,20 @@ impl<'a> DeclarationEmitter<'a> {
                 self.preferred_expression_type_text(unary.expression)
                     .or_else(|| self.infer_fallback_type_text_at(unary.expression, depth + 1))
             }
+            // A type-asserted expression (`expr as T`, `<T>expr`) reuses the
+            // source assertion *type node* in tsc's declaration output, exactly
+            // as the annotation-position emitter does. Reusing the node (not the
+            // solver-resolved type) preserves entity-name computed property keys
+            // (`{ [n]: T }`) and other source-only spellings that type
+            // resolution would otherwise flatten to literal values.
+            // `explicit_asserted_type_text` returns `None` for `as const`, so
+            // those continue to flow through the default solver path below.
+            k if k == syntax_kind_ext::AS_EXPRESSION || k == syntax_kind_ext::TYPE_ASSERTION => {
+                self.explicit_asserted_type_text(node_id).or_else(|| {
+                    self.get_node_type(node_id)
+                        .map(|type_id| self.print_type_id(type_id))
+                })
+            }
             k if k == syntax_kind_ext::ARROW_FUNCTION
                 || k == syntax_kind_ext::FUNCTION_EXPRESSION =>
             {
