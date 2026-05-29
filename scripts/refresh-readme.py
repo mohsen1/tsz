@@ -2,9 +2,9 @@
 """Refresh README.md progress blocks from the latest suite artifact JSON files.
 
 Reads:
-  - scripts/conformance/conformance-detail.json  (or conformance-snapshot.json)
+  - .ci-metrics/conformance.json (or scripts/conformance/conformance-detail.json)
   - .ci-metrics/emit.json (or scripts/emit/emit-detail.json)
-  - scripts/fourslash/fourslash-detail.json
+  - .ci-metrics/fourslash.json (or scripts/fourslash/fourslash-detail.json)
   - https://tsz.dev/benchmark-data/latest.json
 
 Updates the progress blocks between marker comments in README.md:
@@ -46,17 +46,63 @@ def progress_bar(current, total, width=20):
     return f"[{'█' * filled}{'░' * empty}] {pct * 100:.1f}%"
 
 
-def load_conformance():
-    for name in ["conformance-snapshot.json", "conformance-detail.json"]:
-        p = ROOT / "scripts" / "conformance" / name
-        if p.exists():
-            with open(p) as f:
-                data = json.load(f)
-            s = data.get("summary", {})
-            total = s.get("total", s.get("total_tests", 0))
-            passed = s.get("passed", 0)
+def load_metric_json(path):
+    with open(path) as f:
+        return json.load(f)
+
+
+def normalize_suite_summary(data, suite):
+    summary = data.get("summary")
+    if summary:
+        return {
+            "passed": summary.get("passed"),
+            "total": summary.get("total", summary.get("total_tests")),
+        }
+
+    if data.get("suite") != suite:
+        return None
+
+    return {
+        "passed": data.get("passed"),
+        "total": data.get("total"),
+    }
+
+
+def suite_metric_candidates(explicit_path, default_paths):
+    candidates = []
+    if explicit_path is not None:
+        path = explicit_path
+        if not path.is_absolute():
+            path = ROOT / path
+        candidates.append(path)
+    candidates.extend(default_paths)
+    return candidates
+
+
+def load_suite_counts(suite, explicit_path, default_paths):
+    for p in suite_metric_candidates(explicit_path, default_paths):
+        if not p.exists():
+            continue
+        summary = normalize_suite_summary(load_metric_json(p), suite)
+        if summary is None:
+            continue
+        passed = summary.get("passed")
+        total = summary.get("total")
+        if passed is not None and total is not None:
             return passed, total
     return None, None
+
+
+def load_conformance(args):
+    return load_suite_counts(
+        "conformance",
+        args.conformance_metrics_json,
+        [
+            ROOT / ".ci-metrics" / "conformance.json",
+            ROOT / "scripts" / "conformance" / "conformance-snapshot.json",
+            ROOT / "scripts" / "conformance" / "conformance-detail.json",
+        ],
+    )
 
 
 def normalize_emit_summary(data):
@@ -148,13 +194,19 @@ def load_emit(args, readme_text):
     return None
 
 
-def load_fourslash():
-    p = ROOT / "scripts" / "fourslash" / "fourslash-detail.json"
-    if not p.exists():
+def load_fourslash(args):
+    passed, total = load_suite_counts(
+        "fourslash",
+        args.fourslash_metrics_json,
+        [
+            ROOT / ".ci-metrics" / "fourslash.json",
+            ROOT / "scripts" / "fourslash" / "fourslash-detail.json",
+            ROOT / "scripts" / "fourslash" / "fourslash-snapshot.json",
+        ],
+    )
+    if passed is None or total is None:
         return None
-    with open(p) as f:
-        data = json.load(f)
-    return data.get("summary", {})
+    return {"passed": passed, "total": total}
 
 
 def replace_block(text, start_marker, end_marker, new_content):
@@ -207,6 +259,16 @@ def parse_args():
         "--emit-metrics-json",
         type=Path,
         help="use a local emit metrics artifact instead of the default .ci-metrics/emit.json",
+    )
+    parser.add_argument(
+        "--conformance-metrics-json",
+        type=Path,
+        help="use a local conformance metrics artifact instead of the default .ci-metrics/conformance.json",
+    )
+    parser.add_argument(
+        "--fourslash-metrics-json",
+        type=Path,
+        help="use a local fourslash metrics artifact instead of the default .ci-metrics/fourslash.json",
     )
     return parser.parse_args()
 
@@ -292,7 +354,7 @@ def main():
         )
 
     # Conformance
-    passed, total = load_conformance()
+    passed, total = load_conformance(args)
     if passed is not None:
         bar = progress_bar(passed, total)
         block = f"```\nProgress: {bar} ({passed:,}/{total:,} tests)\n```"
@@ -312,7 +374,7 @@ def main():
         text = replace_block(text, "<!-- EMIT_START -->", "<!-- EMIT_END -->", block)
 
     # Fourslash
-    fs = load_fourslash()
+    fs = load_fourslash(args)
     if fs is not None:
         bar = progress_bar(fs["passed"], fs["total"])
         block = f"```\nProgress: {bar} ({fs['passed']:,} / {fs['total']:,} tests)\n```"

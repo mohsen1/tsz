@@ -15,6 +15,28 @@ spec.loader.exec_module(refresh_readme)
 
 
 class RefreshReadmeTests(unittest.TestCase):
+    def test_ci_suite_metric_shape_normalizes_to_counts(self):
+        summary = refresh_readme.normalize_suite_summary({
+            "suite": "conformance",
+            "pass_rate": "100.0",
+            "passed": 12579,
+            "total": 12585,
+        }, "conformance")
+
+        self.assertEqual(summary["passed"], 12579)
+        self.assertEqual(summary["total"], 12585)
+
+    def test_snapshot_suite_metric_shape_normalizes_to_counts(self):
+        summary = refresh_readme.normalize_suite_summary({
+            "summary": {
+                "passed": 6558,
+                "total": 6562,
+            },
+        }, "fourslash")
+
+        self.assertEqual(summary["passed"], 6558)
+        self.assertEqual(summary["total"], 6562)
+
     def test_ci_emit_metric_shape_normalizes_to_readme_summary(self):
         summary = refresh_readme.normalize_emit_summary({
             "suite": "emit",
