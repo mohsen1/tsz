@@ -180,6 +180,88 @@ fn assignability_cache_strict_any_matches_uncached_relation_policy() {
 }
 
 #[test]
+fn assignability_cache_skip_weak_type_checks_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let unrelated = interner.intern_string("unrelated");
+    let optional = interner.intern_string("optional");
+
+    let source = interner.object(vec![PropertyInfo::new(unrelated, TypeId::STRING)]);
+    let target = interner.object(vec![PropertyInfo::opt(optional, TypeId::NUMBER)]);
+
+    let ordinary = RelationPolicy::default().with_skip_weak_type_checks(false);
+    let skip_weak = RelationPolicy::default().with_skip_weak_type_checks(true);
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let skip_weak_key =
+        RelationCacheKey::for_assignability(source, target, skip_weak.cache_config());
+
+    assert_ne!(
+        ordinary_key, skip_weak_key,
+        "ordinary and skip-weak policies must occupy distinct assignability cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let skip_weak_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        skip_weak,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        !ordinary_uncached,
+        "ordinary assignability should reject unrelated object properties against a weak target",
+    );
+    assert!(
+        skip_weak_uncached,
+        "skip-weak assignability should bypass the weak-type no-overlap rejection",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary weak-type policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary weak-type result must be stored in the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(skip_weak_key),
+        None,
+        "skip-weak lookup must not hit the ordinary weak-type slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, skip_weak),
+        skip_weak_uncached,
+        "cached skip-weak policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(skip_weak_key),
+        Some(skip_weak_uncached),
+        "skip-weak result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary weak-type slot must remain intact after the skip-weak lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_strict_function_types_matches_uncached_function_variance() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
