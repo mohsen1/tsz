@@ -203,7 +203,8 @@ impl<'a> CheckerState<'a> {
         source: TypeId,
         target: TypeId,
     ) -> crate::query_boundaries::assignability::RelationOutcome {
-        if self.homomorphic_mapped_display_source_assignable_to_target(source, target) {
+        let related = self.is_assignable_to(source, target);
+        if related {
             return crate::query_boundaries::assignability::RelationOutcome {
                 related: true,
                 depth_exceeded: false,
@@ -217,7 +218,9 @@ impl<'a> CheckerState<'a> {
         let (source, target) = self.prepare_assignability_inputs(source, target);
         let request =
             crate::query_boundaries::assignability::RelationRequest::assign(source, target);
-        self.execute_relation_request(&request)
+        let mut outcome = self.execute_relation_request(&request);
+        outcome.related = false;
+        outcome
     }
 
     /// Execute a diagnostic-bearing assignment relation using the current
@@ -237,7 +240,7 @@ impl<'a> CheckerState<'a> {
             property_classification: None,
         };
 
-        if source == target {
+        if source == target || self.is_assignable_to_with_env(source, target) {
             return outcome(true);
         }
 
@@ -312,6 +315,7 @@ impl<'a> CheckerState<'a> {
             }
         }
 
+        relation_outcome.related = false;
         relation_outcome
     }
 
