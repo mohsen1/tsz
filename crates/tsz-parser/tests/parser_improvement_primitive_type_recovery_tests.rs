@@ -1,6 +1,6 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — primitive type recovery.
 
-use crate::parser::test_fixture::parse_source;
+use crate::parser::test_fixture::{parse_source, parse_source_named};
 
 #[test]
 fn test_void_return_type() {
@@ -98,4 +98,83 @@ const arrow2: (x: number) => string = (x) => "";
         "Expected no parser errors for primitive types in arrow functions, got {:?}",
         parser.get_diagnostics()
     );
+}
+
+// A bare keyword type never accepts type arguments (tsc parses them as
+// keyword-type nodes via `tryParse(parseKeywordAndNoDot)`). A relational `<`
+// after an `as`/`satisfies` expression whose type is a bare keyword must stay a
+// less-than operator, not be mis-parsed as the start of a type-argument list
+// (which previously emitted a spurious TS1005 "'>' expected").
+#[test]
+fn keyword_type_after_as_does_not_consume_relational_less_than() {
+    // Exercise several keyword types and operands so the rule is proven for the
+    // class, not one spelling.
+    for source in [
+        "const b = null as any < 1;",
+        "const b = null as string < 1;",
+        "const b = null as number < 1;",
+        "const b = null as unknown < 1;",
+        "const b = null as never < 1;",
+        "declare const x: any; const b = x as any < 1;",
+        "const b = (0) satisfies number < 1;",
+        "const b = null as any < 1 as any;",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert!(
+            parser.get_diagnostics().iter().all(|d| d.code != 1005),
+            "Relational `<` after a bare keyword `as`/`satisfies` type should not emit \
+             TS1005 for `{source}`, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn keyword_type_after_as_relational_less_than_is_clean_in_tsx() {
+    // The same rule must hold in `.tsx`, where `<` is also JSX-sensitive.
+    let (parser, _root) = parse_source_named("test.tsx", "const b = null as any < 1;\n");
+    assert!(
+        parser.get_diagnostics().iter().all(|d| d.code != 1005),
+        "Relational `<` after `as any` should not emit TS1005 in .tsx, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+#[test]
+fn bare_keyword_type_with_type_arguments_is_rejected_like_tsc() {
+    // tsc rejects type arguments on a bare keyword type (e.g. `any<number>`):
+    // the keyword node consumes no `<...>`, so the leftover `<` triggers a
+    // "',' expected." diagnostic in the declaration. Previously tsz silently
+    // accepted `any<number>` as a generic type reference.
+    for source in [
+        "let x: any<number>;",
+        "let x: string<number>;",
+        "let x: never<number>;",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert!(
+            parser.get_diagnostics().iter().any(|d| d.code == 1005),
+            "A bare keyword type with type arguments should be rejected (TS1005) for \
+             `{source}`, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
+}
+
+#[test]
+fn dotted_and_generic_type_references_still_take_type_arguments() {
+    // The keyword rule must not regress real generic type references, including
+    // dotted names and renamed type parameters.
+    for source in [
+        "type Box<T> = T; let x: Box<number>;",
+        "type Pair<A, B> = [A, B]; let y: Pair<string, number>;",
+        "declare namespace N { export type B<T> = T; } let z: N.B<number>;",
+    ] {
+        let (parser, _root) = parse_source(source);
+        assert!(
+            parser.get_diagnostics().is_empty(),
+            "Generic type references should still parse cleanly for `{source}`, got {:?}",
+            parser.get_diagnostics()
+        );
+    }
 }
