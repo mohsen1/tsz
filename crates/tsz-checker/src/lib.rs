@@ -606,6 +606,9 @@ mod for_in_lhs_relation_routing_arch_tests;
 #[path = "../tests/for_in_narrowing_tests.rs"]
 mod for_in_narrowing_tests;
 #[cfg(test)]
+#[path = "tests/fresh_const_array_mutable_assignment_tests.rs"]
+mod fresh_const_array_mutable_assignment_tests;
+#[cfg(test)]
 #[path = "tests/generic_callback_outer_context_tests.rs"]
 mod generic_callback_outer_context_tests;
 #[cfg(test)]

@@ -616,10 +616,21 @@ impl<'a, 'b> ExpressionDispatcher<'a, 'b> {
                             &request.read().normal_origin().contextual_opt(None),
                         );
                         self.checker.ctx.in_const_assertion = prev_in_const_assertion;
-                        crate::query_boundaries::widening::apply_const_assertion(
+                        let asserted = crate::query_boundaries::widening::apply_const_assertion(
                             self.checker.ctx.types,
                             expr_type,
-                        )
+                        );
+                        // A fresh `as const` array/tuple literal drops its
+                        // `readonly` modifier when the contextual type is a
+                        // mutable array/tuple (matching tsc); see
+                        // `const_assertion_array_literal_drops_readonly`.
+                        self.checker
+                            .const_assertion_array_literal_drops_readonly(
+                                assertion.expression,
+                                asserted,
+                                request.contextual_type,
+                            )
+                            .unwrap_or(asserted)
                     } else {
                         // Check for duplicate properties in type literal nodes (TS2300)
                         self.checker
