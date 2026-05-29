@@ -436,19 +436,18 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Parenthesized type — emit the inner type wrapped in parentheses.
-            // tsc preserves source-level parenthesized types verbatim in
-            // declaration output: `var l: (() => c)` stays `(() => c)`, and
-            // even `var x: (string)` stays `(string)`.  Callers that need to
-            // inspect the structural inner type first use `peel_paren`, and
-            // those callers manage their own parens via `needs_parens` checks;
-            // they call `emit_type(inner)` with the already-peeled node so
-            // this arm is not reached from those contexts.
+            // Parenthesized type — strip the parens and emit the inner type.
+            // tsc strips source-level parenthesization in annotation positions:
+            // `var x: (string)` → `string`, `var l: (() => c)` → `() => c`.
+            // Structural position callers (array element, union/intersection
+            // arm, conditional branch, optional/rest tuple element) all call
+            // `peel_paren` before `emit_type(inner)` and never reach this arm.
+            // Type argument positions are handled explicitly in
+            // `emit_type_arguments`. Any remaining call reaching this arm is
+            // in an annotation context where stripping is correct.
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
                 if let Some(paren) = self.arena.get_wrapped_type(type_node) {
-                    self.write("(");
                     self.emit_type(paren.type_node);
-                    self.write(")");
                 }
             }
 
