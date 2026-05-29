@@ -188,6 +188,69 @@ fn import_fix_with_package_json_in_nested_subpackage_full_fixture() {
     );
 }
 
+/// Regression test: empty `errorCodes` at position (1,1) should also trigger the
+/// `CANNOT_FIND_NAME` fallback and produce an import fix. This mirrors the fourslash
+/// harness calling `getCodeFixes` at the start of a file with no specific code
+/// (because the marker at line 1, col 0 has no overlapping diagnostic).
+#[test]
+fn import_fix_with_empty_error_codes_at_start_of_file() {
+    let mut server = make_server();
+
+    let app_tsx = "/project/app.tsx";
+    let app_content = "const state = useMemo(() => 'Hello', []);";
+
+    server
+        .open_files
+        .insert(app_tsx.to_string(), app_content.to_string());
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/package.json".to_string(),
+        r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+    );
+    server.open_files.insert(
+        "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+        "export declare function useEffect(effect: () => void): void;\nexport declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+    );
+
+    // Empty errorCodes — fourslash calls this way when no marker diagnostic overlaps
+    // the cursor (position 0). The server should fall back to all CANNOT_FIND_NAME
+    // diagnostics in the file and still return the import fix.
+    let req = TsServerRequest {
+        seq: 1,
+        _msg_type: "request".to_string(),
+        command: "getCodeFixes".to_string(),
+        arguments: serde_json::json!({
+            "file": app_tsx,
+            "startLine": 1,
+            "startOffset": 1,
+            "endLine": 1,
+            "endOffset": 1,
+            "errorCodes": []
+        }),
+    };
+
+    let resp = server.handle_get_code_fixes(1, &req);
+    assert!(resp.success, "expected getCodeFixes to succeed");
+    let actions = resp
+        .body
+        .as_ref()
+        .and_then(serde_json::Value::as_array)
+        .expect("expected getCodeFixes actions array");
+
+    let descriptions: Vec<&str> = actions
+        .iter()
+        .filter_map(|a| a.get("description").and_then(serde_json::Value::as_str))
+        .collect();
+
+    let has_preact_import = descriptions
+        .iter()
+        .any(|d| d.contains("preact/hooks") && d.contains("useMemo"));
+
+    assert!(
+        has_preact_import,
+        "expected import fix for 'useMemo' from 'preact/hooks' with empty errorCodes, got: {descriptions:?}"
+    );
+}
+
 /// Regression test for `importFixesWithPackageJsonInSideAnotherPackage`:
 /// When a package has a nested subpath `package.json` (e.g. `preact/hooks`) but
 /// no parent `package.json` in `open_files`, the import fix should still find
