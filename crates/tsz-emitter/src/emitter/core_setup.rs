@@ -850,6 +850,62 @@ impl<'a> Printer<'a> {
         self.scoped_static_super_assignment_target = prev_super_assignment_target;
     }
 
+    /// Re-emit a lowered static field initializer (`ClassName.field = <init>`)
+    /// with the comment cursor temporarily rewound so that comments living
+    /// *inside* the initializer expression are available again.
+    ///
+    /// While the class body is emitted, static fields are skipped and the
+    /// comment cursor is advanced past their whole source span. That cursor
+    /// advance also consumes comments nested inside the initializer (e.g. the
+    /// trailing comment on the last member of `static A = class { m() {} // x }`).
+    /// Those comments are re-attached here by rewinding the cursor to the first
+    /// comment at or after the initializer's start before emission, then
+    /// restoring it to the position past the initializer's last token so the
+    /// surrounding emission state is unchanged.
+    pub(in crate::emitter) fn emit_static_field_initializer_with_inner_comments(
+        &mut self,
+        init_idx: NodeIndex,
+        this_alias: Option<&str>,
+        super_base_alias: Option<&str>,
+        super_direct_access: bool,
+    ) {
+        let saved_comment_idx = self.comment_emit_idx;
+        let mut restored_comment_idx = saved_comment_idx;
+        if !self.ctx.options.remove_comments
+            && let Some(init_node) = self.arena.get(init_idx)
+        {
+            let init_pos = init_node.pos;
+            let init_end = self.find_token_end_before_trivia(init_node.pos, init_node.end);
+            // Rewind to the first comment that starts at or after the
+            // initializer so nested trailing comments emit inline again.
+            let mut first_inner = saved_comment_idx;
+            while first_inner > 0 && self.all_comments[first_inner - 1].pos >= init_pos {
+                first_inner -= 1;
+            }
+            // After emission, resume at the first comment strictly past the
+            // initializer's content so comments that genuinely follow the
+            // field assignment are not re-emitted twice.
+            restored_comment_idx = saved_comment_idx;
+            while restored_comment_idx < self.all_comments.len()
+                && self.all_comments[restored_comment_idx].end <= init_end
+            {
+                restored_comment_idx += 1;
+            }
+            self.comment_emit_idx = first_inner;
+        }
+
+        self.emit_expression_with_scoped_static_initializer_mode(
+            init_idx,
+            this_alias,
+            super_base_alias,
+            super_direct_access,
+        );
+
+        // Never move the cursor backwards relative to where emission left it,
+        // and never expose comments the surrounding code already consumed.
+        self.comment_emit_idx = self.comment_emit_idx.max(restored_comment_idx);
+    }
+
     /// Enter the CommonJS-export-body mask while emitting `f`: clear
     /// `options.module` to `None` (so inner statements do not re-apply
     /// module-level transforms) and save the outer module on

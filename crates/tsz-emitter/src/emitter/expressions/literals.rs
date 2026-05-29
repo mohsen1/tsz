@@ -504,7 +504,7 @@ impl<'a> Printer<'a> {
             let es2018_num = ScriptTarget::ES2018 as u32;
             if has_spread && target_num < es2018_num {
                 // Target is ES2015/ES2016/ES2017: lower to Object.assign()
-                self.emit_object_literal_with_object_assign(&emitted_properties);
+                self.emit_object_literal_with_object_assign(node, &emitted_properties);
                 if self.object_spread_has_recovered_trailing_empty_object(node, &emitted_properties)
                 {
                     self.write(", {}");
@@ -1458,7 +1458,7 @@ impl<'a> Printer<'a> {
     /// - `{ ...a, x: 1, ...b }` → `Object.assign(Object.assign(Object.assign({}, a), { x: 1 }), b)`
     ///
     /// The pattern left-folds: each spread/segment adds one more `Object.assign` wrapping.
-    fn emit_object_literal_with_object_assign(&mut self, elements: &[NodeIndex]) {
+    fn emit_object_literal_with_object_assign(&mut self, node: &Node, elements: &[NodeIndex]) {
         // Segment elements into alternating spans of regular props and spread elements.
         // Each segment is either a slice of regular properties or a single spread node.
         #[derive(Clone)]
@@ -1466,6 +1466,20 @@ impl<'a> Printer<'a> {
             Props(&'a [NodeIndex]),
             Spread(NodeIndex),
         }
+
+        // A trailing line comment on the object literal's last element (e.g.
+        // `{ a: 1, ...b } // c`) must survive the Object.assign lowering. tsc
+        // emits it after the final argument and moves the closing `)` to the
+        // next line. The argument span and the literal's closing brace bound
+        // the comment scan so we never steal comments belonging to outer code.
+        let last_element_trailing = (!self.ctx.options.remove_comments)
+            .then(|| elements.last().copied())
+            .flatten()
+            .and_then(|last_idx| self.arena.get(last_idx).map(|n| (n.pos, n.end)))
+            .map(|(last_pos, last_end_raw)| {
+                let token_end = self.find_token_end_before_trivia(last_pos, last_end_raw);
+                (token_end, node.end)
+            });
 
         let mut segs: Vec<Seg<'_>> = Vec::new();
         let mut seg_start = 0usize;
@@ -1533,6 +1547,7 @@ impl<'a> Printer<'a> {
                         // Single spread of simple literal: Object.assign(expr)
                         self.write("Object.assign(");
                         self.emit_spread_expression_node(*spread_idx);
+                        self.emit_object_assign_last_element_trailing(last_element_trailing);
                         self.write(")");
                     } else {
                         // Multiple segments, simple literal first: use expr as seed
@@ -1542,6 +1557,9 @@ impl<'a> Printer<'a> {
                     // Non-literal spread: seed is {}
                     self.write("Object.assign({}, ");
                     self.emit_spread_expression_node(*spread_idx);
+                    if segs.len() == 1 {
+                        self.emit_object_assign_last_element_trailing(last_element_trailing);
+                    }
                     self.write(")");
                 }
             }
@@ -1552,7 +1570,8 @@ impl<'a> Printer<'a> {
         }
 
         // Emit remaining segments, each adding `, seg)` to close one Object.assign.
-        for seg in segs.iter().skip(1) {
+        let last_seg_i = segs.len().saturating_sub(1);
+        for (i, seg) in segs.iter().enumerate().skip(1) {
             self.write(", ");
             match seg {
                 Seg::Props(props) => {
@@ -1562,7 +1581,30 @@ impl<'a> Printer<'a> {
                     self.emit_spread_expression_node(*spread_idx);
                 }
             }
+            // The outermost (last) Object.assign call wraps the final source
+            // element, so its trailing comment belongs right before this `)`.
+            if i == last_seg_i {
+                self.emit_object_assign_last_element_trailing(last_element_trailing);
+            }
             self.write(")");
+        }
+    }
+
+    /// Emit a trailing comment captured from the last element of an object
+    /// literal that was lowered to `Object.assign(...)`. tsc renders it after
+    /// the final argument with the closing `)` moved onto the next line, e.g.
+    /// `Object.assign({ a: 1 }, b // c\n)`.
+    fn emit_object_assign_last_element_trailing(
+        &mut self,
+        last_element_trailing: Option<(u32, u32)>,
+    ) {
+        if let Some((token_end, max_pos)) = last_element_trailing
+            && self.has_trailing_comment_on_same_line(token_end, max_pos)
+        {
+            // `emit_trailing_comments_before` writes its own leading space, so
+            // do not add one here.
+            self.emit_trailing_comments_before(token_end, max_pos);
+            self.write_line();
         }
     }
 
