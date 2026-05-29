@@ -52,6 +52,20 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Whether an `INFER_TYPE` node carries a non-empty type-parameter
+    /// constraint slot (e.g. `infer U extends string`). The constraint is
+    /// detected structurally via the infer type-parameter's `constraint`
+    /// slot, never by matching the type-parameter name.
+    fn infer_type_has_constraint(&self, infer_idx: NodeIndex) -> bool {
+        self.arena
+            .get(infer_idx)
+            .filter(|node| node.kind == syntax_kind_ext::INFER_TYPE)
+            .and_then(|node| self.arena.get_infer_type(node))
+            .and_then(|infer| self.arena.get(infer.type_parameter))
+            .and_then(|tp_node| self.arena.get_type_parameter(tp_node))
+            .is_some_and(|tp| tp.constraint.is_some())
+    }
+
     pub(crate) fn emit_type(&mut self, type_idx: NodeIndex) {
         let Some(type_node) = self.arena.get(type_idx) else {
             return;
@@ -182,6 +196,12 @@ impl<'a> DeclarationEmitter<'a> {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                // An intersection member of a union is
+                                // parenthesized so the grouping round-trips
+                                // unambiguously: `string & {} | T` reads as
+                                // `(string & {}) | T`. Mirrors the intersection
+                                // arm, which parenthesizes nested unions.
+                                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
                         });
                         if needs_parens {
                             self.write("(");
@@ -669,6 +689,17 @@ impl<'a> DeclarationEmitter<'a> {
                             || node.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || (check_source_was_parenthesized
                                 && node.kind == syntax_kind_ext::MAPPED_TYPE)
+                            // A source-parenthesized `infer X` check operand
+                            // must keep its parens: the conditional's own
+                            // `extends` keyword immediately follows, so without
+                            // parens it is reabsorbed as the infer
+                            // type-parameter's constraint clause and changes
+                            // meaning (e.g. `(infer A) extends infer B ? C : D`
+                            // would reparse as `infer A extends infer B`). This
+                            // applies whether or not the infer already carries
+                            // its own source constraint.
+                            || (check_source_was_parenthesized
+                                && node.kind == syntax_kind_ext::INFER_TYPE)
                     });
 
                     if check_needs_parens {
@@ -694,6 +725,16 @@ impl<'a> DeclarationEmitter<'a> {
                                 && (node.kind == syntax_kind_ext::FUNCTION_TYPE
                                     || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                     || node.kind == syntax_kind_ext::MAPPED_TYPE))
+                            // A source-parenthesized `infer U extends C` extends
+                            // operand keeps its parens: tsc preserves the source
+                            // grouping (e.g.
+                            // `T extends (infer U extends number) ? X : Y`
+                            // stays parenthesized). Gate on the infer carrying
+                            // its own constraint so a bare `(infer U)` extends
+                            // operand still drops its redundant parens.
+                            || (extends_source_was_parenthesized
+                                && node.kind == syntax_kind_ext::INFER_TYPE
+                                && self.infer_type_has_constraint(extends_inner))
                     });
 
                     if extends_needs_parens {
