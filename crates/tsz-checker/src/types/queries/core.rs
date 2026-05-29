@@ -1596,19 +1596,22 @@ impl<'a> CheckerState<'a> {
         }
         self.get_class_name_from_expression(object_expr)
             .or_else(|| {
-                let fallback = self.format_type_diagnostic(object_type);
-                fallback
-                    .strip_prefix("typeof ")
-                    .map(str::trim)
-                    .filter(|name| {
-                        !name.is_empty()
-                            && !name.contains('{')
-                            && !name.contains("=>")
-                            && *name != "any"
-                            && *name != "unknown"
-                            && *name != "object"
-                    })
-                    .map(str::to_string)
+                // For `typeof X` types (TypeData::TypeQuery), extract the symbol name
+                // directly rather than parsing the rendered "typeof " prefix from the
+                // type printer — the printer output is not a reliable identity source.
+                if let crate::query_boundaries::common::TypeQueryKind::TypeQuery(sym_ref) =
+                    crate::query_boundaries::common::classify_type_query(
+                        self.ctx.types,
+                        object_type,
+                    )
+                {
+                    let sym_id = tsz_binder::SymbolId(sym_ref.0);
+                    self.get_cross_file_symbol(sym_id)
+                        .filter(|s| !s.escaped_name.is_empty())
+                        .map(|s| s.escaped_name.clone())
+                } else {
+                    None
+                }
             })
             .unwrap_or_else(|| "the class".to_string())
     }
