@@ -531,6 +531,10 @@ name = "accessor_pair_override_ts2416_tests"
 path = "tests/accessor_pair_override_ts2416_tests.rs"
 
 [[test]]
+name = "conditional_optional_infer_default_tests"
+path = "tests/conditional_optional_infer_default_tests.rs"
+
+[[test]]
 name = "conditional_extends_readonly_identity_tests"
 path = "tests/conditional_extends_readonly_identity_tests.rs"
 

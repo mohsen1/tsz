@@ -2,6 +2,30 @@
 
 use super::*;
 
+/// Outcome of resolving a single `infer` property of a conditional's extends
+/// pattern against the (concrete) check type.
+///
+/// This distinguishes the three cases tsc's `inferFromProperties` produces, which
+/// a plain `Option<TypeId>` cannot:
+///
+/// * [`Candidate`](InferPropertyResolution::Candidate) — the property is present;
+///   its type is the inference candidate.
+/// * [`NoCandidate`](InferPropertyResolution::NoCandidate) — an *optional* pattern
+///   property is absent in the source. tsc contributes no candidate, so the
+///   conditional still matches (true branch) but the infer variable stays unbound
+///   and defaults to its constraint (or `unknown`). Crucially it must **not** pick
+///   up a spurious `undefined`, which would corrupt a plain `infer R` (→ `undefined`
+///   instead of `unknown`) and make a constrained `infer R extends C` fail its
+///   constraint and collapse the conditional to its false branch.
+/// * [`NoMatch`](InferPropertyResolution::NoMatch) — a *required* pattern property
+///   is absent (or the source cannot supply it): the conditional takes its false
+///   branch.
+enum InferPropertyResolution {
+    Candidate(TypeId),
+    NoCandidate,
+    NoMatch,
+}
+
 impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
     /// Handle object extends pattern: T extends { prop: infer U } ? ...
     pub(super) fn eval_conditional_object_infer(
@@ -122,11 +146,16 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         let mut effective_constraint: FxHashMap<Atom, (TypeId, bool)> = FxHashMap::default();
 
         for &(prop_name, info, optional) in infer_props {
-            let Some(inferred) =
-                self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
-            else {
-                return self.evaluate(cond.false_type);
-            };
+            let inferred =
+                match self.resolve_conditional_infer_property(check_unwrapped, prop_name, optional)
+                {
+                    InferPropertyResolution::Candidate(ty) => ty,
+                    InferPropertyResolution::NoMatch => return self.evaluate(cond.false_type),
+                    // No candidate from this slot: leave the variable unbound here. If no
+                    // other slot supplies one, pass 2 defaults it to its constraint (or
+                    // `unknown`); a co-located slot that does supply a candidate still wins.
+                    InferPropertyResolution::NoCandidate => continue,
+                };
 
             if let Some(existing) = accumulated.get(&info.name).copied() {
                 // tsc unions co-located infer candidates across property slots.
@@ -160,6 +189,11 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 continue; // already processed this variable
             }
             let Some(mut inferred) = accumulated.get(&info.name).copied() else {
+                // No candidate from any slot (all were absent optionals): default the
+                // variable to its constraint (or `unknown`), matching tsc's
+                // `getInferredType`, and take the true branch.
+                let default_ty = info.constraint.unwrap_or(TypeId::UNKNOWN);
+                subst.insert(info.name, default_ty);
                 continue;
             };
 
@@ -214,11 +248,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
-        let inferred =
-            self.resolve_conditional_infer_property(check_unwrapped, prop_name, prop_optional);
-
-        let Some(mut inferred) = inferred else {
-            return self.evaluate(cond.false_type);
+        let mut inferred = match self.resolve_conditional_infer_property(
+            check_unwrapped,
+            prop_name,
+            prop_optional,
+        ) {
+            InferPropertyResolution::Candidate(ty) => ty,
+            InferPropertyResolution::NoMatch => return self.evaluate(cond.false_type),
+            InferPropertyResolution::NoCandidate => {
+                // tsc's `getInferredType`: an infer variable with no candidate
+                // resolves to its constraint (or `unknown`), and the conditional
+                // takes its true branch. The absent optional property neither
+                // supplies a spurious `undefined` candidate nor forces the false
+                // branch.
+                let default_ty = info.constraint.unwrap_or(TypeId::UNKNOWN);
+                let subst = TypeSubstitution::single(info.name, default_ty);
+                let true_inst =
+                    instantiate_type_with_infer(self.interner(), cond.true_type, &subst);
+                return self
+                    .evaluate_preserving_tail_application_branch_alias(true_inst, Some(true_inst));
+            }
         };
 
         let mut subst = TypeSubstitution::single(info.name, inferred);
@@ -256,41 +305,40 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         source: TypeId,
         prop_name: Atom,
         optional: bool,
-    ) -> Option<TypeId> {
+    ) -> InferPropertyResolution {
+        // Absent property: an optional pattern position contributes no candidate
+        // (tsc skips it), while a required one fails the match. Shared by every
+        // "property not found" arm below.
+        let absent = if optional {
+            InferPropertyResolution::NoCandidate
+        } else {
+            InferPropertyResolution::NoMatch
+        };
+
         if source == TypeId::OBJECT {
-            return optional.then_some(TypeId::UNDEFINED);
+            return absent;
         }
 
         if let Some(type_id) = self.implicit_sequence_property_type(source, prop_name) {
-            return Some(type_id);
+            return InferPropertyResolution::Candidate(type_id);
         }
 
         if let Some(query_db) = self.query_db() {
             let prop_name_str = self.interner().resolve_atom_ref(prop_name);
             return match query_db.resolve_property_access(source, &prop_name_str) {
-                PropertyAccessResult::Success { type_id, .. } => Some(type_id),
-                PropertyAccessResult::PropertyNotFound { .. } => {
-                    optional.then_some(TypeId::UNDEFINED)
+                PropertyAccessResult::Success { type_id, .. } => {
+                    InferPropertyResolution::Candidate(type_id)
                 }
-                _ => None,
+                PropertyAccessResult::PropertyNotFound { .. } => absent,
+                _ => InferPropertyResolution::NoMatch,
             };
         }
 
         match self.interner().lookup(source) {
             Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
                 let shape = self.interner().object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == prop_name)
-                    .map(|prop| {
-                        if optional {
-                            self.optional_property_type(prop)
-                        } else {
-                            prop.type_id
-                        }
-                    })
-                    .or_else(|| optional.then_some(TypeId::UNDEFINED))
+                self.property_candidate(&shape.properties, prop_name, optional)
+                    .unwrap_or(absent)
             }
             Some(TypeData::Callable(callable_id)) => {
                 // Callable types (class constructors) have static properties
@@ -298,20 +346,15 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 // E.g., `typeof MyClass extends { defaultProps: infer D }` should
                 // find `defaultProps` in the class constructor's static properties.
                 let shape = self.interner().callable_shape(callable_id);
-                shape
-                    .properties
-                    .iter()
-                    .find(|prop| prop.name == prop_name)
-                    .map(|prop| {
-                        if optional {
-                            self.optional_property_type(prop)
-                        } else {
-                            prop.type_id
-                        }
-                    })
-                    .or_else(|| optional.then_some(TypeId::UNDEFINED))
+                self.property_candidate(&shape.properties, prop_name, optional)
+                    .unwrap_or(absent)
             }
             Some(TypeData::Union(members)) => {
+                // A concrete union check type contributes the union of each member's
+                // candidate. A member that lacks an optional property contributes
+                // `undefined` (the indexed-access reading of an absent optional);
+                // a member that fails the match (required prop absent) fails the
+                // whole conditional.
                 let members = self.interner().type_list(members);
                 let mut inferred_members: SmallVec<[TypeId; 8]> = SmallVec::new();
                 for &member in members.iter() {
@@ -319,19 +362,26 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
-                    let inferred = self.resolve_conditional_infer_property(
+                    match self.resolve_conditional_infer_property(
                         member_unwrapped,
                         prop_name,
                         optional,
-                    )?;
-                    inferred_members.push(inferred);
+                    ) {
+                        InferPropertyResolution::Candidate(ty) => inferred_members.push(ty),
+                        InferPropertyResolution::NoCandidate => {
+                            inferred_members.push(TypeId::UNDEFINED)
+                        }
+                        InferPropertyResolution::NoMatch => {
+                            return InferPropertyResolution::NoMatch;
+                        }
+                    }
                 }
-                if inferred_members.is_empty() {
-                    None
-                } else if inferred_members.len() == 1 {
-                    Some(inferred_members[0])
-                } else {
-                    Some(self.interner().union_from_slice(&inferred_members))
+                match inferred_members.len() {
+                    0 => absent,
+                    1 => InferPropertyResolution::Candidate(inferred_members[0]),
+                    _ => InferPropertyResolution::Candidate(
+                        self.interner().union_from_slice(&inferred_members),
+                    ),
                 }
             }
             Some(TypeData::Intersection(members)) => {
@@ -344,15 +394,13 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         Some(TypeData::ReadonlyType(inner)) => inner,
                         _ => member,
                     };
-                    if let Some(inferred) = self.resolve_conditional_infer_property(
-                        member_unwrapped,
-                        prop_name,
-                        optional,
-                    ) {
-                        return Some(inferred);
+                    if let InferPropertyResolution::Candidate(inferred) = self
+                        .resolve_conditional_infer_property(member_unwrapped, prop_name, optional)
+                    {
+                        return InferPropertyResolution::Candidate(inferred);
                     }
                 }
-                optional.then_some(TypeId::UNDEFINED)
+                absent
             }
             _ => {
                 // Fallback: try evaluating the source further and recursing.
@@ -362,10 +410,32 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                 if evaluated != source {
                     self.resolve_conditional_infer_property(evaluated, prop_name, optional)
                 } else {
-                    None
+                    InferPropertyResolution::NoMatch
                 }
             }
         }
+    }
+
+    /// Look up `prop_name` among a property list (an object or callable shape),
+    /// returning its candidate type when present. `None` means the property is
+    /// absent — the caller decides whether that is a no-candidate optional or a
+    /// hard no-match.
+    fn property_candidate(
+        &self,
+        properties: &[PropertyInfo],
+        prop_name: Atom,
+        optional: bool,
+    ) -> Option<InferPropertyResolution> {
+        properties
+            .iter()
+            .find(|prop| prop.name == prop_name)
+            .map(|prop| {
+                InferPropertyResolution::Candidate(if optional {
+                    self.optional_property_type(prop)
+                } else {
+                    prop.type_id
+                })
+            })
     }
 
     /// Handle nested object infer pattern
