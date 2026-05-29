@@ -94,6 +94,10 @@ path = "tests/import_equals_alias_dts_emit_tests.rs"
 name = "inferred_object_index_signature_dts_emit_tests"
 path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
 
+[[test]]
+name = "generic_call_bare_type_param_dts_emit_tests"
+path = "tests/generic_call_bare_type_param_dts_emit_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
