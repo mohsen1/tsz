@@ -76,6 +76,34 @@ impl<'a> CheckerState<'a> {
         self.get_type_of_element_access_with_request(idx, &TypingRequest::NONE)
     }
 
+    /// Resolve the member-access result type when the (resolved) object type is
+    /// `unknown`, under `strictNullChecks`.
+    ///
+    /// `tsc` forbids accessing a member of a value of type `unknown` — by name
+    /// (`x.p`), by index (`x[k]`), or through an optional chain (`x?.p` / `x?.[k]`)
+    /// — so under `strictNullChecks` we emit the diagnostic and return `Some`:
+    /// `TS18046` (`'x' is of type 'unknown'.`) when the base expression has a
+    /// printable name, otherwise the object form `TS2571` (`Object is of type
+    /// 'unknown'.`), returning `ERROR` to stop cascading diagnostics. When
+    /// `strictNullChecks` is off, `unknown` behaves like `any`; we return `None` so
+    /// each caller can apply its own non-strict fallback (index-signature handling
+    /// for element access, `error_property_not_exist_at` for property access).
+    ///
+    /// This is the single decision gate for the unknown-object access result,
+    /// shared by the element-access `literal_string`/`literal_index` arms and the
+    /// property-access path, so the `TS2571`/`TS18046` choice is not re-derived
+    /// independently in each place.
+    pub(crate) fn unknown_object_access_result(&mut self, base_expr: NodeIndex) -> Option<TypeId> {
+        if !self.ctx.compiler_options.strict_null_checks {
+            return None;
+        }
+        if self.error_is_of_type_unknown(base_expr) {
+            Some(TypeId::ERROR)
+        } else {
+            Some(TypeId::ANY)
+        }
+    }
+
     pub(crate) fn get_type_of_element_access_with_request(
         &mut self,
         idx: NodeIndex,
@@ -1157,18 +1185,11 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    if self.ctx.compiler_options.strict_null_checks {
+                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    if unknown_result.is_some() {
                         use_index_signature_check = false;
-                        // TS18046: 'x' is of type 'unknown'.
-                        // Without strictNullChecks, unknown is treated like any.
-                        if self.error_is_of_type_unknown(access.expression) {
-                            Some(TypeId::ERROR)
-                        } else {
-                            Some(TypeId::ANY)
-                        }
-                    } else {
-                        None
                     }
+                    unknown_result
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => {
                     // TS2576 parity for element access on instance/super with a static member name.
@@ -1296,20 +1317,11 @@ impl<'a> CheckerState<'a> {
                     Some(property_type.unwrap_or(TypeId::ERROR))
                 }
                 PropertyAccessResult::IsUnknown => {
-                    if self.ctx.compiler_options.strict_null_checks {
-                        if !keep_index_signature_check {
-                            use_index_signature_check = false;
-                        }
-                        // TS18046: 'x' is of type 'unknown'.
-                        // Without strictNullChecks, unknown is treated like any.
-                        if self.error_is_of_type_unknown(access.expression) {
-                            Some(TypeId::ERROR)
-                        } else {
-                            Some(TypeId::ANY)
-                        }
-                    } else {
-                        None
+                    let unknown_result = self.unknown_object_access_result(access.expression);
+                    if unknown_result.is_some() && !keep_index_signature_check {
+                        use_index_signature_check = false;
                     }
+                    unknown_result
                 }
                 PropertyAccessResult::PropertyNotFound { .. } => None,
             };

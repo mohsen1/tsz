@@ -135,6 +135,10 @@ name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
 
 [[test]]
+name = "optional_chain_indexed_unknown_tests"
+path = "tests/optional_chain_indexed_unknown_tests.rs"
+
+[[test]]
 name = "new_expression_regression_tests"
 path = "tests/new_expression_regression_tests.rs"
 
