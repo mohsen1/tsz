@@ -279,7 +279,7 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             params: target_fn.params.clone(),
             return_type: target_fn.return_type,
             this_type: target_fn.this_type,
-            type_predicate: target_fn.type_predicate.clone(),
+            type_predicate: target_fn.type_predicate,
             is_constructor: target_fn.is_constructor,
             is_method: target_fn.is_method,
         };
