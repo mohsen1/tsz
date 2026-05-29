@@ -216,7 +216,18 @@ impl Server {
 
         let mut diagnostics: Vec<tsz::checker::diagnostics::Diagnostic> = Vec::new();
         for (file_idx, file) in program.files.iter().enumerate() {
-            if category == DiagnosticCategory::Error && file.file_name == file_path {
+            // Only run the checker for the file we need diagnostics from.
+            // Other files are already bound into ProgramContext so their
+            // symbols are available for cross-file type resolution; running
+            // check_source_file on them is pure overhead that scales with
+            // the number of open files (e.g. node_modules declaration files
+            // opened by a fourslash test can each take several seconds when
+            // they contain circular namespace/interface declarations).
+            if file.file_name != file_path {
+                continue;
+            }
+
+            if category == DiagnosticCategory::Error {
                 diagnostics.extend(file.parse_diagnostics.iter().map(|diag| {
                     tsz::checker::diagnostics::Diagnostic::error(
                         file.file_name.clone(),
@@ -250,15 +261,14 @@ impl Server {
             checker.ctx.set_current_file_idx(file_idx);
             checker.check_source_file(file.source_file);
 
-            if file.file_name == file_path {
-                diagnostics.extend(
-                    checker
-                        .ctx
-                        .diagnostics
-                        .into_iter()
-                        .filter(|diag| diag.category == category),
-                );
-            }
+            diagnostics.extend(
+                checker
+                    .ctx
+                    .diagnostics
+                    .into_iter()
+                    .filter(|diag| diag.category == category),
+            );
+            break;
         }
 
         if category == DiagnosticCategory::Error {
