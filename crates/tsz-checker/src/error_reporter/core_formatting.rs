@@ -271,15 +271,30 @@ impl<'a> CheckerState<'a> {
                 }
             }
             let evaluated = self.evaluate_type_with_env(ty);
-            if evaluated != ty
-                && self.ctx.types.get_display_alias(evaluated).is_some()
-                && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+            if evaluated != ty {
+                if self.ctx.types.get_display_alias(evaluated).is_some()
+                    && !crate::query_boundaries::recursive_alias::is_def_non_generic_recursive_alias(
+                        self.ctx.types.as_type_database(),
+                        &self.ctx.definition_store,
+                        def_id,
+                    )
+                {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
+                // tsc attaches an alias symbol (and renders the alias name) only
+                // to freshly-constructed structural types. A non-generic alias
+                // whose body resolves to a bare intrinsic keyword or a literal
+                // points at a shared singleton type with no alias symbol, so tsc
+                // shows the underlying type (`string`, `42`, `never`, …) —
+                // including through alias chains (`type A = B; type B = string`
+                // renders as `string`). `evaluate_type_with_env` collapses the
+                // chain, so a single check on the evaluated form covers the family.
+                if crate::query_boundaries::common::is_intrinsic_or_literal_type(
                     self.ctx.types.as_type_database(),
-                    &self.ctx.definition_store,
-                    def_id,
-                )
-            {
-                return self.format_type_for_assignability_message(evaluated);
+                    evaluated,
+                ) {
+                    return self.format_type_for_assignability_message(evaluated);
+                }
             }
             let name = self.ctx.types.resolve_atom_ref(def.name);
             return name.to_string();

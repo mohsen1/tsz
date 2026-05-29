@@ -1713,6 +1713,14 @@ pub(crate) fn is_primitive_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool 
     tsz_solver::visitor::is_primitive_type(db, type_id)
 }
 
+/// True when `type_id` is a bare intrinsic keyword type or a literal type — the
+/// types tsc does not attach an `aliasSymbol` to. A non-generic type alias whose
+/// body resolves to one of these renders structurally in diagnostics rather than
+/// by the alias name.
+pub(crate) fn is_intrinsic_or_literal_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
+    tsz_solver::visitor::is_intrinsic_or_literal_type(db, type_id)
+}
+
 pub(crate) fn is_literal_type_through_type_constraints(
     db: &dyn TypeDatabase,
     type_id: TypeId,
