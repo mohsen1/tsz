@@ -379,6 +379,7 @@ impl<'a> Printer<'a> {
             prior_enum_string_members: FxHashMap::default(),
             prior_enum_string_values: FxHashMap::default(),
             private_field_weakmaps: FxHashMap::default(),
+            generated_private_names: None,
             private_member_info: FxHashMap::default(),
             pending_weakmap_inits: Vec::new(),
             pending_static_private_inits: Vec::new(),
@@ -753,6 +754,9 @@ impl<'a> Printer<'a> {
                 || file_name.ends_with(".mjs")
                 || file_name.ends_with(".cjs");
             self.set_current_root_js_source(is_js_source);
+            // The generated private-helper name set is file-scoped: reset it so a
+            // reused printer re-seeds from this file's enclosing source bindings.
+            self.generated_private_names = None;
         }
 
         if let Some(source) = self.arena.get_source_file(node)

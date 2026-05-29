@@ -39,6 +39,10 @@ name = "enum_metadata_number_tests"
 path = "tests/enum_metadata_number_tests.rs"
 
 [[test]]
+name = "private_element_naming_tests"
+path = "tests/private_element_naming_tests.rs"
+
+[[test]]
 name = "comment_tests"
 path = "tests/comment_tests.rs"
 
