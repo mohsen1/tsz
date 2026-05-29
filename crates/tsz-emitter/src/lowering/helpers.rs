@@ -860,6 +860,29 @@ impl<'a> LoweringPass<'a> {
         false
     }
 
+    /// Check whether a for-of initializer is a bare destructuring-ASSIGNMENT
+    /// target (an array/object literal pattern), as opposed to a
+    /// `VARIABLE_DECLARATION_LIST` binding declaration. Such targets are
+    /// patterns, not fresh array/object construction, so spreads inside them
+    /// must be lowered as destructuring rest rather than array spread.
+    pub(super) fn for_of_initializer_is_assignment_target(&self, initializer: NodeIndex) -> bool {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return false;
+        };
+
+        // Variable-declaration-list initializers (`for (const [a] of xs)`) are
+        // bindings, handled by the binding-pattern path.
+        if init_node.kind == syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return false;
+        }
+
+        // A bare expression target is a destructuring assignment only when it is
+        // an array or object literal pattern. Plain identifier targets
+        // (`for (x of xs)`) need no special handling.
+        init_node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION
+            || init_node.kind == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION
+    }
+
     pub(super) fn get_identifier_id(&self, idx: NodeIndex) -> Option<IdentifierId> {
         if idx.is_none() {
             return None;
