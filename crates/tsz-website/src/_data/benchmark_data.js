@@ -8,6 +8,7 @@ import {
   PROJECT_ROWS_BY_NAME,
   REQUIRED_PROJECT_ROWS,
 } from "../../../../scripts/bench/project-rows.mjs";
+import { selectLatestBenchmarkArtifact } from "../../../../scripts/bench/benchmark-artifact-selection.mjs";
 import { subsystemForCode } from "../../../../scripts/ci/diagnostic-subsystems.mjs";
 import { fmt } from "./loc.js";
 import { generatedBenchmarkSource } from "./benchmark_generated_sources.js";
@@ -863,18 +864,14 @@ function loadBenchmarks() {
     }
   }
 
-  for (const location of benchmarkArtifactFiles()) {
-    const data = readJsonIfExists(location);
-    if (data?.results) {
-      _benchmarkSourceKind = "artifact";
-      return sanitizeLegacyBenchmarkData(data);
-    }
-  }
-
-  const snapshot = readJsonIfExists(path.join(ROOT, "crates/tsz-website/bench-snapshot.json"));
-  if (snapshot?.results) {
-    _benchmarkSourceKind = "snapshot";
-    return sanitizeLegacyBenchmarkData(snapshot);
+  const snapshotPath = path.join(ROOT, "crates/tsz-website/bench-snapshot.json");
+  const selectedArtifact = selectLatestBenchmarkArtifact([
+    ...benchmarkArtifactFiles(),
+    snapshotPath,
+  ]);
+  if (selectedArtifact) {
+    _benchmarkSourceKind = selectedArtifact.file === snapshotPath ? "snapshot" : "artifact";
+    return sanitizeLegacyBenchmarkData(selectedArtifact.data);
   }
 
   _benchmarkSourceKind = null;

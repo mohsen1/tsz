@@ -4,6 +4,7 @@ import {
   renderReadmePerfPng,
   renderReadmePerfSvg,
 } from "../../scripts/bench/readme-perf-svg.mjs";
+import { selectLatestBenchmarkArtifact } from "../../scripts/bench/benchmark-artifact-selection.mjs";
 import { createTsgoWinnerReport } from "../../scripts/bench/tsgo-winner-report.mjs";
 
 export default function (eleventyConfig) {
@@ -36,7 +37,7 @@ export default function (eleventyConfig) {
     "../../artifacts/bench-vs-tsgo-latest.json",
     "bench-snapshot.json",
   ];
-  const latestBenchmarkArtifact = benchmarkArtifacts.find((file) => fs.existsSync(file));
+  const latestBenchmarkArtifact = selectLatestBenchmarkArtifact(benchmarkArtifacts)?.file;
   if (latestBenchmarkArtifact) {
     eleventyConfig.addPassthroughCopy({
       [latestBenchmarkArtifact]: "benchmark-data/latest.json",
