@@ -1078,5 +1078,32 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
 
 
 
+class ArchGuardAllFileLimitChecksPassTests(unittest.TestCase):
+    """Generic guard: every FILE_LINE_LIMIT_CHECKS entry must exist on disk
+    and must not exceed its pinned cap.  This catches entries (like
+    async_es5_ir.rs) that have no dedicated per-entry test class."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_all_file_limit_paths_exist(self):
+        for name, path, _limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            self.assertTrue(
+                path.exists(),
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': path {path} does not exist. "
+                "Remove the entry or fix the path.",
+            )
+
+    def test_all_file_limit_caps_are_not_exceeded(self):
+        for name, path, limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            hits = self.arch_guard.scan_file_line_limit(path, limit)
+            self.assertEqual(
+                hits,
+                [],
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': cap {limit} is too tight "
+                f"for the live file ({hits}). Bump the cap or split the file.",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
