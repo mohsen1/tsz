@@ -193,6 +193,9 @@ impl<'a> Printer<'a> {
                 self.ctx.block_scope_state.enter_scope();
             }
             self.preallocate_iterator_return_temps_for_statements(&block.statements.nodes);
+            if is_function_body_block {
+                self.prealloc_for_of_destructure_temps(&block.statements.nodes);
+            }
             self.map_opening_brace(node);
             self.write("{ ");
             let var_insert_pos = if is_function_body_block {
@@ -240,6 +243,9 @@ impl<'a> Printer<'a> {
             self.ctx.block_scope_state.enter_scope();
         }
         self.preallocate_iterator_return_temps_for_statements(&block.statements.nodes);
+        if is_function_body_block {
+            self.prealloc_for_of_destructure_temps(&block.statements.nodes);
+        }
         // Compute the block's closing `}` position so comment scans don't
         // overshoot into comments belonging to the closing brace line.
         // Use find_token_end_before_trivia which correctly skips `}` inside
