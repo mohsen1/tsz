@@ -357,10 +357,12 @@ FILE_LINE_LIMIT_CHECKS = [
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
+    # Ratcheted 3949→2466 after extracting the test module into
+    # driver/check_utils/tests.rs.
     (
         "CLI boundary: driver/check_utils monolith size ratchet (#9412)",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "check_utils.rs",
-        3949,
+        2466,
     ),
     # LSP module-specifier resolution: split by resolution family per §19.
     (
