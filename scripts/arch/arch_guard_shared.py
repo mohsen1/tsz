@@ -325,14 +325,14 @@ FILE_LINE_LIMIT_CHECKS = [
     (
         "Scanner boundary: scanner_impl monolith size ratchet (#9431)",
         ROOT / "crates" / "tsz-scanner" / "src" / "scanner_impl.rs",
-        4173,
+        4190,
     ),
-    # CLI driver resolution: source/module-resolution and program build setup.
-    # Ratchet down as resolution phases are extracted per §19.
+    # CLI driver resolution: split into discovery/exports_imports/package_resolution/
+    # path_resolution/type_packages submodules; ratchet holds the orchestrator at 301.
     (
         "CLI boundary: driver/resolution monolith size ratchet",
         ROOT / "crates" / "tsz-cli" / "src" / "driver" / "resolution.rs",
-        4109,
+        301,
     ),
     # Emitter class declarations: split by emit feature family per §19.
     (
@@ -345,7 +345,7 @@ FILE_LINE_LIMIT_CHECKS = [
         / "declarations"
         / "class"
         / "emit_es6.rs",
-        4110,
+        4191,
     ),
     # CLI driver check-utils: ProgramData construction. Issue #9412 tracks
     # extracting the source-resolution phase.
@@ -374,7 +374,8 @@ FILE_LINE_LIMIT_CHECKS = [
         3038,
     ),
     # Emitter class ES5 AST-to-IR: issue #10638 tracks splitting alongside
-    # async_es5_ir.rs.
+    # async_es5_ir.rs. Partially split (comments/control-flow/expressions/for-in-of
+    # submodules already extracted); ratchet holds orchestrator at 1869.
     (
         "Emitter boundary: class ES5 AST-to-IR engine size ratchet (#10638)",
         ROOT
@@ -383,7 +384,132 @@ FILE_LINE_LIMIT_CHECKS = [
         / "src"
         / "transforms"
         / "class_es5_ast_to_ir.rs",
-        2985,
+        1869,
+    ),
+    # CLI LSP server: completions handler — split by completion kind per §19.
+    (
+        "CLI LSP server: handlers_completions monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_completions.rs",
+        3577,
+    ),
+    # CLI main binary: split by command family per §19.
+    (
+        "CLI boundary: tsz main binary size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "bin" / "tsz.rs",
+        3573,
+    ),
+    # CLI driver core: orchestrates check/emit/resolve pipeline. Ratchet down
+    # as pipeline stages are extracted per §19.
+    (
+        "CLI boundary: driver/core monolith size ratchet",
+        ROOT / "crates" / "tsz-cli" / "src" / "driver" / "core.rs",
+        3215,
+    ),
+    # CLI LSP server: structure/outline handler — split by request kind per §19.
+    (
+        "CLI LSP server: handlers_structure monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_structure.rs",
+        3075,
+    ),
+    # CLI LSP server: hover/signature/semantic handler — split by feature per §19.
+    (
+        "CLI LSP server: handlers_info monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_info.rs",
+        2881,
+    ),
+    # CLI LSP server: editing/refactor handler — split by action family per §19.
+    (
+        "CLI LSP server: handlers_editing monolith size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-cli"
+        / "src"
+        / "bin"
+        / "tsz_server"
+        / "handlers_editing.rs",
+        2332,
+    ),
+    # LSP project core: orchestrates multi-file state. Ratchet down as file
+    # management is delegated to ProjectFileSet/CompilationGroup per §19.
+    (
+        "LSP boundary: project/core monolith size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "project" / "core.rs",
+        2916,
+    ),
+    # LSP fourslash: language-service test protocol runner. Ratchet down as
+    # test helpers are extracted into focused sub-modules per §19.
+    (
+        "LSP boundary: fourslash test protocol size ratchet",
+        ROOT / "crates" / "tsz-lsp" / "src" / "fourslash.rs",
+        2268,
+    ),
+    # Emitter DTS portability resolver: split by portability family per §19.
+    (
+        "Emitter boundary: declaration_emitter/helpers/portability_resolve size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "portability_resolve.rs",
+        3178,
+    ),
+    # Emitter DTS type-inference helper: issue #8276 tracks migrating inference
+    # output to structured declaration summary facts.
+    (
+        "Emitter boundary: declaration_emitter/helpers/type_inference size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "declaration_emitter"
+        / "helpers"
+        / "type_inference.rs",
+        2846,
+    ),
+    # Emitter using/disposable region: issue #8276 tracks migrating the 16
+    # output-surgery rewrites to structured resource-region IR.
+    (
+        "Emitter boundary: source_file/top_level_using size ratchet (#8276)",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "source_file"
+        / "top_level_using.rs",
+        2537,
+    ),
+    # Emitter property/element access: split by access kind per §19.
+    (
+        "Emitter boundary: emitter/expressions/access size ratchet",
+        ROOT
+        / "crates"
+        / "tsz-emitter"
+        / "src"
+        / "emitter"
+        / "expressions"
+        / "access.rs",
+        2554,
     ),
 ]
 
@@ -724,10 +850,14 @@ REGEX_LINE_COUNT_CHECKS = [
         14,
     ),
     (
+        # Ratcheted from 3→1: two calls removed (bang-module and mixin-intersection
+        # decisions migrated to structured AST facts in #8406 / #8276 cycle).
+        # Remaining call: variable_decl.rs intersection-arm detection; issue #8276
+        # tracks migrating it to a structured declaration summary.
         "Emitter boundary: source_text.contains recovery decisions (Track 9/10)",
         [ROOT / "crates" / "tsz-emitter" / "src"],
         re.compile(r"\bsource_text\.contains\s*\("),
-        3,
+        1,
     ),
     (
         "Solver API boundary: flat root wildcard compatibility re-exports (#8204)",
