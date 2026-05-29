@@ -151,16 +151,28 @@ impl<'a> DeclarationEmitter<'a> {
             // Array type
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.arena.get_array_type(type_node) {
+                    // Preserve a source-level parenthesized array element so the
+                    // user's parens round-trip verbatim (e.g. `(T)[]` stays
+                    // `(T)[]`, not `T[]`). Detect the source `PARENTHESIZED_TYPE`
+                    // wrapper structurally on the array element, mirroring the
+                    // conditional-type arms. This only affects verbatim source
+                    // copy; synthesized array types print through the solver
+                    // TypePrinter, which normalizes parens independently.
+                    let element_source_was_parenthesized = self
+                        .arena
+                        .get(arr.element_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                     let inner = self.peel_paren(arr.element_type);
-                    let needs_parens = self.arena.get(inner).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::FUNCTION_TYPE
-                            || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || n.kind == syntax_kind_ext::UNION_TYPE
-                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
-                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                            || n.kind == syntax_kind_ext::TYPE_OPERATOR
-                            || n.kind == syntax_kind_ext::INFER_TYPE
-                    });
+                    let needs_parens = element_source_was_parenthesized
+                        || self.arena.get(inner).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || n.kind == syntax_kind_ext::UNION_TYPE
+                                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                || n.kind == syntax_kind_ext::TYPE_OPERATOR
+                                || n.kind == syntax_kind_ext::INFER_TYPE
+                        });
                     if needs_parens {
                         self.write("(");
                     }
@@ -191,17 +203,30 @@ impl<'a> DeclarationEmitter<'a> {
                             self.emit_named_tuple_type_multiline(type_idx);
                             continue;
                         }
+                        // An intersection member of a union keeps its source
+                        // grouping verbatim: if the user parenthesized the arm
+                        // (`"a" | (string & {})`) those parens round-trip, but a
+                        // bare source intersection arm (`T | T & undefined`)
+                        // stays unparenthesized. Detect the source
+                        // `PARENTHESIZED_TYPE` wrapper structurally; do not
+                        // synthesize parens that the source did not have.
+                        // Synthesized union members print through the solver
+                        // TypePrinter (`print_type_id`), which adds the
+                        // normalized `(T & undefined)` parens on its own path.
+                        let member_source_was_parenthesized = self
+                            .arena
+                            .get(type_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                         let inner = self.peel_paren(type_idx);
                         let needs_parens = self.arena.get(inner).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                                // An intersection member of a union is
-                                // parenthesized so the grouping round-trips
-                                // unambiguously: `string & {} | T` reads as
-                                // `(string & {}) | T`. Mirrors the intersection
-                                // arm, which parenthesizes nested unions.
-                                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                // A source-parenthesized intersection member of a
+                                // union keeps its parens so the grouping
+                                // round-trips unambiguously: `(string & {}) | T`.
+                                || (member_source_was_parenthesized
+                                    && n.kind == syntax_kind_ext::INTERSECTION_TYPE)
                         });
                         if needs_parens {
                             self.write("(");

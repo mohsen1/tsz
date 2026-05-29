@@ -144,3 +144,88 @@ fn template_literal_type_text_reescapes_backtick_and_dollar_brace() {
         "backtick and ${{ in template text must be escaped: {output:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fix C: a source-parenthesized array element keeps its parens verbatim in
+// the copied annotation (`(T)[]` stays `(T)[]`, not `T[]`). The fix keys on
+// the source `PARENTHESIZED_TYPE` array element, never on the element's name.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn parenthesized_array_element_keeps_parens() {
+    // `(Foo)[]` is a redundant-but-user-written grouping that tsc preserves
+    // verbatim in the .d.ts.
+    let output = emit_dts("export type T = (Foo)[];");
+    assert!(
+        output.contains("(Foo)[]"),
+        "source-parenthesized array element must keep parens: {output}"
+    );
+}
+
+#[test]
+fn parenthesized_array_element_keeps_parens_renamed() {
+    // Same rule, different element spelling: proves the fix is not keyed on a
+    // particular type-reference name.
+    let output = emit_dts("export type T = (Widget9)[];");
+    assert!(
+        output.contains("(Widget9)[]"),
+        "source-parenthesized array element must keep parens (renamed): {output}"
+    );
+}
+
+#[test]
+fn unparenthesized_array_element_stays_unparenthesized() {
+    // Negative/fallback case: a bare array element gets no synthesized parens.
+    let output = emit_dts("export type T = Foo[];");
+    assert!(
+        output.contains("Foo[]") && !output.contains("(Foo)[]"),
+        "bare array element must stay unparenthesized: {output}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Fix C: a *bare* intersection member of a union keeps its source spelling
+// (`T | T & undefined` stays unparenthesized), while a *source-parenthesized*
+// intersection member keeps its parens. Both branches key on the source
+// `PARENTHESIZED_TYPE` wrapper, never on the member's spelling.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn unparenthesized_intersection_union_member_stays_unparenthesized() {
+    // `T | T & undefined` is the verbatim source; tsc preserves the exact
+    // unparenthesized grouping rather than synthesizing `T | (T & undefined)`.
+    let output = emit_dts("export declare function f<T>(a: T | T & undefined): void;");
+    assert!(
+        output.contains("a: T | T & undefined"),
+        "bare intersection union member must stay unparenthesized: {output}"
+    );
+    assert!(
+        !output.contains("a: T | (T & undefined)"),
+        "bare intersection union member must not gain synthesized parens: {output}"
+    );
+}
+
+#[test]
+fn unparenthesized_intersection_union_member_stays_unparenthesized_renamed() {
+    // Different type-parameter spelling proves the rule is structural.
+    let output = emit_dts("export declare function g<Elem>(a: Elem | Elem & null): void;");
+    assert!(
+        output.contains("a: Elem | Elem & null"),
+        "bare intersection union member must stay unparenthesized (renamed): {output}"
+    );
+    assert!(
+        !output.contains("(Elem & null)"),
+        "bare intersection union member must not gain synthesized parens (renamed): {output}"
+    );
+}
+
+#[test]
+fn parenthesized_intersection_union_member_keeps_parens() {
+    // When the source parenthesizes the intersection arm, those parens
+    // round-trip so the grouping stays unambiguous.
+    let output = emit_dts("export declare function f<T>(a: T | (T & undefined)): void;");
+    assert!(
+        output.contains("a: T | (T & undefined)"),
+        "source-parenthesized intersection union member must keep parens: {output}"
+    );
+}
