@@ -142,6 +142,29 @@ impl<'a> Printer<'a> {
             return None;
         }
 
+        // The previous statement's source text can end with `/` for reasons
+        // unrelated to a trailing division operator: a JSX expression statement
+        // closed by `</` (e.g. `<>hi</div>`, where the mismatched named closing
+        // tag is left to reparse as the next statement) ends with the `/` of its
+        // closing fragment/element. Treating that `/` as a binary operator would
+        // splice the JSX closing slash onto the following statement. Skip the
+        // trailing-operator recovery for JSX expression statements.
+        if self
+            .arena
+            .get_expression_statement(previous)
+            .and_then(|stmt| self.arena.get(stmt.expression))
+            .is_some_and(|expr| {
+                matches!(
+                    expr.kind,
+                    syntax_kind_ext::JSX_ELEMENT
+                        | syntax_kind_ext::JSX_FRAGMENT
+                        | syntax_kind_ext::JSX_SELF_CLOSING_ELEMENT
+                )
+            })
+        {
+            return None;
+        }
+
         let text = self.source_text?;
         let bytes = text.as_bytes();
         let previous_start = (previous.pos as usize).min(bytes.len());

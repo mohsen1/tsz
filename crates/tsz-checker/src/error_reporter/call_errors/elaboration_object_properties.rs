@@ -352,13 +352,18 @@ impl<'a> CheckerState<'a> {
                 && cached_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.diagnostic_relation_boolean_guard(cached_prop_type, target_prop_type)
+                && !self
+                    .assign_relation_outcome(cached_prop_type, target_prop_type)
+                    .related
             {
                 // If the cached type fails, try the literal type from the initializer.
                 // When a generic call widens literals during inference (e.g., `'name'` → string),
                 // the literal type may actually be assignable to the inferred target.
                 if let Some(literal_type) = self.literal_type_from_initializer(prop_value_idx) {
-                    if self.diagnostic_relation_boolean_guard(literal_type, target_prop_type) {
+                    if self
+                        .assign_relation_outcome(literal_type, target_prop_type)
+                        .related
+                    {
                         literal_type
                     } else {
                         cached_prop_type
@@ -382,10 +387,9 @@ impl<'a> CheckerState<'a> {
                         self.get_type_of_node_with_request(prop_value_idx, &contextual_request);
                     if contextual_prop_type != TypeId::ERROR
                         && contextual_prop_type != TypeId::ANY
-                        && self.diagnostic_relation_boolean_guard(
-                            contextual_prop_type,
-                            target_prop_type,
-                        )
+                        && self
+                            .assign_relation_outcome(contextual_prop_type, target_prop_type)
+                            .related
                     {
                         contextual_prop_type
                     } else {
@@ -422,10 +426,9 @@ impl<'a> CheckerState<'a> {
                 if let Some(duplicate_source_for_check) = duplicate_source_for_check
                     && duplicate_source_for_check != TypeId::ERROR
                     && duplicate_source_for_check != TypeId::ANY
-                    && !self.diagnostic_relation_boolean_guard(
-                        duplicate_source_for_check,
-                        target_prop_type,
-                    )
+                    && !self
+                        .assign_relation_outcome(duplicate_source_for_check, target_prop_type)
+                        .related
                 {
                     let source_prop_type_for_diagnostic =
                         crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -463,7 +466,9 @@ impl<'a> CheckerState<'a> {
                 && effective_source_prop != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.diagnostic_relation_boolean_guard(effective_source_prop, target_prop_type)
+                && !self
+                    .assign_relation_outcome(effective_source_prop, target_prop_type)
+                    .related
             {
                 let source_prop_type_for_diagnostic =
                     crate::query_boundaries::assignability::rewrite_function_error_slots_to_any(
@@ -552,7 +557,9 @@ impl<'a> CheckerState<'a> {
                         let body_type = self.get_type_of_node(func.body);
                         if body_type == TypeId::ERROR
                             || body_type == TypeId::ANY
-                            || self.diagnostic_relation_boolean_guard(body_type, expected_ret)
+                            || self
+                                .assign_relation_outcome(body_type, expected_ret)
+                                .related
                         {
                             return None;
                         }
@@ -635,7 +642,9 @@ impl<'a> CheckerState<'a> {
                 && source_prop_type != TypeId::ANY
                 && target_prop_type != TypeId::ERROR
                 && target_prop_type != TypeId::ANY
-                && !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type)
+                && !self
+                    .assign_relation_outcome(source_prop_type, target_prop_type)
+                    .related
                 && self
                     .ctx
                     .arena
@@ -676,8 +685,9 @@ impl<'a> CheckerState<'a> {
             }
 
             // Check if the property value type is assignable to the target property type
-            let prop_assignable =
-                self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type);
+            let prop_assignable = self
+                .assign_relation_outcome(source_prop_type, target_prop_type)
+                .related;
             if !prop_assignable {
                 if self.try_elaborate_assignment_source_error(prop_value_idx, target_prop_type) {
                     elaborated = true;
@@ -935,7 +945,10 @@ impl<'a> CheckerState<'a> {
             if source_member_type == TypeId::ERROR || source_member_type == TypeId::ANY {
                 continue;
             }
-            if !self.diagnostic_relation_boolean_guard(source_member_type, target_member_type) {
+            if !self
+                .assign_relation_outcome(source_member_type, target_member_type)
+                .related
+            {
                 return false;
             }
         }
@@ -1305,7 +1318,8 @@ impl<'a> CheckerState<'a> {
                 && target_element_type != TypeId::ERROR
                 && target_element_type != TypeId::ANY
                 && self
-                    .diagnostic_relation_boolean_guard(contextual_elem_type, target_element_type);
+                    .assign_relation_outcome(contextual_elem_type, target_element_type)
+                    .related;
 
             // When the target element type is an index-signature-only type
             // (e.g., `NamedTransform { [name: string]: Transform3D }`),
@@ -1363,7 +1377,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.diagnostic_relation_boolean_guard(elem_type, target_element_type) {
+            if !self
+                .assign_relation_outcome(elem_type, target_element_type)
+                .related
+            {
                 let widen_source_display = self.array_elaboration_widening_required_for_display(
                     elem_type,
                     target_element_type,
@@ -1491,7 +1508,10 @@ impl<'a> CheckerState<'a> {
         if iterated_element_type == spread_expr_type {
             return false;
         }
-        if self.diagnostic_relation_boolean_guard(iterated_element_type, target_element_type) {
+        if self
+            .assign_relation_outcome(iterated_element_type, target_element_type)
+            .related
+        {
             return false;
         }
 
@@ -1592,7 +1612,10 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
 
-            if !self.diagnostic_relation_boolean_guard(source_prop_type, target_prop_type) {
+            if !self
+                .assign_relation_outcome(source_prop_type, target_prop_type)
+                .related
+            {
                 return false;
             }
         }
@@ -1720,7 +1743,10 @@ impl<'a> CheckerState<'a> {
         };
 
         // Only elaborate when the overall assignment fails.
-        if self.diagnostic_relation_boolean_guard(init_type, declared_type) {
+        if self
+            .assign_relation_outcome(init_type, declared_type)
+            .related
+        {
             return false;
         }
 

@@ -12,12 +12,25 @@ enum StaticSuperMember {
 }
 
 impl<'a> Printer<'a> {
+    /// True when `super` is captured through the async-lowering accessor objects
+    /// (`_super = Object.create(null, { x: { get, set } })` / the `_superIndex`
+    /// value-accessor closure) rather than the static-member `Reflect.get`/`set`
+    /// alias. In that mode reads and writes go directly through the captured
+    /// accessor (`_super.x`, `_superIndex("x").value`); the `Reflect`-based
+    /// rewrite is only correct for the static-member super alias.
+    pub(in crate::emitter) const fn in_async_captured_super(&self) -> bool {
+        self.scoped_static_super_direct_access || self.scoped_static_super_index_alias.is_some()
+    }
+
     pub(in crate::emitter) fn emit_scoped_static_super_assignment(
         &mut self,
         left: NodeIndex,
         operator: u16,
         right: NodeIndex,
     ) -> bool {
+        if self.in_async_captured_super() {
+            return false;
+        }
         let Some(member) = self.scoped_static_super_member(left) else {
             return false;
         };
@@ -54,6 +67,9 @@ impl<'a> Printer<'a> {
         operator: u16,
         is_prefix: bool,
     ) -> bool {
+        if self.in_async_captured_super() {
+            return false;
+        }
         let Some(member) = self.scoped_static_super_member(operand) else {
             return false;
         };
@@ -242,6 +258,9 @@ impl<'a> Printer<'a> {
         is_element: bool,
     ) -> bool {
         if !self.scoped_static_super_assignment_target {
+            return false;
+        }
+        if self.in_async_captured_super() {
             return false;
         }
         let Some(base_node) = self.arena.get(access.expression) else {

@@ -33,6 +33,26 @@ use crate::visitor::{
 // (2 per check_subtype call instead of 4). Layout: high 32 bits = fuel, low 32 bits = depth.
 thread_local! {
     static GLOBAL_SUBTYPE_STATE: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+    // Monotonic counter bumped whenever a `Lazy(DefId)` could not be resolved
+    // (its body is not yet registered — typically a re-entrant lib-resolution
+    // window). A subtype result computed while this counter changed depended on
+    // an undetermined type and must NOT be cached as definitive, or it poisons
+    // every later structural check that shares the same member type.
+    static LAZY_RESOLVE_FAILURES: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// Record that a `Lazy(DefId)` failed to resolve during a relation check.
+#[inline]
+pub(crate) fn note_lazy_resolve_failure() {
+    LAZY_RESOLVE_FAILURES.with(|c| c.set(c.get().wrapping_add(1)));
+}
+
+/// Current value of the unresolved-`Lazy` counter; compare a snapshot taken
+/// before computing a result with the value after to detect whether the
+/// computation depended on an unresolved `Lazy`.
+#[inline]
+pub(crate) fn lazy_resolve_failure_count() -> u64 {
+    LAZY_RESOLVE_FAILURES.with(std::cell::Cell::get)
 }
 
 /// Pack depth (low 32) and fuel (high 32) into a single u64.
@@ -53,11 +73,12 @@ const fn unpack_fuel(state: u64) -> u32 {
     (state >> 32) as u32
 }
 
-/// Reset subtype depth and fuel counters.
+/// Reset subtype depth, fuel, and unresolved-`Lazy`-failure counters.
 /// Called between compilation sessions to prevent stale state from a previous
 /// compilation (e.g., if it panicked and left counters dirty).
 pub fn reset_subtype_thread_local_state() {
     GLOBAL_SUBTYPE_STATE.with(|s| s.set(0));
+    LAZY_RESOLVE_FAILURES.with(|c| c.set(0));
 }
 
 // Maximum number of non-trivial subtype checks per top-level call chain.
@@ -355,6 +376,11 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             (depth, fuel)
         });
 
+        // Snapshot the unresolved-`Lazy` counter. If it changes while computing
+        // this pair's result, the result depended on a `Lazy` whose body was not
+        // yet registered, so a `False` is undetermined and must not be cached.
+        let lazy_failures_at_entry = lazy_resolve_failure_count();
+
         // Helper macro to decrement global depth and optionally reset fuel on early returns.
         macro_rules! leave_global {
             () => {
@@ -368,6 +394,29 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                         s.set(pack_depth_fuel(depth, unpack_fuel(prev)));
                     }
                 });
+            };
+        }
+
+        // Helper macro to cache a definitive subtype result, but only when the
+        // computation did not depend on a `Lazy` whose body was unresolved
+        // (which would make the result undetermined and poison the cache).
+        //
+        // This is best-effort and intentionally conservative: the snapshot is
+        // process-wide (thread-local), so *any* unresolved-`Lazy` event anywhere
+        // in this top-level call's subtree — even in a branch whose result did
+        // not feed the final answer — suppresses the write. That only ever skips
+        // a cache write (correctness-preserving: the result is recomputed later,
+        // when the body is registered), never produces a wrong answer. Captures
+        // `lazy_failures_at_entry` from the enclosing scope by name.
+        macro_rules! cache_definitive {
+            ($db:expr, $key:expr, $result:expr) => {
+                if lazy_resolve_failure_count() == lazy_failures_at_entry {
+                    match $result {
+                        SubtypeResult::True => $db.insert_subtype_cache($key, true),
+                        SubtypeResult::False => $db.insert_subtype_cache($key, false),
+                        SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
+                    }
+                }
             };
         }
 
@@ -730,11 +779,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
                 self.guard.leave(pair);
                 if !has_this_type && let Some(db) = self.query_db {
                     let key = self.make_cache_key(source, target);
-                    match result {
-                        SubtypeResult::True => db.insert_subtype_cache(key, true),
-                        SubtypeResult::False => db.insert_subtype_cache(key, false),
-                        _ => {}
-                    }
+                    cache_definitive!(db, key, result);
                 }
                 leave_global!();
                 return result;
@@ -793,11 +838,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.guard.leave(pair);
             if !has_this_type && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
-                match result {
-                    SubtypeResult::True => db.insert_subtype_cache(key, true),
-                    SubtypeResult::False => db.insert_subtype_cache(key, false),
-                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
-                }
+                cache_definitive!(db, key, result);
             }
             leave_global!();
             return result;
@@ -818,11 +859,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             self.guard.leave(pair);
             if !has_this_type && let Some(db) = self.query_db {
                 let key = self.make_cache_key(source, target);
-                match result {
-                    SubtypeResult::True => db.insert_subtype_cache(key, true),
-                    SubtypeResult::False => db.insert_subtype_cache(key, false),
-                    SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
-                }
+                cache_definitive!(db, key, result);
             }
             leave_global!();
             return result;
@@ -902,11 +939,7 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
         // Skip ThisType: results are context-dependent (see lookup guard above).
         if !has_this_type && let Some(db) = self.query_db {
             let key = self.make_cache_key(source, target);
-            match result {
-                SubtypeResult::True => db.insert_subtype_cache(key, true),
-                SubtypeResult::False => db.insert_subtype_cache(key, false),
-                SubtypeResult::CycleDetected | SubtypeResult::DepthExceeded => {}
-            }
+            cache_definitive!(db, key, result);
         }
 
         // Decrement global depth; reset fuel when outermost call completes.
@@ -991,6 +1024,10 @@ impl<'a, R: TypeResolver> SubtypeChecker<'a, R> {
             return false;
         }
         let Some(body) = self.resolver.resolve_lazy(def_id, self.interner) else {
+            // Same undetermined-result event as `resolve_lazy_type`: the
+            // conditional-alias-base decision derived from an unresolvable
+            // `Lazy` must not poison the subtype cache in the enclosing call.
+            note_lazy_resolve_failure();
             return false;
         };
         if matches!(self.interner.lookup(body), Some(TypeData::Conditional(_))) {

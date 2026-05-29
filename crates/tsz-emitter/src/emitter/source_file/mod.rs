@@ -9,6 +9,8 @@ mod top_level_using_decorated;
 #[cfg(test)]
 mod class_es5_field_initializer_tests;
 #[cfg(test)]
+mod class_expr_computed_static_method_naming_tests;
+#[cfg(test)]
 mod class_expression_decorator_tests;
 #[cfg(test)]
 mod class_static_alias_tests;
@@ -25,5 +27,7 @@ mod private_field_helper_order_tests;
 #[cfg(test)]
 mod private_tagged_template_tests;
 
+#[cfg(test)]
+mod empty_statement_comment_elision_tests;
 #[cfg(test)]
 mod es5_emit_tests;

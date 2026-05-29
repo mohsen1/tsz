@@ -151,6 +151,16 @@ def print_summary(snap: dict) -> None:
                 f"span={fmt_int(row.get('pos'))}..{fmt_int(row.get('end'))}  "
                 f"{row['file']}"
             )
+    slow_alias_phases = snap.get("slow_type_alias_check_timings") or []
+    if slow_alias_phases:
+        print("  slowest type alias check phases:")
+        for row in slow_alias_phases[:10]:
+            print(
+                f"    {row['elapsed_ms']:>8.2f} ms  "
+                f"phase={row.get('phase', '<unknown>'):<24}  "
+                f"span={fmt_int(row.get('pos'))}..{fmt_int(row.get('end'))}  "
+                f"{row.get('name', '<anonymous>')}  {row['file']}"
+            )
     print()
     print("overlay copy:")
     print(
@@ -287,6 +297,22 @@ def print_diff(post: dict, base: dict) -> None:
             print(
                 f"    current  {a['elapsed_ms']:.2f} ms  "
                 f"kind={a.get('kind')} span={a.get('pos')}..{a.get('end')} {a['file']}"
+            )
+    post_alias = post.get("slow_type_alias_check_timings") or []
+    base_alias = base.get("slow_type_alias_check_timings") or []
+    if post_alias or base_alias:
+        print("  slowest type alias check phase:")
+        if base_alias:
+            b = base_alias[0]
+            print(
+                f"    baseline {b['elapsed_ms']:.2f} ms  "
+                f"phase={b.get('phase')} {b.get('name')} {b['file']}"
+            )
+        if post_alias:
+            a = post_alias[0]
+            print(
+                f"    current  {a['elapsed_ms']:.2f} ms  "
+                f"phase={a.get('phase')} {a.get('name')} {a['file']}"
             )
     print()
     post_rows = {r["reason"]: r for r in by_reason_rows(post, optional=True)}

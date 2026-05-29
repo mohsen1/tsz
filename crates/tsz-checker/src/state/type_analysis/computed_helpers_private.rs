@@ -91,7 +91,10 @@ impl<'a> CheckerState<'a> {
                 {
                     return true;
                 }
-                if self.diagnostic_relation_boolean_guard(object_type, declaring_type) {
+                if self
+                    .assign_relation_outcome(object_type, declaring_type)
+                    .related
+                {
                     return true;
                 }
                 // Last resort: check if the object type has the private property
@@ -105,7 +108,10 @@ impl<'a> CheckerState<'a> {
                 )
                 .is_success()
             }
-            _ => self.diagnostic_relation_boolean_guard(object_type, declaring_type),
+            _ => {
+                self.assign_relation_outcome(object_type, declaring_type)
+                    .related
+            }
         }
     }
 
@@ -257,6 +263,7 @@ impl<'a> CheckerState<'a> {
             let Some(prop) = self.ctx.arena.get_property_decl(node) else {
                 continue;
             };
+            let is_optional = prop.question_token;
             let declared_type = if is_write_context {
                 self.class_property_relation_declared_type(decl_idx, prop)
             } else {
@@ -264,22 +271,56 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
-                if evaluated != type_id
+                let base = if evaluated != type_id
                     && crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         evaluated,
                     )
                     .is_some_and(|shape| {
                         shape.string_index.is_some() || shape.number_index.is_some()
-                    })
-                {
-                    return Some(evaluated);
-                }
-                return Some(type_id);
+                    }) {
+                    evaluated
+                } else {
+                    type_id
+                };
+                return Some(self.add_private_field_optionality(
+                    base,
+                    is_optional,
+                    is_write_context,
+                ));
             }
         }
 
         None
+    }
+
+    /// Apply `?`-optionality to a private field's declared type, mirroring how
+    /// public optional fields get `| undefined` through `optional_property_type`.
+    ///
+    /// The private-field declared type is read straight off the annotation, so
+    /// the optional marker would otherwise be dropped — leaving `#x?: T` typed as
+    /// `T` instead of `T | undefined`. Reads always include `undefined` under
+    /// `strictNullChecks`; the assignment-target (write) type only includes it
+    /// when `exactOptionalPropertyTypes` is off, so that flag still rejects
+    /// `this.#x = undefined`.
+    fn add_private_field_optionality(
+        &mut self,
+        type_id: TypeId,
+        is_optional: bool,
+        is_write_context: bool,
+    ) -> TypeId {
+        if !is_optional
+            || !self.ctx.strict_null_checks()
+            || type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::ERROR
+        {
+            return type_id;
+        }
+        if is_write_context && self.ctx.compiler_options.exact_optional_property_types {
+            return type_id;
+        }
+        self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
     }
 
     pub(crate) fn get_type_of_private_property_access(
@@ -699,7 +740,9 @@ impl<'a> CheckerState<'a> {
                 &property_name,
             )
         } else if self.types_have_same_private_brand(object_type_for_check, declaring_type)
-            || self.diagnostic_relation_boolean_guard(object_type_for_check, declaring_type)
+            || self
+                .assign_relation_outcome(object_type_for_check, declaring_type)
+                .related
         {
             true
         } else {
@@ -752,7 +795,8 @@ impl<'a> CheckerState<'a> {
                         } else if self.types_have_same_private_brand(object_type_for_check, ty) {
                             true
                         } else {
-                            self.diagnostic_relation_boolean_guard(object_type_for_check, ty)
+                            self.assign_relation_outcome(object_type_for_check, ty)
+                                .related
                         }
                     })
             });

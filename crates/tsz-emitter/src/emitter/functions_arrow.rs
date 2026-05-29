@@ -335,7 +335,7 @@ impl<'a> Printer<'a> {
         let Some(body_node) = self.arena.get(body_idx) else {
             return;
         };
-        let body_token_end = self.find_token_end_before_trivia(body_node.pos, body_node.end);
+        let body_token_end = self.find_last_expr_end_before_trivia(body_node.pos, body_node.end);
         let comment_end = std::cmp::max(body_node.end, arrow_end);
         if let Some((defer_start, defer_end)) = self.arrow_concise_body_trailing_comment_defer_range
             && body_token_end == defer_start
@@ -369,7 +369,7 @@ impl<'a> Printer<'a> {
             if body.kind == syntax_kind_ext::BLOCK {
                 return None;
             }
-            return Some(self.find_token_end_before_trivia(body.pos, body.end));
+            return Some(self.find_last_expr_end_before_trivia(body.pos, body.end));
         }
 
         if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION {
@@ -1407,14 +1407,7 @@ impl<'a> Printer<'a> {
                     let hoist_start =
                         body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
                     self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.emit(stmt);
-                            self.write_line();
-                        }
-                    }
+                    self.emit_async_body_block_statements(func.body);
                     if let Some(hoist_start) = hoist_start {
                         self.insert_async_arrow_generator_hoists(hoist_start);
                     }
@@ -1543,10 +1536,7 @@ impl<'a> Printer<'a> {
         {
             let statements = block.statements.clone();
             if !self.emit_statement_list_with_using_scope(&statements) {
-                for &stmt in &statements.nodes {
-                    self.emit(stmt);
-                    self.write_line();
-                }
+                self.emit_async_body_block_statements(func.body);
             }
         }
         if let Some(hoist_start) = hoist_start {
@@ -1778,14 +1768,7 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 let hoist_start =
                     body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
-                if let Some(body_node) = self.arena.get(func.body)
-                    && let Some(block) = self.arena.get_block(body_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.emit(stmt);
-                        self.write_line();
-                    }
-                }
+                self.emit_async_body_block_statements(func.body);
                 if let Some(hoist_start) = hoist_start {
                     self.insert_async_arrow_generator_hoists(hoist_start);
                 }

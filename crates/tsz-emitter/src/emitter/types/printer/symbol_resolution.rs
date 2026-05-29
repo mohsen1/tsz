@@ -303,6 +303,14 @@ impl<'a> TypePrinter<'a> {
         let arena = self.symbol_arena?;
         let sym = arena.get(sym_id)?;
 
+        // When the symbol itself is the resolved target of an in-scope
+        // `import alias = Q.R.S` declaration, tsc references it by the bare
+        // alias name (e.g. `import xc = x.c; var p: xc`). Return the alias
+        // directly instead of expanding the qualified path to `xc.c`/`x.c`.
+        if let Some(alias) = self.resolve_import_equals_alias(sym_id) {
+            return Some(alias);
+        }
+
         // When a symbol is a "default" export alias, resolve the underlying
         // declaration's actual name (e.g., `export default class MyComponent`
         // should print "MyComponent", not "default").
@@ -429,6 +437,11 @@ impl<'a> TypePrinter<'a> {
 
     pub(crate) fn resolve_namespace_import_alias(&self, sym_id: SymbolId) -> Option<String> {
         self.namespace_alias_resolver
+            .and_then(|resolver| resolver(sym_id))
+    }
+
+    pub(crate) fn resolve_import_equals_alias(&self, sym_id: SymbolId) -> Option<String> {
+        self.import_equals_alias_resolver
             .and_then(|resolver| resolver(sym_id))
     }
 

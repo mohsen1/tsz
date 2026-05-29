@@ -466,6 +466,34 @@ impl<'a> Printer<'a> {
         None
     }
 
+    /// Return the position of the first line break at or after a declaration's
+    /// value end, capped at `limit`. Used to bound emission of trailing comments
+    /// in the gap between a declaration value and a recovered ASI empty-statement
+    /// semicolon: comments before this line break are genuine same-line trailing
+    /// comments of the declaration, while comments after it are leading trivia of
+    /// the (elided) trailing empty statement. When no line break exists before
+    /// `limit`, returns `limit` so inline comments (e.g. `const x = 1 /* c */;`)
+    /// are emitted unchanged.
+    pub(in crate::emitter) fn line_end_after_declaration_value(
+        &self,
+        start: u32,
+        limit: u32,
+    ) -> u32 {
+        let Some(text) = self.source_text else {
+            return limit;
+        };
+        let bytes = text.as_bytes();
+        let mut i = std::cmp::min(start as usize, bytes.len());
+        let cap = std::cmp::min(limit as usize, bytes.len());
+        while i < cap {
+            if bytes[i] == b'\n' || bytes[i] == b'\r' {
+                return i as u32;
+            }
+            i += 1;
+        }
+        limit
+    }
+
     /// Check if all variable declarations in a declaration list lack initializers
     pub(in crate::emitter) fn all_declarations_lack_initializer(
         &self,

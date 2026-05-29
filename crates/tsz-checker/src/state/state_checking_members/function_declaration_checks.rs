@@ -1162,13 +1162,13 @@ impl<'a> CheckerState<'a> {
         } else {
             self.return_type_for_implicit_return_check(return_type, is_async, false)
         };
-        // For async functions, if we couldn't unwrap Promise<T> (e.g. lib files not loaded),
-        // fall back to the annotation syntax. If it looks like Promise<...>, suppress TS2355
-        // since we can't verify the inner type anyway.
+        // For async functions, suppress return-completeness diagnostics only
+        // when the annotation resolves to the actual global Promise. A local
+        // or qualified type named Promise still follows normal return checks.
         if is_async
             && check_return_type == return_type
             && has_type_annotation
-            && self.return_type_annotation_looks_like_promise(func.type_annotation)
+            && self.return_type_annotation_is_exactly_promise(func.type_annotation)
         {
             check_return_type = TypeId::VOID;
         }

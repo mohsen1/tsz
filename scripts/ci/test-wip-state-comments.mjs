@@ -99,6 +99,31 @@ assert.deepEqual(wipStateFindings([{
   comments: [signedComment()],
 }]), []);
 
+assert.deepEqual(wipStateFindings([{
+  number: 10310,
+  title: "fix(dts): project object literal union surfaces",
+  isDraft: true,
+  labels: { nodes: [] },
+  timelineItems: {
+    nodes: [{
+      __typename: "ConvertToDraftEvent",
+      createdAt: "2026-05-27T22:45:03Z",
+      actor: { login: "mohsen1" },
+    }],
+  },
+  comments: {
+    nodes: [signedComment({
+      created_at: "2026-05-27T22:45:04Z",
+      body: [
+        "AgentName: M1-A",
+        "Converted this PR back to draft because the current ready head is blocked.",
+        "Blockers: CI Summary is red and the latest review still flags output surgery.",
+        "Next owner/action: Studio-D should keep merge-queue off and fix the blocker.",
+      ].join("\n"),
+    })],
+  },
+}]), []);
+
 assert.deepEqual(
   wipStateFindings([pr()]),
   [{

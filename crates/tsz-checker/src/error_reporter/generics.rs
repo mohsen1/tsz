@@ -747,10 +747,16 @@ impl<'a> CheckerState<'a> {
                 continue;
             }
             let prop_value = self.evaluate_type_for_assignability(prop.type_id);
-            if !self.diagnostic_relation_boolean_guard(prop_value, resolved_constraint)
-                && !self.diagnostic_relation_boolean_guard(prop.type_id, constraint)
-                && !self.diagnostic_relation_boolean_guard(prop_value, constraint)
-                && !self.diagnostic_relation_boolean_guard(prop.type_id, resolved_constraint)
+            if !self
+                .assign_relation_outcome(prop_value, resolved_constraint)
+                .related
+                && !self
+                    .assign_relation_outcome(prop.type_id, constraint)
+                    .related
+                && !self.assign_relation_outcome(prop_value, constraint).related
+                && !self
+                    .assign_relation_outcome(prop.type_id, resolved_constraint)
+                    .related
             {
                 return false;
             }

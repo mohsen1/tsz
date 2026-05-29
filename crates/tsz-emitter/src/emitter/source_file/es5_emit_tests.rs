@@ -845,6 +845,71 @@ fn es5_nested_static_class_expression_non_null_wrapper_still_hoists_alias() {
     );
 }
 
+// When B holds alias `_a` and then allocates alias `_b` for its nested class E,
+// E's static field F has an async method that references E.  The generator state
+// inside F.func must pick `_c` (not `_b`) to avoid shadowing E's alias.
+#[test]
+fn es5_class_expression_generator_state_avoids_alias_b() {
+    // B→_a (depth 1).  While B's comma expression runs, E gets _b (depth 2).
+    // F is a static-field value of E, so replace_identifier("E","_b") runs on
+    // F's output.  Without the fix the generator state in F.func would be `_b`.
+    let source = "class A {\n    static B = class B {\n        static E = class E {\n            static F = class F {\n                static async func() { await E.help(); }\n            };\n            static help() { return 1; }\n        };\n    };\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("_b.help()"),
+        "E class-name reference should be replaced with the `_b` alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function (_b)"),
+        "Generator state must not collide with the `_b` class-expression alias.\nOutput:\n{output}"
+    );
+}
+
+// Three-deep nesting: B→_a, E→_b, G→_c.  G's static field H has an async
+// method referencing G.  Generator state in H.func must pick `_d`, not `_c`.
+#[test]
+fn es5_class_expression_generator_state_avoids_alias_c() {
+    // B→_a, E→_b, G→_c (each allocated while the outer alias is still live).
+    // H is a static-field value of G, so replace_identifier("G","_c") runs
+    // on H's output.  Without the fix the generator state in H.func is `_c`.
+    let source = "class A {\n    static B = class B {\n        static E = class E {\n            static G = class G {\n                static H = class H {\n                    static async func() { await G.help(); }\n                };\n                static help() { return 1; }\n            };\n        };\n    };\n}\n";
+
+    let (parser, root) = parse_test_source(source);
+    let options = PrinterOptions {
+        target: ScriptTarget::ES5,
+        ..Default::default()
+    };
+    let ctx = EmitContext::with_options(options.clone());
+    let transforms = LoweringPass::new(&parser.arena, &ctx).run(root);
+    let mut printer =
+        EmitterPrinter::with_transforms_and_options(&parser.arena, transforms, options);
+    printer.set_source_text(source);
+    printer.emit(root);
+    let output = printer.get_output().to_string();
+
+    assert!(
+        output.contains("_c.help()"),
+        "G class-name reference should be replaced with the `_c` alias.\nOutput:\n{output}"
+    );
+    assert!(
+        !output.contains("function (_c)"),
+        "Generator state must not collide with the `_c` class-expression alias.\nOutput:\n{output}"
+    );
+}
+
 #[test]
 fn class_expression_static_comma_temp_follows_computed_name_temps() {
     let source = "async function* test(x) {\n    return class {\n        [await x] = await x;\n        static [await x] = await x;\n        [yield 1] = yield 2;\n        static [yield 3] = yield 4;\n    };\n}\n";

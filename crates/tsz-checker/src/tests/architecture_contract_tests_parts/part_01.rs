@@ -1723,6 +1723,23 @@ fn test_relation_flags_surface_covers_checker_policy_bits() {
     }
 }
 
+/// The checker boundary's flag wrapper should mirror the solver's typed
+/// `RelationFlags` bit surface, not the legacy cache-key `FLAG_*` protocol.
+#[test]
+fn test_relation_flags_surface_uses_solver_typed_flags() {
+    let source = fs::read_to_string("src/query_boundaries/assignability.rs")
+        .expect("failed to read query_boundaries/assignability.rs");
+
+    assert!(
+        source.contains("tsz_solver::RelationFlags::STRICT_NULL_CHECKS"),
+        "RelationFlags wrapper must derive checker policy bits from solver typed flags"
+    );
+    assert!(
+        !source.contains("tsz_solver::RelationCacheKey::FLAG_"),
+        "RelationFlags wrapper must not depend on legacy RelationCacheKey FLAG_* constants"
+    );
+}
+
 /// Checker compiler-option packing must stay on the boundary-owned
 /// `RelationFlags` wrapper rather than reaching into solver internals.
 #[test]

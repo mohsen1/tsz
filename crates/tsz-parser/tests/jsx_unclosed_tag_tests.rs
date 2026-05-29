@@ -360,3 +360,82 @@ fn test_jsx_unclosed_at_eof_position_matches_tsc_no_trailing_newline() {
         "Expected exactly one TS1005 `'</' expected.`, got: {errors:?}",
     );
 }
+
+// Fix A: a JSX fragment closed by a MISMATCHED NAMED tag (`<>...</div>`) must
+// leave the named tag and its `>` UNCONSUMED so they reparse as the following
+// statement (mirroring tsc's `parseExpected(GreaterThanToken, shouldAdvance=false)`).
+// The fragment statement must end at the `</` boundary, and a *separate* statement
+// must begin at the named tag. Keyed structurally on statement boundaries, not on
+// the chosen tag name — verified across several names.
+#[test]
+fn test_jsx_mismatched_named_closing_fragment_leaves_tokens_for_reparse() {
+    for name in ["div", "span", "foo", "X"] {
+        let src = format!("<>hi</{name}>\nrest;\n");
+        let (parser, root) = parse_source_named("file.tsx", &src);
+        let sf = parser.arena.get(root).unwrap();
+        let sfd = parser.arena.get_source_file(sf).unwrap();
+        let stmts: Vec<_> = sfd.statements.nodes.to_vec();
+        // Expect: fragment expr statement, then a statement that begins at the
+        // named tag, then `rest;`.
+        assert!(
+            stmts.len() >= 2,
+            "[{name}] expected the named close tag to reparse as its own statement(s), got {} statements: {:?}",
+            stmts.len(),
+            stmts
+                .iter()
+                .map(|&i| {
+                    let n = parser.arena.get(i).unwrap();
+                    src[n.pos as usize..(n.end as usize).min(src.len())].to_string()
+                })
+                .collect::<Vec<_>>(),
+        );
+        let first = parser.arena.get(stmts[0]).unwrap();
+        let first_text = &src[first.pos as usize..(first.end as usize).min(src.len())];
+        // The fragment statement must NOT swallow the named tag name.
+        assert!(
+            !first_text.contains(name),
+            "[{name}] fragment statement should not consume the mismatched named tag, got {first_text:?}",
+        );
+        // A later statement must contain the named tag (it reparsed downstream).
+        let tag_reparsed = stmts.iter().skip(1).any(|&i| {
+            let n = parser.arena.get(i).unwrap();
+            src[n.pos as usize..(n.end as usize).min(src.len())].contains(name)
+        });
+        assert!(
+            tag_reparsed,
+            "[{name}] mismatched named tag must reparse as a following statement",
+        );
+        // The diagnostics for the mismatch must still be present.
+        let codes: Vec<u32> = parser.parse_diagnostics.iter().map(|d| d.code).collect();
+        assert!(
+            codes.contains(&17015),
+            "[{name}] expected TS17015 (expected corresponding closing tag), got {codes:?}",
+        );
+        assert!(
+            codes.contains(&17014),
+            "[{name}] expected TS17014 (fragment has no corresponding closing tag), got {codes:?}",
+        );
+    }
+}
+
+// Fix A negative case: a well-formed `</>` closing fragment must continue to be
+// fully consumed (no leftover tokens, no mismatch diagnostics).
+#[test]
+fn test_jsx_wellformed_closing_fragment_unaffected() {
+    let src = "<>hi</>;\n";
+    let (parser, root) = parse_source_named("file.tsx", src);
+    let sf = parser.arena.get(root).unwrap();
+    let sfd = parser.arena.get_source_file(sf).unwrap();
+    let codes: Vec<u32> = parser.parse_diagnostics.iter().map(|d| d.code).collect();
+    assert!(
+        !codes.contains(&17015) && !codes.contains(&17014),
+        "well-formed `</>` should not emit mismatch diagnostics, got {codes:?}",
+    );
+    // The fragment should consume through `</>`.
+    let frag = parser.arena.get(sfd.statements.nodes[0]).unwrap();
+    let frag_text = &src[frag.pos as usize..(frag.end as usize).min(src.len())];
+    assert!(
+        frag_text.contains("</>"),
+        "well-formed fragment statement should include `</>`, got {frag_text:?}",
+    );
+}

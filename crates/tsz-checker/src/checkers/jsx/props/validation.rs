@@ -20,6 +20,36 @@ use tsz_solver::computation::TypeSubstitution;
 use tsz_solver::{ObjectShape, TypeId};
 
 impl<'a> CheckerState<'a> {
+    /// Whether a JSX relation operand (a spread source or an attribute value
+    /// type) carries a conditional that is still deferred over a type
+    /// parameter, so a structural assignability answer is unreliable. See
+    /// `query_boundaries::checkers::jsx::jsx_relation_operand_is_deferred_conditional`.
+    ///
+    /// The operand is frequently a not-yet-expanded alias application
+    /// (`SingleProps<W>`); evaluating it surfaces the underlying conditional
+    /// intersection (`Omit<...> & ...`) so detection does not depend on whether
+    /// the type happened to be expanded at the call site.
+    pub(in crate::checkers_domain::jsx) fn jsx_relation_operand_defers(
+        &mut self,
+        type_id: TypeId,
+    ) -> bool {
+        if crate::query_boundaries::checkers::jsx::jsx_relation_operand_is_deferred_conditional(
+            self.ctx.types,
+            &self.ctx.definition_store,
+            type_id,
+        ) {
+            return true;
+        }
+        let evaluated = self.evaluate_application_type(type_id);
+        let evaluated = self.evaluate_type_with_env(evaluated);
+        evaluated != type_id
+            && crate::query_boundaries::checkers::jsx::jsx_relation_operand_is_deferred_conditional(
+                self.ctx.types,
+                &self.ctx.definition_store,
+                evaluated,
+            )
+    }
+
     /// Walk every `{...expr}` spread attribute on a JSX element and emit
     /// TS2698 ("Spread types may only be created from object types") for
     /// each one whose type is not a valid spread source.
@@ -220,12 +250,33 @@ impl<'a> CheckerState<'a> {
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            !self.diagnostic_relation_boolean_guard(*attr_type, expected_type)
+            // A deferred conditional on either operand is comparable for `tsc`;
+            // the structural relation cannot soundly disprove it, so it is not a
+            // genuine mismatch.
+            if self.jsx_relation_operand_defers(*attr_type)
+                || self.jsx_relation_operand_defers(expected_type)
+            {
+                return false;
+            }
+            !self
+                .assign_relation_outcome(*attr_type, expected_type)
+                .related
         });
+        // A spread whose source carries a deferred conditional over a type
+        // parameter (e.g. `Omit`/`Overwrite` of an unresolved `T`) is an
+        // instantiable, comparable type for `tsc`; absent a concrete explicit
+        // mismatch the structural relation cannot soundly disprove the
+        // whole-object assignability, so emitting here is a false positive.
+        let spread_source_is_deferred = generic_spreads
+            .iter()
+            .any(|&spread_type| self.jsx_relation_operand_defers(spread_type));
         let explicit_type = self.build_jsx_provided_attrs_object_type(&explicit_attrs);
         generic_spreads.push(explicit_type);
         let attrs_type = self.ctx.types.factory().intersection(generic_spreads);
         if !has_explicit_mismatch {
+            if spread_source_is_deferred {
+                return;
+            }
             if !crate::query_boundaries::checkers::jsx::contains_mapped_type_with_readonly_modifier(
                 self.ctx.types,
                 props_type,
@@ -239,7 +290,7 @@ impl<'a> CheckerState<'a> {
                     attrs_type,
                 );
             if !source_retains_explicit_object
-                && self.diagnostic_relation_boolean_guard(attrs_type, props_type)
+                && self.assign_relation_outcome(attrs_type, props_type).related
             {
                 return;
             }
@@ -1024,8 +1075,12 @@ impl<'a> CheckerState<'a> {
         {
             let alias_evaluated = self.evaluate_type_with_env(alias_hint);
             if alias_evaluated != TypeId::ERROR
-                && self.diagnostic_relation_boolean_guard(alias_evaluated, normalized)
-                && self.diagnostic_relation_boolean_guard(normalized, alias_evaluated)
+                && self
+                    .assign_relation_outcome(alias_evaluated, normalized)
+                    .related
+                && self
+                    .assign_relation_outcome(normalized, alias_evaluated)
+                    .related
             {
                 self.ctx.types.store_display_alias(normalized, alias_hint);
             }
@@ -1729,7 +1784,7 @@ impl<'a> CheckerState<'a> {
             // Build target: IntrinsicAttributes & spread_type
             let target = self.ctx.types.factory().intersection2(ia_type, spread_type);
 
-            if !self.diagnostic_relation_boolean_guard(spread_type, target) {
+            if !self.assign_relation_outcome(spread_type, target).related {
                 let spread_name = self.format_type(spread_type);
                 let target_name = format!("IntrinsicAttributes & {spread_name}");
                 let message = format_message(
@@ -1866,8 +1921,12 @@ impl<'a> CheckerState<'a> {
             if evaluated != display_type && evaluated != TypeId::ERROR {
                 if let Some(alias_hint) = alias_hint {
                     let alias_evaluated = self.evaluate_type_with_env(alias_hint);
-                    if self.diagnostic_relation_boolean_guard(alias_evaluated, evaluated)
-                        && self.diagnostic_relation_boolean_guard(evaluated, alias_evaluated)
+                    if self
+                        .assign_relation_outcome(alias_evaluated, evaluated)
+                        .related
+                        && self
+                            .assign_relation_outcome(evaluated, alias_evaluated)
+                            .related
                     {
                         self.ctx.types.store_display_alias(evaluated, alias_hint);
                     }
@@ -1894,7 +1953,9 @@ impl<'a> CheckerState<'a> {
     ) -> Option<bool> {
         if !initializer_is_bare_string_literal
             || original_property_type == expected_type
-            || self.diagnostic_relation_boolean_guard(actual_type, expected_type)
+            || self
+                .assign_relation_outcome(actual_type, expected_type)
+                .related
         {
             return None;
         }

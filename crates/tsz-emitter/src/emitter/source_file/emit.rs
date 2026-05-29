@@ -2276,8 +2276,24 @@ impl<'a> Printer<'a> {
                 .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }
 
-        if !self.hoisted_file_level_class_temps.is_empty() {
-            let var_decl = format!("var {};", self.hoisted_file_level_class_temps.join(", "));
+        // A class-lowering temp can be reachable from more than one hoist
+        // bucket (e.g. a class alias reserved as a file-level class temp that
+        // is also collected with the private-field var names). Emit each name
+        // in exactly one `var` declaration: a name already declared by the
+        // ref-vars or deferred buckets must not be re-declared here.
+        let file_level_class_temps: Vec<String> = self
+            .hoisted_file_level_class_temps
+            .iter()
+            .filter(|name| {
+                !ref_vars.contains(name)
+                    && !self
+                        .hoisted_deferred_static_class_result_temps
+                        .contains(name)
+            })
+            .cloned()
+            .collect();
+        if !file_level_class_temps.is_empty() {
+            let var_decl = format!("var {};", file_level_class_temps.join(", "));
             self.writer
                 .insert_line_at(hoist_byte_offset, hoist_line, &var_decl);
         }

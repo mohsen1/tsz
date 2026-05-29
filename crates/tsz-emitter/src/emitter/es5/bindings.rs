@@ -746,18 +746,24 @@ impl<'a> Printer<'a> {
             return;
         };
 
-        // downlevelIteration must be checked BEFORE the simple-ident optimization,
-        // because `__read` is required even when the initializer is a plain identifier
-        // (e.g. `const [value] = data` with downlevelIteration → `__read(data, 1)`).
-        if self.ctx.options.downlevel_iteration
-            && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN
-        {
-            self.emit_es5_destructuring_with_read_node(decl.name, decl.initializer, first);
+        // Empty object patterns skip __read entirely (no elements to iterate).
+        // Empty array patterns with downlevelIteration still fall through to
+        // `emit_es5_destructuring_with_read_node`, which computes a read limit of 0
+        // and emits `__read(source, 0)` — matching tsc behavior.
+        // Empty array patterns WITHOUT downlevelIteration use the fallback path.
+        let is_empty = self.binding_pattern_is_empty(decl.name);
+        let needs_downlevel_read = self.ctx.options.downlevel_iteration
+            && pattern_node.kind == syntax_kind_ext::ARRAY_BINDING_PATTERN;
+        if is_empty && !needs_downlevel_read {
+            self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
             return;
         }
 
-        if self.binding_pattern_is_empty(decl.name) {
-            self.emit_es5_destructuring_fallback(pattern_node, decl.initializer, first, true);
+        // downlevelIteration must be checked BEFORE the simple-ident optimization,
+        // because `__read` is required even when the initializer is a plain identifier
+        // (e.g. `const [value] = data` with downlevelIteration → `__read(data, 1)`).
+        if needs_downlevel_read {
+            self.emit_es5_destructuring_with_read_node(decl.name, decl.initializer, first);
             return;
         }
 

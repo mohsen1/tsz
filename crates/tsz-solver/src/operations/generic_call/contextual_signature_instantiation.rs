@@ -3,10 +3,32 @@
 use crate::inference::infer::{InferenceContext, InferenceVar};
 use crate::instantiation::instantiate::{TypeSubstitution, instantiate_type};
 use crate::operations::{AssignabilityChecker, CallEvaluator};
-use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeId, TypePredicate};
+use crate::types::{FunctionShape, ParamInfo, TupleElement, TypeId, TypeParamInfo, TypePredicate};
 use rustc_hash::FxHashMap;
 
 impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
+    fn direct_type_param_name(&self, type_id: TypeId) -> Option<tsz_common::Atom> {
+        crate::type_param_info(self.interner.as_type_database(), type_id).map(|info| info.name)
+    }
+
+    fn function_uses_only_naked_type_params(
+        &self,
+        func: &FunctionShape,
+        names: &[tsz_common::Atom],
+    ) -> bool {
+        if func.params.is_empty() {
+            return false;
+        }
+        let params_are_naked = func.params.iter().all(|param| {
+            self.direct_type_param_name(param.type_id)
+                .is_some_and(|name| names.contains(&name))
+        });
+        params_are_naked
+            && self
+                .direct_type_param_name(func.return_type)
+                .is_some_and(|name| names.contains(&name))
+    }
+
     pub(super) fn constrain_return_context_params_with_rest(
         &mut self,
         infer_ctx: &mut InferenceContext<'_>,
@@ -181,6 +203,166 @@ impl<'a, C: AssignabilityChecker> CallEvaluator<'a, C> {
             is_method: target_fn.is_method,
         };
         Some(self.interner.function(instantiated))
+    }
+
+    /// Check whether a generic function argument's type-parameter constraints are
+    /// strictly stronger than the corresponding outer type parameters of the call
+    /// site, which would make the argument structurally incompatible.
+    ///
+    /// Structural rule (mirrors PR #11702's same-arity check for assignment):
+    /// `<U extends C>(x: U) => U` is NOT assignable to `<T>(x: T) => T` when
+    /// `C` strictly narrows `T`'s effective constraint (`unknown` when `T` is
+    /// unconstrained). Only fires when the source and the outer target have the
+    /// same arity (same number of relevant type parameters).
+    ///
+    /// Returns `Some(generic_target_id)` (the reconstructed generic target, used
+    /// as the "expected" type in `ArgumentTypeMismatch`) when the check fails;
+    /// returns `None` when the argument is compatible.
+    pub(crate) fn check_generic_arg_stricter_constraint_mismatch(
+        &mut self,
+        arg_type: TypeId,
+        raw_param_type: TypeId,
+        outer_type_params: &[TypeParamInfo],
+    ) -> Option<TypeId> {
+        if outer_type_params.is_empty() {
+            return None;
+        }
+
+        // Source must be a generic function with at least one constraint.
+        let source_fn = Self::get_contextual_signature_cached(self.interner, arg_type)?;
+        tracing::trace!(
+            arg_type = arg_type.0,
+            source_tp_count = source_fn.type_params.len(),
+            "check_generic_arg_stricter_constraint_mismatch: source_fn"
+        );
+        let source_tp_names: Vec<_> = source_fn.type_params.iter().map(|tp| tp.name).collect();
+        let all_source_tps_constrained = source_fn
+            .type_params
+            .iter()
+            .all(|tp| tp.constraint.is_some());
+        let has_strict_source_constraint = source_fn
+            .type_params
+            .iter()
+            .filter_map(|tp| tp.constraint)
+            .any(|constraint| constraint != TypeId::UNKNOWN);
+        if source_tp_names.is_empty()
+            || !all_source_tps_constrained
+            || !has_strict_source_constraint
+            || !self.function_uses_only_naked_type_params(&source_fn, &source_tp_names)
+        {
+            tracing::trace!(
+                "check_generic_arg_stricter_constraint_mismatch: source shape is not strict naked generic, skip"
+            );
+            return None;
+        }
+
+        // Quick guard: raw_param_type must reference type parameters at all.
+        if !crate::visitor::contains_type_parameters(self.interner, raw_param_type) {
+            tracing::trace!(
+                raw_param_type = raw_param_type.0,
+                "check_generic_arg_stricter_constraint_mismatch: no type params in raw_param_type, skip"
+            );
+            return None;
+        }
+
+        // Get the target fn shape first so we know which names are local
+        // (bound inside raw_param_type itself, e.g. `<V>(x: T, y: V) => T`).
+        let target_fn = Self::get_contextual_signature_cached(self.interner, raw_param_type)?;
+        let local_tp_names: rustc_hash::FxHashSet<tsz_common::Atom> =
+            target_fn.type_params.iter().map(|tp| tp.name).collect();
+
+        let outer_tp_names: Vec<_> = outer_type_params.iter().map(|tp| tp.name).collect();
+        if !self.function_uses_only_naked_type_params(&target_fn, &outer_tp_names) {
+            tracing::trace!(
+                "check_generic_arg_stricter_constraint_mismatch: target shape is not naked outer generic, skip"
+            );
+            return None;
+        }
+
+        let mut all_tp_names_in_param = Vec::new();
+        for ty in target_fn
+            .params
+            .iter()
+            .map(|param| param.type_id)
+            .chain(std::iter::once(target_fn.return_type))
+        {
+            let name = self.direct_type_param_name(ty)?;
+            if local_tp_names.contains(&name) {
+                return None;
+            }
+            if !all_tp_names_in_param.contains(&name) {
+                all_tp_names_in_param.push(name);
+            }
+        }
+
+        let relevant_outer_tps: Vec<&TypeParamInfo> = outer_type_params
+            .iter()
+            .filter(|tp| all_tp_names_in_param.contains(&tp.name))
+            .collect();
+
+        tracing::trace!(
+            relevant_count = relevant_outer_tps.len(),
+            source_tp_count = source_fn.type_params.len(),
+            "check_generic_arg_stricter_constraint_mismatch: arity check"
+        );
+
+        // Only apply when the outer target arity matches the source arity.
+        if relevant_outer_tps.is_empty() || relevant_outer_tps.len() != source_fn.type_params.len()
+        {
+            tracing::trace!("check_generic_arg_stricter_constraint_mismatch: arity mismatch, skip");
+            return None;
+        }
+
+        // Build a locally-generic version of the target function by promoting the
+        // outer type params to local quantifiers. This is equivalent to what tsc
+        // does when it reconstructs a canonical `<T>(x: T) => T` generic for the
+        // comparison — the outer T becomes a fresh local quantifier, and the
+        // PR #11702 same-arity constraint check in `checking.rs` handles the rest.
+        let generic_target = FunctionShape {
+            type_params: relevant_outer_tps.iter().map(|&&tp| tp).collect(),
+            params: target_fn.params.clone(),
+            return_type: target_fn.return_type,
+            this_type: target_fn.this_type,
+            type_predicate: target_fn.type_predicate,
+            is_constructor: target_fn.is_constructor,
+            is_method: target_fn.is_method,
+        };
+        let generic_target_id = self.interner.function(generic_target);
+
+        // Delegate to the standard assignability check. PR #11702's fix in
+        // `checking.rs` (same-arity generic constraint comparison) handles
+        // detecting when the source constraint is strictly stronger.
+        let assignable = self.checker.is_assignable_to(arg_type, generic_target_id);
+        tracing::trace!(
+            arg_type = arg_type.0,
+            generic_target_id = generic_target_id.0,
+            assignable,
+            "check_generic_arg_stricter_constraint_mismatch: assignability result"
+        );
+        if assignable {
+            return None;
+        }
+
+        Some(generic_target_id)
+    }
+
+    pub(crate) fn arg_mismatch(
+        &mut self,
+        arg_type: TypeId,
+        raw_param_type: TypeId,
+        final_param_type: TypeId,
+        func: &FunctionShape,
+    ) -> Option<TypeId> {
+        if let Some(expected) =
+            self.conflicting_contextual_signature_instantiation_type(arg_type, final_param_type)
+        {
+            return Some(expected);
+        }
+        self.check_generic_arg_stricter_constraint_mismatch(
+            arg_type,
+            raw_param_type,
+            &func.type_params,
+        )
     }
 
     pub(super) fn conflicting_contextual_param_candidate_substitution(

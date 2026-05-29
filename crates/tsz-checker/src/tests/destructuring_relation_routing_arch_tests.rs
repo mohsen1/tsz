@@ -45,3 +45,56 @@ fn destructuring_default_checks_use_relation_outcome_boundary() {
         "destructuring default/property relation checks should not use raw boolean guards"
     );
 }
+
+#[test]
+fn object_rest_destructuring_uses_single_relation_outcome() {
+    let source = fs::read_to_string("src/assignability/assignment_checker/destructuring.rs")
+        .expect("failed to read assignment_checker/destructuring.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        compact_source
+            .contains("letoutcome=self.assign_relation_outcome(source,rest_target_type);")
+            && compact_source.contains("ifoutcome.related{return;}"),
+        "object rest destructuring should use the shared relation outcome for the rest target decision"
+    );
+    assert!(
+        !compact_source.contains("diagnostic_relation_boolean_guard(source,rest_target_type)"),
+        "object rest destructuring must not pre-gate the rest target decision with a raw boolean guard"
+    );
+}
+
+#[test]
+fn binding_pattern_default_inference_uses_relation_outcomes() {
+    let source = fs::read_to_string("src/types/queries/binding.rs")
+        .expect("failed to read types/queries/binding.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert_eq!(
+        compact_source
+            .matches("assign_relation_outcome(init_type,element_type).related")
+            .count(),
+        2,
+        "object and array binding default inference should route element/default compatibility through relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("is_assignable_to(init_type,element_type)"),
+        "binding default inference should not use raw boolean assignability gates"
+    );
+}
+
+#[test]
+fn state_destructuring_default_inference_uses_relation_outcome() {
+    let source = fs::read_to_string("src/state/variable_checking/destructuring.rs")
+        .expect("failed to read state/variable_checking/destructuring.rs");
+    let compact_source: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+
+    assert!(
+        compact_source.contains("assign_relation_outcome(init_type,element_type).related"),
+        "state destructuring default inference should route element/default compatibility through relation outcomes"
+    );
+    assert!(
+        !compact_source.contains("is_assignable_to(init_type,element_type)"),
+        "state destructuring default inference should not use a raw boolean assignability gate"
+    );
+}

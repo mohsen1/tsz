@@ -113,6 +113,46 @@ let y10 = unboxify(x10);
 }
 
 #[test]
+fn implemented_generic_mapped_helper_uses_lexical_parameter_surface() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Box<T> = {};
+type Boxified<T> = {
+    [P in keyof T]: Box<T[P]>;
+};
+function boxify<T>(obj: T): Boxified<T> {
+    return obj as any;
+}
+type A = { a: string };
+type B = { b: string };
+function f1(x: A | B | undefined) {
+    return boxify(x);
+}
+
+type Wrapped<Value> = {
+    [Key in keyof Value]: { current: Value[Key] };
+};
+function wrap<Value>(value: Value): Wrapped<Value> {
+    return value as any;
+}
+function f2(item: A | B | undefined) {
+    return wrap(item);
+}
+"#,
+    );
+
+    assert!(
+        output.contains("declare function f1(x: A | B | undefined): Boxified<A | B | undefined>;"),
+        "Expected mapped helper return to use the source-visible parameter annotation: {output}"
+    );
+    assert!(
+        output
+            .contains("declare function f2(item: A | B | undefined): Wrapped<A | B | undefined>;"),
+        "Expected renamed helper and parameter names to use the same structural surface: {output}"
+    );
+}
+
+#[test]
 fn test_mutable_array_literal_binding_widens_homogeneous_literals() {
     let source = r#"
 let [hello, brave] = ["Hello", "Brave"];

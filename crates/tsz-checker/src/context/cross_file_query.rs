@@ -161,6 +161,40 @@ impl<'a> CheckerContext<'a> {
         None
     }
 
+    /// Whether `sym_id` ultimately denotes a class declaration, following
+    /// import-alias / re-export hops across files.
+    ///
+    /// This gates TS4112 ("...does not extend another class"): a class whose
+    /// `extends` target resolves to a real class *does* extend another class,
+    /// even when tsz cannot resolve that base's full instance type at the use
+    /// site (for example a cross-file generic base). tsc reports TS4112 only
+    /// when there is no class base at all (no `extends` clause, an `extends`
+    /// target that is an interface, or an unresolved name), so the gate must
+    /// key off whether the target is a class rather than off whether the base
+    /// type happened to resolve.
+    pub fn heritage_symbol_resolves_to_class(&self, sym_id: SymbolId) -> bool {
+        let mut current = sym_id;
+        for _ in 0..16 {
+            let Some(symbol) = self.cross_file_cache_symbol(current) else {
+                return false;
+            };
+            if symbol.has_any_flags(symbol_flags::CLASS) {
+                return true;
+            }
+            if !symbol.has_any_flags(symbol_flags::ALIAS) {
+                return false;
+            }
+            let Some(next) = self.resolve_import_alias_and_register(current) else {
+                return false;
+            };
+            if next == current {
+                return false;
+            }
+            current = next;
+        }
+        false
+    }
+
     const fn source_file_symbol_type_requester_key(requester_file_idx: u32) -> u32 {
         requester_file_idx.saturating_add(1)
     }

@@ -660,7 +660,6 @@ impl<'a> CheckerState<'a> {
         self.rewrite_variadic_tuples1_fingerprints(&sf.text);
         self.rewrite_type_argument_inference_with_constraints_fingerprints(&sf.text);
         self.rewrite_recursive_type_references1_fingerprints(&sf.text);
-        self.rewrite_audit_followup_conformance_fingerprints(&sf.text);
     }
 
     fn is_index_signatures1_fixture(source_text: &str) -> bool {
@@ -1080,24 +1079,6 @@ impl<'a> CheckerState<'a> {
                 diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE,
                 message,
             );
-        }
-    }
-
-    fn rewrite_audit_followup_conformance_fingerprints(&mut self, source_text: &str) {
-        use tsz_common::diagnostics::diagnostic_codes;
-
-        if source_text.contains("interface Comparable<T>")
-            && source_text.contains("class A<T> implements Comparable<T>")
-        {
-            for diag in &mut self.ctx.diagnostics {
-                if diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE
-                    && diag.message_text
-                        == "Type 'A<number>' is not assignable to type 'I<string>'."
-                {
-                    diag.message_text =
-                        "Type 'A<number>' is not assignable to type 'Comparable<string>'.".into();
-                }
-            }
         }
     }
 

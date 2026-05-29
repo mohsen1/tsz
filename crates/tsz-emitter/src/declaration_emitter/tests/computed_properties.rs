@@ -586,3 +586,92 @@ namespace X.A.B.C {
         "Expected exported empty inner namespace to be preserved inside the declare namespace: {output}"
     );
 }
+
+// =============================================================================
+// Type-asserted arrow body reuses the source assertion type node (entity-name
+// computed property keys are preserved verbatim instead of being resolved to
+// their literal values). tsc reuses the `as`-cast type node in declaration
+// emit, so `() => null! as { [n]: T }` keeps the `[n]` reference rather than
+// flattening it to the literal key. See `declarationEmitPartialReuseComputedProperty`.
+// =============================================================================
+
+#[test]
+fn asserted_arrow_body_preserves_entity_name_computed_keys() {
+    let output = emit_dts_with_binding(
+        r#"
+const key = "A";
+export const o = () => null! as { [key]: string, foo: string };
+"#,
+    );
+    assert!(
+        output.contains("[key]: string"),
+        "Expected entity-name computed key `[key]` to be preserved verbatim: {output}"
+    );
+    assert!(
+        output.contains("foo: string"),
+        "Expected sibling literal member to be preserved: {output}"
+    );
+    assert!(
+        !output.contains("A: string"),
+        "Computed key must NOT be resolved to its literal value `A`: {output}"
+    );
+}
+
+#[test]
+fn asserted_arrow_body_preserves_renamed_entity_name_computed_keys() {
+    // Renaming the entity-name reference must not change the behavior — the rule
+    // is structural ("the key is an entity-name expression"), not name-specific.
+    let output = emit_dts_with_binding(
+        r#"
+const tag = "B";
+export const make = () => null! as { [tag]: number, bar: number };
+"#,
+    );
+    assert!(
+        output.contains("[tag]: number"),
+        "Expected renamed entity-name computed key `[tag]` to be preserved verbatim: {output}"
+    );
+    assert!(
+        !output.contains("B: number"),
+        "Computed key must NOT be resolved to its literal value `B`: {output}"
+    );
+}
+
+#[test]
+fn asserted_arrow_body_preserves_numeric_entity_name_computed_keys() {
+    let output = emit_dts_with_binding(
+        r#"
+const poz = 1;
+const neg = -1;
+export const o = () => null! as { [poz]: number, [neg]: number };
+"#,
+    );
+    assert!(
+        output.contains("[poz]: number"),
+        "Expected entity-name computed key `[poz]` to be preserved verbatim: {output}"
+    );
+    assert!(
+        output.contains("[neg]: number"),
+        "Expected entity-name computed key `[neg]` to be preserved verbatim: {output}"
+    );
+    assert!(
+        !output.contains("1: number") && !output.contains("[-1]: number"),
+        "Computed keys must NOT be resolved to their literal values: {output}"
+    );
+}
+
+#[test]
+fn asserted_arrow_body_reuses_source_type_for_plain_annotation() {
+    // Negative/fallback case: a non-computed assertion still reuses the source
+    // type node, matching tsc's node-reuse behavior, and is not silently
+    // dropped or replaced with `any`.
+    let output = emit_dts_with_binding(
+        r#"
+export const f = () => null! as { value: string };
+"#,
+    );
+    assert!(
+        output.contains("() =>") && output.contains("value: string"),
+        "Expected source assertion object type to be reused: {output}"
+    );
+}

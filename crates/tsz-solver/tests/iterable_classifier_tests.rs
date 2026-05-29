@@ -459,6 +459,67 @@ fn async_iterable_object_returns_object_shape() {
 }
 
 #[test]
+fn async_iterable_type_parameter_carries_constraint() {
+    // `for await ... of` over a type parameter resolves to the parameter's
+    // apparent type (its constraint). The classifier must surface the
+    // constraint so the checker can recurse into it, mirroring the sync path.
+    let interner = TypeInterner::new();
+    let constraint = interner.lazy(DefId(7));
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("T"),
+        constraint: Some(constraint),
+        default: None,
+        is_const: false,
+    });
+    match classify_async_iterable_type(&interner, tp) {
+        AsyncIterableTypeKind::TypeParameter { constraint: c } => assert_eq!(c, Some(constraint)),
+        other => panic!("expected TypeParameter, got {other:?}"),
+    }
+}
+
+#[test]
+fn async_iterable_type_parameter_without_constraint_yields_none() {
+    // Renamed bound variable (`Elem`) proves the arm is structural, not keyed
+    // on a particular type-parameter spelling.
+    let interner = TypeInterner::new();
+    let tp = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("Elem"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    match classify_async_iterable_type(&interner, tp) {
+        AsyncIterableTypeKind::TypeParameter { constraint } => assert_eq!(constraint, None),
+        other => panic!("expected TypeParameter, got {other:?}"),
+    }
+}
+
+#[test]
+fn async_iterable_intersection_returns_intersection_members() {
+    let interner = TypeInterner::new();
+    let tp_a = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("A"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let tp_b = interner.type_param(TypeParamInfo {
+        name: interner.intern_string("B"),
+        constraint: None,
+        default: None,
+        is_const: false,
+    });
+    let isect = interner.intersection(vec![tp_a, tp_b]);
+    match classify_async_iterable_type(&interner, isect) {
+        AsyncIterableTypeKind::Intersection(members) => {
+            assert!(members.contains(&tp_a));
+            assert!(members.contains(&tp_b));
+        }
+        other => panic!("expected Intersection, got {other:?}"),
+    }
+}
+
+#[test]
 fn async_iterable_readonly_returns_inner() {
     let interner = TypeInterner::new();
     let inner = interner.array(TypeId::NUMBER);

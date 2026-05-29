@@ -91,8 +91,12 @@ impl<'a> Printer<'a> {
         if let Some(names) = self.file_level_class_temp_reservations.get_mut(&class_idx)
             && let Some(name) = names.pop_front()
         {
-            self.hoisted_file_level_class_temps
-                .retain(|temp| temp != &name);
+            return name;
+        }
+
+        // Honour pre-allocated names reserved by reserve_es5_computed_key_inner_class_temps
+        // so that the class alias gets the same slot that was counted before the key temp.
+        if let Some(name) = self.preallocated_temp_names.pop_front() {
             return name;
         }
 

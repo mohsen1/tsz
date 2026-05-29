@@ -44,6 +44,9 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        let spread_source_is_deferred = generic_spread_types
+            .iter()
+            .any(|&spread_type| self.jsx_relation_operand_defers(spread_type));
         let explicit_attrs_type = self.build_jsx_provided_attrs_object_type(provided_attrs);
         let mut members = generic_spread_types;
         members.push(explicit_attrs_type);
@@ -63,7 +66,17 @@ impl<'a> CheckerState<'a> {
             let Some(expected_type) = expected_type else {
                 return false;
             };
-            !self.diagnostic_relation_boolean_guard(*actual_type, expected_type)
+            // A deferred conditional on either operand is comparable for `tsc`;
+            // the structural relation cannot soundly disprove it, so it is not a
+            // genuine mismatch.
+            if self.jsx_relation_operand_defers(*actual_type)
+                || self.jsx_relation_operand_defers(expected_type)
+            {
+                return false;
+            }
+            !self
+                .assign_relation_outcome(*actual_type, expected_type)
+                .related
         });
 
         let has_alias_string_prop_mismatch = provided_attrs.iter().any(|(name, actual_type)| {
@@ -77,9 +90,22 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
+        // A spread whose source carries a deferred conditional over a type
+        // parameter (e.g. `Omit`/`Overwrite` of an unresolved `T`) is an
+        // instantiable, comparable type for `tsc`; it does not drive a
+        // whole-object TS2322. Without a concrete explicit-attribute mismatch
+        // the structural relation cannot soundly disprove assignability, so
+        // emitting here is a false positive.
         if !has_explicit_prop_mismatch
             && !has_alias_string_prop_mismatch
-            && self.diagnostic_relation_boolean_guard(attrs_type, props_type)
+            && spread_source_is_deferred
+        {
+            return false;
+        }
+
+        if !has_explicit_prop_mismatch
+            && !has_alias_string_prop_mismatch
+            && self.assign_relation_outcome(attrs_type, props_type).related
         {
             return false;
         }

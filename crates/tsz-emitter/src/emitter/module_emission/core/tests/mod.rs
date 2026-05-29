@@ -4,6 +4,7 @@ use crate::lowering::LoweringPass;
 use tsz_common::ScriptTarget;
 
 mod cjs_module_exports;
+mod cjs_named_import_reexport_tests;
 mod cjs_namespace_alias;
 mod esm_class_namespace;
 

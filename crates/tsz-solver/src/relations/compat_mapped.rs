@@ -488,6 +488,12 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
 
         let source_template = s_mapped.template;
         let mut target_template = t_mapped.template;
+        if let Some(assignable) =
+            self.deferred_indexed_mapped_templates_assignable(source_template, target_template)
+        {
+            return Some(assignable);
+        }
+
         let source_param = self.interner.type_param(s_mapped.type_param);
         let target_key_substitution =
             TypeSubstitution::single(t_mapped.type_param.name, source_param);
@@ -512,6 +518,13 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         self.subtype
             .type_param_equivalences
             .push((source_param, target_param));
+
+        if let Some(assignable) =
+            self.deferred_indexed_mapped_templates_assignable(source_template, target_template)
+        {
+            self.subtype.type_param_equivalences.truncate(equiv_start);
+            return Some(assignable);
+        }
 
         let structurally_assignable =
             self.mapped_template_structurally_assignable(source_template, target_template);
@@ -543,6 +556,49 @@ impl<'a, R: TypeResolver> CompatChecker<'a, R> {
         let result = self.subtype.is_subtype_of(source_template, target_template);
         self.subtype.type_param_equivalences.truncate(equiv_start);
         Some(result)
+    }
+
+    fn deferred_indexed_mapped_templates_assignable(
+        &mut self,
+        source_template: TypeId,
+        target_template: TypeId,
+    ) -> Option<bool> {
+        let (source_obj, source_idx) = index_access_parts(self.interner, source_template)?;
+        let (target_obj, target_idx) = index_access_parts(self.interner, target_template)?;
+        if !self.homomorphic_mapped_sources_match(source_idx, target_idx) {
+            return None;
+        }
+
+        Some(self.deferred_indexed_object_source_assignable(source_obj, target_obj))
+    }
+
+    fn deferred_indexed_object_source_assignable(
+        &mut self,
+        source_obj: TypeId,
+        target_obj: TypeId,
+    ) -> bool {
+        if self.homomorphic_mapped_sources_match(source_obj, target_obj) {
+            return true;
+        }
+
+        if let (Some(source_param), Some(target_param)) = (
+            type_param_info(self.interner, source_obj),
+            type_param_info(self.interner, target_obj),
+        ) {
+            if source_param.constraint.is_some_and(|constraint| {
+                self.homomorphic_mapped_sources_match(constraint, target_obj)
+            }) {
+                return true;
+            }
+            if target_param.constraint.is_some_and(|constraint| {
+                self.homomorphic_mapped_sources_match(constraint, source_obj)
+            }) {
+                return false;
+            }
+        }
+
+        self.configure_subtype(self.strict_function_types);
+        self.subtype.is_subtype_of(source_obj, target_obj)
     }
 
     /// Returns whether the `as` clause is the identity — the bare iteration

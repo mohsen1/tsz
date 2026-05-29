@@ -415,13 +415,21 @@ impl<'a> Printer<'a> {
         self.emit_param_prologue(transforms);
         let hoist_anchor = is_function_body_block.then(|| self.capture_hoist_anchor());
 
-        for &stmt_idx in &block.statements.nodes {
-            let before_len = self.writer.len();
-            self.emit(stmt_idx);
-            if self.writer.len() > before_len {
-                self.write_line();
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
             }
-        }
+        };
+        self.emit_block_statement_list_with_comments(
+            &stmts,
+            0,
+            block_close_pos,
+            is_function_body_block,
+        );
 
         self.ctx.block_scope_state.exit_scope();
         if let Some(anchor) = hoist_anchor {
@@ -429,6 +437,44 @@ impl<'a> Printer<'a> {
         }
         self.decrease_indent();
         self.write("}");
+    }
+
+    /// Emit the statements of a downleveled async body block (the body that
+    /// becomes `__awaiter(this, ..., function* () { ... })`) through the shared
+    /// comment-aware per-statement loop.
+    ///
+    /// The naive `self.emit(stmt); self.write_line();` loops that previously
+    /// drove these wrappers dropped same-line trailing comments on body
+    /// statements (e.g. `const req = yield foo; // ONE`). Routing them through
+    /// `emit_block_statement_list_with_comments` preserves leading/trailing
+    /// comment handling and `comment_emit_idx` advancement exactly as the
+    /// canonical `emit_block` loop does.
+    ///
+    /// `block_idx` is the original async body block node. Directive prologues
+    /// (e.g. `"use strict"`) are not re-emitted here because the awaiter body
+    /// itself is not a fresh module/function-source boundary that introduces
+    /// one; any leading string-literal statement is emitted as an ordinary
+    /// statement, matching tsc.
+    pub(in crate::emitter) fn emit_async_body_block_statements(&mut self, block_idx: NodeIndex) {
+        let Some(block_node) = self.arena.get(block_idx) else {
+            return;
+        };
+        let Some(block) = self.arena.get_block(block_node) else {
+            return;
+        };
+        let stmts: Vec<NodeIndex> = block.statements.nodes.to_vec();
+        // Position of the body block's closing `}`, used as the upper bound for
+        // trailing-comment scanning on the final statement (so the awaiter's own
+        // synthetic `})` does not steal the comment).
+        let block_close_pos = {
+            let close_end = self.find_block_closing_brace_end(block_node);
+            if close_end > block_node.pos {
+                close_end - 1
+            } else {
+                block_node.end
+            }
+        };
+        self.emit_block_statement_list_with_comments(&stmts, 0, block_close_pos, true);
     }
 
     fn skip_block_opening_line_comments(

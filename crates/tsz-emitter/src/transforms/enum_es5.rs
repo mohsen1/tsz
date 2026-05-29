@@ -527,6 +527,35 @@ impl<'a> EnumES5Transformer<'a> {
                 .get(member_data.name)
                 .is_some_and(|n| n.kind == syntax_kind_ext::COMPUTED_PROPERTY_NAME);
 
+            // Skip members whose name resolved to empty and are not a
+            // `PrivateIdentifier` (which gets its own error-recovery emit path).
+            // This covers parse-error recovery nodes such as invalid characters
+            // (e.g. `¬`) inside an enum body: those recover into an empty
+            // `Identifier` node, and tsc discards the member entirely rather
+            // than emitting a spurious `E[E[""] = 0] = "";` line.
+            //
+            // A member explicitly named with the empty string literal
+            // (`enum E { "" }`) is a *legitimate* member whose name node is a
+            // `StringLiteral`/`NoSubstitutionTemplateLiteral`. tsc emits it as
+            // `E[E[""] = n] = "";`, so we must not treat that empty name as a
+            // recovery node. Distinguish by the name node's syntax kind, not by
+            // the resolved text.
+            let is_private_identifier = self
+                .arena
+                .get(member_data.name)
+                .is_some_and(|n| n.kind == SyntaxKind::PrivateIdentifier as u16);
+            let is_string_literal_name = self.arena.get(member_data.name).is_some_and(|n| {
+                n.kind == SyntaxKind::StringLiteral as u16
+                    || n.kind == SyntaxKind::NoSubstitutionTemplateLiteral as u16
+            });
+            if member_name.is_empty()
+                && !is_computed
+                && !is_private_identifier
+                && !is_string_literal_name
+            {
+                continue;
+            }
+
             // For computed property names, get the expression as an IR node
             let computed_key = if is_computed {
                 self.arena
@@ -1377,7 +1406,16 @@ impl<'a> EnumES5Transformer<'a> {
         match node.kind {
             k if k == SyntaxKind::NumericLiteral as u16 => {
                 let lit = self.arena.get_literal(node)?;
-                lit.text.parse().ok()
+                // Parse hex/binary/octal/separator forms (e.g. `0xFF_FF_FF_FF`)
+                // via the shared numeric parser, falling back to a plain decimal
+                // integer parse. Only fold to an integer when the parsed value is
+                // an exact, in-range integer (float members use the float path).
+                lit.text.parse::<i64>().ok().or_else(|| {
+                    tsz_common::numeric::parse_numeric_literal_value(&lit.text).and_then(|v| {
+                        (v.is_finite() && v == v.trunc() && v.abs() < 9_007_199_254_740_992.0)
+                            .then_some(v as i64)
+                    })
+                })
             }
             k if k == SyntaxKind::Identifier as u16 => {
                 // Resolve references to previously evaluated enum members
@@ -1491,18 +1529,30 @@ impl<'a> EnumES5Transformer<'a> {
                     o if o == SyntaxKind::AsteriskToken as u16 => left.checked_mul(right),
                     o if o == SyntaxKind::SlashToken as u16 => (right != 0).then(|| left / right),
                     o if o == SyntaxKind::PercentToken as u16 => (right != 0).then(|| left % right),
+                    // Bitwise shifts use ECMAScript int32 semantics: the left
+                    // operand is coerced to i32, the shift count is the low 5
+                    // bits of the right operand, and `<<`/`>>` sign-extend while
+                    // `>>>` is an unsigned (zero-fill) shift. Mirrors the masking
+                    // in `enums/evaluator.rs` and `const_enum_eval.rs`.
                     o if o == SyntaxKind::LessThanLessThanToken as u16 => {
-                        Some(left.wrapping_shl(right as u32))
+                        Some(i64::from((left as i32).wrapping_shl(right as u32 & 0x1f)))
                     }
                     o if o == SyntaxKind::GreaterThanGreaterThanToken as u16 => {
-                        Some(left.wrapping_shr(right as u32))
+                        Some(i64::from((left as i32).wrapping_shr(right as u32 & 0x1f)))
                     }
                     o if o == SyntaxKind::GreaterThanGreaterThanGreaterThanToken as u16 => {
-                        Some((left as u64).wrapping_shr(right as u32) as i64)
+                        Some(i64::from((left as u32).wrapping_shr(right as u32 & 0x1f)))
                     }
-                    o if o == SyntaxKind::AmpersandToken as u16 => Some(left & right),
-                    o if o == SyntaxKind::BarToken as u16 => Some(left | right),
-                    o if o == SyntaxKind::CaretToken as u16 => Some(left ^ right),
+                    // Bitwise and/or/xor also operate on int32 in ECMAScript.
+                    o if o == SyntaxKind::AmpersandToken as u16 => {
+                        Some(i64::from(left as i32 & right as i32))
+                    }
+                    o if o == SyntaxKind::BarToken as u16 => {
+                        Some(i64::from(left as i32 | right as i32))
+                    }
+                    o if o == SyntaxKind::CaretToken as u16 => {
+                        Some(i64::from(left as i32 ^ right as i32))
+                    }
                     _ => None,
                 }
             }
@@ -1512,7 +1562,8 @@ impl<'a> EnumES5Transformer<'a> {
                 let op = unary.operator;
                 match op {
                     o if o == SyntaxKind::MinusToken as u16 => Some(operand.checked_neg()?),
-                    o if o == SyntaxKind::TildeToken as u16 => Some(!operand),
+                    // Bitwise NOT operates on int32 in ECMAScript.
+                    o if o == SyntaxKind::TildeToken as u16 => Some(i64::from(!(operand as i32))),
                     o if o == SyntaxKind::ExclamationToken as u16 => Some(i64::from(operand == 0)),
                     o if o == SyntaxKind::PlusToken as u16 => Some(operand),
                     _ => None,

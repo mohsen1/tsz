@@ -161,10 +161,9 @@ impl<'a> CheckerState<'a> {
                         && let Some(raw_zero_param_child_type) =
                             self.raw_single_jsx_zero_param_callback_type(attributes_idx)
                         && !matches!(raw_zero_param_child_type, TypeId::ANY | TypeId::ERROR)
-                        && !self.diagnostic_relation_boolean_guard(
-                            raw_zero_param_child_type,
-                            children_type,
-                        )
+                        && !self
+                            .assign_relation_outcome(raw_zero_param_child_type, children_type)
+                            .related
                     {
                         self.check_jsx_single_child_assignable(
                             attributes_idx,
@@ -551,7 +550,8 @@ impl<'a> CheckerState<'a> {
             return false;
         }
 
-        self.diagnostic_relation_boolean_guard(actual_child_type, children_type)
+        self.assign_relation_outcome(actual_child_type, children_type)
+            .related
     }
 
     fn single_jsx_child_is_function_like(&self, attributes_idx: NodeIndex) -> bool {
@@ -1169,7 +1169,8 @@ impl<'a> CheckerState<'a> {
     }
 
     fn children_type_accepts_text(&mut self, children_type: TypeId) -> bool {
-        self.diagnostic_relation_boolean_guard(TypeId::STRING, children_type)
+        self.assign_relation_outcome(TypeId::STRING, children_type)
+            .related
     }
 
     fn check_jsx_multiple_children_assignable(
@@ -1218,7 +1219,10 @@ impl<'a> CheckerState<'a> {
         if actual_children_type == TypeId::ANY || actual_children_type == TypeId::ERROR {
             return;
         }
-        if self.diagnostic_relation_boolean_guard(actual_children_type, children_type) {
+        if self
+            .assign_relation_outcome(actual_children_type, children_type)
+            .related
+        {
             return;
         }
 
@@ -1243,7 +1247,10 @@ impl<'a> CheckerState<'a> {
             return;
         }
 
-        if self.diagnostic_relation_boolean_guard(actual_child_type, children_type) {
+        if self
+            .assign_relation_outcome(actual_child_type, children_type)
+            .related
+        {
             return;
         }
 
@@ -1430,14 +1437,20 @@ impl<'a> CheckerState<'a> {
             if matches!(actual_child_type, TypeId::ANY | TypeId::ERROR) {
                 continue;
             }
-            if self.diagnostic_relation_boolean_guard(actual_child_type, expected_child_type) {
+            if self
+                .assign_relation_outcome(actual_child_type, expected_child_type)
+                .related
+            {
                 continue;
             }
             // Fallback: when a child doesn't match the extracted array element type,
             // also check against the original (unfiltered) children type. This handles
             // cases where the children type is a union including non-array members like
             // `{}` (from ReactFragment) that subsume the child type.
-            if self.diagnostic_relation_boolean_guard(actual_child_type, original_children_type) {
+            if self
+                .assign_relation_outcome(actual_child_type, original_children_type)
+                .related
+            {
                 continue;
             }
 
@@ -1528,8 +1541,12 @@ impl<'a> CheckerState<'a> {
 
         let resolved_target = self.resolve_type_for_property_access(target_type);
         let resolved_instance = self.resolve_type_for_property_access(instance_type);
-        if !(self.diagnostic_relation_boolean_guard(resolved_instance, resolved_target)
-            && self.diagnostic_relation_boolean_guard(resolved_target, resolved_instance))
+        if !(self
+            .assign_relation_outcome(resolved_instance, resolved_target)
+            .related
+            && self
+                .assign_relation_outcome(resolved_target, resolved_instance)
+                .related)
         {
             return false;
         }
@@ -1721,7 +1738,10 @@ impl<'a> CheckerState<'a> {
         // Array<ReactNode>` is a member of the union, but we can't detect it structurally
         // because it's an interface extending Array rather than a direct Array type.
         let array_of_children = self.ctx.types.factory().array(type_id);
-        if self.diagnostic_relation_boolean_guard(array_of_children, type_id) {
+        if self
+            .assign_relation_outcome(array_of_children, type_id)
+            .related
+        {
             return true;
         }
 

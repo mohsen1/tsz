@@ -1993,3 +1993,52 @@ fn test_document_highlights_does_not_panic_on_circular_heritage() {
         "documentHighlights must return without crashing on circular heritage; response: {resp:?}"
     );
 }
+
+/// Regression: `ScopeWalker::collect_references` previously used
+/// `stacker::remaining_stack()` inside a `maybe_grow` closure as its depth
+/// guard.  Inside a `maybe_grow` closure the remaining-stack probe always
+/// returns ~2 MB (the new segment's headroom), so the guard never fired and
+/// `stacker` kept chaining new segments until the OS killed the process with
+/// SIGABRT.  The fix replaces the probe with an explicit depth counter shared
+/// by all three recursive tree-walk functions (`walk_to_node`,
+/// `walk_for_scope`, `collect_references`).
+///
+/// This test constructs a file whose AST nesting is deep enough that the old
+/// code would exhaust the stacker budget many times over, while the fixed code
+/// should terminate immediately (depth limit trips, returns empty highlights).
+#[test]
+fn test_document_highlights_depth_guard_prevents_stacker_runaway() {
+    let mut server = make_server();
+    // Build a deeply-nested function tree (200 levels of immediately-invoked
+    // lambdas). The resulting AST has ~200 nesting levels, which is well
+    // within the 4096 depth limit but deep enough to exercise the guard path
+    // in environments with small per-segment budgets.
+    let depth = 200usize;
+    let mut source = String::new();
+    source.push_str("var target = 0;\n");
+    for _ in 0..depth {
+        source.push_str("(function() {\n");
+    }
+    source.push_str("target;\n");
+    for _ in 0..depth {
+        source.push_str("})();\n");
+    }
+    let file_path = "/tests/cases/fourslash/deep_nesting.ts";
+    server
+        .open_files
+        .insert(file_path.to_string(), source.clone());
+    let req = make_request(
+        "documentHighlights",
+        serde_json::json!({
+            "file": file_path,
+            "line": depth as u32 + 1,
+            "offset": 1,
+            "filesToSearch": [file_path],
+        }),
+    );
+    let resp = server.handle_tsserver_request(req);
+    assert!(
+        resp.success,
+        "documentHighlights must not crash on deeply-nested AST; response: {resp:?}"
+    );
+}

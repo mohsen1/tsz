@@ -109,6 +109,11 @@ pub struct TypeFormatter<'a> {
     /// should show structural inputs instead of chasing nested application
     /// display aliases.
     skip_application_display_alias_chase: bool,
+    /// Internal guard used while formatting generic application arguments.
+    /// In that context, tsc preserves indexed-access alias spelling such as
+    /// `Partial<T>[keyof T]` instead of simplifying the nested access to
+    /// `T[keyof T] | undefined`.
+    preserve_application_arg_index_alias_surface: bool,
     /// Specific non-generic type aliases whose name should not be used for
     /// diagnostic display. This is used for `typeof` aliases in assignability
     /// messages where tsc prints the target's structural type rather than the
@@ -297,6 +302,25 @@ impl<'a> TypeFormatter<'a> {
     ) -> Option<String> {
         let mapped_id = match self.interner.lookup(obj) {
             Some(TypeData::Mapped(id)) => id,
+            Some(TypeData::Application(app_id)) => {
+                let app = self.interner.type_application(app_id);
+                let Some(TypeData::Lazy(def_id)) = self.interner.lookup(app.base) else {
+                    return None;
+                };
+                let def_store = self.def_store?;
+                let def = def_store.get(def_id)?;
+                let body = def.body?;
+                let instantiated = crate::computation::instantiate_generic(
+                    self.interner,
+                    body,
+                    &def.type_params,
+                    &app.args,
+                );
+                match self.interner.lookup(instantiated) {
+                    Some(TypeData::Mapped(id)) => id,
+                    _ => return None,
+                }
+            }
             _ => return None,
         };
         let mapped = self.interner.mapped_type(mapped_id);
@@ -379,6 +403,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,
@@ -613,6 +638,7 @@ impl<'a> TypeFormatter<'a> {
             preserve_array_generic_form: false,
             skip_application_alias_names: false,
             skip_application_display_alias_chase: false,
+            preserve_application_arg_index_alias_surface: false,
             skip_type_alias_def_ids: FxHashSet::default(),
             skipped_type_alias_expansion_visiting: FxHashSet::default(),
             builtin_iterator_return_type: None,

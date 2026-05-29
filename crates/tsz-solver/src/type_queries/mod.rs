@@ -27,6 +27,7 @@
 //! }
 //! ```
 
+pub mod assertion_overlap;
 pub mod classifiers;
 mod core;
 pub mod data;
@@ -68,8 +69,8 @@ pub use extended::{
     IndexKeyKind, LazyTypeKind, LiteralKeyKind, LiteralTypeKind, MappedConstraintKind,
     NamespaceMemberKind, PromiseTypeKind, PropertyAccessResolutionKind, StringLiteralKeyKind,
     TypeArgumentExtractionKind, TypeQueryKind, TypeResolutionKind, are_same_base_literal_kind,
-    classify_array_like, classify_element_indexable, classify_for_call_signatures,
-    classify_for_contextual_literal, classify_for_lazy_resolution,
+    classify_array_like, classify_element_indexable, classify_element_indexable_with_resolver,
+    classify_for_call_signatures, classify_for_contextual_literal, classify_for_lazy_resolution,
     classify_for_property_access_resolution, classify_for_string_literal_keys,
     classify_for_type_argument_extraction, classify_for_type_resolution, classify_index_key,
     classify_literal_key, classify_literal_type, classify_mapped_constraint,

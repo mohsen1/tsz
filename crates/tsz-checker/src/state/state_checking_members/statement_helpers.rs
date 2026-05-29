@@ -212,8 +212,12 @@ impl<'a> CheckerState<'a> {
             // assignable to number or string, tsc's evaluator would likely succeed
             // (the import resolves to a const with a literal value).
             if eval_result.is_none()
-                && (self.diagnostic_relation_boolean_guard(init_type, TypeId::NUMBER)
-                    || self.diagnostic_relation_boolean_guard(init_type, TypeId::STRING))
+                && (self
+                    .assign_relation_outcome(init_type, TypeId::NUMBER)
+                    .related
+                    || self
+                        .assign_relation_outcome(init_type, TypeId::STRING)
+                        .related)
             {
                 continue;
             }

@@ -125,6 +125,11 @@ fn for_of_empty_array_assignment_target_advances_iterator_without_binding() {
         output.contains(".value;"),
         "Empty for-of assignment patterns must still access .value to advance the iterator.\nOutput:\n{output}"
     );
+    // Empty assignment patterns must NOT schedule __read.
+    assert!(
+        !output.contains("var __read") && !output.contains("__read("),
+        "Empty for-of assignment patterns must not schedule __read.\nOutput:\n{output}"
+    );
 }
 
 #[test]

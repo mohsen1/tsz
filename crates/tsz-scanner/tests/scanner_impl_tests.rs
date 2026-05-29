@@ -373,6 +373,44 @@ fn test_template_rescan_invalid_hex_escape() {
     );
 }
 
+#[test]
+fn test_template_fixed_unicode_lone_surrogate_is_valid_escape() {
+    use tsz_scanner::SyntaxKind;
+    use tsz_scanner::scanner_impl::{ScannerState, TokenFlags};
+
+    // A fixed four-hex-digit `\uXXXX` escape that decodes to a lone surrogate
+    // code unit (0xD800..=0xDFFF) is a *valid* escape with a real cooked value
+    // in `tsc`, so it must NOT set `ContainsInvalidEscape`. If it did, tagged
+    // templates at ES2015/ES2017 would be spuriously downleveled to
+    // `__makeTemplateObject([..., void 0], [...])`.
+    //
+    // We vary the surrogate value (high surrogate, low surrogate, and an
+    // unrelated surrogate-range value) so the rule is structural, not keyed to
+    // any specific character or test text.
+    for src in [
+        r"}\uD83D`",       // high surrogate
+        r"}\uDCA9`",       // low surrogate
+        r"}\uDABC`",       // arbitrary surrogate-range code unit
+        r"}\uD83D\uDCA9`", // adjacent high+low surrogate escapes (valid pair)
+    ] {
+        let mut scanner = ScannerState::new(src.to_string(), true);
+
+        scanner.scan();
+        assert_eq!(scanner.get_token(), SyntaxKind::CloseBraceToken);
+
+        let token = scanner.re_scan_template_token(false);
+        assert_eq!(token, SyntaxKind::TemplateTail, "src={src:?}");
+
+        let flags = scanner.get_token_flags();
+        let has_invalid = (flags & TokenFlags::ContainsInvalidEscape as u32) != 0;
+        assert!(
+            !has_invalid,
+            "lone-surrogate \\uXXXX escape must be a valid escape (no ContainsInvalidEscape). src={src:?}, flags={flags}, text={:?}",
+            scanner.get_token_text_ref()
+        );
+    }
+}
+
 // --- Empty-exponent / identifier-after-numeric scanner diagnostics --------
 //
 // Mirrors tsc's `scanNumber` exponent branch: a numeric literal whose

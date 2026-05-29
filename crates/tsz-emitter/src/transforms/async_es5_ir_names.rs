@@ -144,41 +144,9 @@ impl<'a> AsyncES5Transformer<'a> {
     pub(in crate::transforms) fn fresh_catch_binding_temp(
         &self,
         source_name: &str,
-        catch_clause: NodeIndex,
+        _catch_clause: NodeIndex,
     ) -> String {
-        let ordinal = self.async_catch_binding_ordinal(catch_clause);
-        self.fresh_reserved_name(format!("{source_name}_{ordinal}"))
-    }
-
-    fn async_catch_binding_ordinal(&self, catch_clause: NodeIndex) -> u32 {
-        let Some(current_catch) = self.arena.get(catch_clause) else {
-            return 1;
-        };
-        let mut ordinal = 1;
-        for node in &self.arena.nodes {
-            if node.kind != syntax_kind_ext::TRY_STATEMENT {
-                continue;
-            }
-            let Some(try_data) = self.arena.get_try(node) else {
-                continue;
-            };
-            if try_data.catch_clause.is_none() {
-                continue;
-            }
-            let Some(previous_catch) = self.arena.get(try_data.catch_clause) else {
-                continue;
-            };
-            if previous_catch.pos >= current_catch.pos {
-                continue;
-            }
-            if self.contains_await_recursive(try_data.try_block)
-                || self.contains_await_recursive(try_data.catch_clause)
-                || self.contains_await_recursive(try_data.finally_block)
-            {
-                ordinal += 1;
-            }
-        }
-        ordinal
+        self.fresh_reserved_name(source_name.to_string())
     }
 
     pub fn set_disposable_env_context<I>(&mut self, next_id: u32, blocked_names: I)
