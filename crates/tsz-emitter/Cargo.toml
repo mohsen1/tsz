@@ -31,6 +31,14 @@ name = "class_temp_dedup_hoist_buckets_tests"
 path = "tests/class_temp_dedup_hoist_buckets_tests.rs"
 
 [[test]]
+name = "enum_int32_shift_fold_tests"
+path = "tests/enum_int32_shift_fold_tests.rs"
+
+[[test]]
+name = "enum_metadata_number_tests"
+path = "tests/enum_metadata_number_tests.rs"
+
+[[test]]
 name = "comment_tests"
 path = "tests/comment_tests.rs"
 
