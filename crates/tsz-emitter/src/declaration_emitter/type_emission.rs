@@ -66,6 +66,36 @@ impl<'a> DeclarationEmitter<'a> {
             .is_some_and(|tp| tp.constraint.is_some())
     }
 
+    /// Whether a source `PARENTHESIZED_TYPE` reached directly by `emit_type`
+    /// (an annotation-like position, not a structural caller that already
+    /// peels) should keep its source parens around `inner` (the fully peeled
+    /// inner type), matching tsc.
+    ///
+    /// tsc strips redundant parens around atomic/simple operands and
+    /// function/constructor types in these positions, but preserves the source
+    /// grouping when the inner type is a composite that benefits from explicit
+    /// parentheses (union, intersection, conditional, mapped/type-literal,
+    /// tuple) or an `infer` carrying a constraint. The decision is purely
+    /// structural — keyed on the inner node kind, never on identifier names or
+    /// rendered output.
+    fn annotation_paren_keeps_source_parens(&self, inner: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(inner) else {
+            return false;
+        };
+        let k = node.kind;
+        k == syntax_kind_ext::UNION_TYPE
+            || k == syntax_kind_ext::INTERSECTION_TYPE
+            || k == syntax_kind_ext::CONDITIONAL_TYPE
+            || k == syntax_kind_ext::MAPPED_TYPE
+            || k == syntax_kind_ext::TYPE_LITERAL
+            || k == syntax_kind_ext::TUPLE_TYPE
+            // A source-parenthesized `infer U extends C` keeps its parens: the
+            // trailing `extends` would otherwise re-absorb following tokens
+            // (e.g. an enclosing conditional's own clause). A bare `(infer U)`
+            // with no constraint drops the redundant parens.
+            || (k == syntax_kind_ext::INFER_TYPE && self.infer_type_has_constraint(inner))
+    }
+
     pub(crate) fn emit_type(&mut self, type_idx: NodeIndex) {
         let Some(type_node) = self.arena.get(type_idx) else {
             return;
@@ -461,18 +491,36 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Parenthesized type — strip the parens and emit the inner type.
-            // tsc strips source-level parenthesization in annotation positions:
-            // `var x: (string)` → `string`, `var l: (() => c)` → `() => c`.
-            // Structural position callers (array element, union/intersection
-            // arm, conditional branch, optional/rest tuple element) all call
-            // `peel_paren` before `emit_type(inner)` and never reach this arm.
-            // Type argument positions are handled explicitly in
-            // `emit_type_arguments`. Any remaining call reaching this arm is
-            // in an annotation context where stripping is correct.
+            // Parenthesized type reached directly (an annotation-like position
+            // not pre-peeled by a structural caller: type-alias RHS, mapped-type
+            // value, function/constructor return, type-predicate target,
+            // `as`-cast type, variable/property/parameter annotation, …).
+            //
+            // tsc strips *redundant* source parens around atomic/simple operands
+            // and function/constructor types in these positions
+            // (`var x: (string)` → `string`, `var f: (() => string)` →
+            // `() => string`), but *preserves* the source parens when the inner
+            // type is a composite that benefits from explicit grouping — a
+            // union, intersection, conditional, mapped/type-literal, or tuple —
+            // and when the inner is an `infer` carrying a constraint (whose
+            // trailing `extends` would otherwise re-absorb following tokens).
+            // The decision keys on the peeled inner node *kind*, never on names
+            // or rendered output.
+            //
+            // Structural-position callers (array element, union/intersection
+            // arm, conditional branch, optional/rest tuple element, indexed
+            // access, type operator) all call `peel_paren` before
+            // `emit_type(inner)` and manage their own parens, so they never
+            // reach this arm; type-argument positions are handled explicitly in
+            // `emit_type_arguments`.
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
-                if let Some(paren) = self.arena.get_wrapped_type(type_node) {
-                    self.emit_type(paren.type_node);
+                let inner = self.peel_paren(type_idx);
+                if self.annotation_paren_keeps_source_parens(inner) {
+                    self.write("(");
+                    self.emit_type(inner);
+                    self.write(")");
+                } else {
+                    self.emit_type(inner);
                 }
             }
 

@@ -229,3 +229,147 @@ fn parenthesized_intersection_union_member_keeps_parens() {
         "source-parenthesized intersection union member must keep parens: {output}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Fix D (refines #11687): a `PARENTHESIZED_TYPE` reached directly by
+// `emit_type` (an annotation-like position: type-alias RHS, mapped-type
+// value, function/constructor return, type-predicate target, …) preserves
+// its source parens when the inner type is a composite that benefits from
+// explicit grouping (union, intersection, conditional, mapped/type-literal,
+// tuple) or an `infer` carrying a constraint, and strips them when the inner
+// is atomic or a function/constructor type. The decision keys on the peeled
+// inner node *kind*, never on names or rendered output.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn alias_rhs_parenthesized_intersection_keeps_parens() {
+    // `keyofIntersection` / `parenthesisDoesNotBlockAliasSymbolCreation`:
+    // a source-parenthesized intersection in alias-RHS position keeps parens.
+    let output = emit_dts("export type T<A, B> = (A & B);");
+    assert!(
+        output.contains("= (A & B);"),
+        "parenthesized intersection in alias-RHS must keep parens: {output}"
+    );
+}
+
+#[test]
+fn alias_rhs_parenthesized_intersection_keeps_parens_renamed() {
+    // Renamed type parameters prove the rule is structural, not name-keyed.
+    let output = emit_dts("export type Wrap<Left, Right> = (Left & Right);");
+    assert!(
+        output.contains("= (Left & Right);"),
+        "parenthesized intersection in alias-RHS must keep parens (renamed): {output}"
+    );
+}
+
+#[test]
+fn alias_rhs_parenthesized_union_keeps_parens() {
+    let output = emit_dts("export type T = (string | number);");
+    assert!(
+        output.contains("= (string | number);"),
+        "parenthesized union in alias-RHS must keep parens: {output}"
+    );
+}
+
+#[test]
+fn alias_rhs_parenthesized_tuple_keeps_parens() {
+    // `destructuringInFunctionType`: `type T1 = ([a, b, c]);` keeps parens.
+    let output = emit_dts("export type T = ([number, string]);");
+    assert!(
+        output.contains("= ([number, string]);"),
+        "parenthesized tuple in alias-RHS must keep parens: {output}"
+    );
+}
+
+#[test]
+fn predicate_target_parenthesized_union_keeps_parens() {
+    // `narrowingUnionToUnion`: `x is (string | 0)` keeps parens.
+    let output = emit_dts("export declare function check(x: unknown): x is (string | 0);");
+    assert!(
+        output.contains("x is (string | 0)"),
+        "parenthesized type-predicate target union must keep parens: {output}"
+    );
+}
+
+#[test]
+fn predicate_target_parenthesized_intersection_keeps_parens() {
+    // `typeGuardOfFormThisMember`: `this is (Networked & this)` keeps parens.
+    let output = emit_dts(
+        "export interface Thing { isNet(): this is (Networked & this); }\ninterface Networked {}",
+    );
+    assert!(
+        output.contains("this is (Networked & this)"),
+        "parenthesized type-predicate target intersection must keep parens: {output}"
+    );
+}
+
+#[test]
+fn mapped_type_value_parenthesized_conditional_keeps_parens() {
+    // `recursiveTypeReferences2`: a source-parenthesized conditional as a
+    // mapped-type value keeps parens.
+    let output = emit_dts("export type M<T> = { [K in keyof T]?: (T[K] extends string ? 1 : 0) };");
+    assert!(
+        output.contains("(T[K] extends string ? 1 : 0)"),
+        "parenthesized conditional mapped-type value must keep parens: {output}"
+    );
+}
+
+#[test]
+fn function_return_parenthesized_infer_with_constraint_keeps_parens() {
+    // `inferTypesWithExtends1` X3: a function-return-position
+    // `(infer U extends string)` keeps parens (the trailing `extends` would
+    // otherwise re-absorb the enclosing conditional's tokens).
+    let output = emit_dts(
+        "export type T<F> = F extends (...a: any[]) => (infer U extends string) ? U : never;",
+    );
+    assert!(
+        output.contains("=> (infer U extends string) ?"),
+        "parenthesized constrained infer in function return must keep parens: {output}"
+    );
+}
+
+#[test]
+fn function_return_parenthesized_infer_with_constraint_keeps_parens_renamed() {
+    // Renamed infer variable proves the rule is structural.
+    let output = emit_dts(
+        "export type T<F> = F extends (...a: any[]) => (infer Vee extends number) ? Vee : never;",
+    );
+    assert!(
+        output.contains("=> (infer Vee extends number) ?"),
+        "parenthesized constrained infer in function return must keep parens (renamed): {output}"
+    );
+}
+
+#[test]
+fn annotation_redundant_parens_around_keyword_are_stripped() {
+    // #11687's win: `var x: (string)` → `string`.
+    let output = emit_dts("export declare var x: (string);");
+    assert!(
+        output.contains("var x: string;") && !output.contains("(string)"),
+        "redundant parens around a keyword type must be stripped: {output}"
+    );
+}
+
+#[test]
+fn annotation_redundant_parens_around_function_type_are_stripped() {
+    // #11687's win: `var f: (() => c)` → `() => c` in direct annotation
+    // position. (Function-type parens are *kept* only as union/array members,
+    // which are handled by their own structural arms.)
+    let output = emit_dts("export declare var f: (() => string);");
+    assert!(
+        output.contains("var f: () => string;") && !output.contains("(() => string)"),
+        "redundant parens around a function type must be stripped: {output}"
+    );
+}
+
+#[test]
+fn annotation_bare_parenthesized_infer_drops_redundant_parens() {
+    // Negative/fallback: a bare `(infer U)` with no constraint has nothing to
+    // capture trailing tokens, so the redundant parens drop. Exercised via the
+    // function-return annotation position so it reaches this arm directly.
+    let output = emit_dts("export type T<F> = F extends (...a: any[]) => (infer U) ? U : never;");
+    assert!(
+        !output.contains("=> (infer U)"),
+        "bare infer (no constraint) in annotation position should drop redundant parens: {output}"
+    );
+}
