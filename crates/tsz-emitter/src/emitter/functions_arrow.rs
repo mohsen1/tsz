@@ -1407,14 +1407,7 @@ impl<'a> Printer<'a> {
                     let hoist_start =
                         body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
                     self.emit_object_rest_param_prologue_entries(&object_rest_param_prologue);
-                    if let Some(body_node) = self.arena.get(func.body)
-                        && let Some(block) = self.arena.get_block(body_node)
-                    {
-                        for &stmt in &block.statements.nodes {
-                            self.emit(stmt);
-                            self.write_line();
-                        }
-                    }
+                    self.emit_async_body_block_statements(func.body);
                     if let Some(hoist_start) = hoist_start {
                         self.insert_async_arrow_generator_hoists(hoist_start);
                     }
@@ -1543,10 +1536,7 @@ impl<'a> Printer<'a> {
         {
             let statements = block.statements.clone();
             if !self.emit_statement_list_with_using_scope(&statements) {
-                for &stmt in &statements.nodes {
-                    self.emit(stmt);
-                    self.write_line();
-                }
+                self.emit_async_body_block_statements(func.body);
             }
         }
         if let Some(hoist_start) = hoist_start {
@@ -1778,14 +1768,7 @@ impl<'a> Printer<'a> {
                 self.increase_indent();
                 let hoist_start =
                     body_has_for_await.then(|| self.begin_async_arrow_generator_hoists());
-                if let Some(body_node) = self.arena.get(func.body)
-                    && let Some(block) = self.arena.get_block(body_node)
-                {
-                    for &stmt in &block.statements.nodes {
-                        self.emit(stmt);
-                        self.write_line();
-                    }
-                }
+                self.emit_async_body_block_statements(func.body);
                 if let Some(hoist_start) = hoist_start {
                     self.insert_async_arrow_generator_hoists(hoist_start);
                 }
