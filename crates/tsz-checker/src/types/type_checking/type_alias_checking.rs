@@ -912,6 +912,13 @@ impl<'a> CheckerState<'a> {
                 if self.type_arg_nodes_all_are_deferred_passthrough_for_depth_check(type_args) {
                     return false;
                 }
+                if self
+                    .type_args_reset_defaulted_alias_params_with_scoped_transform_for_depth_check(
+                        alias_sid, type_args,
+                    )
+                {
+                    return true;
+                }
                 if type_args.nodes.iter().copied().all(|arg_idx| {
                     self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                         || self.type_node_is_bounded_indexed_descent_for_depth_check(

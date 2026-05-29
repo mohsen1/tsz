@@ -877,6 +877,38 @@ type Foo<T> = T extends unknown
     );
 }
 
+/// Recursive conditional aliases that omit a defaulted parameter while
+/// transforming an earlier argument are unconditionally infinite. Each
+/// recursive type reference resets the omitted parameter to its default, so the
+/// recursion never makes progress toward the terminating branch.
+#[test]
+fn recursive_conditional_alias_omitted_default_transform_emits_definition_ts2589() {
+    let source = r#"
+type Link<T, Depth extends number = 4> = [Depth] extends [0] ? T : Link<T[]>;
+type Chain<Value, Step extends number = 4> =
+  [Step] extends [0] ? Value : Chain<Promise<Value>>;
+"#;
+    let diags = check_source_diagnostics(source);
+    let ts2589 = diags.iter().filter(|d| d.code == 2589).collect::<Vec<_>>();
+    assert_eq!(
+        ts2589.len(),
+        2,
+        "Should emit TS2589 for each default-resetting recursive conditional alias. Got: {diags:?}"
+    );
+
+    let spans = ts2589
+        .iter()
+        .map(|diag| {
+            let start = diag.start as usize;
+            &source[start..(start + diag.length as usize).min(source.len())]
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        spans.contains(&"Link<T[]>") && spans.contains(&"Chain<Promise<Value>>"),
+        "TS2589 should anchor at the recursive references, got spans {spans:?} from {diags:?}"
+    );
+}
+
 /// TS2589 at a type alias definition is anchored at the LAST recursive
 /// self-reference in source order — the same node `tsc` reports against
 /// (its `currentNode` when `instantiationDepth === 100` fires while

@@ -105,6 +105,39 @@ impl<'a> CheckerState<'a> {
             })
     }
 
+    pub(crate) fn type_args_reset_defaulted_alias_params_with_scoped_transform_for_depth_check(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+        type_args: &NodeList,
+    ) -> bool {
+        let Some(type_param_nodes) = self.alias_type_parameter_nodes_for_depth_check(alias_sid)
+        else {
+            return false;
+        };
+        let supplied_count = type_args.nodes.len();
+        if supplied_count >= type_param_nodes.len() {
+            return false;
+        }
+        let omitted = &type_param_nodes[supplied_count..];
+        if omitted.is_empty()
+            || !omitted.iter().copied().all(|param_idx| {
+                self.ctx
+                    .arena
+                    .get(param_idx)
+                    .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
+                    .is_some_and(|param| param.default != NodeIndex::NONE)
+            })
+        {
+            return false;
+        }
+
+        type_args.nodes.iter().copied().any(|arg_idx| {
+            self.type_node_contains_scoped_type_parameter_for_depth_check(arg_idx)
+                && !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
+                && !self.type_node_is_bounded_indexed_descent_for_depth_check(alias_sid, arg_idx)
+        })
+    }
+
     fn type_name_is_deferred_passthrough_for_depth_check(&mut self, name_idx: NodeIndex) -> bool {
         let Some(name_node) = self.ctx.arena.get(name_idx) else {
             return false;
@@ -185,6 +218,18 @@ impl<'a> CheckerState<'a> {
             .get_children(node_idx)
             .into_iter()
             .any(|child_idx| self.type_node_contains_infer_binding_named(child_idx, name))
+    }
+
+    fn alias_type_parameter_nodes_for_depth_check(
+        &self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> Option<Vec<NodeIndex>> {
+        let symbol = self.ctx.binder.get_symbol(alias_sid)?;
+        let decl_idx = symbol.primary_declaration()?;
+        let decl_node = self.ctx.arena.get(decl_idx)?;
+        let alias = self.ctx.arena.get_type_alias(decl_node)?;
+        let type_params = alias.type_parameters.as_ref()?;
+        Some(type_params.nodes.clone())
     }
 
     fn type_node_is_alias_type_parameter_ref(
