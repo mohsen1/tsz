@@ -49,6 +49,18 @@ assert.match(
 
 assert.match(
   workflow,
+  /Download latest benchmark data from GCS[\s\S]+SCCACHE_GCS_KEY_JSON:[\s\S]+gcloud auth activate-service-account[\s\S]+gcloud auth print-access-token/,
+  "Pages deploy should activate the GCS service-account secret before downloading benchmark truth",
+);
+
+assert.match(
+  workflow,
+  /Download latest suite metrics from GCS[\s\S]+SCCACHE_GCS_KEY_JSON:[\s\S]+gcloud auth activate-service-account[\s\S]+metrics\/latest\/\$\{suite\}\.json/,
+  "Pages deploy should activate the GCS service-account secret before downloading suite metrics",
+);
+
+assert.match(
+  workflow,
   /selectLatestBenchmarkArtifact[\s\S]+bench-vs-tsgo-github-latest\.json[\s\S]+bench-vs-tsgo-gcs-latest\.json/,
   "Pages readiness status should describe the selected fresh benchmark artifact",
 );

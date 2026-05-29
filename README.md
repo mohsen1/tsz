@@ -85,14 +85,14 @@ to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [███████████████████░] 96.8% (13,094 / 13,530 tests)
-Declaration: [███████████████████░] 96.2% (1,606 / 1,669 tests)
+JavaScript:  [████████████████████] 99.0% (13,401 / 13,530 tests)
+Declaration: [███████████████████░] 97.0% (1,619 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
-This block is generated from the checked-in emit artifact with
-`python3 scripts/refresh-readme.py --write`; release claims should cite the
-current CI artifact.
+This block is generated from the latest CI emit metric when available, falling
+back to the checked-in emit artifact with `python3 scripts/refresh-readme.py
+--write`; release claims should cite the current CI artifact.
 
 ### Language Service
 

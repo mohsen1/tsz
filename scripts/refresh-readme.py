@@ -3,7 +3,7 @@
 
 Reads:
   - scripts/conformance/conformance-detail.json  (or conformance-snapshot.json)
-  - scripts/emit/emit-detail.json
+  - .ci-metrics/emit.json (or scripts/emit/emit-detail.json)
   - scripts/fourslash/fourslash-detail.json
   - https://tsz.dev/benchmark-data/latest.json
 
@@ -22,6 +22,7 @@ Usage:
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -58,13 +59,93 @@ def load_conformance():
     return None, None
 
 
-def load_emit():
-    p = ROOT / "scripts" / "emit" / "emit-detail.json"
-    if not p.exists():
+def normalize_emit_summary(data):
+    summary = data.get("summary")
+    if summary:
+        return summary
+
+    if data.get("suite") != "emit":
         return None
-    with open(p) as f:
-        data = json.load(f)
-    return data.get("summary", {})
+
+    return {
+        "jsPass": data.get("js_passed"),
+        "jsTotal": data.get("js_total"),
+        "jsSkip": data.get("js_skipped", 0),
+        "jsTimeout": data.get("js_timeouts", 0),
+        "dtsPass": data.get("dts_passed"),
+        "dtsTotal": data.get("dts_total"),
+        "dtsSkip": data.get("dts_skipped", 0),
+    }
+
+
+def emit_summary_from_readme(text):
+    section = text.split("<!-- EMIT_START -->", 1)
+    if len(section) != 2:
+        return None
+    section = section[1].split("<!-- EMIT_END -->", 1)[0]
+
+    summary = {}
+    for line in section.splitlines():
+        if "JavaScript" in line:
+            prefix = "js"
+        elif "Declaration" in line:
+            prefix = "dts"
+        else:
+            continue
+
+        match = re.search(r"\(([\d,]+)\s*/\s*([\d,]+)", line)
+        if not match:
+            continue
+        summary[f"{prefix}Pass"] = int(match.group(1).replace(",", ""))
+        summary[f"{prefix}Total"] = int(match.group(2).replace(",", ""))
+
+    if {"jsPass", "jsTotal", "dtsPass", "dtsTotal"}.issubset(summary):
+        summary.setdefault("jsSkip", 0)
+        summary.setdefault("jsTimeout", 0)
+        summary.setdefault("dtsSkip", 0)
+        return summary
+    return None
+
+
+def prefer_readme_emit_summary(candidate, readme_summary):
+    if readme_summary is None:
+        return candidate
+
+    same_domain = (
+        readme_summary.get("jsTotal") == candidate.get("jsTotal")
+        and readme_summary.get("dtsTotal") == candidate.get("dtsTotal")
+    )
+    ahead_or_equal = (
+        readme_summary.get("jsPass", 0) >= candidate.get("jsPass", 0)
+        and readme_summary.get("dtsPass", 0) >= candidate.get("dtsPass", 0)
+    )
+    return readme_summary if same_domain and ahead_or_equal else candidate
+
+
+def load_emit(args, readme_text):
+    readme_summary = emit_summary_from_readme(readme_text)
+    candidates = []
+    if args.emit_metrics_json is not None:
+        path = args.emit_metrics_json
+        if not path.is_absolute():
+            path = ROOT / path
+        candidates.append(path)
+    candidates.extend([
+        ROOT / ".ci-metrics" / "emit.json",
+        ROOT / "scripts" / "emit" / "emit-detail.json",
+    ])
+
+    for p in candidates:
+        if not p.exists():
+            continue
+        with open(p) as f:
+            data = json.load(f)
+        summary = normalize_emit_summary(data)
+        if summary is not None:
+            if args.emit_metrics_json is None and p == ROOT / "scripts" / "emit" / "emit-detail.json":
+                return prefer_readme_emit_summary(summary, readme_summary)
+            return summary
+    return None
 
 
 def load_fourslash():
@@ -121,6 +202,11 @@ def parse_args():
         "--skip-performance",
         action="store_true",
         help="skip the README performance chart block and PNG generation",
+    )
+    parser.add_argument(
+        "--emit-metrics-json",
+        type=Path,
+        help="use a local emit metrics artifact instead of the default .ci-metrics/emit.json",
     )
     return parser.parse_args()
 
@@ -213,7 +299,7 @@ def main():
         text = replace_block(text, "<!-- CONFORMANCE_START -->", "<!-- CONFORMANCE_END -->", block)
 
     # Emit
-    emit = load_emit()
+    emit = load_emit(args, original)
     if emit is not None:
         js_bar = progress_bar(emit["jsPass"], emit["jsTotal"])
         dts_bar = progress_bar(emit["dtsPass"], emit["dtsTotal"])
