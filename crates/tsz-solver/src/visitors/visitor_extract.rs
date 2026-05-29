@@ -1130,7 +1130,7 @@ mod widen_unique_symbol_dts_tests {
     fn standalone_unique_symbol_widens_to_symbol() {
         // A standalone `unique symbol` value surface prints as `symbol` in .d.ts.
         let interner = TypeInterner::new();
-        let sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(42)));
+        let sym = interner.unique_symbol(SymbolRef(42));
         let widened = widen_unique_symbol_value_type_for_dts(&interner, sym);
         assert_eq!(widened, TypeId::SYMBOL);
     }
@@ -1142,8 +1142,8 @@ mod widen_unique_symbol_dts_tests {
         // into a single `symbol`, dropping the declared identities. This is the
         // `indirectUniqueSymbolDeclarationEmit` witness shape.
         let interner = TypeInterner::new();
-        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(1)));
-        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(2)));
+        let sym_a = interner.unique_symbol(SymbolRef(1));
+        let sym_b = interner.unique_symbol(SymbolRef(2));
         let union = interner.union(vec![sym_a, sym_b]);
         let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
         assert_eq!(widened, union, "2-member unique-symbol union preserved");
@@ -1161,9 +1161,9 @@ mod widen_unique_symbol_dts_tests {
     #[test]
     fn three_distinct_unique_symbols_in_union_are_preserved() {
         let interner = TypeInterner::new();
-        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(10)));
-        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(20)));
-        let sym_c = interner.intern(TypeData::UniqueSymbol(SymbolRef(30)));
+        let sym_a = interner.unique_symbol(SymbolRef(10));
+        let sym_b = interner.unique_symbol(SymbolRef(20));
+        let sym_c = interner.unique_symbol(SymbolRef(30));
         let union = interner.union(vec![sym_a, sym_b, sym_c]);
         let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
         assert_eq!(widened, union);
@@ -1181,7 +1181,7 @@ mod widen_unique_symbol_dts_tests {
         // passthrough non-unique-symbol member) must still widen that
         // unique-symbol member — the guard only triggers for >= 2 distinct ones.
         let interner = TypeInterner::new();
-        let sym = interner.intern(TypeData::UniqueSymbol(SymbolRef(7)));
+        let sym = interner.unique_symbol(SymbolRef(7));
         let union = interner.union(vec![sym, TypeId::STRING]);
         let widened = widen_unique_symbol_value_type_for_dts(&interner, union);
         match interner.lookup(widened) {
@@ -1206,8 +1206,8 @@ mod widen_unique_symbol_dts_tests {
         // Renamed-binding equivalence: the guard keys on distinct `SymbolRef`s,
         // not on any particular id value or user-chosen name.
         let interner = TypeInterner::new();
-        let sym_a = interner.intern(TypeData::UniqueSymbol(SymbolRef(999)));
-        let sym_b = interner.intern(TypeData::UniqueSymbol(SymbolRef(1000)));
+        let sym_a = interner.unique_symbol(SymbolRef(999));
+        let sym_b = interner.unique_symbol(SymbolRef(1000));
         let union = interner.union(vec![sym_a, sym_b]);
         assert_eq!(
             widen_unique_symbol_value_type_for_dts(&interner, union),
