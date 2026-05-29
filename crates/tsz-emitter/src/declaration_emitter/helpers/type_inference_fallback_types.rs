@@ -761,7 +761,27 @@ impl<'a> DeclarationEmitter<'a> {
                 continue;
             };
             let type_text = if func.type_annotation.is_some() {
-                self.emit_type_node_text(func.type_annotation)
+                // When the callee is generic and its return annotation mentions its own
+                // type parameters (e.g. `boxify<T>(obj: T): Boxified<T>`), the raw
+                // annotation text still carries the bare type parameter. Substitute the
+                // inferred type arguments so the returned text reflects the call site
+                // (`Boxified<A | B | C | undefined>`), mirroring
+                // call_expression_source_return_type_text. Fall back to the raw
+                // annotation when substitution is not applicable.
+                let raw = self.emit_type_node_text(func.type_annotation);
+                match raw {
+                    Some(raw_text)
+                        if call.type_arguments.is_none()
+                            && self.source_return_type_mentions_type_parameter(
+                                self.arena, func, &raw_text,
+                            ) =>
+                    {
+                        self.substitute_source_call_type_parameters(
+                            self.arena, func, call, raw_text,
+                        )
+                    }
+                    other => other,
+                }
             } else if func.body.is_some() {
                 self.function_body_single_return_expression(func.body)
                     .and_then(|return_expr| {
