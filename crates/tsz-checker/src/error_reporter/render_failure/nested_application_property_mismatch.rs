@@ -255,13 +255,14 @@ impl<'a> CheckerState<'a> {
                     source_property_type,
                     target_property_type,
                 );
-                let nested_plain_mismatch_from_application = self
-                    .should_render_nested_application_property_mismatch(source, target)
-                    && Self::nested_reason_is_plain_type_mismatch(nested);
-                if !nested_plain_mismatch_from_application
-                    && !self
-                        .nested_reason_reuses_enclosing_application_source(nested_source, source)
-                {
+                // Same-base generic application property mismatches still surface
+                // the leaf relation (e.g. `Type 'number' is not assignable to type
+                // 'string'.`) beneath the `Types of property 'p' are incompatible.`
+                // elaboration, matching tsc. The only chain tsc collapses here is a
+                // nested failure that would re-display the enclosing application
+                // itself (recursive same-base reuse, e.g. `Deep<T>.next`), which the
+                // reuse guard below continues to suppress.
+                if !self.nested_reason_reuses_enclosing_application_source(nested_source, source) {
                     let nested_diag = self.render_failure_reason(
                         nested,
                         nested_source,
