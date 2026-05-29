@@ -695,6 +695,18 @@ impl<'a> DeclarationEmitter<'a> {
                 return Some(type_text);
             }
             if let Some(return_expr) = self.single_return_expression(func.body)
+                && self
+                    .arena
+                    .get(return_expr)
+                    .is_some_and(|node| node.kind == syntax_kind_ext::CALL_EXPRESSION)
+                && let Some(type_text) = self
+                    .call_expression_source_return_type_text(return_expr)
+                    .or_else(|| self.call_expression_declared_return_type_text(return_expr))
+                    .filter(|text| !text.is_empty() && text != "any")
+            {
+                return Some(type_text);
+            }
+            if let Some(return_expr) = self.single_return_expression(func.body)
                 && let Some(type_text) = self
                     .declaration_summary_primitive_expression_type_text(return_expr, 0)
                     .or_else(|| self.infer_fallback_type_text_at(return_expr, 0))
