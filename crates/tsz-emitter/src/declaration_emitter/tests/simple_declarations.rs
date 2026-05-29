@@ -17,3 +17,4 @@ include!("simple_declarations_parts/part_02.rs");
 include!("simple_declarations_parts/part_03.rs");
 include!("simple_declarations_parts/part_04.rs");
 include!("simple_declarations_parts/part_05.rs");
+include!("simple_declarations_parts/part_06.rs");
