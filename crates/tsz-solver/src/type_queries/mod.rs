@@ -27,6 +27,7 @@
 //! }
 //! ```
 
+pub mod assertion_overlap;
 pub mod classifiers;
 mod core;
 pub mod data;

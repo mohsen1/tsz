@@ -859,14 +859,25 @@ pub fn types_are_comparable_for_assertion(
     source: TypeId,
     target: TypeId,
 ) -> bool {
-    types_are_comparable_for_assertion_inner(db, source, target, 0)
+    types_are_comparable_for_assertion_inner(db, source, target, 0, false)
 }
 
-fn types_are_comparable_for_assertion_inner(
+/// `nested` tracks whether we have descended into an object property or a
+/// tuple/array element. tsc's `checkAssertionWorker` widens only the
+/// *top-level* assertion source via `getWidenedType`, so two distinct literals
+/// that appear as the direct operands of an assertion (e.g. `"x" as "y"`, or a
+/// member of the top-level union in `"x" as "y" | "z"`) are treated as
+/// overlapping, whereas distinct literals nested inside a shared property
+/// (e.g. `{ k: "a" } as { k: "b" }`) are *not* widened and therefore do not
+/// overlap. Union/intersection/readonly/enum decomposition of the top-level
+/// types keeps `nested` unchanged; only descending through a property or
+/// element sets it.
+pub(super) fn types_are_comparable_for_assertion_inner(
     db: &dyn TypeDatabase,
     source: TypeId,
     target: TypeId,
     depth: u32,
+    nested: bool,
 ) -> bool {
     // Prevent infinite recursion
     if depth > 5 {
@@ -876,6 +887,24 @@ fn types_are_comparable_for_assertion_inner(
     // Same type is always comparable
     if source == target {
         return true;
+    }
+
+    // Cache the structural views once; this function pattern-matches both
+    // operands repeatedly across the decomposition cases below.
+    let source_data = db.lookup(source);
+    let target_data = db.lookup(target);
+
+    // Nested distinct literals do not overlap. The equal case is handled above,
+    // so reaching here with two literal operands while `nested` means the
+    // values differ; tsc does not widen nested literals, so `"a"` and `"b"` (or
+    // `1` and `2`) are not comparable as shared property/element types. Enum
+    // literals are `TypeData::Enum`, not `TypeData::Literal`, so same-enum
+    // member comparability is unaffected.
+    if nested
+        && matches!(source_data, Some(TypeData::Literal(_)))
+        && matches!(target_data, Some(TypeData::Literal(_)))
+    {
+        return false;
     }
 
     // `never` is comparable to any type (it's the bottom type, subtype of all types).
@@ -901,57 +930,69 @@ fn types_are_comparable_for_assertion_inner(
     // NOTE: callers should pre-resolve Lazy types (via checker evaluation) before
     // invoking this function to avoid false TS2352 on assertions like
     // `{mode: ""} as UserSettings` where a nested interface property stays Lazy.
-    let source_is_lazy = matches!(db.lookup(source), Some(TypeData::Lazy(_)));
-    let target_is_lazy = matches!(db.lookup(target), Some(TypeData::Lazy(_)));
+    let source_is_lazy = matches!(source_data, Some(TypeData::Lazy(_)));
+    let target_is_lazy = matches!(target_data, Some(TypeData::Lazy(_)));
     if depth > 0 && source_is_lazy && target_is_lazy {
         return true;
     }
 
     // Unwrap ReadonlyType wrappers
-    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(source) {
-        return types_are_comparable_for_assertion_inner(db, inner, target, depth + 1);
+    if let Some(TypeData::ReadonlyType(inner)) = source_data {
+        return types_are_comparable_for_assertion_inner(db, inner, target, depth + 1, nested);
     }
-    if let Some(TypeData::ReadonlyType(inner)) = db.lookup(target) {
-        return types_are_comparable_for_assertion_inner(db, source, inner, depth + 1);
+    if let Some(TypeData::ReadonlyType(inner)) = target_data {
+        return types_are_comparable_for_assertion_inner(db, source, inner, depth + 1, nested);
     }
 
     // Check union types
-    if let Some(TypeData::Union(list_id)) = db.lookup(source) {
+    if let Some(TypeData::Union(list_id)) = source_data {
         let members = db.type_list(list_id);
         return members
             .iter()
-            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1, nested));
     }
-    if let Some(TypeData::Union(list_id)) = db.lookup(target) {
+    if let Some(TypeData::Union(list_id)) = target_data {
         let members = db.type_list(list_id);
         return members
             .iter()
-            .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+            .any(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1, nested));
     }
 
     // For intersection source S1 & S2 & ... & Sn: any member comparable to target suffices.
     // For intersection target T1 & T2 & ... & Tn: source must be comparable to every member
     // (tsc's eachTypeRelatedToType via comparableRelation).
-    if let Some(TypeData::Intersection(list_id)) = db.lookup(source) {
+    if let Some(TypeData::Intersection(list_id)) = source_data {
         let members = db.type_list(list_id);
         return members
             .iter()
-            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1));
+            .any(|&m| types_are_comparable_for_assertion_inner(db, m, target, depth + 1, nested));
     }
-    if let Some(TypeData::Intersection(list_id)) = db.lookup(target) {
+    if let Some(TypeData::Intersection(list_id)) = target_data {
         let members = db.type_list(list_id);
         return members
             .iter()
-            .all(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1));
+            .all(|&m| types_are_comparable_for_assertion_inner(db, source, m, depth + 1, nested));
     }
 
     // Enum comparability: unwrap to member type union, matching
     // `types_are_comparable_inner` behavior.
-    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(source) {
-        return types_are_comparable_for_assertion_inner(db, members_type_id, target, depth + 1);
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = source_data {
+        return types_are_comparable_for_assertion_inner(
+            db,
+            members_type_id,
+            target,
+            depth + 1,
+            nested,
+        );
     }
-    if let Some(TypeData::Enum(_def_id, members_type_id)) = db.lookup(target) {
-        return types_are_comparable_for_assertion_inner(db, source, members_type_id, depth + 1);
+    if let Some(TypeData::Enum(_def_id, members_type_id)) = target_data {
+        return types_are_comparable_for_assertion_inner(
+            db,
+            source,
+            members_type_id,
+            depth + 1,
+            nested,
+        );
     }
 
     // Check primitive ↔ literal comparability
@@ -1016,13 +1057,13 @@ fn types_are_comparable_for_assertion_inner(
         && let Some(TypeData::TypeParameter(info)) = db.lookup(target)
         && let Some(constraint) = info.constraint
     {
-        return types_are_comparable_for_assertion_inner(db, source, constraint, depth + 1);
+        return types_are_comparable_for_assertion_inner(db, source, constraint, depth + 1, nested);
     }
     if is_empty_object_type(db, target)
         && let Some(TypeData::TypeParameter(info)) = db.lookup(source)
         && let Some(constraint) = info.constraint
     {
-        return types_are_comparable_for_assertion_inner(db, constraint, target, depth + 1);
+        return types_are_comparable_for_assertion_inner(db, constraint, target, depth + 1, nested);
     }
 
     if callable_signatures_overlap_for_assertion(db, source, target, depth) {
@@ -1031,7 +1072,7 @@ fn types_are_comparable_for_assertion_inner(
 
     // For type assertions, only check that overlapping properties are comparable.
     // Do NOT require all target properties to exist in the source.
-    types_have_common_properties_relaxed(db, source, target, depth)
+    super::assertion_overlap::types_have_common_properties_relaxed(db, source, target, depth)
 }
 
 fn type_param_primitive_comparable_with_constraint(
@@ -1107,7 +1148,7 @@ fn assertion_signatures_are_comparable(
         }
     }
 
-    types_are_comparable_for_assertion_inner(db, source_return, target_return, depth + 1)
+    types_are_comparable_for_assertion_inner(db, source_return, target_return, depth + 1, true)
 }
 
 fn signature_param_types_are_comparable_for_assertion(
@@ -1127,12 +1168,13 @@ fn signature_param_types_are_comparable_for_assertion(
                     source_member,
                     target_member,
                     depth + 1,
+                    true,
                 )
             })
         });
     }
 
-    types_are_comparable_for_assertion_inner(db, source, target, depth + 1)
+    types_are_comparable_for_assertion_inner(db, source, target, depth + 1, true)
 }
 
 fn nullable_callable_union_members(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Vec<TypeId>> {
@@ -1247,167 +1289,6 @@ fn is_keyof_to_string_number_symbol(
         return true;
     }
     false
-}
-
-/// Relaxed version of `types_have_common_properties` for TS2352.
-/// Only requires that shared properties have comparable types.
-/// Missing target properties in the source are allowed.
-fn types_have_common_properties_relaxed(
-    db: &dyn TypeDatabase,
-    source: TypeId,
-    target: TypeId,
-    depth: u32,
-) -> bool {
-    fn get_properties(db: &dyn TypeDatabase, type_id: TypeId) -> Vec<(Atom, TypeId, bool)> {
-        if type_id.is_intrinsic() {
-            return Vec::new();
-        }
-        match db.lookup(type_id) {
-            Some(TypeData::Object(shape_id) | TypeData::ObjectWithIndex(shape_id)) => {
-                let shape = db.object_shape(shape_id);
-                shape
-                    .properties
-                    .iter()
-                    .map(|p| (p.name, p.type_id, p.optional))
-                    .collect()
-            }
-            Some(TypeData::Callable(callable_id)) => {
-                let shape = db.callable_shape(callable_id);
-                shape
-                    .properties
-                    .iter()
-                    .map(|p| (p.name, p.type_id, p.optional))
-                    .collect()
-            }
-            Some(TypeData::Intersection(list_id)) => {
-                let members = db.type_list(list_id);
-                let mut props = Vec::new();
-                for &member in members.iter() {
-                    props.extend(get_properties(db, member));
-                }
-                props
-            }
-            // Arrays have no named properties for overlap checking - element types
-            // are compared separately in types_are_comparable_for_assertion_inner.
-            // Returning empty ensures we don't short-circuit array↔object comparisons.
-            _ => Vec::new(),
-        }
-    }
-
-    // Handle array↔array comparability: check element types directly
-    if let (Some(TypeData::Array(src_elem)), Some(TypeData::Array(tgt_elem))) =
-        (db.lookup(source), db.lookup(target))
-    {
-        return types_are_comparable_for_assertion_inner(db, src_elem, tgt_elem, depth + 1);
-    }
-
-    // Handle array↔tuple comparability: array element vs any tuple element
-    if let (Some(TypeData::Array(arr_elem)), Some(TypeData::Tuple(tuple_id))) =
-        (db.lookup(source), db.lookup(target))
-    {
-        let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
-        });
-    }
-    if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
-        (db.lookup(source), db.lookup(target))
-    {
-        let tuple_elements = db.tuple_list(tuple_id);
-        return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
-        });
-    }
-
-    // Handle tuple↔tuple comparability: check element types pairwise.
-    // tsc's isTypeComparableTo checks tuples structurally: each element at
-    // position i must be comparable to the element at position i in the other
-    // tuple. Different-length tuples are not comparable (neither is assignable
-    // to the other), so TS2352 should fire.
-    if let (Some(TypeData::Tuple(src_tuple)), Some(TypeData::Tuple(tgt_tuple))) =
-        (db.lookup(source), db.lookup(target))
-    {
-        let src_elements = db.tuple_list(src_tuple);
-        let tgt_elements = db.tuple_list(tgt_tuple);
-        // Different-length tuples are not comparable
-        if src_elements.len() != tgt_elements.len() {
-            return false;
-        }
-        // All corresponding elements must be comparable
-        return src_elements.iter().zip(tgt_elements.iter()).all(|(s, t)| {
-            types_are_comparable_for_assertion_inner(db, s.type_id, t.type_id, depth + 1)
-        });
-    }
-
-    let source_props = get_properties(db, source);
-    let target_props = get_properties(db, target);
-
-    // If both sides have no properties and aren't arrays/tuples, they don't overlap
-    if source_props.is_empty() && target_props.is_empty() {
-        return false;
-    }
-
-    use rustc_hash::FxHashMap;
-    let mut source_by_name: FxHashMap<Atom, Vec<(TypeId, bool)>> = FxHashMap::default();
-    for (name, ty, optional) in &source_props {
-        source_by_name
-            .entry(*name)
-            .or_default()
-            .push((*ty, *optional));
-    }
-
-    // For TS2352: only check that shared properties are comparable.
-    // Missing target properties are allowed.
-    let mut found_common = false;
-    for (target_name, target_ty, target_optional) in &target_props {
-        if let Some(source_entries) = source_by_name.get(target_name) {
-            found_common = true;
-            let any_comparable = source_entries.iter().any(|(source_ty, source_optional)| {
-                if (*source_optional || *target_optional)
-                    && (*source_ty == TypeId::UNDEFINED || *target_ty == TypeId::UNDEFINED)
-                {
-                    return true;
-                }
-                if are_distinct_literal_values(db, *source_ty, *target_ty) {
-                    return false;
-                }
-                types_are_comparable_for_assertion_inner(db, *source_ty, *target_ty, depth + 1)
-            });
-            if !any_comparable {
-                return false;
-            }
-        }
-        // Intentionally NOT returning false for missing target properties
-    }
-
-    if !found_common {
-        // Weak type overlap: if either side has ONLY optional properties (a "weak type"),
-        // it overlaps with any object that has at least one property. Every object
-        // structurally satisfies a weak type (optional properties can all be missing).
-        // This matches tsc's `isTypeComparableTo` which bypasses weak type detection
-        // (TS2559) in comparable contexts like type assertions.
-        let source_is_weak =
-            !source_props.is_empty() && source_props.iter().all(|(_, _, opt)| *opt);
-        let target_is_weak =
-            !target_props.is_empty() && target_props.iter().all(|(_, _, opt)| *opt);
-        if (source_is_weak && !target_props.is_empty())
-            || (target_is_weak && !source_props.is_empty())
-        {
-            return true;
-        }
-    }
-
-    found_common
-}
-
-fn are_distinct_literal_values(db: &dyn TypeDatabase, source: TypeId, target: TypeId) -> bool {
-    let Some(TypeData::Literal(source_lit)) = db.lookup(source) else {
-        return false;
-    };
-    let Some(TypeData::Literal(target_lit)) = db.lookup(target) else {
-        return false;
-    };
-    source_lit != target_lit
 }
 
 fn types_are_comparable_inner(
@@ -1798,7 +1679,7 @@ fn types_have_common_properties(
     if let (Some(TypeData::Array(src_elem)), Some(TypeData::Array(tgt_elem))) =
         (db.lookup(source), db.lookup(target))
     {
-        return types_are_comparable_for_assertion_inner(db, src_elem, tgt_elem, depth + 1);
+        return types_are_comparable_for_assertion_inner(db, src_elem, tgt_elem, depth + 1, false);
     }
 
     // Handle array↔tuple comparability: array element vs any tuple element
@@ -1807,7 +1688,7 @@ fn types_have_common_properties(
     {
         let tuple_elements = db.tuple_list(tuple_id);
         return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1)
+            types_are_comparable_for_assertion_inner(db, arr_elem, elem.type_id, depth + 1, false)
         });
     }
     if let (Some(TypeData::Tuple(tuple_id)), Some(TypeData::Array(arr_elem))) =
@@ -1815,7 +1696,7 @@ fn types_have_common_properties(
     {
         let tuple_elements = db.tuple_list(tuple_id);
         return tuple_elements.iter().any(|elem| {
-            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1)
+            types_are_comparable_for_assertion_inner(db, elem.type_id, arr_elem, depth + 1, false)
         });
     }
 
@@ -1835,7 +1716,7 @@ fn types_have_common_properties(
         }
         // All corresponding elements must be comparable
         return src_elements.iter().zip(tgt_elements.iter()).all(|(s, t)| {
-            types_are_comparable_for_assertion_inner(db, s.type_id, t.type_id, depth + 1)
+            types_are_comparable_for_assertion_inner(db, s.type_id, t.type_id, depth + 1, false)
         });
     }
 
