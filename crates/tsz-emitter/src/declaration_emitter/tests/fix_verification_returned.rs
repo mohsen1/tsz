@@ -840,3 +840,72 @@ export function g(value: One | Two) {
         "must not leak the callee's bare type parameter `Source`: {output}"
     );
 }
+
+// A returned *non-rest* destructured binding element must NOT have its declaration
+// emit reuse the enclosing parameter/variable annotation as the inferred return
+// type. The element's type is a property/element projection of the destructured
+// source (tsc emits `string` for `function f({ name: alias }: Named) { return alias; }`,
+// never `Named`). The AST heuristic that resolves a returned identifier to its
+// declared source annotation previously climbed across the binding pattern and
+// surfaced the whole source type; it must now decline so the type comes from the
+// solver/cache instead.
+//
+// Property keys (`name`/`value`), aliases (`alias`/`renamed`), and source shapes
+// (named `Named` vs inline literal, flat vs nested) are all varied so the
+// assertion proves the structural rule rather than one spelling. A trailing rest
+// element (`...rest`) is the deliberate exception: its type *is* derived from the
+// source annotation (the source with bound keys omitted), so it must keep
+// emitting a source-annotation-backed return type.
+#[test]
+fn fix_returned_non_rest_binding_element_is_not_parameter_annotation() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+type Named = { name: string };
+export function renamedAlias({ name: alias }: Named) {
+    return alias;
+}
+export function shorthandProp({ name }: Named) {
+    return name;
+}
+export function inlineLiteralRenamed({ value: renamed }: { value: number }) {
+    return renamed;
+}
+type Outer = { p: Named };
+export function nestedRenamed({ p: { name: inner } }: Outer) {
+    return inner;
+}
+type P = { enum: boolean; one: boolean };
+export function withRest({ enum: _enum, ...rest }: P) {
+    return rest;
+}
+"#,
+    );
+
+    // The bug surfaced the destructured-source annotation as the element's return
+    // type. None of these may appear, regardless of the chosen
+    // property/alias/source spelling.
+    for forbidden in [
+        "renamedAlias({ name: alias }: Named): Named",
+        "shorthandProp({ name }: Named): Named",
+        "nestedRenamed({ p: { name: inner } }: Outer): Named",
+    ] {
+        assert!(
+            !output.contains(forbidden),
+            "non-rest binding element must not inherit the destructured-source annotation as its return type, found `{forbidden}`: {output}"
+        );
+    }
+    // The inline-literal renaming must likewise not surface the source object
+    // literal `{ value: number }` as the return type.
+    assert!(
+        !output.contains("inlineLiteralRenamed({ value: renamed }: {\n    value: number;\n}): {\n    value: number;\n}"),
+        "inline-literal binding element must not return the source object literal: {output}"
+    );
+
+    // The rest element keeps deriving its type from the source annotation (the
+    // destructured source with bound keys omitted), so it must still emit a
+    // source-backed return type rather than declining like the non-rest case.
+    assert!(
+        output.contains("withRest({ enum: _enum, ...rest }: P): "),
+        "rest binding element must still emit a source-annotation-derived return type: {output}"
+    );
+}
