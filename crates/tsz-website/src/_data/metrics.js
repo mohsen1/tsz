@@ -44,14 +44,12 @@ function formatEmitExtra(skipped, timeouts = 0) {
 }
 
 function setSuiteFromSnapshotSummary(metrics, key, passed, total, extra = "") {
-  passed = toInt(passed);
-  total = toInt(total);
-  if (passed === null || total === null || total <= 0) {
+  const candidate = suiteCandidate(null, passed, total, extra);
+  if (!candidate) {
     return false;
   }
-  const rate = (passed / total) * 100;
-  setSuiteMetrics(metrics, key, rate, passed, total, extra);
-  return true;
+  candidate.rate = (candidate.passed / candidate.total) * 100;
+  return setSuiteCandidate(metrics, key, candidate);
 }
 
 function parseEmitExtraFromReadmeLine(line) {
@@ -61,58 +59,65 @@ function parseEmitExtraFromReadmeLine(line) {
   return extra ? ` (${extra})` : "";
 }
 
-function setConformanceFromReadme(metrics, readme) {
-  if (!readme) return false;
+function suiteCandidate(rate, passed, total, extra = "") {
+  passed = toInt(passed);
+  total = toInt(total);
+  if (passed === null || total === null || total <= 0) {
+    return null;
+  }
+  rate = toNumber(rate);
+  if (rate === null) {
+    rate = (passed / total) * 100;
+  }
+  return { rate, passed, total, extra };
+}
+
+function setSuiteCandidate(metrics, key, candidate) {
+  if (!candidate) return false;
+  setSuiteMetrics(metrics, key, candidate.rate, candidate.passed, candidate.total, candidate.extra);
+  return true;
+}
+
+function preferBestCandidate(ciCandidate, readmeCandidate) {
+  if (ciCandidate && readmeCandidate && readmeCandidate.total > ciCandidate.total) {
+    return readmeCandidate;
+  }
+  return ciCandidate || readmeCandidate;
+}
+
+function conformanceFromReadme(readme) {
+  if (!readme) return null;
   const confSection = readme.match(
     /<!-- CONFORMANCE_START -->([\s\S]*?)<!-- CONFORMANCE_END -->/,
   );
-  if (!confSection) return false;
+  if (!confSection) return null;
   const m = confSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-  if (!m) return false;
-  return setSuiteIfValid(
-    metrics,
-    "conformance",
-    toNumber(m[1]),
-    toInt(m[2]),
-    toInt(m[3]),
-  );
+  if (!m) return null;
+  return suiteCandidate(m[1], m[2], m[3]);
 }
 
-function setEmitFromReadme(metrics, readme, key, label) {
-  if (!readme) return false;
+function emitFromReadme(readme, label) {
+  if (!readme) return null;
   const emitSection = readme.match(/<!-- EMIT_START -->([\s\S]*?)<!-- EMIT_END -->/);
-  if (!emitSection) return false;
+  if (!emitSection) return null;
   const line = emitSection[1]
     .split("\n")
     .find((candidate) => candidate.includes(label));
-  if (!line) return false;
+  if (!line) return null;
   const m = line.match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-  if (!m) return false;
-  return setSuiteIfValid(
-    metrics,
-    key,
-    toNumber(m[1]),
-    toInt(m[2]),
-    toInt(m[3]),
-    parseEmitExtraFromReadmeLine(line),
-  );
+  if (!m) return null;
+  return suiteCandidate(m[1], m[2], m[3], parseEmitExtraFromReadmeLine(line));
 }
 
-function setFourslashFromReadme(metrics, readme) {
-  if (!readme) return false;
+function fourslashFromReadme(readme) {
+  if (!readme) return null;
   const fsSection = readme.match(
     /<!-- FOURSLASH_START -->([\s\S]*?)<!-- FOURSLASH_END -->/,
   );
-  if (!fsSection) return false;
+  if (!fsSection) return null;
   const m = fsSection[1].match(/([\d.]+)%\s*\(([\d,]+)\s*\/\s*([\d,]+)/);
-  if (!m) return false;
-  return setSuiteIfValid(
-    metrics,
-    "fourslash",
-    toNumber(m[1]),
-    toInt(m[2]),
-    toInt(m[3]),
-  );
+  if (!m) return null;
+  return suiteCandidate(m[1], m[2], m[3]);
 }
 
 function setSuiteUnavailable(metrics, key) {
@@ -132,14 +137,6 @@ function setSuiteMetrics(metrics, key, rate, passed, total, extra = "") {
   metrics[`${key}_passed`] = fmt(passed);
   metrics[`${key}_total`] = fmt(total);
   metrics[`${key}_extra`] = extra;
-}
-
-function setSuiteIfValid(metrics, key, rate, passed, total, extra = "") {
-  if (rate === null || passed === null || total === null || total <= 0) {
-    return false;
-  }
-  setSuiteMetrics(metrics, key, rate, passed, total, extra);
-  return true;
 }
 
 function extractMetrics() {
@@ -162,60 +159,56 @@ function extractMetrics() {
     if (versionMatch) metrics.ts_version = versionMatch[1];
   }
 
-  const hasCiConformance = conformance
-    ? setSuiteIfValid(
-        metrics,
-        "conformance",
-        toNumber(conformance.pass_rate),
-        toInt(conformance.passed),
-        toInt(conformance.total),
-      )
-    : false;
-  const hasCiEmitJs = emit
-    ? setSuiteIfValid(
-        metrics,
-        "emit_js",
-        toNumber(emit.js_pass_rate),
-        toInt(emit.js_passed),
-        toInt(emit.js_total),
+  const ciConformance = conformance
+    ? suiteCandidate(conformance.pass_rate, conformance.passed, conformance.total)
+    : null;
+  const ciEmitJs = emit
+    ? suiteCandidate(
+        emit.js_pass_rate,
+        emit.js_passed,
+        emit.js_total,
         formatEmitExtra(toInt(emit.js_skipped), toInt(emit.js_timeouts)),
       )
-    : false;
-  const hasCiEmitDts = emit
-    ? setSuiteIfValid(
-        metrics,
-        "emit_dts",
-        toNumber(emit.dts_pass_rate),
-        toInt(emit.dts_passed),
-        toInt(emit.dts_total),
+    : null;
+  const ciEmitDts = emit
+    ? suiteCandidate(
+        emit.dts_pass_rate,
+        emit.dts_passed,
+        emit.dts_total,
         formatEmitExtra(toInt(emit.dts_skipped)),
       )
-    : false;
-  const hasCiFourslash = fourslash
-    ? setSuiteIfValid(
-        metrics,
-        "fourslash",
-        toNumber(fourslash.pass_rate),
-        toInt(fourslash.passed),
-        toInt(fourslash.total),
-      )
-    : false;
+    : null;
+  const ciFourslash = fourslash
+    ? suiteCandidate(fourslash.pass_rate, fourslash.passed, fourslash.total)
+    : null;
 
-  const hasReadmeConformance = hasCiConformance
-    || setConformanceFromReadme(metrics, readme);
-  const hasReadmeEmitJs = hasCiEmitJs
-    || setEmitFromReadme(metrics, readme, "emit_js", "JavaScript");
-  const hasReadmeEmitDts = hasCiEmitDts
-    || setEmitFromReadme(metrics, readme, "emit_dts", "Declaration");
-  const hasReadmeFourslash = hasCiFourslash
-    || setFourslashFromReadme(metrics, readme);
+  const hasConformance = setSuiteCandidate(
+    metrics,
+    "conformance",
+    preferBestCandidate(ciConformance, conformanceFromReadme(readme)),
+  );
+  const hasEmitJs = setSuiteCandidate(
+    metrics,
+    "emit_js",
+    preferBestCandidate(ciEmitJs, emitFromReadme(readme, "JavaScript")),
+  );
+  const hasEmitDts = setSuiteCandidate(
+    metrics,
+    "emit_dts",
+    preferBestCandidate(ciEmitDts, emitFromReadme(readme, "Declaration")),
+  );
+  const hasFourslash = setSuiteCandidate(
+    metrics,
+    "fourslash",
+    preferBestCandidate(ciFourslash, fourslashFromReadme(readme)),
+  );
 
   const conformanceSnapshot = readJsonIfExists(path.join(ROOT, "scripts/conformance/conformance-snapshot.json"));
   const emitSnapshot = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-snapshot.json"));
   const emitDetail = readJsonIfExists(path.join(ROOT, "scripts/emit/emit-detail.json"));
   const fourslashSnapshot = readJsonIfExists(path.join(ROOT, "scripts/fourslash/fourslash-snapshot.json"));
 
-  if (!hasReadmeConformance) {
+  if (!hasConformance) {
     setSuiteFromSnapshotSummary(
       metrics,
       "conformance",
@@ -223,7 +216,7 @@ function extractMetrics() {
       conformanceSnapshot?.summary?.total_tests ?? conformanceSnapshot?.summary?.total,
     );
   }
-  if (!hasReadmeEmitJs) {
+  if (!hasEmitJs) {
     setSuiteFromSnapshotSummary(
       metrics,
       "emit_js",
@@ -232,7 +225,7 @@ function extractMetrics() {
       formatEmitExtra(toInt(emitDetail?.summary?.jsSkip), toInt(emitDetail?.summary?.jsTimeout)),
     );
   }
-  if (!hasReadmeEmitDts) {
+  if (!hasEmitDts) {
     setSuiteFromSnapshotSummary(
       metrics,
       "emit_dts",
@@ -241,7 +234,7 @@ function extractMetrics() {
       formatEmitExtra(toInt(emitDetail?.summary?.dtsSkip)),
     );
   }
-  if (!hasReadmeFourslash) {
+  if (!hasFourslash) {
     setSuiteFromSnapshotSummary(
       metrics,
       "fourslash",
