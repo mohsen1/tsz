@@ -1659,6 +1659,10 @@ name = "ts7053_intersection_record_constrained_param_tests"
 path = "tests/ts7053_intersection_record_constrained_param_tests.rs"
 
 [[test]]
+name = "ts7053_record_constraint_index_tests"
+path = "tests/ts7053_record_constraint_index_tests.rs"
+
+[[test]]
 name = "tuple_union_contextual_typing_tests"
 path = "tests/tuple_union_contextual_typing_tests.rs"
 
