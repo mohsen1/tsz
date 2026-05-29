@@ -119,13 +119,20 @@ impl<'a> CheckerState<'a> {
             return false;
         }
         let omitted = &type_param_nodes[supplied_count..];
+        let alias_param_names = self.alias_type_parameter_names_for_depth_check(alias_sid);
         if omitted.is_empty()
             || !omitted.iter().copied().all(|param_idx| {
                 self.ctx
                     .arena
                     .get(param_idx)
                     .and_then(|param_node| self.ctx.arena.get_type_parameter(param_node))
-                    .is_some_and(|param| param.default != NodeIndex::NONE)
+                    .is_some_and(|param| {
+                        param.default != NodeIndex::NONE
+                            && !self.type_node_contains_alias_type_parameter_name_for_depth_check(
+                                param.default,
+                                &alias_param_names,
+                            )
+                    })
             })
         {
             return false;
@@ -136,6 +143,81 @@ impl<'a> CheckerState<'a> {
                 && !self.type_node_is_deferred_passthrough_for_depth_check(arg_idx)
                 && !self.type_node_is_bounded_indexed_descent_for_depth_check(alias_sid, arg_idx)
         })
+    }
+
+    pub(crate) fn type_args_contain_subtractive_alias_guard_for_depth_check(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+        type_args: &NodeList,
+    ) -> bool {
+        let alias_param_names = self.alias_type_parameter_names_for_depth_check(alias_sid);
+        type_args.nodes.iter().copied().any(|arg_idx| {
+            self.type_node_is_subtractive_alias_guard_for_depth_check(arg_idx, &alias_param_names)
+        })
+    }
+
+    pub(crate) fn type_alias_has_default_reset_recursive_conditional_body(
+        &mut self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(symbol) = self.ctx.binder.get_symbol(alias_sid) else {
+            return false;
+        };
+        let declarations = symbol.declarations.clone();
+        declarations.into_iter().any(|decl_idx| {
+            self.ctx.arena.get(decl_idx).is_some_and(|decl_node| {
+                decl_node.kind == syntax_kind_ext::TYPE_ALIAS_DECLARATION
+                    && self
+                        .ctx
+                        .arena
+                        .get_type_alias(decl_node)
+                        .is_some_and(|alias| {
+                            self.ctx
+                                .arena
+                                .kind_at(alias.type_node)
+                                .is_some_and(|kind| kind == syntax_kind_ext::CONDITIONAL_TYPE)
+                                && self.type_node_has_default_reset_recursive_alias_ref(
+                                    alias.type_node,
+                                    alias_sid,
+                                )
+                        })
+            })
+        })
+    }
+
+    fn type_node_has_default_reset_recursive_alias_ref(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+
+        if node.kind == syntax_kind_ext::TYPE_REFERENCE
+            && let Some(type_ref) = self.ctx.arena.get_type_ref(node)
+        {
+            let resolved = self
+                .resolve_type_symbol_for_lowering(type_ref.type_name)
+                .map(tsz_binder::SymbolId);
+            if resolved == Some(alias_sid)
+                && let Some(type_args) = &type_ref.type_arguments
+                && self
+                    .type_args_reset_defaulted_alias_params_with_scoped_transform_for_depth_check(
+                        alias_sid, type_args,
+                    )
+            {
+                return true;
+            }
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_has_default_reset_recursive_alias_ref(child_idx, alias_sid)
+            })
     }
 
     fn type_name_is_deferred_passthrough_for_depth_check(&mut self, name_idx: NodeIndex) -> bool {
@@ -230,6 +312,128 @@ impl<'a> CheckerState<'a> {
         let alias = self.ctx.arena.get_type_alias(decl_node)?;
         let type_params = alias.type_parameters.as_ref()?;
         Some(type_params.nodes.clone())
+    }
+
+    fn alias_type_parameter_names_for_depth_check(
+        &self,
+        alias_sid: tsz_binder::SymbolId,
+    ) -> Vec<String> {
+        let Some(type_param_nodes) = self.alias_type_parameter_nodes_for_depth_check(alias_sid)
+        else {
+            return Vec::new();
+        };
+        type_param_nodes
+            .into_iter()
+            .filter_map(|param_idx| {
+                let param_node = self.ctx.arena.get(param_idx)?;
+                let param = self.ctx.arena.get_type_parameter(param_node)?;
+                self.ctx
+                    .arena
+                    .get_identifier_text(param.name)
+                    .map(str::to_owned)
+            })
+            .collect()
+    }
+
+    fn type_node_is_subtractive_alias_guard_for_depth_check(
+        &mut self,
+        node_idx: NodeIndex,
+        alias_param_names: &[String],
+    ) -> bool {
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if node.kind == syntax_kind_ext::PARENTHESIZED_TYPE
+            && let Some(wrapped) = self.ctx.arena.get_wrapped_type(node)
+        {
+            return self.type_node_is_subtractive_alias_guard_for_depth_check(
+                wrapped.type_node,
+                alias_param_names,
+            );
+        }
+        if node.kind != syntax_kind_ext::TYPE_REFERENCE {
+            return false;
+        }
+        let Some(type_ref) = self.ctx.arena.get_type_ref(node) else {
+            return false;
+        };
+        let Some(type_args) = type_ref.type_arguments.as_ref() else {
+            return false;
+        };
+        if type_args.nodes.len() != 2 {
+            return false;
+        }
+        let Some(source_name) = self.type_node_bare_reference_name(type_args.nodes[0]) else {
+            return false;
+        };
+        let Some(removed_name) = self.type_node_bare_reference_name(type_args.nodes[1]) else {
+            return false;
+        };
+        if source_name == removed_name
+            || !alias_param_names.iter().any(|name| name == source_name)
+            || !alias_param_names.iter().any(|name| name == removed_name)
+        {
+            return false;
+        }
+
+        self.ctx
+            .arena
+            .get_identifier_text(type_ref.type_name)
+            .is_some_and(|name| name == "Exclude")
+            && self.type_name_resolves_to_global_type_for_depth_check(type_ref.type_name, "Exclude")
+    }
+
+    fn type_name_resolves_to_global_type_for_depth_check(
+        &mut self,
+        type_name: NodeIndex,
+        expected_name: &str,
+    ) -> bool {
+        let Some(resolved) = self
+            .resolve_type_symbol_for_lowering(type_name)
+            .map(tsz_binder::SymbolId)
+        else {
+            return false;
+        };
+        let lib_binders = self.get_lib_binders();
+        self.ctx
+            .binder
+            .get_global_type_with_libs(expected_name, &lib_binders)
+            .is_some_and(|global| global == resolved)
+    }
+
+    fn type_node_contains_alias_type_parameter_name_for_depth_check(
+        &self,
+        node_idx: NodeIndex,
+        names: &[String],
+    ) -> bool {
+        if names.is_empty() {
+            return false;
+        }
+        let Some(node) = self.ctx.arena.get(node_idx) else {
+            return false;
+        };
+        if self
+            .type_node_bare_reference_name(node_idx)
+            .is_some_and(|reference_name| names.iter().any(|name| reference_name == name))
+        {
+            return true;
+        }
+        if self
+            .ctx
+            .arena
+            .get_identifier(node)
+            .is_some_and(|identifier| names.contains(&identifier.escaped_text))
+        {
+            return true;
+        }
+
+        self.ctx
+            .arena
+            .get_children(node_idx)
+            .into_iter()
+            .any(|child_idx| {
+                self.type_node_contains_alias_type_parameter_name_for_depth_check(child_idx, names)
+            })
     }
 
     fn type_node_is_alias_type_parameter_ref(

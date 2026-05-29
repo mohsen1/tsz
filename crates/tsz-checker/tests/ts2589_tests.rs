@@ -885,15 +885,18 @@ type Foo<T> = T extends unknown
 fn recursive_conditional_alias_omitted_default_transform_emits_definition_ts2589() {
     let source = r#"
 type Link<T, Depth extends number = 4> = [Depth] extends [0] ? T : Link<T[]>;
+type Solve<T> = Link<T> extends infer U ? U : never;
+type Box<Item> = { value: Item };
 type Chain<Value, Step extends number = 4> =
-  [Step] extends [0] ? Value : Chain<Promise<Value>>;
+  [Step] extends [0] ? Value : Chain<Box<Value>>;
+type Resolve<Value> = Chain<Value> extends infer Output ? Output : never;
 "#;
     let diags = check_source_diagnostics(source);
     let ts2589 = diags.iter().filter(|d| d.code == 2589).collect::<Vec<_>>();
     assert_eq!(
         ts2589.len(),
-        2,
-        "Should emit TS2589 for each default-resetting recursive conditional alias. Got: {diags:?}"
+        4,
+        "Should emit TS2589 at both the default-resetting recursive alias definitions and use sites. Got: {diags:?}"
     );
 
     let spans = ts2589
@@ -904,7 +907,10 @@ type Chain<Value, Step extends number = 4> =
         })
         .collect::<Vec<_>>();
     assert!(
-        spans.contains(&"Link<T[]>") && spans.contains(&"Chain<Promise<Value>>"),
+        spans.contains(&"Link<T[]>")
+            && spans.contains(&"Link<T>")
+            && spans.contains(&"Chain<Box<Value>>")
+            && spans.contains(&"Chain<Value>"),
         "TS2589 should anchor at the recursive references, got spans {spans:?} from {diags:?}"
     );
 }
