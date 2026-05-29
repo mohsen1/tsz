@@ -12,7 +12,7 @@
 //! privacyTopLevelInternalReferenceImportWith{out,}Export (alias must NOT be
 //! used where the target is locally nameable).
 //!
-//! AgentName: opus48-emit100
+//! `AgentName`: opus48-emit100
 
 use std::path::PathBuf;
 use std::process::Command;

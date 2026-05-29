@@ -90,11 +90,7 @@
 
     #[test]
     fn project_mode_cross_file_class_type_reference_uses_instance_type() {
-        let mut options = ResolvedCompilerOptions::default();
-        options.no_emit = true;
-        options.checker.strict = true;
-        options.checker.module = ModuleKind::ES2015;
-        options.printer.module = ModuleKind::ES2015;
+        let options = project_mode_es2015_strict_options();
 
         let diagnostics = collect_test_diagnostics_with_options(
             &[
@@ -131,11 +127,7 @@ export class Derived extends Base {
 
     #[test]
     fn project_mode_cross_file_generic_class_self_reference_uses_instance_type() {
-        let mut options = ResolvedCompilerOptions::default();
-        options.no_emit = true;
-        options.checker.strict = true;
-        options.checker.module = ModuleKind::ES2015;
-        options.printer.module = ModuleKind::ES2015;
+        let options = project_mode_es2015_strict_options();
 
         let diagnostics = collect_test_diagnostics_with_options(
             &[
@@ -173,11 +165,7 @@ export class StringBox extends Box<string> {
 
     #[test]
     fn project_mode_imported_class_annotation_and_typeof_keep_instance_constructor_split() {
-        let mut options = ResolvedCompilerOptions::default();
-        options.no_emit = true;
-        options.checker.strict = true;
-        options.checker.module = ModuleKind::ES2015;
-        options.printer.module = ModuleKind::ES2015;
+        let options = project_mode_es2015_strict_options();
 
         let diagnostics = collect_test_diagnostics_with_options(
             &[
@@ -237,12 +225,20 @@ let badCtor: typeof Token = Token.create();
     // the rule is structural and not name-keyed.
 
     fn project_mode_es2015_strict_options() -> ResolvedCompilerOptions {
-        let mut options = ResolvedCompilerOptions::default();
-        options.no_emit = true;
-        options.checker.strict = true;
-        options.checker.module = ModuleKind::ES2015;
-        options.printer.module = ModuleKind::ES2015;
-        options
+        let mut args = default_cli_args_for_test();
+        args.ignore_config = true;
+        args.no_emit = true;
+        args.strict = true;
+        args.target = Some(crate::args::Target::Es2015);
+
+        let mut resolved = crate::config::resolve_compiler_options(None)
+            .expect("resolve default compiler options");
+        crate::driver::apply_cli_overrides(&mut resolved, &args).expect("apply cli overrides");
+        if matches!(resolved.printer.module, ModuleKind::None) {
+            resolved.printer.module = ModuleKind::ES2015;
+            resolved.checker.module = ModuleKind::ES2015;
+        }
+        resolved
     }
 
     #[test]

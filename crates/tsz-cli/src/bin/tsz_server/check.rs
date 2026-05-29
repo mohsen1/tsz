@@ -244,7 +244,7 @@ impl Server {
                 &program_context.all_binders[file_idx],
                 &query_cache,
                 file.file_name.clone(),
-                checker_options.clone(),
+                checker_options,
             );
 
             checker.ctx.report_unresolved_imports = true;
