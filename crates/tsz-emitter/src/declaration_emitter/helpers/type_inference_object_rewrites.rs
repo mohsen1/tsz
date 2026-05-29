@@ -178,6 +178,16 @@ impl<'a> DeclarationEmitter<'a> {
         }
 
         if computed_members.is_empty() && overridden_members.is_empty() {
+            // Every member was a non-emittable computed key (e.g. `["" + ""]`).
+            // The syntax-recovery path has nothing concrete to inject, but the
+            // checker already collapsed those dynamic computed members into
+            // index signatures on the solver type. Serialize that structural
+            // type rather than dropping to an empty `{}` via the source-text
+            // object-literal fallback.
+            if has_non_emittable_computed_members {
+                let printed = self.print_type_id(type_id);
+                return (!printed.trim().is_empty()).then_some(printed);
+            }
             return None;
         }
 
