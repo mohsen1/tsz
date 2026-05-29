@@ -27,6 +27,10 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [[test]]
+name = "es5_super_object_literal_accessor_tests"
+path = "tests/es5_super_object_literal_accessor_tests.rs"
+
+[[test]]
 name = "class_temp_dedup_hoist_buckets_tests"
 path = "tests/class_temp_dedup_hoist_buckets_tests.rs"
 
