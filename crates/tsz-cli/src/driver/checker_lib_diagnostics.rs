@@ -112,7 +112,7 @@ pub(super) fn check_checker_lib_file_for_interfaces(
         diagnostics
             .retain(|diag| keep_checker_diagnostic_when_program_has_real_syntax_errors(diag.code));
     }
-    diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    diagnostics.sort_by(|a, b| a.compare(b));
     diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
     // PERF: All callers Arc::clone the same shared DefinitionStore; the
@@ -175,7 +175,7 @@ pub(super) fn check_checker_lib_file_baseline(
     );
 
     let mut diagnostics = std::mem::take(&mut checker.ctx.diagnostics);
-    diagnostics.sort_by(|a, b| a.start.cmp(&b.start).then_with(|| a.code.cmp(&b.code)));
+    diagnostics.sort_by(|a, b| a.compare(b));
     diagnostics.dedup_by(|a, b| a.start == b.start && a.code == b.code);
 
     // PERF: Same as `check_checker_lib_file` — callers ignore stats and the
@@ -1105,14 +1105,7 @@ pub(super) fn collect_checker_lib_baseline_diagnostics_for_codes(
         );
     }
 
-    diagnostics.sort_by(|a, b| {
-        (a.file.as_str(), a.start, a.code, a.message_text.as_str()).cmp(&(
-            b.file.as_str(),
-            b.start,
-            b.code,
-            b.message_text.as_str(),
-        ))
-    });
+    diagnostics.sort_by(|a, b| a.compare(b));
     diagnostics.dedup_by(|a, b| lib_diagnostic_fingerprint(a) == lib_diagnostic_fingerprint(b));
     diagnostics
 }

@@ -828,6 +828,92 @@ fn expr_object_literal() {
 }
 
 #[test]
+fn object_literal_private_indexer_tail_recovers_as_comma_initializer() {
+    let source = "const x = { private [x: string]: string; };";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        1,
+        "malformed indexer tail should stay on one object property"
+    );
+
+    let prop = arena
+        .get(object_data.elements.nodes[0])
+        .expect("property assignment");
+    let assignment = arena
+        .get_property_assignment(prop)
+        .expect("property assignment data");
+    let (_, op, _) = get_binary(arena, assignment.initializer);
+    assert_eq!(op, SyntaxKind::CommaToken as u16);
+
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED));
+}
+
+#[test]
+fn object_literal_computed_indexer_tail_at_close_brace_reports_colon_expected() {
+    // parserSymbolIndexer5-shaped input: a malformed computed-indexer member
+    // (`[name: type]: value`) whose recovered tail butts directly against the
+    // object's closing `}`. tsc still reports TS1005 "':' expected." at the
+    // `}` for the missing property colon. Vary the computed-name identifier
+    // (here `q`, not `s`) so the assertion keys on the structure, not a name.
+    let source = "var x = {\n    [q: symbol]: \"\"\n}";
+    let (parser, root) = parse_source(source);
+    let arena = parser.get_arena();
+    let init = get_var_initializer(arena, root);
+    let object = arena.get(init).expect("object literal");
+    let object_data = arena
+        .get_literal_expr(object)
+        .expect("object literal expression");
+    assert_eq!(
+        object_data.elements.nodes.len(),
+        1,
+        "malformed indexer tail should stay on one object property"
+    );
+
+    // The recovered initializer is still the comma-expression from #10701.
+    let prop = arena
+        .get(object_data.elements.nodes[0])
+        .expect("property assignment");
+    let assignment = arena
+        .get_property_assignment(prop)
+        .expect("property assignment data");
+    let (_, op, _) = get_binary(arena, assignment.initializer);
+    assert_eq!(op, SyntaxKind::CommaToken as u16);
+
+    // The trailing "':' expected." must land at the closing `}` position.
+    let close_brace_pos = source.rfind('}').expect("closing brace") as u32;
+    assert!(
+        parser.get_diagnostics().iter().any(|diag| diag.code
+            == diagnostic_codes::EXPECTED
+            && diag.start == close_brace_pos
+            && diag.message == "':' expected."),
+        "expected TS1005 \"':' expected.\" at the closing brace, got {:?}",
+        parser.get_diagnostics()
+    );
+
+    // The earlier recovery diagnostics from #10701 must remain.
+    let codes: Vec<u32> = parser
+        .get_diagnostics()
+        .iter()
+        .map(|diag| diag.code)
+        .collect();
+    assert!(codes.contains(&diagnostic_codes::EXPECTED));
+    assert!(codes.contains(&diagnostic_codes::PROPERTY_ASSIGNMENT_EXPECTED));
+}
+
+#[test]
 fn expr_yield() {
     // `function* gen() { yield 1; yield* other(); }`
     let (parser, _) = parse_source("function* gen() { yield 1; yield* other(); }");
@@ -1772,4 +1858,3 @@ fn no_substitution_template_records_raw_token_text() {
         );
     }
 }
-

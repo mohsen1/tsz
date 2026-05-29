@@ -83,6 +83,7 @@ impl<'a> CheckerState<'a> {
                 index,
                 source_element,
                 target_element,
+                ..
             }) => {
                 // For variadic-rest tuples with trailing fixed elements, only
                 // report element-level errors for the leading fixed section.

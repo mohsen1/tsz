@@ -965,7 +965,7 @@ jobs:
             filter: 'Mapped complex template keys'
           - label: projects
             timeout: 120
-            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-essentials-project|rxjs-project|type-fest-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
+            filter: 'utility-types/|ts-toolbelt/|ts-essentials/|utility-types-project|ts-toolbelt-project|ts-essentials-project|rxjs-project|type-fest-project|zod-project|kysely-project|vite-vanilla-ts-app|nextjs-fresh-app|nextjs'
           - label: large-ts-repo
             timeout: 120
             filter: '^large-ts-repo$'
@@ -1132,6 +1132,32 @@ jobs:
             fi
             copy_from_cloudbuild_manifest
           }
+          shard_status_value() {
+            local key="$1"
+            awk -v key="$key" '
+              index($0, key "=") == 1 { value = substr($0, length(key) + 2) }
+              END { print value }
+            ' "bench-status-${{ matrix.label }}.env"
+          }
+          shard_published_complete_results() {
+            local results_file="bench-results-${{ matrix.label }}.json"
+            local run_log="bench-run-${{ matrix.label }}.log"
+            [[ -s "$results_file" ]] || return 1
+            [[ -s "$run_log" ]] || return 1
+            grep -q "Results Summary" "$run_log" || return 1
+            grep -q "JSON results written:" "$run_log" || return 1
+            node - "$results_file" <<'NODE'
+          const fs = require("node:fs");
+
+          const file = process.argv[2];
+          const data = JSON.parse(fs.readFileSync(file, "utf8"));
+          const results = Array.isArray(data.results) ? data.results : [];
+          if (data.error) process.exit(1);
+          if (results.length === 0) process.exit(1);
+          if (data.totals && Number(data.totals.rows) !== results.length) process.exit(1);
+          process.exit(0);
+          NODE
+          }
 
           deadline=$((SECONDS + ${{ matrix.timeout }} * 60))
           while true; do
@@ -1142,15 +1168,25 @@ jobs:
                 capture_cloudbuild_log
                 exit 1
               fi
-              # shellcheck disable=SC1091
-              source "bench-status-${{ matrix.label }}.env"
-              if [[ "${BENCH_TARGET_SHA:-}" != "${{ env.BENCH_TARGET_SHA }}" ||
-                    "${BENCH_SHARD_LABEL:-}" != "${{ matrix.label }}" ]]; then
+              status_target_sha="$(shard_status_value BENCH_TARGET_SHA)"
+              status_shard_label="$(shard_status_value BENCH_SHARD_LABEL)"
+              status_exit="$(shard_status_value BENCH_SHARD_STATUS)"
+              if [[ "${status_target_sha}" != "${{ env.BENCH_TARGET_SHA }}" ||
+                    "${status_shard_label}" != "${{ matrix.label }}" ]]; then
                 echo "Cloud Build shard status metadata did not match this shard."
                 cat "bench-status-${{ matrix.label }}.env"
                 exit 1
               fi
-              exit "${BENCH_SHARD_STATUS:-1}"
+              if ! [[ "${status_exit}" =~ ^[0-9]+$ ]]; then
+                echo "Cloud Build shard status did not include numeric BENCH_SHARD_STATUS."
+                cat "bench-status-${{ matrix.label }}.env"
+                exit 1
+              fi
+              if [[ "${status_exit}" != "0" ]] && shard_published_complete_results; then
+                echo "Cloud Build shard reported BENCH_SHARD_STATUS=${status_exit}, but it published complete benchmark results for ${{ matrix.label }}; allowing publish to merge the artifact."
+                exit 0
+              fi
+              exit "${status_exit}"
             fi
             case "$status" in
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
@@ -1179,6 +1215,7 @@ jobs:
           name: bench-results-${{ matrix.label }}
           path: |
             bench-results-${{ matrix.label }}.json
+            bench-status-${{ matrix.label }}.env
             bench-run-${{ matrix.label }}.log
             bench-postmortem-${{ matrix.label }}.log
             bench-prep-fetch-${{ matrix.label }}.log

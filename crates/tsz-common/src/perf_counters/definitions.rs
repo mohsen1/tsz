@@ -915,6 +915,7 @@ pub const DELEGATE_SOURCE_FILE_MISS_RESIDUE_LIMIT: usize = 128;
 pub const DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUE_LIMIT: usize = 128;
 pub const SLOW_CHECK_FILE_TIMING_LIMIT: usize = 32;
 pub const SLOW_CHECK_STATEMENT_TIMING_LIMIT: usize = 64;
+pub const SLOW_TYPE_ALIAS_CHECK_TIMING_LIMIT: usize = 64;
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct DelegateDeclarationFileMissResidue {
@@ -964,6 +965,16 @@ pub struct SlowCheckStatementTiming {
     pub elapsed_ms: f64,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct SlowTypeAliasCheckTiming {
+    pub file: String,
+    pub name: String,
+    pub phase: &'static str,
+    pub pos: u32,
+    pub end: u32,
+    pub elapsed_ms: f64,
+}
+
 #[derive(Debug, Copy, Clone)]
 pub struct DirectSourceFileTypeAliasBodyRejectionResidueInput<'a> {
     pub name: &'a str,
@@ -990,6 +1001,8 @@ static DIRECT_SOURCE_FILE_TYPE_ALIAS_BODY_REJECTION_RESIDUES: OnceLock<
 static SLOW_CHECK_FILE_TIMINGS: OnceLock<Mutex<Vec<SlowCheckFileTiming>>> = OnceLock::new();
 static SLOW_CHECK_STATEMENT_TIMINGS: OnceLock<Mutex<Vec<SlowCheckStatementTiming>>> =
     OnceLock::new();
+static SLOW_TYPE_ALIAS_CHECK_TIMINGS: OnceLock<Mutex<Vec<SlowTypeAliasCheckTiming>>> =
+    OnceLock::new();
 
 fn delegate_declaration_file_miss_residues(
 ) -> &'static Mutex<Vec<DelegateDeclarationFileMissResidue>> {
@@ -1011,6 +1024,10 @@ fn slow_check_file_timings() -> &'static Mutex<Vec<SlowCheckFileTiming>> {
 
 fn slow_check_statement_timings() -> &'static Mutex<Vec<SlowCheckStatementTiming>> {
     SLOW_CHECK_STATEMENT_TIMINGS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn slow_type_alias_check_timings() -> &'static Mutex<Vec<SlowTypeAliasCheckTiming>> {
+    SLOW_TYPE_ALIAS_CHECK_TIMINGS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
 pub const COMPUTE_TYPE_OF_SYMBOL_INTERFACE_SIMPLE_OBJECT_TYPE_REFERENCE_REJECT_RESIDUE_LIMIT:

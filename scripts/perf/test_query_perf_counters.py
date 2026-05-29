@@ -11,7 +11,7 @@ SCRIPT = Path(__file__).with_name("query-perf-counters.py")
 
 def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "mode": "attribution",
         "enabled": True,
         "delegate": {
@@ -71,6 +71,16 @@ def sample_snapshot(*, type_environment_core: int = 7, import_type: int = 3):
             {"file": "src/deep.ts", "kind": 244, "pos": 10, "end": 80, "elapsed_ms": 8.25},
             {"file": "src/shallow.ts", "kind": 243, "pos": 1, "end": 9, "elapsed_ms": 1.5},
         ],
+        "slow_type_alias_check_timings": [
+            {
+                "file": "src/deep.ts",
+                "name": "XOR",
+                "phase": "body",
+                "pos": 10,
+                "end": 80,
+                "elapsed_ms": 7.5,
+            },
+        ],
     }
 
 
@@ -101,6 +111,8 @@ class QueryPerfCountersTests(unittest.TestCase):
         self.assertIn("src/deep.ts", result.stdout)
         self.assertIn("slowest semantic check statements:", result.stdout)
         self.assertIn("kind= 244", result.stdout)
+        self.assertIn("slowest type alias check phases:", result.stdout)
+        self.assertIn("phase=body", result.stdout)
         self.assertIn("Dominant: TypeEnvironmentCore = 7", result.stdout)
         self.assertIn("Top non-baseline T2.2 target: ImportType = 3", result.stdout)
 

@@ -406,6 +406,69 @@ export function wrap<T>(value: T) {
     );
 }
 
+#[test]
+fn test_self_recursive_exported_function_does_not_stack_overflow() {
+    // A directly self-recursive exported function must not cause infinite
+    // recursion in the return-type inferrer; it should fall back without crashing.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+export function loop(n: number): number {
+    return loop(n - 1);
+}
+export function identity(s: string): string {
+    return identity(s);
+}
+"#,
+    );
+    assert!(
+        output.contains("declare function loop"),
+        "Self-recursive loop must appear in declarations: {output}"
+    );
+    assert!(
+        output.contains("declare function identity"),
+        "Self-recursive identity must appear in declarations: {output}"
+    );
+}
+
+#[test]
+fn test_non_recursive_callee_still_infers_primitive_return() {
+    // When the callee is NOT self-recursive, the return type should still
+    // be inferred from the callee's body — proving the guard only fires for
+    // genuine self-calls and does not regress the happy path.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function helper(): string {
+    return "hello";
+}
+export function wrapper() {
+    return helper();
+}
+export function wrapper2() {
+    function inner() {
+        return "world";
+    }
+    return inner();
+}
+"#,
+    );
+    let wrapper_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrapper("))
+        .unwrap_or_else(|| panic!("Expected wrapper declaration: {output}"));
+    assert!(
+        wrapper_decl.contains("string"),
+        "Non-recursive callee return type should still be inferred as string: {output}"
+    );
+    let wrapper2_decl = output
+        .lines()
+        .find(|line| line.starts_with("export declare function wrapper2("))
+        .unwrap_or_else(|| panic!("Expected wrapper2 declaration: {output}"));
+    assert!(
+        wrapper2_decl.contains("string"),
+        "Non-recursive inner callee return type should still be inferred as string: {output}"
+    );
+}
+
 // =============================================================================
 // 19. Default Parameter Values (stripped)
 // =============================================================================

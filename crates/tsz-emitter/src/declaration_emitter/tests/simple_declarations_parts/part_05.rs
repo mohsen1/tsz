@@ -524,3 +524,77 @@ fn test_jsdoc_redirected_event_const_undefined_includes_undefined() {
         "Expected redirected `event` lookup with undefined initializer to preserve undefined: {output}"
     );
 }
+
+/// Object literal optional method `a?() {}` must emit as method-signature
+/// style `a?(): void`, not property-function style `a?: () => void`.
+///
+/// Adjacent shape: different method name (`handle?()`) proves the rule is
+/// not name-dependent.
+#[test]
+fn test_object_literal_optional_method_uses_method_signature_style() {
+    // Uses emit_dts_with_binding (no solver cache) which goes through the
+    // allowlisted_initializer_type_text path; the optional method must still
+    // render with method-signature syntax.
+    let output = emit_dts_with_binding(
+        r#"
+const bar = { a?() {} };
+const baz = { handle?() {} };
+"#,
+    );
+
+    assert!(
+        output.contains("a?(): void"),
+        "Expected optional method to emit as 'a?(): void' (method-signature style), not 'a?: () => void': {output}"
+    );
+    assert!(
+        output.contains("handle?(): void"),
+        "Expected optional method 'handle' to emit as 'handle?(): void': {output}"
+    );
+    assert!(
+        !output.contains("a?: () =>"),
+        "Expected no property-function style for optional method 'a': {output}"
+    );
+    assert!(
+        !output.contains("handle?: () =>"),
+        "Expected no property-function style for optional method 'handle': {output}"
+    );
+}
+
+/// When `{ y? }` is written (grammar error TS1162), tsc still infers an optional
+/// property for the object type. The `?` token position is recorded during parsing
+/// so the DTS emitter can produce `y?: T` instead of `y: T`.
+///
+/// Structural rule: when a shorthand property assignment has `question_token_pos != 0`,
+/// the emitted object type member uses `name?` as the prefix (optional property).
+/// This applies regardless of the identifier name used (structural, not spelling-dependent).
+#[test]
+fn optional_shorthand_property_inferred_as_optional_in_dts() {
+    // `{ y? }` is a grammar error but tsc still makes the property optional in DTS.
+    // Usage analysis is required so the emitter can resolve `y` → `let y: number`.
+    let output = emit_dts_with_usage_analysis(
+        r#"
+let y: number;
+export const obj = { y? };
+"#,
+    );
+    assert!(
+        output.contains("y?: number"),
+        "shorthand property with `?` should emit as optional (y?: number): {output}"
+    );
+    assert!(
+        !output.contains("y: number"),
+        "shorthand property with `?` must not emit as non-optional: {output}"
+    );
+
+    // Same rule with a different name — proves the rule is not spelling-dependent.
+    let output2 = emit_dts_with_usage_analysis(
+        r#"
+let count: string;
+export const o = { count? };
+"#,
+    );
+    assert!(
+        output2.contains("count?: string"),
+        "renamed shorthand property with `?` should emit as optional (count?: string): {output2}"
+    );
+}

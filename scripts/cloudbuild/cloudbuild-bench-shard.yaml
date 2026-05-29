@@ -4,6 +4,8 @@
 steps:
   - id: download-bench-prep
     name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    env:
+      - '_BENCH_TARGET_SHA=${_BENCH_TARGET_SHA}'
     script: |
       #!/bin/sh
       set +e
@@ -101,6 +103,7 @@ steps:
           ca-certificates \
           curl \
           git \
+          hyperfine \
           jq \
           pkg-config \
           xz-utils

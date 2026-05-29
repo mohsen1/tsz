@@ -1137,6 +1137,60 @@ impl<'a> DeclarationEmitter<'a> {
         idx
     }
 
+    /// Resolve the symbol that the entity name on the right-hand side of an
+    /// `import alias = Q.R.S` declaration refers to. Walks the qualified-name
+    /// chain left-to-right: the leftmost identifier resolves through normal
+    /// scope lookup, then each `.right` member is looked up in the running
+    /// symbol's exports/members tables. Returns the final member symbol.
+    pub(in crate::declaration_emitter) fn import_equals_entity_target_symbol(
+        &self,
+        binder: &tsz_binder::BinderState,
+        entity_idx: NodeIndex,
+    ) -> Option<SymbolId> {
+        // Collect member names from leftmost to rightmost.
+        let mut chain: Vec<NodeIndex> = Vec::new();
+        let mut current = entity_idx;
+        loop {
+            let node = self.arena.get(current)?;
+            if let Some(qn) = self.arena.get_qualified_name(node) {
+                chain.push(qn.right);
+                current = qn.left;
+            } else {
+                break;
+            }
+        }
+        // `current` is now the leftmost identifier node.
+        let leftmost_name = self
+            .arena
+            .get(current)
+            .and_then(|n| self.arena.get_identifier(n))
+            .map(|id| id.escaped_text.clone())?;
+        let mut sym_id = self.resolve_identifier_symbol(current, &leftmost_name)?;
+
+        // Walk member names right-to-left (chain was pushed leftmost-first).
+        for &member_idx in chain.iter().rev() {
+            let member_name = self
+                .arena
+                .get(member_idx)
+                .and_then(|n| self.arena.get_identifier(n))
+                .map(|id| id.escaped_text.clone())?;
+            let resolved = self.resolve_portability_symbol(sym_id, binder);
+            let symbol = binder.symbols.get(resolved)?;
+            let next = symbol
+                .exports
+                .as_ref()
+                .and_then(|exports| exports.get(&member_name))
+                .or_else(|| {
+                    symbol
+                        .members
+                        .as_ref()
+                        .and_then(|members| members.get(&member_name))
+                })?;
+            sym_id = next;
+        }
+        Some(sym_id)
+    }
+
     pub(in crate::declaration_emitter) fn leftmost_qualified_name_ident(
         &self,
         idx: NodeIndex,

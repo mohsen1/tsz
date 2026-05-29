@@ -591,11 +591,14 @@ impl HelpersNeeded {
         if self.dispose_resources {
             names.push("__disposeResources");
         }
-        self.push_unprioritized_names(&mut names);
         if self.prop_key {
             names.push("__propKey");
         }
-        if self.set_function_name {
+        if self.es_decorate && self.set_function_name {
+            names.push("__setFunctionName");
+        }
+        self.push_unprioritized_names(&mut names);
+        if !self.es_decorate && self.set_function_name {
             names.push("__setFunctionName");
         }
         if self.rewrite_relative_import_extension {
@@ -749,8 +752,12 @@ pub fn emit_helpers(helpers: &HelpersNeeded) -> String {
         output.push('\n');
     }
     let mut emitted_unprioritized = Vec::new();
+    if helpers.es_decorate && helpers.set_function_name {
+        output.push_str(SET_FUNCTION_NAME_HELPER);
+        output.push('\n');
+    }
     emit_class_private_helpers(helpers, &mut output, &mut emitted_unprioritized);
-    if helpers.set_function_name {
+    if !helpers.es_decorate && helpers.set_function_name {
         output.push_str(SET_FUNCTION_NAME_HELPER);
         output.push('\n');
     }
@@ -792,6 +799,18 @@ fn emit_class_private_helpers(
     output: &mut String,
     emitted: &mut Vec<HelperEmitOrder>,
 ) {
+    if helpers.es_decorate && !helpers.unprioritized_order.is_empty() {
+        for &helper in &helpers.unprioritized_order {
+            if is_class_private_helper(helper) {
+                emit_unprioritized_helper(helper, helpers, output, emitted);
+            }
+        }
+        for helper in fallback_class_private_order(helpers) {
+            emit_unprioritized_helper(helper, helpers, output, emitted);
+        }
+        return;
+    }
+
     let (first, second) = if helpers.class_private_field_set_before_get {
         (
             HelperEmitOrder::ClassPrivateFieldSet,
@@ -811,6 +830,31 @@ fn emit_class_private_helpers(
         output,
         emitted,
     );
+}
+
+const fn is_class_private_helper(helper: HelperEmitOrder) -> bool {
+    matches!(
+        helper,
+        HelperEmitOrder::ClassPrivateFieldGet
+            | HelperEmitOrder::ClassPrivateFieldSet
+            | HelperEmitOrder::ClassPrivateFieldIn
+    )
+}
+
+const fn fallback_class_private_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 3] {
+    [
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldSet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldGet
+        },
+        if helpers.class_private_field_set_before_get {
+            HelperEmitOrder::ClassPrivateFieldGet
+        } else {
+            HelperEmitOrder::ClassPrivateFieldSet
+        },
+        HelperEmitOrder::ClassPrivateFieldIn,
+    ]
 }
 
 const fn fallback_unprioritized_order(helpers: &HelpersNeeded) -> [HelperEmitOrder; 12] {
@@ -1074,6 +1118,8 @@ mod tests {
                 "__generator",
                 "__addDisposableResource",
                 "__disposeResources",
+                "__propKey",
+                "__setFunctionName",
                 "__await",
                 "__asyncGenerator",
                 "__asyncDelegator",
@@ -1086,8 +1132,6 @@ mod tests {
                 "__classPrivateFieldGet",
                 "__classPrivateFieldSet",
                 "__classPrivateFieldIn",
-                "__propKey",
-                "__setFunctionName",
                 "__rewriteRelativeImportExtension",
             ],
         );
@@ -1262,6 +1306,30 @@ mod tests {
 
         assert!(i_get < i_set_name);
         assert!(i_set_name < i_await);
+    }
+
+    #[test]
+    fn emit_helpers_order_tc39_set_function_name_before_private_helpers() {
+        let mut helpers = HelpersNeeded {
+            es_decorate: true,
+            set_function_name: true,
+            ..HelpersNeeded::default()
+        };
+        helpers.mark_class_private_field_in();
+        helpers.mark_class_private_field_get();
+        helpers.mark_class_private_field_set();
+
+        let output = emit_helpers(&helpers);
+        let i_es_decorate = find_helper(&output, "__esDecorate");
+        let i_set_name = find_helper(&output, "__setFunctionName");
+        let i_in = find_helper(&output, "__classPrivateFieldIn");
+        let i_get = find_helper(&output, "__classPrivateFieldGet");
+        let i_set = find_helper(&output, "__classPrivateFieldSet");
+
+        assert!(i_es_decorate < i_set_name);
+        assert!(i_set_name < i_in);
+        assert!(i_in < i_get);
+        assert!(i_get < i_set);
     }
 
     #[test]

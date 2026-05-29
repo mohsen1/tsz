@@ -266,17 +266,41 @@ impl<'a> AsyncES5Transformer<'a> {
         self.labeled_continue_targets.truncate(continue_stack_len);
         self.labeled_break_targets.truncate(break_stack_len);
 
-        let condition_label = self.state.next_label();
-        if !current_statements.is_empty() {
-            if !Self::loop_statements_end_control_flow(current_statements) {
-                current_statements.push(Self::generator_label_assignment(condition_label));
+        // When the body contains a `continue`, flush it into its own case so
+        // `continue` can jump directly to the condition label. Without a
+        // flush, there is no distinct label for the condition to target.
+        // When there is no `continue`, the condition check is appended to
+        // the current case (body + condition share one case), which matches
+        // tsc's emitted shape and produces the minimum number of cases.
+        let condition_start_label = if has_loop_continue {
+            let cond_label = self.state.next_label();
+            if Self::loop_statements_end_control_flow(current_statements) {
+                // Body case already exits unconditionally; close it without a
+                // fallthrough label if there is anything to close.
+                if !current_statements.is_empty() {
+                    cases.push(IRGeneratorCase {
+                        label: *current_label,
+                        statements: std::mem::take(current_statements),
+                    });
+                }
+            } else {
+                // Either there are pending body statements, or the loop body
+                // already flushed its last case internally and left
+                // `current_statements` empty (e.g. a single `if` with an await
+                // inside one branch). In either case we need a visible
+                // `_a.label = cond_label` so that `continue` can jump here and
+                // any test helpers can locate the condition label.
+                current_statements.push(Self::generator_label_assignment(cond_label));
+                cases.push(IRGeneratorCase {
+                    label: *current_label,
+                    statements: std::mem::take(current_statements),
+                });
             }
-            cases.push(IRGeneratorCase {
-                label: *current_label,
-                statements: std::mem::take(current_statements),
-            });
-        }
-        *current_label = condition_label;
+            *current_label = cond_label;
+            cond_label
+        } else {
+            *current_label
+        };
 
         if let Some(operand_idx) = condition_await_operand {
             let operand = self.expression_to_ir(operand_idx);
@@ -289,27 +313,27 @@ impl<'a> AsyncES5Transformer<'a> {
                 current_label,
             );
             current_statements.push(IRNode::IfBreak {
-                condition: Box::new(IRNode::GeneratorSent),
-                target_label: loop_label,
+                condition: Box::new(Self::negated_condition(IRNode::GeneratorSent)),
+                target_label: exit_placeholder,
             });
         } else {
             let condition = self.expression_to_ir(loop_data.condition);
             current_statements.push(IRNode::IfBreak {
-                condition: Box::new(condition),
-                target_label: loop_label,
+                condition: Box::new(Self::negated_condition(condition)),
+                target_label: exit_placeholder,
             });
         }
-        let exit_label = self.state.next_label();
-        current_statements.push(Self::generator_label_assignment(exit_label));
+        current_statements.push(Self::generator_break_statement(loop_label));
 
         cases.push(IRGeneratorCase {
             label: *current_label,
             statements: std::mem::take(current_statements),
         });
 
+        let exit_label = self.state.next_label();
         Self::patch_if_break_target(cases, exit_placeholder, exit_label);
         if has_loop_continue {
-            Self::patch_if_break_target(cases, continue_placeholder, condition_label);
+            Self::patch_if_break_target(cases, continue_placeholder, condition_start_label);
         }
         *current_label = exit_label;
     }

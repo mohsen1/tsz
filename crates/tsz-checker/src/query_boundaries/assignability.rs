@@ -3,7 +3,9 @@ use tsz_solver::classes::inheritance::InheritanceGraph;
 use tsz_solver::computation::{TypeSubstitution, evaluate_type, instantiate_type_cached};
 use tsz_solver::construction::{QueryDatabase, TypeDatabase};
 use tsz_solver::relations::subtype::TypeResolver;
-use tsz_solver::{ObjectShape, PropertyInfo, SubtypeFailureReason, TypeId};
+use tsz_solver::{
+    ObjectShape, ParamInfo, PropertyInfo, SubtypeFailureReason, TypeId, TypeParamInfo,
+};
 
 use crate::state::CheckerState;
 
@@ -272,6 +274,87 @@ pub(crate) fn contextual_callable_member_has_unclassified_generic_parameter_drif
     source_params.len() <= member_sig.params.len()
         && tsz_solver::contains_type_parameters(db, source_param.type_id)
         && tsz_solver::contains_type_parameters(db, member_param.type_id)
+}
+
+fn direct_type_param_name(db: &dyn TypeDatabase, type_id: TypeId) -> Option<Atom> {
+    tsz_solver::type_queries::get_type_parameter_info(db, type_id).map(|info| info.name)
+}
+
+fn signature_uses_only_naked_type_params(
+    db: &dyn TypeDatabase,
+    params: &[ParamInfo],
+    return_type: TypeId,
+    type_params: &[TypeParamInfo],
+) -> bool {
+    if params.is_empty() {
+        return false;
+    }
+    let names: Vec<_> = type_params.iter().map(|tp| tp.name).collect();
+    let params_are_naked = params.iter().all(|param| {
+        direct_type_param_name(db, param.type_id).is_some_and(|name| names.contains(&name))
+    });
+    params_are_naked
+        && direct_type_param_name(db, return_type).is_some_and(|name| names.contains(&name))
+}
+
+fn generic_signature_constraints_and_naked_shape(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<(Vec<Option<TypeId>>, bool)> {
+    if let Some(shape) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        let constraints = shape.type_params.iter().map(|tp| tp.constraint).collect();
+        let naked = signature_uses_only_naked_type_params(
+            db,
+            &shape.params,
+            shape.return_type,
+            &shape.type_params,
+        );
+        return Some((constraints, naked));
+    }
+    let shape = tsz_solver::type_queries::get_callable_shape_for_type(db, type_id)?;
+    let sig = shape.call_signatures.first()?;
+    let constraints = sig.type_params.iter().map(|tp| tp.constraint).collect();
+    let naked =
+        signature_uses_only_naked_type_params(db, &sig.params, sig.return_type, &sig.type_params);
+    Some((constraints, naked))
+}
+
+/// Return `true` when `actual` is a generic function whose every type parameter
+/// has a constraint, while `expected` is a same-arity generic function whose
+/// type parameters are all unconstrained.
+///
+/// In that shape the mismatch is a constraint-strictness incompatibility that
+/// outer inference cannot repair, so contextual-call diagnostics must not be
+/// deferred away.
+pub(crate) fn generic_arg_constraint_mismatch_is_structural(
+    db: &dyn TypeDatabase,
+    actual: TypeId,
+    expected: TypeId,
+) -> bool {
+    let Some((source_constraints, source_is_naked)) =
+        generic_signature_constraints_and_naked_shape(db, actual)
+    else {
+        return false;
+    };
+    if source_constraints.is_empty()
+        || !source_is_naked
+        || !source_constraints.iter().all(Option::is_some)
+        || !source_constraints
+            .iter()
+            .filter_map(|constraint| *constraint)
+            .any(|constraint| constraint != TypeId::UNKNOWN)
+    {
+        return false;
+    }
+
+    let Some((target_constraints, target_is_naked)) =
+        generic_signature_constraints_and_naked_shape(db, expected)
+    else {
+        return false;
+    };
+    target_is_naked
+        && target_constraints.len() == source_constraints.len()
+        && target_constraints.iter().all(Option::is_none)
 }
 
 pub(crate) fn homomorphic_mapped_source_assignable_to_target<R: TypeResolver>(
@@ -621,26 +704,29 @@ impl RelationRequest {
 // Existing boundary helpers
 // ---------------------------------------------------------------------------
 
-/// Boundary-safe flag constants for relation cache keys.
+/// Boundary-safe flag constants for relation policy.
 ///
-/// Wraps the flag constants from `tsz_solver::RelationCacheKey` without exposing
-/// the internal `RelationCacheKey` struct itself. Checker code should use these
-/// constants when constructing relation policy flags (e.g., in `pack_relation_flags`).
+/// Mirrors the solver's typed `RelationFlags` bit surface while keeping the
+/// checker-facing packed `u16` protocol quarantined to this boundary. Checker
+/// code should use these constants when constructing relation policy flags
+/// (e.g., in `pack_relation_flags`).
 pub(crate) struct RelationFlags;
 
 impl RelationFlags {
-    pub const STRICT_NULL_CHECKS: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_NULL_CHECKS;
-    pub const STRICT_FUNCTION_TYPES: u16 = tsz_solver::RelationCacheKey::FLAG_STRICT_FUNCTION_TYPES;
+    pub const STRICT_NULL_CHECKS: u16 = tsz_solver::RelationFlags::STRICT_NULL_CHECKS.bits() as u16;
+    pub const STRICT_FUNCTION_TYPES: u16 =
+        tsz_solver::RelationFlags::STRICT_FUNCTION_TYPES.bits() as u16;
     pub const EXACT_OPTIONAL_PROPERTY_TYPES: u16 =
-        tsz_solver::RelationCacheKey::FLAG_EXACT_OPTIONAL_PROPERTY_TYPES;
+        tsz_solver::RelationFlags::EXACT_OPTIONAL_PROPERTY_TYPES.bits() as u16;
     pub const NO_UNCHECKED_INDEXED_ACCESS: u16 =
-        tsz_solver::RelationCacheKey::FLAG_NO_UNCHECKED_INDEXED_ACCESS;
-    pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationCacheKey::FLAG_NO_ERASE_GENERICS;
-    pub const ALLOW_BIVARIANT_REST: u16 = tsz_solver::RelationCacheKey::FLAG_ALLOW_BIVARIANT_REST;
+        tsz_solver::RelationFlags::NO_UNCHECKED_INDEXED_ACCESS.bits() as u16;
+    pub const NO_ERASE_GENERICS: u16 = tsz_solver::RelationFlags::NO_ERASE_GENERICS.bits() as u16;
+    pub const ALLOW_BIVARIANT_REST: u16 =
+        tsz_solver::RelationFlags::ALLOW_BIVARIANT_REST.bits() as u16;
     pub const ALLOW_ERASED_GENERIC_SIGNATURE_RETRY: u16 =
-        tsz_solver::RelationCacheKey::FLAG_ALLOW_ERASED_GENERIC_SIGNATURE_RETRY;
+        tsz_solver::RelationFlags::ALLOW_ERASED_GENERIC_SIGNATURE_RETRY.bits() as u16;
     pub const DISABLE_METHOD_BIVARIANCE: u16 =
-        tsz_solver::RelationCacheKey::FLAG_DISABLE_METHOD_BIVARIANCE;
+        tsz_solver::RelationFlags::DISABLE_METHOD_BIVARIANCE.bits() as u16;
 }
 
 /// Re-export of the solver's relation cache key type.

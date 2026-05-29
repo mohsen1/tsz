@@ -1407,9 +1407,10 @@ pub struct CheckerContext<'a> {
     /// Decremented on each type resolution to prevent timeout on pathological types.
     /// When exhausted, type resolution returns ERROR to prevent infinite loops.
     pub type_resolution_fuel: Cell<u32>,
-    // NOTE: Freshness is now tracked on the TypeId via ObjectFlags.
-    // This fixes the "Zombie Freshness" bug by interning fresh vs non-fresh
-    // object shapes distinctly.
+    /// Node cache for class/method/interface type param `TypeId`s (no `DefId` registration).
+    /// Prevents `fresh_type_param` from minting distinct ids across independent
+    /// `push_type_parameters` calls; see `intern_type_param_for_decl` for invariants.
+    pub type_param_node_cache: FxHashMap<(u32, tsz_solver::TypeParamInfo), tsz_solver::TypeId>,
 }
 
 /// Project-wide shared environment for multi-file type checking.

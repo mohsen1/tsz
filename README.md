@@ -19,20 +19,20 @@ The goal is a correct, fast, drop-in replacement for `tsc`, with both native and
 
 `tsz` is built the with help of AI-assistant coding. Many tools and AI models were used during its development.
 
-TypeScript is intentionally unsound. `tsz` keeps a sound core solver and layers a compatibility
-engine on top to match TypeScript behavior while preserving correctness where possible.
-
 ## Performance
 
-`tsz` is **2.21x faster** across the current successful micro benchmark
-snapshot. Large-project performance work is still underway; the release target
-is for eligible green project rows to be at least **2x faster than `tsgo`** in
-the canonical benchmark artifact.
-
-```
-tsz:  [█████████░░░░░░░░░░░] 3s
-tsgo: [████████████████████] 7s
-```
+`tsz` is aiming to be 2x faster than tsgo on all benchmarks. It is 3x faster in small file samples. Work on larger projects is underway.
+<!-- PERFORMANCE_START -->
+<p align="left">
+  <a href="https://tsz.dev/benchmarks/">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="crates/tsz-website/static/benchmark-data/readme-perf-light.png">
+      <img src="crates/tsz-website/static/benchmark-data/readme-perf-light.png" alt="Latest tsz vs tsgo benchmark performance" width="760">
+    </picture>
+  </a>
+</p>
+<!-- PERFORMANCE_END -->
 
 ## Install
 
@@ -54,6 +54,8 @@ irm https://tsz.dev/install.ps1 | iex
 ```
 
 ## TypeScript compatibility
+
+`tsz` runs TypeScript's own test suite for compatablity across type-checking, code emition and LSP. 
 <!-- TS_VERSION_START -->
 Currently targeting `TypeScript`@`6.0.3`
 <!-- TS_VERSION_END -->
@@ -65,37 +67,22 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 100.0% (12,582/12,582 tests)
+Progress: [████████████████████] 99.9% (12,889/12,896 tests)
 ```
 <!-- CONFORMANCE_END -->
 
-Conformance is measured by diagnostic fingerprint comparison: each diagnostic must match tsc in
-error code, file, line, column, and message.
-
-The checked-in detail snapshot is exact, but release conformance also tracks
-the accepted-regression strictness list separately until that deficit reaches
-zero.
 
 ### Emitter
 
-We compare tsz JavaScript/declaration emit output against TypeScript's baseline files
-to ensure correct code generation.
 
 <!-- EMIT_START -->
 ```
-JavaScript:  [███████████████████░] 96.8% (13,094 / 13,530 tests)
-Declaration: [███████████████████░] 96.2% (1,606 / 1,669 tests)
+JavaScript:  [████████████████████] 99.2% (13,426 / 13,530 tests)
+Declaration: [████████████████████] 98.4% (1,643 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
-This block is generated from the checked-in emit artifact with
-`python3 scripts/refresh-readme.py --write`; release claims should cite the
-current CI artifact.
-
 ### Language Service
-
-We run TypeScript's fourslash language service tests against `tsz-server` to measure
-language service feature coverage (completions, quickinfo, go-to-definition, etc.).
 
 <!-- FOURSLASH_START -->
 ```

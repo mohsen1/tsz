@@ -2,7 +2,7 @@ use super::super::super::Printer;
 use super::AutoAccessorEmitOptions;
 use crate::transforms::private_fields_es5::get_private_field_name;
 use tsz_parser::parser::NodeIndex;
-use tsz_parser::parser::node::Node;
+use tsz_parser::parser::node::{Node, NodeAccess};
 use tsz_parser::parser::syntax_kind_ext;
 use tsz_scanner::SyntaxKind;
 
@@ -88,6 +88,69 @@ impl<'a> Printer<'a> {
         None
     }
 
+    /// Returns `true` when the class-expression initializer is bound by a
+    /// `using` / `await using` declaration that this target lowers to an
+    /// `__addDisposableResource(env, <class>, ...)` call. That lowering moves
+    /// the class out of direct-assignment position, so JS named evaluation no
+    /// longer assigns the binding name to the (anonymous) class; tsc therefore
+    /// captures the class in a temp and calls `__setFunctionName` explicitly.
+    /// Plain `var`/`let`/`const`/parameter/property/assignment bindings keep
+    /// the class in named-evaluation position and need no such helper. Mirrors
+    /// the lowering-pass gate of the same name.
+    pub(in crate::emitter) fn class_expr_binding_loses_named_evaluation(
+        &self,
+        class_idx: NodeIndex,
+    ) -> bool {
+        if self.ctx.options.target.supports_es2025() {
+            // `using` declarations are emitted verbatim; named evaluation holds.
+            return false;
+        }
+        let mut current = class_idx;
+        let mut hops = 0;
+        while hops < 8 {
+            let Some(parent_idx) = self
+                .arena
+                .get_extended(current)
+                .map(|ext| ext.parent)
+                .filter(|p| !p.is_none())
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    let Some(list_idx) = self
+                        .arena
+                        .get_extended(parent_idx)
+                        .map(|ext| ext.parent)
+                        .filter(|p| !p.is_none())
+                    else {
+                        return false;
+                    };
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        return false;
+                    }
+                    return (list_node.flags as u32 & tsz_parser::parser::node_flags::USING) != 0;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn identifier_binding_name(&self, name_idx: NodeIndex) -> Option<String> {
         let name_node = self.arena.get(name_idx)?;
         if name_node.kind != SyntaxKind::Identifier as u16 {
@@ -162,6 +225,30 @@ impl<'a> Printer<'a> {
             && let Some(paren) = self.arena.get_parenthesized(expr_node)
         {
             return self.is_computed_name_expr_side_effect_free(paren.expression);
+        }
+        false
+    }
+
+    pub(in crate::emitter) fn expression_directly_contains_private_identifier(
+        &self,
+        expr_idx: NodeIndex,
+    ) -> bool {
+        let mut stack = vec![expr_idx];
+        while let Some(current) = stack.pop() {
+            let Some(node) = self.arena.get(current) else {
+                continue;
+            };
+            if node.kind == SyntaxKind::PrivateIdentifier as u16 {
+                return true;
+            }
+            if current != expr_idx
+                && (node.kind == syntax_kind_ext::FUNCTION_EXPRESSION
+                    || node.kind == syntax_kind_ext::ARROW_FUNCTION
+                    || node.kind == syntax_kind_ext::CLASS_EXPRESSION)
+            {
+                continue;
+            }
+            stack.extend(self.arena.get_children(current));
         }
         false
     }

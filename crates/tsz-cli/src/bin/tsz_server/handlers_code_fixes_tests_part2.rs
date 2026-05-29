@@ -1423,3 +1423,100 @@ fn fix_missing_type_annotation_wrong_error_code_returns_empty() {
         "should not produce fixes when error_codes does not include 9010"
     );
 }
+
+/// When the server did not generate a TS9010 diagnostic (e.g. isolatedDeclarations
+/// is not in the server's inferred options) but the client supplies `request_span`,
+/// the fix should use the span's start position to locate the variable declaration.
+/// Structural rule: `error_codes`=[9010] + `request_span` covers variable name -> fix is
+/// generated from the span even with an empty diagnostics slice.
+#[test]
+fn fix_missing_type_annotation_jsx_self_closing_span_fallback_no_server_diag() {
+    let content = "export const myNode = <div/>;";
+    let file = "/span_fallback.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+    // "myNode" starts at byte 13 (0-indexed). LineMap uses 0-based line/col.
+    // line=0, col=13.
+    let span_start = tsz::lsp::position::Position::new(0, 13);
+    let span_end = tsz::lsp::position::Position::new(0, 19);
+
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[], // No server-generated TS9010 diagnostics
+        &[9010],
+        Some((span_start, span_end)),
+    );
+
+    assert_eq!(
+        fixes.len(),
+        2,
+        "span-based fallback must produce two fix variants when diagnostics is empty: {fixes:?}"
+    );
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(
+        direct_text, ": JSX.Element",
+        "span fallback should still infer JSX.Element"
+    );
+}
+
+/// Span-based fallback for `JsxElement` shape (variable named `node`).
+/// Confirms the fallback is keyed on the JSX node kind, not on the
+/// diagnostic source.
+#[test]
+fn fix_missing_type_annotation_jsx_element_span_fallback_different_name() {
+    let content = "export const node = <section><p/></section>;";
+    let file = "/span_fallback_element.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+    let span_start = tsz::lsp::position::Position::new(0, 13);
+    let span_end = tsz::lsp::position::Position::new(0, 17);
+
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[], // No diagnostics
+        &[9010],
+        Some((span_start, span_end)),
+    );
+
+    assert_eq!(
+        fixes.len(),
+        2,
+        "span-based fallback must produce two fix variants for JsxElement: {fixes:?}"
+    );
+    let direct_text = fixes[0]["changes"][0]["textChanges"][0]["newText"]
+        .as_str()
+        .expect("direct annotation newText");
+    assert_eq!(direct_text, ": JSX.Element");
+}
+
+/// Span with no `request_span` and empty diagnostics must return nothing.
+#[test]
+fn fix_missing_type_annotation_no_span_no_diag_returns_empty() {
+    let content = "export const el = <div/>;";
+    let file = "/no_span_no_diag.tsx";
+    let arena = parse_to_arena(file, content);
+    let line_map = LineMap::build(content);
+
+    let fixes = Server::apply_isolated_decl_type_annotation_fix(
+        file,
+        content,
+        &arena,
+        &line_map,
+        &[], // No diagnostics
+        &[9010],
+        None, // No span either
+    );
+
+    assert!(
+        fixes.is_empty(),
+        "without both diagnostics and span, no fix should be produced"
+    );
+}

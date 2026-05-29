@@ -61,8 +61,7 @@ jobs:
           arch_tool_only=false
           compiler_checks_required=true
           unit_packages=""
-          if [[ "${CI_EVENT_NAME}" == "push" \
-                && "${CI_REF}" == refs/heads/automation/merge-queue/* ]]; then
+          if [[ "${CI_REF}" == refs/heads/automation/merge-queue/* ]]; then
             # Queue branches are synthetic latest-main merge commits. The PR
             # head has already passed required PR CI before queueing, so keep
             # only the required summary check alive for queue throughput.

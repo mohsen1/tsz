@@ -13,6 +13,47 @@ pub(crate) fn contains_index_access_type(db: &dyn TypeDatabase, type_id: TypeId)
     tsz_solver::type_queries::contains_index_access_type(db, type_id)
 }
 
+/// Whether a JSX attribute relation operand carries a conditional type that is
+/// still deferred over a type parameter, making a structural assignability
+/// answer unreliable.
+///
+/// This covers both whole-object spread sources (`{...props}` where `props` is
+/// `Omit`/`Pick`/`Exclude`/`Overwrite`/a user conditional over an unresolved
+/// `T`) and individual attribute operand types (e.g. `value={props.value}`
+/// whose type is `Option<C<T>> | C<T>`). `tsc` treats such instantiable types
+/// as *comparable* and does not emit `TS2322`; `tsz`'s structural relation
+/// cannot soundly decide them and conservatively reports "not assignable",
+/// producing a false positive.
+///
+/// Keyed purely on type structure (a deferred conditional member, or a
+/// conditional surface that still mentions a type parameter) so it is
+/// independent of the conditional helper's spelling or the type-parameter
+/// name.
+pub(crate) fn jsx_relation_operand_is_deferred_conditional(
+    db: &dyn TypeDatabase,
+    def_store: &DefinitionStore,
+    type_id: TypeId,
+) -> bool {
+    fn one(db: &dyn TypeDatabase, def_store: &DefinitionStore, type_id: TypeId) -> bool {
+        if !crate::query_boundaries::common::contains_type_parameters(db, type_id) {
+            return false;
+        }
+        crate::query_boundaries::common::has_deferred_conditional_member(db, type_id)
+            || crate::query_boundaries::common::contains_conditional_type(db, type_id)
+            || crate::query_boundaries::diagnostics::application_base_has_conditional_alias_body(
+                db, def_store, type_id,
+            )
+    }
+
+    if one(db, def_store, type_id) {
+        return true;
+    }
+    // The operand is frequently an intersection (`Omit<T, K> & Extra`);
+    // a conditional-bodied member anywhere in it defers the relation.
+    crate::query_boundaries::common::intersection_members(db, type_id)
+        .is_some_and(|members| members.iter().any(|&m| one(db, def_store, m)))
+}
+
 /// Check whether a type surface contains an explicit-readonly mapped type.
 pub(crate) fn contains_mapped_type_with_readonly_modifier(
     db: &dyn TypeDatabase,

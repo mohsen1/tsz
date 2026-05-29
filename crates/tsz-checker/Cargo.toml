@@ -31,8 +31,20 @@ web-time = { workspace = true }
 stacker = "0.1.23"
 
 [[test]]
+name = "closure_boundary_property_narrowing_tests"
+path = "tests/closure_boundary_property_narrowing_tests.rs"
+
+[[test]]
 name = "union_protected_intersection_property_tests"
 path = "tests/union_protected_intersection_property_tests.rs"
+
+[[test]]
+name = "tuple_element_mismatch_tests"
+path = "tests/tuple_element_mismatch_tests.rs"
+
+[[test]]
+name = "for_await_type_parameter_iterability_tests"
+path = "tests/for_await_type_parameter_iterability_tests.rs"
 
 [[test]]
 name = "array_element_naked_inference_tests"
@@ -41,6 +53,10 @@ path = "tests/array_element_naked_inference_tests.rs"
 [[test]]
 name = "homomorphic_mapped_keyof_modifier_tests"
 path = "tests/homomorphic_mapped_keyof_modifier_tests.rs"
+
+[[test]]
+name = "homomorphic_mapped_index_display_tests"
+path = "tests/homomorphic_mapped_index_display_tests.rs"
 
 [[test]]
 name = "array_declaration_display_summary_tests"
@@ -87,6 +103,10 @@ name = "generic_alias_assignability_pollution_tests"
 path = "tests/generic_alias_assignability_pollution_tests.rs"
 
 [[test]]
+name = "generic_default_branch_independence_tests"
+path = "tests/generic_default_branch_independence_tests.rs"
+
+[[test]]
 name = "generic_return_fingerprint_tests"
 path = "tests/generic_return_fingerprint_tests.rs"
 
@@ -111,6 +131,10 @@ name = "async_return_widening_tests"
 path = "tests/async_return_widening_tests.rs"
 
 [[test]]
+name = "async_return_promise_identity_tests"
+path = "tests/async_return_promise_identity_tests.rs"
+
+[[test]]
 name = "object_literal_getter_widening_tests"
 path = "tests/object_literal_getter_widening_tests.rs"
 
@@ -121,6 +145,10 @@ path = "tests/object_union_assignability_fast_path_tests.rs"
 [[test]]
 name = "optional_chain_literal_nullish_ts2339_tests"
 path = "tests/optional_chain_literal_nullish_ts2339_tests.rs"
+
+[[test]]
+name = "optional_chain_indexed_unknown_tests"
+path = "tests/optional_chain_indexed_unknown_tests.rs"
 
 [[test]]
 name = "new_expression_regression_tests"
@@ -141,6 +169,18 @@ path = "tests/array_subclass_inheritance_tests.rs"
 [[test]]
 name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
+
+[[test]]
+name = "variadic_tuple_recursive_zip_tests"
+path = "tests/variadic_tuple_recursive_zip_tests.rs"
+
+[[test]]
+name = "recursive_conditional_alias_index_tests"
+path = "tests/recursive_conditional_alias_index_tests.rs"
+
+[[test]]
+name = "recursive_conditional_infer_depth_tests"
+path = "tests/recursive_conditional_infer_depth_tests.rs"
 
 [[test]]
 name = "reverse_mapped_inference_tests"
@@ -371,12 +411,20 @@ name = "recursive_typeof_param_display_tests"
 path = "tests/recursive_typeof_param_display_tests.rs"
 
 [[test]]
+name = "recursive_value_call_return_tests"
+path = "tests/recursive_value_call_return_tests.rs"
+
+[[test]]
 name = "interface_call_signature_typeof_param_tests"
 path = "tests/interface_call_signature_typeof_param_tests.rs"
 
 [[test]]
 name = "lib_merge_indexed_access_no_cascade_tests"
 path = "tests/lib_merge_indexed_access_no_cascade_tests.rs"
+
+[[test]]
+name = "lib_type_alias_to_interface_resolution_tests"
+path = "tests/lib_type_alias_to_interface_resolution_tests.rs"
 
 [[test]]
 name = "readonly_tuple_source_display_tests"
@@ -429,6 +477,10 @@ path = "tests/interface_heritage_display_tests.rs"
 [[test]]
 name = "ts2430_tests"
 path = "tests/ts2430_tests.rs"
+
+[[test]]
+name = "ts2430_cross_file_generic_heritage_tests"
+path = "tests/ts2430_cross_file_generic_heritage_tests.rs"
 
 [[test]]
 name = "ts2540_readonly_tests"
@@ -605,6 +657,10 @@ path = "tests/ts2673_anonymous_class_private_ctor_tests.rs"
 [[test]]
 name = "ts2352_merged_type_alias_const_tests"
 path = "tests/ts2352_merged_type_alias_const_tests.rs"
+
+[[test]]
+name = "ts2352_nested_literal_overlap_tests"
+path = "tests/ts2352_nested_literal_overlap_tests.rs"
 
 [[test]]
 name = "ts2683_tests"
@@ -947,6 +1003,10 @@ name = "ts2344_literal_type_message"
 path = "tests/ts2344_literal_type_message.rs"
 
 [[test]]
+name = "ts4112_cross_file_override_heritage_tests"
+path = "tests/ts4112_cross_file_override_heritage_tests.rs"
+
+[[test]]
 name = "ts2344_keyof_bare_tparam_defer_tests"
 path = "tests/ts2344_keyof_bare_tparam_defer_tests.rs"
 
@@ -1049,6 +1109,10 @@ path = "tests/convert_keywords_yes_tests.rs"
 [[test]]
 name = "infer_extends_constraint_substitution_tests"
 path = "tests/infer_extends_constraint_substitution_tests.rs"
+
+[[test]]
+name = "infer_constraint_whole_candidate_tests"
+path = "tests/infer_constraint_whole_candidate_tests.rs"
 
 [[test]]
 name = "fresh_intersection_display_tests"
@@ -1211,6 +1275,10 @@ name = "ts2339_union_narrow_display_tests"
 path = "tests/ts2339_union_narrow_display_tests.rs"
 
 [[test]]
+name = "ts2339_user_defined_predicate_primitive_or_object_tests"
+path = "tests/ts2339_user_defined_predicate_primitive_or_object_tests.rs"
+
+[[test]]
 name = "ts2345_instanceof_narrowed_union_display_tests"
 path = "tests/ts2345_instanceof_narrowed_union_display_tests.rs"
 
@@ -1241,6 +1309,10 @@ path = "tests/ts2352_paren_alias_display_tests.rs"
 [[test]]
 name = "generic_inference_ordering_tests"
 path = "tests/generic_inference_ordering_tests.rs"
+
+[[test]]
+name = "jsx_generic_spread_deferred_conditional_tests"
+path = "tests/jsx_generic_spread_deferred_conditional_tests.rs"
 
 [[test]]
 name = "jsx_multi_construct_overload_tests"
@@ -1527,6 +1599,10 @@ name = "string_mapping_alias_display_tests"
 path = "tests/string_mapping_alias_display_tests.rs"
 
 [[test]]
+name = "class_field_mapped_type_indexed_access_tests"
+path = "tests/class_field_mapped_type_indexed_access_tests.rs"
+
+[[test]]
 name = "class_arrow_property_type_inference_tests"
 path = "tests/class_arrow_property_type_inference_tests.rs"
 
@@ -1545,6 +1621,10 @@ path = "tests/class_expression_implements_display_tests.rs"
 [[test]]
 name = "class_implements_predicate_inference_tests"
 path = "tests/class_implements_predicate_inference_tests.rs"
+
+[[test]]
+name = "class_implements_overloaded_method_ts2416_tests"
+path = "tests/class_implements_overloaded_method_ts2416_tests.rs"
 
 [[test]]
 name = "dynamic_names_ts2720_tests"
@@ -1579,8 +1659,20 @@ name = "ts7053_template_mapped_tests"
 path = "tests/ts7053_template_mapped_tests.rs"
 
 [[test]]
+name = "ts7053_record_constrained_type_param_index_tests"
+path = "tests/ts7053_record_constrained_type_param_index_tests.rs"
+
+[[test]]
 name = "ts7053_unconstrained_type_param_index_tests"
 path = "tests/ts7053_unconstrained_type_param_index_tests.rs"
+
+[[test]]
+name = "ts7053_intersection_record_constrained_param_tests"
+path = "tests/ts7053_intersection_record_constrained_param_tests.rs"
+
+[[test]]
+name = "ts7053_record_constraint_index_tests"
+path = "tests/ts7053_record_constraint_index_tests.rs"
 
 [[test]]
 name = "tuple_union_contextual_typing_tests"
@@ -1593,6 +1685,10 @@ path = "tests/string_iterable_overload_matching_tests.rs"
 [[test]]
 name = "abstract_method_overload_ts2416_tests"
 path = "tests/abstract_method_overload_ts2416_tests.rs"
+
+[[test]]
+name = "generic_method_override_constraint_ts2416_tests"
+path = "tests/generic_method_override_constraint_ts2416_tests.rs"
 
 [[test]]
 name = "override_accessor_property_kind_mismatch_ts2416_tests"
@@ -1641,6 +1737,10 @@ path = "tests/issue_9730_readonly_array_element_inference_repro.rs"
 [[test]]
 name = "satisfies_object_property_position_tests"
 path = "tests/satisfies_object_property_position_tests.rs"
+
+[[test]]
+name = "satisfies_elaboration_chain_tests"
+path = "tests/satisfies_elaboration_chain_tests.rs"
 
 [[test]]
 name = "nested_infer_extends_scope_tests"
@@ -1739,6 +1839,10 @@ name = "deeply_nested_conditional_mapped_recursion_tests"
 path = "tests/deeply_nested_conditional_mapped_recursion_tests.rs"
 
 [[test]]
+name = "infer_match_recursive_wrapper_termination_tests"
+path = "tests/infer_match_recursive_wrapper_termination_tests.rs"
+
+[[test]]
 name = "type_parameter_canonical_typeid_tests"
 path = "tests/type_parameter_canonical_typeid_tests.rs"
 
@@ -1757,6 +1861,10 @@ path = "tests/optional_chain_continuation_undefined_tests.rs"
 [[test]]
 name = "structural_dispatch_void_tests"
 path = "tests/structural_dispatch_void_tests.rs"
+
+[[test]]
+name = "optional_property_required_elaboration_tests"
+path = "tests/optional_property_required_elaboration_tests.rs"
 
 [lints]
 workspace = true

@@ -71,8 +71,12 @@ use tsz::lsp::{
 
 #[path = "tsz_lsp/tsz_lsp_dispatch.rs"]
 mod tsz_lsp_dispatch;
+#[path = "tsz_lsp/tsz_lsp_notification_handlers.rs"]
+mod tsz_lsp_notification_handlers;
 #[path = "tsz_lsp/tsz_lsp_request_handlers.rs"]
 mod tsz_lsp_request_handlers;
+#[path = "tsz_lsp/tsz_lsp_response_helpers.rs"]
+mod tsz_lsp_response_helpers;
 
 /// TSZ Language Server
 #[derive(Parser, Debug)]
@@ -277,46 +281,6 @@ impl LspServer {
                 "message": message,
             }),
         });
-    }
-
-    // ─── Response helpers ───────────────────────────────────────────────
-
-    fn success_response(&self, id: Option<Value>, result: Value) -> JsonRpcResponse {
-        JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            id: id.unwrap_or(Value::Null),
-            result: Some(result),
-            error: None,
-        }
-    }
-
-    fn make_response(&self, id: Option<Value>, result: Result<Value>) -> JsonRpcResponse {
-        match result {
-            Ok(value) => self.success_response(id, value),
-            Err(e) => JsonRpcResponse {
-                jsonrpc: "2.0".to_string(),
-                id: id.unwrap_or(Value::Null),
-                result: None,
-                error: Some(JsonRpcError {
-                    code: -32603,
-                    message: e.to_string(),
-                    data: None,
-                }),
-            },
-        }
-    }
-
-    fn error_response(&self, id: Option<Value>, code: i32, message: String) -> JsonRpcResponse {
-        JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            id: id.unwrap_or(Value::Null),
-            result: None,
-            error: Some(JsonRpcError {
-                code,
-                message,
-                data: None,
-            }),
-        }
     }
 
     // ─── Param extraction helpers ───────────────────────────────────────

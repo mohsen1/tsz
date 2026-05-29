@@ -19,6 +19,30 @@ pub(crate) fn maybe_substitute_this_type(
     }
 }
 
+/// Collect a type's call signatures, handling both `CallableShape`
+/// (overloaded / object-with-call-sigs) and the single-signature `FunctionShape`
+/// that an interface method declaration lowers to. `get_call_signatures` alone
+/// misses the `FunctionShape` case and would yield an empty signature list.
+pub(crate) fn member_call_signatures(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Vec<tsz_solver::CallSignature> {
+    if let Some(sigs) = tsz_solver::type_queries::get_call_signatures(db, type_id) {
+        return sigs;
+    }
+    if let Some(fs) = tsz_solver::type_queries::get_function_shape(db, type_id) {
+        return vec![tsz_solver::CallSignature {
+            type_params: fs.type_params.clone(),
+            params: fs.params.clone(),
+            this_type: fs.this_type,
+            return_type: fs.return_type,
+            type_predicate: fs.type_predicate,
+            is_method: fs.is_method,
+        }];
+    }
+    Vec::new()
+}
+
 fn has_own_signature_type_params(checker: &CheckerState<'_>, type_id: TypeId) -> bool {
     if let Some(shape) = tsz_solver::type_queries::get_callable_shape(checker.ctx.types, type_id) {
         return shape
@@ -705,4 +729,97 @@ pub(crate) fn is_valid_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool
 /// Check if a type is a valid interface heritage base.
 pub(crate) fn is_valid_interface_base_type(db: &dyn TypeDatabase, type_id: TypeId) -> bool {
     tsz_solver::type_queries::data::is_valid_interface_base_type(db, type_id)
+}
+
+/// True if `type_id` is callable (function or callable shape) and any of its
+/// call signatures carries method-local type parameters. `None` when not
+/// callable, so callers fall back to the strict relation.
+pub(crate) fn callable_signature_is_generic(
+    db: &dyn TypeDatabase,
+    type_id: TypeId,
+) -> Option<bool> {
+    if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(db, type_id) {
+        return Some(!shape.type_params.is_empty());
+    }
+    if let Some(shape) = crate::query_boundaries::common::callable_shape_for_type(db, type_id) {
+        if shape.call_signatures.is_empty() {
+            return None;
+        }
+        return Some(
+            shape
+                .call_signatures
+                .iter()
+                .any(|sig| !sig.type_params.is_empty()),
+        );
+    }
+    None
+}
+
+/// Combine several object-wrapped single-signature method members (one per
+/// overload of `name`) into one `Callable` carrying all of their call
+/// signatures. Returns `None` unless at least two signatures were gathered, so
+/// callers only use the combined form for genuinely overloaded members.
+pub(crate) fn combine_overloaded_method_callable(
+    db: &dyn QueryDatabase,
+    member_object_types: &[TypeId],
+    name: &str,
+) -> Option<TypeId> {
+    use tsz_solver::types::{CallSignature, CallableShape};
+    let tdb = db.as_type_database();
+    let mut call_signatures: Vec<CallSignature> = Vec::new();
+    for &object_ty in member_object_types {
+        let fn_ty = crate::query_boundaries::common::find_property_by_str(tdb, object_ty, name)
+            .map(|p| p.type_id)
+            .unwrap_or(object_ty);
+        if let Some(shape) = crate::query_boundaries::common::function_shape_for_type(tdb, fn_ty) {
+            call_signatures.push(CallSignature {
+                type_params: shape.type_params.clone(),
+                params: shape.params.clone(),
+                this_type: shape.this_type,
+                return_type: shape.return_type,
+                type_predicate: shape.type_predicate,
+                is_method: shape.is_method,
+            });
+        } else if let Some(shape) =
+            crate::query_boundaries::common::callable_shape_for_type(tdb, fn_ty)
+        {
+            call_signatures.extend(shape.call_signatures.iter().cloned());
+        } else {
+            return None;
+        }
+    }
+    if call_signatures.len() < 2 {
+        return None;
+    }
+    Some(db.factory().callable(CallableShape {
+        call_signatures,
+        construct_signatures: Vec::new(),
+        properties: Vec::new(),
+        string_index: None,
+        number_index: None,
+        symbol: None,
+        is_abstract: false,
+    }))
+}
+
+/// Instantiate a base interface member type by substituting the base's type
+/// parameters with the heritage type arguments. A no-op when `base_params` is
+/// empty or the member contains none of those parameters. The cross-file
+/// interface heritage path relies on this because the lowered base member can
+/// still reference the base's own parameter (e.g. `AliasedExpression<T, A>`).
+pub(crate) fn instantiate_member_with_heritage_args(
+    db: &dyn QueryDatabase,
+    member_type: TypeId,
+    base_params: &[tsz_solver::TypeParamInfo],
+    heritage_args: &[TypeId],
+) -> TypeId {
+    if base_params.is_empty() {
+        return member_type;
+    }
+    let substitution = crate::query_boundaries::common::TypeSubstitution::from_args(
+        db.as_type_database(),
+        base_params,
+        heritage_args,
+    );
+    crate::query_boundaries::common::instantiate_type(db, member_type, &substitution)
 }

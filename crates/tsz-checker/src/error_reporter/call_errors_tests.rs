@@ -1596,3 +1596,106 @@ const r = foo({ transform: (x: string) => x.length });
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn ts2345_generic_arg_with_constrained_tp_passed_to_unconstrained_generic_param() {
+    // tsc#11703: `take(g)` must emit TS2345 because `g: <U extends object>(x: U) => U`
+    // has a stricter constraint than the unconstrained `<T>(x: T) => T` that `take` expects.
+    // The mismatch is structural and cannot be resolved by outer inference.
+    let source = r#"
+declare function take<T>(f: (x: T) => T): void;
+declare const g: <U extends object>(x: U) => U;
+take(g);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "Expected TS2345 when passing a constrained-TP generic function to an \
+         unconstrained-TP generic parameter, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn ts2345_generic_arg_constrained_tp_different_names() {
+    // The same rule holds regardless of how the type parameters are named.
+    // `<A extends string>(x: A) => A` passed to `<X>(x: X) => X` must also error.
+    let source = r#"
+declare function take<X>(f: (x: X) => X): void;
+declare const g: <A extends string>(x: A) => A;
+take(g);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        diagnostics.iter().any(|d| d.code == 2345),
+        "Expected TS2345 for constrained-TP generic arg regardless of type param names, \
+         got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2345_unconstrained_generic_arg_passed_to_unconstrained_generic_param() {
+    // `<V>(x: V) => V` passed to `<T>(x: T) => T` is structurally compatible — no error.
+    let source = r#"
+declare function take<T>(f: (x: T) => T): void;
+declare const h: <V>(x: V) => V;
+take(h);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected no TS2345 when passing an unconstrained generic function to an \
+         unconstrained generic parameter, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2345_for_generic_component_props_contextual_inference() {
+    let source = r#"
+type ComponentProps<T> = T extends (props: infer P) => unknown ? P : never;
+declare function wrapComponent<P>(component: (props: P) => unknown): (props: P) => unknown;
+const WrappedComponent = wrapComponent(
+  <T extends string = "span">(props: { as?: T | undefined; className?: string }) => null,
+);
+type RetrievedProps = ComponentProps<typeof WrappedComponent>;
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected contextual generic props inference to stay deferrable, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn no_ts2345_for_higher_order_generic_callback_inference() {
+    let source = r#"
+declare function f2<T>(cb: <S extends number>(x: S) => T): T;
+declare function f3<T>(cb: <S extends Array<S>>(x: S) => T): T;
+let x2 = f2(x => x);
+let x3 = f3(x => x);
+"#;
+    let diagnostics = check_source_with_strict_null(source);
+    assert!(
+        !diagnostics.iter().any(|d| d.code == 2345),
+        "Expected constrained higher-order callback inference to stay deferrable, got: {:?}",
+        diagnostics
+            .iter()
+            .map(|d| (d.code, &d.message_text))
+            .collect::<Vec<_>>()
+    );
+}

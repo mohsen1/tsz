@@ -52,6 +52,50 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Whether an `INFER_TYPE` node carries a non-empty type-parameter
+    /// constraint slot (e.g. `infer U extends string`). The constraint is
+    /// detected structurally via the infer type-parameter's `constraint`
+    /// slot, never by matching the type-parameter name.
+    fn infer_type_has_constraint(&self, infer_idx: NodeIndex) -> bool {
+        self.arena
+            .get(infer_idx)
+            .filter(|node| node.kind == syntax_kind_ext::INFER_TYPE)
+            .and_then(|node| self.arena.get_infer_type(node))
+            .and_then(|infer| self.arena.get(infer.type_parameter))
+            .and_then(|tp_node| self.arena.get_type_parameter(tp_node))
+            .is_some_and(|tp| tp.constraint.is_some())
+    }
+
+    /// Whether a source `PARENTHESIZED_TYPE` reached directly by `emit_type`
+    /// (an annotation-like position, not a structural caller that already
+    /// peels) should keep its source parens around `inner` (the fully peeled
+    /// inner type), matching tsc.
+    ///
+    /// tsc strips redundant parens around atomic/simple operands and
+    /// function/constructor types in these positions, but preserves the source
+    /// grouping when the inner type is a composite that benefits from explicit
+    /// parentheses (union, intersection, conditional, mapped/type-literal,
+    /// tuple) or an `infer` carrying a constraint. The decision is purely
+    /// structural — keyed on the inner node kind, never on identifier names or
+    /// rendered output.
+    fn annotation_paren_keeps_source_parens(&self, inner: NodeIndex) -> bool {
+        let Some(node) = self.arena.get(inner) else {
+            return false;
+        };
+        let k = node.kind;
+        k == syntax_kind_ext::UNION_TYPE
+            || k == syntax_kind_ext::INTERSECTION_TYPE
+            || k == syntax_kind_ext::CONDITIONAL_TYPE
+            || k == syntax_kind_ext::MAPPED_TYPE
+            || k == syntax_kind_ext::TYPE_LITERAL
+            || k == syntax_kind_ext::TUPLE_TYPE
+            // A source-parenthesized `infer U extends C` keeps its parens: the
+            // trailing `extends` would otherwise re-absorb following tokens
+            // (e.g. an enclosing conditional's own clause). A bare `(infer U)`
+            // with no constraint drops the redundant parens.
+            || (k == syntax_kind_ext::INFER_TYPE && self.infer_type_has_constraint(inner))
+    }
+
     pub(crate) fn emit_type(&mut self, type_idx: NodeIndex) {
         let Some(type_node) = self.arena.get(type_idx) else {
             return;
@@ -137,16 +181,28 @@ impl<'a> DeclarationEmitter<'a> {
             // Array type
             k if k == syntax_kind_ext::ARRAY_TYPE => {
                 if let Some(arr) = self.arena.get_array_type(type_node) {
+                    // Preserve a source-level parenthesized array element so the
+                    // user's parens round-trip verbatim (e.g. `(T)[]` stays
+                    // `(T)[]`, not `T[]`). Detect the source `PARENTHESIZED_TYPE`
+                    // wrapper structurally on the array element, mirroring the
+                    // conditional-type arms. This only affects verbatim source
+                    // copy; synthesized array types print through the solver
+                    // TypePrinter, which normalizes parens independently.
+                    let element_source_was_parenthesized = self
+                        .arena
+                        .get(arr.element_type)
+                        .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                     let inner = self.peel_paren(arr.element_type);
-                    let needs_parens = self.arena.get(inner).is_some_and(|n| {
-                        n.kind == syntax_kind_ext::FUNCTION_TYPE
-                            || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
-                            || n.kind == syntax_kind_ext::UNION_TYPE
-                            || n.kind == syntax_kind_ext::INTERSECTION_TYPE
-                            || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
-                            || n.kind == syntax_kind_ext::TYPE_OPERATOR
-                            || n.kind == syntax_kind_ext::INFER_TYPE
-                    });
+                    let needs_parens = element_source_was_parenthesized
+                        || self.arena.get(inner).is_some_and(|n| {
+                            n.kind == syntax_kind_ext::FUNCTION_TYPE
+                                || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
+                                || n.kind == syntax_kind_ext::UNION_TYPE
+                                || n.kind == syntax_kind_ext::INTERSECTION_TYPE
+                                || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                || n.kind == syntax_kind_ext::TYPE_OPERATOR
+                                || n.kind == syntax_kind_ext::INFER_TYPE
+                        });
                     if needs_parens {
                         self.write("(");
                     }
@@ -177,11 +233,30 @@ impl<'a> DeclarationEmitter<'a> {
                             self.emit_named_tuple_type_multiline(type_idx);
                             continue;
                         }
+                        // An intersection member of a union keeps its source
+                        // grouping verbatim: if the user parenthesized the arm
+                        // (`"a" | (string & {})`) those parens round-trip, but a
+                        // bare source intersection arm (`T | T & undefined`)
+                        // stays unparenthesized. Detect the source
+                        // `PARENTHESIZED_TYPE` wrapper structurally; do not
+                        // synthesize parens that the source did not have.
+                        // Synthesized union members print through the solver
+                        // TypePrinter (`print_type_id`), which adds the
+                        // normalized `(T & undefined)` parens on its own path.
+                        let member_source_was_parenthesized = self
+                            .arena
+                            .get(type_idx)
+                            .is_some_and(|n| n.kind == syntax_kind_ext::PARENTHESIZED_TYPE);
                         let inner = self.peel_paren(type_idx);
                         let needs_parens = self.arena.get(inner).is_some_and(|n| {
                             n.kind == syntax_kind_ext::FUNCTION_TYPE
                                 || n.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                 || n.kind == syntax_kind_ext::CONDITIONAL_TYPE
+                                // A source-parenthesized intersection member of a
+                                // union keeps its parens so the grouping
+                                // round-trips unambiguously: `(string & {}) | T`.
+                                || (member_source_was_parenthesized
+                                    && n.kind == syntax_kind_ext::INTERSECTION_TYPE)
                         });
                         if needs_parens {
                             self.write("(");
@@ -416,15 +491,36 @@ impl<'a> DeclarationEmitter<'a> {
                 }
             }
 
-            // Parenthesized type — strip outer parens and emit the inner
-            // type directly. The surrounding context (array element,
-            // union/intersection arm) adds parens only when the structural
-            // inner type requires them for operator precedence. tsc does not
-            // preserve source parens verbatim; emitting them unconditionally
-            // produces illegal `.d.ts` output such as `declare var x: (string)`.
+            // Parenthesized type reached directly (an annotation-like position
+            // not pre-peeled by a structural caller: type-alias RHS, mapped-type
+            // value, function/constructor return, type-predicate target,
+            // `as`-cast type, variable/property/parameter annotation, …).
+            //
+            // tsc strips *redundant* source parens around atomic/simple operands
+            // and function/constructor types in these positions
+            // (`var x: (string)` → `string`, `var f: (() => string)` →
+            // `() => string`), but *preserves* the source parens when the inner
+            // type is a composite that benefits from explicit grouping — a
+            // union, intersection, conditional, mapped/type-literal, or tuple —
+            // and when the inner is an `infer` carrying a constraint (whose
+            // trailing `extends` would otherwise re-absorb following tokens).
+            // The decision keys on the peeled inner node *kind*, never on names
+            // or rendered output.
+            //
+            // Structural-position callers (array element, union/intersection
+            // arm, conditional branch, optional/rest tuple element, indexed
+            // access, type operator) all call `peel_paren` before
+            // `emit_type(inner)` and manage their own parens, so they never
+            // reach this arm; type-argument positions are handled explicitly in
+            // `emit_type_arguments`.
             k if k == syntax_kind_ext::PARENTHESIZED_TYPE => {
-                if let Some(paren) = self.arena.get_wrapped_type(type_node) {
-                    self.emit_type(paren.type_node);
+                let inner = self.peel_paren(type_idx);
+                if self.annotation_paren_keeps_source_parens(inner) {
+                    self.write("(");
+                    self.emit_type(inner);
+                    self.write(")");
+                } else {
+                    self.emit_type(inner);
                 }
             }
 
@@ -665,6 +761,17 @@ impl<'a> DeclarationEmitter<'a> {
                             || node.kind == syntax_kind_ext::INTERSECTION_TYPE
                             || (check_source_was_parenthesized
                                 && node.kind == syntax_kind_ext::MAPPED_TYPE)
+                            // A source-parenthesized `infer X` check operand
+                            // must keep its parens: the conditional's own
+                            // `extends` keyword immediately follows, so without
+                            // parens it is reabsorbed as the infer
+                            // type-parameter's constraint clause and changes
+                            // meaning (e.g. `(infer A) extends infer B ? C : D`
+                            // would reparse as `infer A extends infer B`). This
+                            // applies whether or not the infer already carries
+                            // its own source constraint.
+                            || (check_source_was_parenthesized
+                                && node.kind == syntax_kind_ext::INFER_TYPE)
                     });
 
                     if check_needs_parens {
@@ -690,6 +797,16 @@ impl<'a> DeclarationEmitter<'a> {
                                 && (node.kind == syntax_kind_ext::FUNCTION_TYPE
                                     || node.kind == syntax_kind_ext::CONSTRUCTOR_TYPE
                                     || node.kind == syntax_kind_ext::MAPPED_TYPE))
+                            // A source-parenthesized `infer U extends C` extends
+                            // operand keeps its parens: tsc preserves the source
+                            // grouping (e.g.
+                            // `T extends (infer U extends number) ? X : Y`
+                            // stays parenthesized). Gate on the infer carrying
+                            // its own constraint so a bare `(infer U)` extends
+                            // operand still drops its redundant parens.
+                            || (extends_source_was_parenthesized
+                                && node.kind == syntax_kind_ext::INFER_TYPE
+                                && self.infer_type_has_constraint(extends_inner))
                     });
 
                     if extends_needs_parens {

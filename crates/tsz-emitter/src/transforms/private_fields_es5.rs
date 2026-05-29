@@ -40,6 +40,11 @@ pub use tsz_parser::syntax::transform_utils::is_private_identifier;
 /// Information about a private field in a class
 #[derive(Debug, Clone)]
 pub struct PrivateFieldInfo {
+    /// The source member node this field was collected from. Used to map a
+    /// member back to its own generated helper name when several members share
+    /// the same private clean-name (instance + static, or duplicate-error
+    /// fields). Defaults to `NodeIndex::NONE` for synthesized entries.
+    pub member_idx: NodeIndex,
     /// The private field name without # (e.g., "value" for "#value")
     pub name: String,
     /// The `WeakMap` variable name (e.g., "_`C_value`" for class C, field #value)
@@ -55,6 +60,11 @@ pub struct PrivateFieldInfo {
 /// Information about a private accessor (get/set) in a class
 #[derive(Debug, Clone)]
 pub struct PrivateAccessorInfo {
+    /// The source member nodes (getter and/or setter) merged into this entry.
+    /// A get/set pair that shares one private clean-name is collapsed into a
+    /// single entry, so the hoisted var-decl list can recognize either member
+    /// node and avoid re-deriving the helper name on a separate path.
+    pub member_indices: Vec<NodeIndex>,
     /// The private accessor name without # (e.g., "value" for "#value")
     pub name: String,
     /// The `WeakMap` variable name for the getter (e.g., "_`C_value_get`")
@@ -113,6 +123,7 @@ impl PrivateFieldState {
         let weakmap_name = format!("_{class_name}_{field_name}");
 
         self.private_fields.push(PrivateFieldInfo {
+            member_idx: NodeIndex::NONE,
             name: field_name.to_string(),
             weakmap_name,
             has_initializer,
@@ -450,6 +461,7 @@ pub fn collect_private_fields_with_reserved(
                 let is_static = arena.has_modifier(&prop_data.modifiers, SyntaxKind::StaticKeyword);
 
                 fields.push(PrivateFieldInfo {
+                    member_idx,
                     name: clean_name.to_string(),
                     weakmap_name,
                     has_initializer: prop_data.initializer.is_some(),
@@ -514,6 +526,7 @@ pub fn collect_private_accessors_with_reserved(
                 accessors
                     .entry(clean_name.to_string())
                     .or_insert_with(|| PrivateAccessorInfo {
+                        member_indices: Vec::new(),
                         name: clean_name.to_string(),
                         get_var_name: Some(make_unique_private_name(
                             &format!("_{class_name}_{clean_name}_get"),
@@ -528,6 +541,7 @@ pub fn collect_private_accessors_with_reserved(
                         setter_param: None,
                         is_static,
                     });
+            entry.member_indices.push(member_idx);
 
             // Update based on accessor type
             if member_node.kind == syntax_kind_ext::GET_ACCESSOR {
@@ -557,6 +571,10 @@ pub fn collect_private_accessors_with_reserved(
 /// Information about a private method in a class
 #[derive(Debug, Clone)]
 pub struct PrivateMethodInfo {
+    /// The source member node this method was collected from. See
+    /// [`PrivateFieldInfo::member_idx`] for why this matters when several
+    /// members share the same private clean-name.
+    pub member_idx: NodeIndex,
     /// The private method name without # (e.g., "method" for "#method")
     pub name: String,
     /// The function variable name (e.g., "_`C_method`")
@@ -622,6 +640,7 @@ pub fn collect_private_methods_with_reserved(
             let is_async = arena.has_modifier(&method_data.modifiers, SyntaxKind::AsyncKeyword);
 
             methods.push(PrivateMethodInfo {
+                member_idx,
                 name: clean_name.to_string(),
                 fn_var_name,
                 body: if method_data.body.is_some() {

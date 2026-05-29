@@ -11,6 +11,7 @@
 //! - `objects`: Object property matching and index signatures
 //! - `functions`: Function/callable signature compatibility
 //! - `generics`: Type parameters, references, and applications
+//! - `mapped_chain`: Homomorphic mapped-chain flattening
 //! - `mapped_expansion`: Concrete mapped-type relation expansion
 //! - `conditionals`: Conditional type checking
 
@@ -20,6 +21,7 @@ pub mod generics;
 pub mod intrinsic_object;
 pub mod intrinsics;
 pub mod literals;
+pub mod mapped_chain;
 pub mod mapped_expansion;
 pub mod mapped_key_constraints;
 pub mod objects;

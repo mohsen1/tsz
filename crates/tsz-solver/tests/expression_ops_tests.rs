@@ -191,6 +191,102 @@ fn test_conditional_fresh_object_literals_get_complementary_optional_properties(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Fresh empty object literal subtype reduction in conditional expressions.
+//
+// tsc computes a conditional's type as `getUnionType([t, f], UnionReduction.Subtype)`.
+// A *fresh* empty `{}` literal is a subtype of any type it is assignable to (one
+// with an index signature or only-optional members), so it is reduced away:
+// `cond ? {} : rec` (rec: Record<string, unknown>) has type `Record<...>`, not
+// `{} | Record<...>`. These tests exercise the structural rule with multiple
+// shapes — they must not depend on a particular property/alias spelling.
+// ---------------------------------------------------------------------------
+
+fn string_index_record(interner: &TypeInterner, value: TypeId) -> TypeId {
+    interner.object_with_index(crate::types::ObjectShape {
+        flags: ObjectFlags::empty(),
+        properties: Vec::new(),
+        string_index: Some(crate::types::IndexSignature {
+            key_type: TypeId::STRING,
+            value_type: value,
+            readonly: false,
+            param_name: None,
+        }),
+        number_index: None,
+        symbol: None,
+    })
+}
+
+#[test]
+fn test_conditional_fresh_empty_object_reduces_into_string_index_sibling() {
+    let interner = TypeInterner::new();
+    let fresh_empty = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+    let record = string_index_record(&interner, TypeId::UNKNOWN);
+
+    // `{} (fresh) | Record<string, unknown>` reduces to the record.
+    assert_eq!(
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, fresh_empty, record),
+        record,
+    );
+    // Order independent: the record may be the true branch.
+    assert_eq!(
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, record, fresh_empty),
+        record,
+    );
+    // Also holds with a different index value type (not a fixed spelling).
+    let record_num = string_index_record(&interner, TypeId::NUMBER);
+    assert_eq!(
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, fresh_empty, record_num),
+        record_num,
+    );
+}
+
+#[test]
+fn test_conditional_fresh_empty_object_reduces_into_optional_only_sibling() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let fresh_empty = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+    // `{ a?: number }` has no required members, so `{}` is assignable to it.
+    let optional_only = interner.object(vec![PropertyInfo::opt(a, TypeId::NUMBER)]);
+
+    assert_eq!(
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, fresh_empty, optional_only),
+        optional_only,
+    );
+}
+
+#[test]
+fn test_conditional_fresh_empty_object_kept_when_sibling_has_required_property() {
+    let interner = TypeInterner::new();
+    let a = interner.intern_string("a");
+    let fresh_empty = interner.object_with_flags(Vec::new(), ObjectFlags::FRESH_LITERAL);
+    // `{ a: number }` has a required property, so `{}` is NOT assignable to it and
+    // is the supertype — the union is preserved (tsc keeps the error on `{}` here).
+    let required = interner.object(vec![PropertyInfo::new(a, TypeId::NUMBER)]);
+
+    let result =
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, fresh_empty, required);
+    assert_ne!(result, fresh_empty);
+    assert_ne!(result, required);
+    assert!(
+        crate::type_queries::get_union_members(&interner, result).is_some(),
+        "fresh {{}} | {{ a: number }} must remain a union",
+    );
+}
+
+#[test]
+fn test_conditional_declared_empty_object_not_reduced_into_record() {
+    let interner = TypeInterner::new();
+    // A *non-fresh* `{}` is the wide empty-object supertype; tsc preserves it in
+    // the union (and still reports the index error), so reduction must not fire.
+    let declared_empty = interner.object(Vec::new());
+    let record = string_index_record(&interner, TypeId::UNKNOWN);
+
+    let result =
+        compute_conditional_expression_type(&interner, TypeId::BOOLEAN, declared_empty, record);
+    assert_ne!(result, record, "declared {{}} must not be reduced away");
+}
+
 #[test]
 fn test_normalize_fresh_object_literal_union_members_preserves_source_order_for_empty_member() {
     // When a fresh-object union has an empty `{}` literal alongside members

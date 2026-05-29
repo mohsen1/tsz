@@ -10,3 +10,4 @@ fn parse_test_source(source: &str) -> (tsz_parser::ParserState, tsz_parser::pars
 
 include!("references_tests_parts/part_00.rs");
 include!("references_tests_parts/part_01.rs");
+include!("references_tests_parts/part_02.rs");

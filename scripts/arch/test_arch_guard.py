@@ -483,10 +483,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
     def _generic_call_resolver_size_check(self):
         for entry in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
             name, path, limit = entry
-            if name == (
-                "Solver engine boundary: generic call resolver must stay at "
-                "current 3381 LOC baseline (#8209)"
-            ):
+            if "generic call resolver" in name and "#8209" in name:
                 return path, limit
         self.fail(
             "generic call resolver size boundary check is missing from "
@@ -495,7 +492,7 @@ class ArchGuardSolverEngineSizeBoundaryTests(unittest.TestCase):
 
     def test_rule_exists_with_current_limit(self):
         path, limit = self._generic_call_resolver_size_check()
-        self.assertEqual(limit, 3381)
+        self.assertEqual(limit, 3378)
         self.assertTrue(
             str(path).endswith(
                 "crates/tsz-solver/src/operations/generic_call/resolve.rs"
@@ -1076,6 +1073,77 @@ class ArchGuardCheckerContextLifetimeManifestTests(unittest.TestCase):
             self.assertEqual(hits, [], f"{name}: {hits[:5]}")
 
 
+
+
+class ArchGuardAllFileLimitChecksPassTests(unittest.TestCase):
+    """Generic guard: every FILE_LINE_LIMIT_CHECKS entry must exist on disk
+    and must not exceed its pinned cap.  This catches entries (like
+    async_es5_ir.rs) that have no dedicated per-entry test class."""
+
+    def setUp(self):
+        self.arch_guard = load_arch_guard_module()
+
+    def test_all_file_limit_paths_exist(self):
+        for name, path, _limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            self.assertTrue(
+                path.exists(),
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': path {path} does not exist. "
+                "Remove the entry or fix the path.",
+            )
+
+    def test_all_file_limit_caps_are_not_exceeded(self):
+        for name, path, limit in self.arch_guard.FILE_LINE_LIMIT_CHECKS:
+            hits = self.arch_guard.scan_file_line_limit(path, limit)
+            self.assertEqual(
+                hits,
+                [],
+                f"FILE_LINE_LIMIT_CHECKS entry '{name}': cap {limit} is too tight "
+                f"for the live file ({hits}). Bump the cap or split the file.",
+            )
+
+    def test_no_unguarded_oversized_production_files(self):
+        """Every production .rs file over 2000 lines must appear in FILE_LINE_LIMIT_CHECKS.
+
+        Prevents new monoliths from growing unchecked. When a file legitimately exceeds
+        2000 lines, add a FILE_LINE_LIMIT_CHECKS entry for it in the same PR; ratchet
+        the cap down as the file is split per §19.
+        """
+        arch_guard = self.arch_guard
+        guarded = {
+            pathlib.Path(path).resolve()
+            for _, path, _ in arch_guard.FILE_LINE_LIMIT_CHECKS
+        }
+        limit = 2000
+        unguarded = []
+        crates_root = ROOT / "crates"
+        if not crates_root.exists():
+            return
+        for path in crates_root.rglob("*.rs"):
+            rel = path.relative_to(ROOT).as_posix()
+            rel_parts = set(rel.split("/"))
+            if arch_guard.EXCLUDE_DIRS.intersection(rel_parts):
+                continue
+            if "tests" in rel_parts or "benches" in rel_parts:
+                continue
+            if arch_guard.is_test_file(rel):
+                continue
+            if path.resolve() in guarded:
+                continue
+            try:
+                n = len(path.read_text(encoding="utf-8", errors="ignore").splitlines())
+            except OSError:
+                continue
+            if n > limit:
+                unguarded.append((n, rel))
+        if unguarded:
+            unguarded.sort(reverse=True)
+            lines = "\n".join(f"  {n:5d}  {r}" for n, r in unguarded)
+            self.fail(
+                f"Found {len(unguarded)} production file(s) over {limit} lines with "
+                f"no FILE_LINE_LIMIT_CHECKS guard.\n"
+                f"Add an entry for each file in the same PR that grows it past {limit} "
+                f"lines; ratchet down as submodules land (§19):\n{lines}"
+            )
 
 
 if __name__ == "__main__":

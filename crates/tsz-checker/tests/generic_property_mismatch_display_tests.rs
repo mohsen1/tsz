@@ -179,7 +179,7 @@ targetBox = emptyBox;
 }
 
 #[test]
-fn generic_primitive_property_mismatch_keeps_property_path_when_nested_source_is_unstable() {
+fn generic_primitive_property_mismatch_surfaces_leaf_relation() {
     let diagnostic = ts2322_diagnostic(
         r#"
 interface Box<T> { value: T; }
@@ -199,14 +199,101 @@ stringBox = numberBox;
     );
     assert!(
         has_related(&diagnostic, "Types of property 'value' are incompatible."),
-        "expected fallback property-path message, got {diagnostic:#?}"
+        "expected property-path elaboration, got {diagnostic:#?}"
     );
+    // tsc surfaces the leaf relation beneath the property-path elaboration even
+    // when both sides are instantiations of the same generic base.
+    assert!(
+        has_related(
+            &diagnostic,
+            "Type 'number' is not assignable to type 'string'."
+        ),
+        "expected leaf relation under generic property mismatch, got {diagnostic:#?}"
+    );
+    // The leaf must use the property types, never the enclosing application.
     assert!(
         !has_related(
             &diagnostic,
             "Type 'Box<number>' is not assignable to type 'string'."
         ),
-        "must not render malformed nested primitive reason, got {diagnostic:#?}"
+        "must not render the enclosing application as the leaf source, got {diagnostic:#?}"
+    );
+}
+
+#[test]
+fn generic_primitive_property_mismatch_leaf_is_type_parameter_name_independent() {
+    // The same leaf must appear regardless of the type-parameter spelling.
+    for type_param in ["T", "K", "Value"] {
+        let source = format!(
+            "interface Box<{type_param}> {{ value: {type_param}; }}\n\
+             declare let numberBox: Box<number>;\n\
+             declare let stringBox: Box<string>;\n\
+             stringBox = numberBox;\n"
+        );
+        let diagnostic = ts2322_diagnostic(&source);
+        assert!(
+            has_related(&diagnostic, "Types of property 'value' are incompatible."),
+            "expected property-path elaboration for param {type_param}, got {diagnostic:#?}"
+        );
+        assert!(
+            has_related(
+                &diagnostic,
+                "Type 'number' is not assignable to type 'string'."
+            ),
+            "expected leaf relation for param {type_param}, got {diagnostic:#?}"
+        );
+    }
+}
+
+#[test]
+fn generic_mapped_property_mismatch_surfaces_leaf_relation() {
+    let diagnostic = ts2322_diagnostic(
+        r#"
+type Wrap<T> = { [K in keyof T]: T[K] };
+
+declare let source: Wrap<{ a: number }>;
+declare let target: Wrap<{ a: string }>;
+
+target = source;
+"#,
+    );
+
+    assert!(
+        has_related(&diagnostic, "Types of property 'a' are incompatible."),
+        "expected property-path elaboration for mapped wrapper, got {diagnostic:#?}"
+    );
+    assert!(
+        has_related(
+            &diagnostic,
+            "Type 'number' is not assignable to type 'string'."
+        ),
+        "expected leaf relation under mapped property mismatch, got {diagnostic:#?}"
+    );
+}
+
+#[test]
+fn generic_multi_argument_property_mismatch_surfaces_leaf_relation() {
+    let diagnostic = ts2322_diagnostic(
+        r#"
+interface Pair<A, B> { a: A; b: B; }
+
+declare let source: Pair<number, number>;
+declare let target: Pair<string, number>;
+
+target = source;
+"#,
+    );
+
+    assert!(
+        has_related(&diagnostic, "Types of property 'a' are incompatible."),
+        "expected property-path elaboration for multi-arg generic, got {diagnostic:#?}"
+    );
+    assert!(
+        has_related(
+            &diagnostic,
+            "Type 'number' is not assignable to type 'string'."
+        ),
+        "expected leaf relation under multi-arg generic property mismatch, got {diagnostic:#?}"
     );
 }
 

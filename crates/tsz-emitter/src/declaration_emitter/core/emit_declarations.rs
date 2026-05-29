@@ -20,6 +20,7 @@ impl<'a> DeclarationEmitter<'a> {
         self.symbol_module_specifier_cache.clear();
         self.import_plan = ImportPlan::default();
         self.local_namespace_alias_targets.clear();
+        self.local_import_equals_alias_for_target.clear();
 
         self.reset_writer();
         self.indent_level = 0;
@@ -993,7 +994,13 @@ impl<'a> DeclarationEmitter<'a> {
                     );
                     return;
                 }
-                if let Some(return_type_id) = type_queries::get_return_type(*interner, func_type_id)
+                if func_body.is_some()
+                    && let Some(predicate_text) = self.function_source_type_predicate_text(func)
+                {
+                    self.write(": ");
+                    self.write(&predicate_text);
+                } else if let Some(return_type_id) =
+                    type_queries::get_return_type(*interner, func_type_id)
                 {
                     let effective_return_type_id = if func_body.is_some() {
                         self.refine_invokable_return_type_from_identifier(func_body, return_type_id)
@@ -1042,11 +1049,25 @@ impl<'a> DeclarationEmitter<'a> {
                     {
                         self.write(": ");
                         self.write(&type_text);
+                    } else if func_body.is_some()
+                        && self.function_body_returns_object_with_this_only_methods(func_body)
+                        && let Some(object_literal_idx) =
+                            self.direct_returned_object_literal(func_body)
+                        && let Some(type_text) =
+                            self.infer_object_literal_type_text_at(object_literal_idx, 0)
+                    {
+                        // Prefer AST-derived text: solver's TypePrinter expands self-referential
+                        // `this`-returning object types exponentially (max_depth = 128 levels).
+                        // `infer_object_literal_type_text_at` emits `/*elided*/ any` for
+                        // `this`-returning methods, which matches tsc's declaration output.
+                        self.write(": ");
+                        self.write(&type_text);
                     } else if let Some((type_text, _)) = scoped_preferred_return.as_ref()
                         && func_body.is_some()
                         && self.function_body_returns_object_with_this_only_methods(func_body)
                     {
-                        // Prefer AST-derived text: solver print of `this`-returning object methods expands exponentially.
+                        // Fallback when direct object-literal inference is unavailable:
+                        // use the scoped preferred return text derived from the source annotation.
                         self.write(": ");
                         self.write(type_text);
                     } else if let Some(type_text) = func_body
@@ -1297,6 +1318,12 @@ impl<'a> DeclarationEmitter<'a> {
         func_body: NodeIndex,
         func_name: NodeIndex,
     ) -> bool {
+        if let Some(predicate_text) = self.function_source_type_predicate_text(func) {
+            self.write(": ");
+            self.write(&predicate_text);
+            return true;
+        }
+
         if self.body_returns_void(func_body) {
             self.write(": void");
             return true;

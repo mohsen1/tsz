@@ -697,8 +697,28 @@ impl<'a> Printer<'a> {
             }
             return false;
         }
+        // Run the AST-based top-level statement check first so constructs the
+        // source-text scan cannot reason about precisely are classified
+        // structurally. In particular `export import M = Z.M` emits as
+        // `M.M = Z.M` (it reuses the IIFE parameter and is NOT a local
+        // binding), so it must not trigger a rename — but the text scan sees
+        // the `import M` keyword and would misclassify it as a binding.
+        if let Some(block) = self.arena.get_module_block(body_node)
+            && let Some(stmts) = &block.statements
+            && stmts
+                .nodes
+                .iter()
+                .copied()
+                .any(|stmt| self.namespace_statement_conflicts_iife_param(stmt, ns_name))
+        {
+            return true;
+        }
+        if self.namespace_block_contains_instantiated_module_named(body_node, ns_name) {
+            return true;
+        }
         if let Some(text) = self.source_text {
-            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            let mut mask_ranges = self.collect_declare_statement_ranges(body_node);
+            mask_ranges.extend(self.collect_enum_decl_ranges(body_node));
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
@@ -706,7 +726,7 @@ impl<'a> Printer<'a> {
             ) {
                 Ok(body_text) => {
                     let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &mask_ranges);
                     Self::text_has_non_namespace_binding_named(&masked, ns_name)
                 }
                 Err(_) => false,
@@ -740,13 +760,37 @@ impl<'a> Printer<'a> {
                         && text_bytes[after_end] != b'$');
 
                 if before_ok && after_ok {
+                    // Look at the first non-whitespace character *after* the
+                    // name. A name immediately followed by `.` is a qualified /
+                    // member reference (`N.foo`) and is never a binding. This
+                    // rejection is unconditional — no binding form places `.`
+                    // directly after the bound identifier.
+                    let mut a = after_end;
+                    while a < text_bytes.len() && text_bytes[a].is_ascii_whitespace() {
+                        a += 1;
+                    }
+                    let followed_by_dot = a < text_bytes.len() && text_bytes[a] == b'.';
+                    let followed_by_paren = a < text_bytes.len() && text_bytes[a] == b'(';
+                    if followed_by_dot {
+                        i = abs + 1;
+                        continue;
+                    }
                     let mut p = abs;
                     while p > 0 && text_bytes[p - 1].is_ascii_whitespace() {
                         p -= 1;
                     }
                     if p > 0 {
                         let prev_char = text_bytes[p - 1];
-                        if prev_char == b'(' || prev_char == b',' {
+                        // Bare `(`/`,` before the name only counts as a binding
+                        // when the name is NOT immediately followed by `(`. A
+                        // name followed by `(` here is a callee (`if (N.f())`,
+                        // `foo(N())`), not a parameter/binding. Genuine
+                        // parameter bindings (`function f(N)`, `f(a, N)`) are
+                        // followed by `)`, `,`, `:`, `=`, etc. — never `(`.
+                        // Function/class declarations like `function N(` are
+                        // handled by the keyword checks below, which run
+                        // independently of this guard.
+                        if (prev_char == b'(' || prev_char == b',') && !followed_by_paren {
                             return true;
                         }
                         let preceding = &text[..p];
@@ -881,7 +925,8 @@ impl<'a> Printer<'a> {
             // decisions and emit incorrectly. Surface span errors instead of
             // returning a false-negative; fall back to false only when source
             // text is literally unavailable.
-            let declare_ranges = self.collect_declare_statement_ranges(body_node);
+            let mut mask_ranges = self.collect_declare_statement_ranges(body_node);
+            mask_ranges.extend(self.collect_enum_decl_ranges(body_node));
             return match crate::safe_slice::slice(
                 text,
                 body_node.pos as usize,
@@ -889,7 +934,7 @@ impl<'a> Printer<'a> {
             ) {
                 Ok(body_text) => {
                     let body_pos = body_node.pos as usize;
-                    let masked = Self::mask_ranges_static(body_text, body_pos, &declare_ranges);
+                    let masked = Self::mask_ranges_static(body_text, body_pos, &mask_ranges);
                     Self::text_has_non_namespace_binding_named(&masked, ns_name)
                 }
                 Err(_) => false,
@@ -1016,6 +1061,79 @@ impl<'a> Printer<'a> {
             }
         }
         ranges
+    }
+
+    /// Collect `(pos, end)` byte ranges of top-level constructs whose source
+    /// text the binding scan cannot interpret correctly and that introduce no
+    /// IIFE-function-scope binding. Currently:
+    ///
+    /// * Enum declarations — enum members are *properties* of the enum object,
+    ///   not function-scope bindings, so an enum member whose name equals the
+    ///   namespace name (e.g. `enum Reservation { ..., TypeScript = 4, ... }`
+    ///   inside `namespace TypeScript`) must not be treated as a shadowing
+    ///   binding. The enum *name* itself is independently checked by the
+    ///   AST-based `declaration_conflicts_iife_param`, so masking the whole
+    ///   span loses no genuine collision.
+    /// * `export import M = Z.M` — emits as `M.M = Z.M`, reusing the IIFE
+    ///   parameter with no local binding, but its `import M` keyword would be
+    ///   misclassified by the scan. A plain `import M = Z.M` *does* bind a
+    ///   local `var M`, so it is intentionally left unmasked.
+    fn collect_enum_decl_ranges(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+    ) -> Vec<(usize, usize)> {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        self.collect_enum_decl_ranges_into(body_node, &mut ranges);
+        ranges
+    }
+
+    fn collect_enum_decl_ranges_into(
+        &self,
+        body_node: &tsz_parser::parser::node::Node,
+        ranges: &mut Vec<(usize, usize)>,
+    ) {
+        let Some(block) = self.arena.get_module_block(body_node) else {
+            return;
+        };
+        let Some(stmts) = &block.statements else {
+            return;
+        };
+        for &stmt_idx in &stmts.nodes {
+            let Some(stmt_node) = self.arena.get(stmt_idx) else {
+                continue;
+            };
+            // `export enum E {}` parses as an EXPORT_DECLARATION wrapping the
+            // real enum declaration; resolve through to the inner decl.
+            let decl_node = if stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION
+                && let Some(export) = self.arena.get_export_decl(stmt_node)
+                && let Some(inner) = self.arena.get(export.export_clause)
+            {
+                inner
+            } else {
+                stmt_node
+            };
+            let is_export_qualified = stmt_node.kind == syntax_kind_ext::EXPORT_DECLARATION;
+            if decl_node.kind == syntax_kind_ext::ENUM_DECLARATION {
+                ranges.push((decl_node.pos as usize, decl_node.end as usize));
+            } else if decl_node.kind == syntax_kind_ext::IMPORT_EQUALS_DECLARATION
+                && is_export_qualified
+            {
+                // `export import M = Z.M` emits as `M.M = Z.M`: it reuses the
+                // IIFE parameter and introduces no local binding, so its text
+                // (which contains the `import M` keyword the scan would
+                // otherwise treat as a binding) must be masked. A *plain*
+                // `import M = Z.M` does emit `var M = Z.M`, so it is left
+                // visible and still forces a rename.
+                ranges.push((stmt_node.pos as usize, stmt_node.end as usize));
+            } else if decl_node.kind == syntax_kind_ext::MODULE_DECLARATION
+                && let Some(module) = self.arena.get_module(decl_node)
+                && let Some(inner_body) = self.arena.get(module.body)
+            {
+                // Recurse into sub-namespace bodies so a nested enum member
+                // sharing the outer namespace name is masked too.
+                self.collect_enum_decl_ranges_into(inner_body, ranges);
+            }
+        }
     }
 
     fn namespace_statement_conflicts_iife_param(&self, stmt_idx: NodeIndex, ns_name: &str) -> bool {

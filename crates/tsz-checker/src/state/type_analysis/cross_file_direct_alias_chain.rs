@@ -204,6 +204,12 @@ impl<'a> CheckerState<'a> {
                     resolved.arena,
                     symbol,
                     arg_count,
+                ) || Self::source_file_local_type_alias_application_is_projection_lowerable(
+                    resolved.arena,
+                    resolved.binder,
+                    symbol,
+                    arg_count,
+                    &proof.for_file(resolved.file_idx),
                 )
             })
     }
@@ -589,6 +595,11 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_inferred_guard_names,
                         proof,
+                    );
+                    Self::collect_template_literal_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
                     );
                     Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
@@ -1049,6 +1060,11 @@ impl<'a> CheckerState<'a> {
                         conditional.extends_type,
                         &mut true_inferred_guard_names,
                         proof,
+                    );
+                    Self::collect_template_literal_infer_type_param_names(
+                        arena,
+                        conditional.extends_type,
+                        &mut true_inferred_guard_names,
                     );
                     Self::source_file_type_node_is_generic_local_alias_application_lowerable_with_guard(
                         arena,
@@ -1876,4 +1892,6 @@ impl<'a> CheckerState<'a> {
 }
 
 include!("cross_file_direct_alias_chain/subtractive_guard_methods.rs");
+include!("cross_file_direct_alias_chain/projection_guard_methods.rs");
+include!("cross_file_direct_alias_chain/template_literal_guard_methods.rs");
 include!("cross_file_direct_alias_chain/type_literal_methods.rs");

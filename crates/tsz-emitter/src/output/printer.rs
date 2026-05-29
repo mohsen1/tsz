@@ -63,6 +63,9 @@ pub struct PrintOptions {
     pub downlevel_iteration: bool,
     /// JSX emit mode
     pub jsx: JsxEmit,
+    /// Emit class fields using `Object.defineProperty` semantics when
+    /// downleveling (mirrors `--useDefineForClassFields`).
+    pub use_define_for_class_fields: bool,
 }
 
 impl PrintOptions {
@@ -108,6 +111,7 @@ impl PrintOptions {
             single_quote: self.single_quote,
             downlevel_iteration: self.downlevel_iteration,
             jsx: self.jsx,
+            use_define_for_class_fields: self.use_define_for_class_fields,
             ..Default::default()
         }
     }

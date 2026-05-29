@@ -238,22 +238,30 @@ impl<'a> Printer<'a> {
             let body_info =
                 super::loop_capture::collect_loop_body_vars(self.arena, for_in_of.statement);
             if (!init_vars.is_empty() || !body_info.block_scoped_vars.is_empty())
-                && let Some(capture_info) = super::loop_capture::check_loop_needs_capture(
+                && super::loop_capture::check_loop_needs_capture(
                     self.arena,
                     for_in_of.statement,
                     &init_vars,
                     &body_info.block_scoped_vars,
                 )
+                .is_some()
             {
-                let init_var_set: std::collections::HashSet<&str> =
-                    init_vars.iter().map(String::as_str).collect();
-                let param_vars: Vec<String> = capture_info
-                    .captured_vars
-                    .iter()
-                    .filter(|v| init_var_set.contains(v.as_str()))
-                    .cloned()
-                    .collect();
+                // Once a for-of loop is converted, all of its own block-scoped
+                // binding variables (the for-of binding, including destructured
+                // names) are threaded as `_loop_N` parameters so each iteration
+                // gets a fresh copy — not just the subset captured by a closure.
+                let param_vars: Vec<String> = init_vars.to_vec();
                 let loop_fn_name = self.ctx.block_scope_state.next_loop_function_name();
+                // The per-iteration binding's destructuring source temp (e.g.
+                // `_b` in `var _b = _a[_i], value = _b[0], i = _b[1]`) is emitted
+                // in the loop header, after the loop function. tsc allocates that
+                // temp before any temp produced inside the loop body, so reserve
+                // it now to keep the global temp numbering aligned.
+                let binding_temp_count =
+                    self.count_for_of_binding_destructure_temps(for_in_of.initializer);
+                if binding_temp_count > 0 {
+                    self.preallocate_temp_names(binding_temp_count);
+                }
                 let body_temp_count =
                     self.count_downlevel_expression_hoisted_temps(for_in_of.statement);
                 if body_temp_count > 0 {
@@ -567,6 +575,64 @@ impl<'a> Printer<'a> {
             || self.arena.get_class(node).is_some()
     }
 
+    /// Count the destructuring source temps that the array-indexed for-of value
+    /// binding will allocate for a `let`/`const`/`var` binding pattern. This
+    /// mirrors the temp-allocating branches of
+    /// `emit_for_of_value_binding_array_es5` so the converted-loop path can
+    /// reserve them in tsc's order. Single-binding patterns that inline the
+    /// element expression allocate no temp.
+    pub(in crate::emitter) fn count_for_of_binding_destructure_temps(
+        &self,
+        initializer: NodeIndex,
+    ) -> usize {
+        let Some(init_node) = self.arena.get(initializer) else {
+            return 0;
+        };
+        if init_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+            return 0;
+        }
+        let Some(decl_list) = self.arena.get_variable(init_node) else {
+            return 0;
+        };
+        // for-of allows a single declarator; only the first is processed.
+        let Some(&decl_idx) = decl_list.declarations.nodes.first() else {
+            return 0;
+        };
+        let Some(decl_node) = self.arena.get(decl_idx) else {
+            return 0;
+        };
+        let Some(decl) = self.arena.get_variable_declaration(decl_node) else {
+            return 0;
+        };
+        if !self.is_binding_pattern(decl.name) {
+            return 0;
+        }
+        let Some(pattern_node) = self.arena.get(decl.name) else {
+            return 0;
+        };
+        if self.binding_pattern_is_empty(decl.name) {
+            // Empty pattern: one temp holds the advanced element value.
+            return 1;
+        }
+        if pattern_node.kind == syntax_kind_ext::OBJECT_BINDING_PATTERN {
+            let (obj_count, obj_rest) = self.count_effective_bindings(pattern_node);
+            // Single-property object patterns inline; multi/rest extract a temp.
+            return usize::from(obj_count > 1 || obj_rest);
+        }
+        // Array binding pattern.
+        let (effective_count, has_rest) = self.count_effective_bindings(pattern_node);
+        if effective_count == 1 && !has_rest {
+            // Single element at index 0 inlines as `name = arr[idx][0]`.
+            return 0;
+        }
+        if effective_count == 0 && has_rest {
+            // Rest-only inlines as `name = arr[idx].slice(0)`.
+            return 0;
+        }
+        // Multi-binding or complex array pattern extracts a source temp.
+        1
+    }
+
     pub(in crate::emitter) fn estimate_for_of_assignment_temp_reserve(
         &self,
         initializer: NodeIndex,
@@ -576,28 +642,27 @@ impl<'a> Printer<'a> {
         };
         match init_node.kind {
             k if k == syntax_kind_ext::OBJECT_LITERAL_EXPRESSION => {
-                if let Some(lit) = self.arena.get_literal_expr(init_node)
-                    && lit.elements.nodes.len() > 1
-                {
-                    // One extracted source temp + per-property default temps.
-                    let mut defaults = 0usize;
-                    for &elem_idx in &lit.elements.nodes {
-                        let Some(elem_node) = self.arena.get(elem_idx) else {
-                            continue;
-                        };
-                        if elem_node.kind == syntax_kind_ext::PROPERTY_ASSIGNMENT
-                            && let Some(prop) = self.arena.get_property_assignment(elem_node)
-                            && let Some(value_node) = self.arena.get(prop.initializer)
-                            && value_node.kind == syntax_kind_ext::BINARY_EXPRESSION
-                            && let Some(bin) = self.arena.get_binary_expr(value_node)
-                            && bin.operator_token == SyntaxKind::EqualsToken as u16
-                        {
-                            defaults += 1;
-                        }
+                let Some(lit) = self.arena.get_literal_expr(init_node) else {
+                    return 0;
+                };
+                // Count per-property default temps. A property with a default
+                // (colon form `{ k: name = init }` or shorthand cover-init form
+                // `{ name = init }`) reserves one extract temp so the
+                // `tmp = source.k, name = tmp === void 0 ? init : tmp` guard can
+                // be emitted, mirroring tsc's allocation order.
+                let mut defaults = 0usize;
+                for &elem_idx in &lit.elements.nodes {
+                    if self.for_of_assignment_property_has_default(elem_idx) {
+                        defaults += 1;
                     }
+                }
+                if lit.elements.nodes.len() > 1 {
+                    // Multi-element patterns also extract one source temp.
                     return 1 + defaults;
                 }
-                0
+                // Single-element patterns inline the source, so only the default
+                // extract temp (if any) is reserved.
+                defaults
             }
             k if k == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION => {
                 if let Some(lit) = self.arena.get_literal_expr(init_node)
@@ -610,6 +675,36 @@ impl<'a> Printer<'a> {
                 0
             }
             _ => 0,
+        }
+    }
+
+    /// Whether an object-pattern element carries a default value, in either the
+    /// colon form (`{ k: name = init }`, a `PROPERTY_ASSIGNMENT` whose
+    /// initializer is an `=` binary) or the shorthand cover-initialized form
+    /// (`{ name = init }`, a `SHORTHAND_PROPERTY_ASSIGNMENT` with an
+    /// `object_assignment_initializer`). Both lower to one extract temp.
+    fn for_of_assignment_property_has_default(&self, elem_idx: NodeIndex) -> bool {
+        let Some(elem_node) = self.arena.get(elem_idx) else {
+            return false;
+        };
+        match elem_node.kind {
+            k if k == syntax_kind_ext::PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_property_assignment(elem_node)
+                .and_then(|prop| self.arena.get(prop.initializer))
+                .and_then(|value_node| {
+                    if value_node.kind == syntax_kind_ext::BINARY_EXPRESSION {
+                        self.arena.get_binary_expr(value_node)
+                    } else {
+                        None
+                    }
+                })
+                .is_some_and(|bin| bin.operator_token == SyntaxKind::EqualsToken as u16),
+            k if k == syntax_kind_ext::SHORTHAND_PROPERTY_ASSIGNMENT => self
+                .arena
+                .get_shorthand_property(elem_node)
+                .is_some_and(|shorthand| shorthand.object_assignment_initializer.is_some()),
+            _ => false,
         }
     }
 

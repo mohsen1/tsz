@@ -169,7 +169,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             _ => None,
         };
 
-        let Some(mut inferred) = inferred else {
+        let Some(inferred) = inferred else {
             return self.evaluate(cond.false_type);
         };
 
@@ -178,19 +178,12 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
-            let is_union = matches!(self.interner().lookup(inferred), Some(TypeData::Union(_)));
-            if is_union && !cond.is_distributive {
-                // For unions in non-distributive conditionals, use filter that adds undefined
-                inferred = self.filter_inferred_by_constraint_or_undefined(
-                    inferred,
-                    constraint,
-                    &mut checker,
-                );
-            } else {
-                // For single values or distributive conditionals, fail if constraint doesn't match
-                if !checker.is_subtype_of(inferred, constraint) {
-                    return self.evaluate(cond.false_type);
-                }
+            if !checker.is_subtype_of(inferred, constraint) {
+                // Whole-candidate constraint check (tsc): a constrained `infer`
+                // whose full candidate is not assignable to the constraint takes
+                // the false branch. No per-member union filtering; distributive
+                // conditionals have already split union members.
+                return self.evaluate(cond.false_type);
             }
             subst.insert(info.name, inferred);
         }
@@ -513,11 +506,20 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
             return self.interner().conditional(*cond);
         }
 
+        // `optionality_undefined` tracks whether the `undefined` in the inferred
+        // candidate came from an optional source element (absent element reads as
+        // `undefined`) rather than from the element's own declared type. A
+        // constrained `infer` strips that optionality-`undefined` before applying
+        // the constraint, matching tsc.
+        let mut optionality_undefined = false;
         let inferred = match check_key {
             Some(TypeData::Tuple(check_elements)) => {
                 let check_elements = self.interner().tuple_list(check_elements);
                 if check_elements.is_empty() {
-                    extends_elem.optional.then_some(TypeId::UNDEFINED)
+                    extends_elem.optional.then(|| {
+                        optionality_undefined = true;
+                        TypeId::UNDEFINED
+                    })
                 } else if check_elements.len() == 1 && !check_elements[0].rest {
                     let elem = &check_elements[0];
                     // Optional source cannot fill a required pattern slot.
@@ -525,6 +527,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                         None
                     } else {
                         let ty = if elem.optional {
+                            optionality_undefined = true;
                             self.interner().union2(elem.type_id, TypeId::UNDEFINED)
                         } else {
                             elem.type_id
@@ -548,6 +551,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                             let check_elements = self.interner().tuple_list(check_elements);
                             if check_elements.is_empty() {
                                 if extends_elem.optional {
+                                    optionality_undefined = true;
                                     inferred_members.push(TypeId::UNDEFINED);
                                     continue;
                                 }
@@ -559,6 +563,7 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
                                     return self.evaluate(cond.false_type);
                                 }
                                 let elem_type = if elem.optional {
+                                    optionality_undefined = true;
                                     self.interner().union2(elem.type_id, TypeId::UNDEFINED)
                                 } else {
                                     elem.type_id
@@ -591,9 +596,14 @@ impl<'a, R: TypeResolver> TypeEvaluator<'a, R> {
         if let Some(constraint) = info.constraint {
             let mut checker = self.conditional_subtype_checker();
             checker.allow_bivariant_rest = true;
-            let Some(filtered) =
+            let filtered = if optionality_undefined {
+                self.filter_optional_inferred_by_constraint(inferred, constraint, &mut checker)
+            } else {
                 self.filter_inferred_by_constraint(inferred, constraint, &mut checker)
-            else {
+            };
+            let Some(filtered) = filtered else {
+                // Constraint not satisfied: take the false branch, substituting any
+                // bindings already established for this pattern.
                 let false_inst =
                     instantiate_type_with_infer(self.interner(), cond.false_type, &subst);
                 return self.evaluate(false_inst);
