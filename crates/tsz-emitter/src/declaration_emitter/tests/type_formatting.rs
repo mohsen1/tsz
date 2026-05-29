@@ -1761,24 +1761,26 @@ fn test_typeof_type() {
 // Parenthesized type preservation
 // =============================================================================
 
-/// tsc preserves user-written parentheses in type annotations verbatim in the
-/// generated `.d.ts`. Both simple types like `(string)` and compound types
-/// like `(string | number)` or `(() => void)` are emitted with their original
-/// parentheses intact.
+/// tsc strips *redundant* parentheses around atomic/simple type annotations
+/// (`var x: (string)` → `string`) but *preserves* them around composite types
+/// such as unions, intersections, conditionals, and tuples (see the
+/// `parenthesized_*` tests below and
+/// `tests::infer_paren_and_union_intersection`).
 
 #[test]
 fn parenthesized_simple_type_annotation_stripped() {
-    // Simple parenthesized primitive — e.g. `var x: (string)` stays `(string)`
+    // Redundant parens around a primitive keyword are stripped:
+    // `var x: (string)` → `string`.
     let output = emit_dts("export declare var x: (string);");
     assert!(
-        output.contains("x: (string)"),
-        "Expected source parens preserved: {output}"
+        output.contains("x: string;") && !output.contains("(string)"),
+        "Expected redundant parens stripped around keyword type: {output}"
     );
-    // Renamed variable — prove the rule is not spelling-dependent
+    // Renamed variable — prove the rule is not spelling-dependent.
     let output2 = emit_dts("export declare var value: (number);");
     assert!(
-        output2.contains("value: (number)"),
-        "Expected source parens preserved for number: {output2}"
+        output2.contains("value: number;") && !output2.contains("(number)"),
+        "Expected redundant parens stripped around keyword type (renamed): {output2}"
     );
 }
 
