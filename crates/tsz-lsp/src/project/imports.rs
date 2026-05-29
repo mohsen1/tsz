@@ -854,6 +854,21 @@ impl Project {
             .unwrap_or(true)
     }
 
+    /// Returns `true` when a bare specifier with a subpath (e.g. `preact/hooks`)
+    /// has its own `package.json` in any loaded `node_modules` directory. This
+    /// lets tsz suggest `preact/hooks` even when the parent `preact` package is
+    /// not listed in the project's dependencies — the subpackage is directly
+    /// installed and addressable.
+    fn specifier_subpackage_has_own_manifest(&self, module_specifier: &str) -> bool {
+        // Only applies to non-scoped specifiers with at least one slash.
+        // Scoped packages (@scope/name) are handled normally.
+        if module_specifier.starts_with('@') || !module_specifier.contains('/') {
+            return false;
+        }
+        let needle = format!("/node_modules/{module_specifier}/package.json");
+        self.files.keys().any(|k| k.ends_with(&needle))
+    }
+
     fn is_auto_import_candidate_excluded(
         &self,
         target_file: &str,
@@ -881,7 +896,8 @@ impl Project {
             allowed_packages,
             existing_imported_packages,
             source_cache,
-        ) {
+        ) && !self.specifier_subpackage_has_own_manifest(module_specifier)
+        {
             return true;
         }
 
@@ -917,7 +933,8 @@ impl Project {
             allowed_packages,
             existing_imported_packages,
             source_cache,
-        ) {
+        ) && !self.specifier_subpackage_has_own_manifest(module_specifier)
+        {
             return true;
         }
 
@@ -3023,6 +3040,54 @@ export = ts;
                 .iter()
                 .any(|specifier| specifier == "react-hook-form/dist/useForm"),
             "expected deep react-hook-form/dist/useForm diagnostics auto-import candidate, got {specs:?}"
+        );
+    }
+
+    #[test]
+    fn diagnostics_import_candidates_subpackage_allowed_when_parent_absent_from_project_deps() {
+        // The project's package.json lists "typescript" only. There is no parent
+        // preact/package.json. preact/hooks has its own package.json so it should
+        // still be offered as an auto-import candidate.
+        let mut project = Project::new();
+        project.set_file(
+            "/project/app.tsx".to_string(),
+            "const state = useMemo(() => 'Hello', []);".to_string(),
+        );
+        project.set_file(
+            "/project/package.json".to_string(),
+            r#"{ "name": "my-app", "dependencies": { "typescript": "^5.0.0" } }"#.to_string(),
+        );
+        // No /project/node_modules/preact/package.json — only the subpackage.
+        project.set_file(
+            "/project/node_modules/preact/hooks/package.json".to_string(),
+            r#"{ "name": "hooks", "version": "0.1.0", "types": "src/index.d.ts" }"#.to_string(),
+        );
+        project.set_file(
+            "/project/node_modules/preact/hooks/src/index.d.ts".to_string(),
+            "export declare function useMemo<T>(factory: () => T, inputs: ReadonlyArray<unknown> | undefined): T;\n".to_string(),
+        );
+
+        let diagnostics = vec![LspDiagnostic {
+            range: Range::new(Position::new(0, 14), Position::new(0, 21)),
+            message: "Cannot find name 'useMemo'.".to_string(),
+            code: Some(tsz_checker::diagnostics::diagnostic_codes::CANNOT_FIND_NAME),
+            severity: None,
+            source: None,
+            related_information: None,
+            reports_unnecessary: None,
+            reports_deprecated: None,
+        }];
+
+        let specs: Vec<String> = project
+            .get_import_candidates_for_diagnostics("/project/app.tsx", &diagnostics)
+            .into_iter()
+            .filter(|candidate| candidate.local_name == "useMemo")
+            .map(|candidate| candidate.module_specifier)
+            .collect();
+
+        assert!(
+            specs.iter().any(|specifier| specifier == "preact/hooks"),
+            "expected preact/hooks candidate when project deps omit 'preact' but subpackage has own manifest, got {specs:?}"
         );
     }
 
