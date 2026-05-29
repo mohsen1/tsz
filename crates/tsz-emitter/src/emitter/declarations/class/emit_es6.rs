@@ -1277,7 +1277,11 @@ impl<'a> Printer<'a> {
                 if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
                     return false;
                 }
-                true
+                // A static field that lowers to no runtime statement (a bare type-only
+                // declaration) neither needs a comma-expr temp nor a `__setFunctionName`
+                // helper item. Fields with runtime state (initializer, auto-accessor, or
+                // decorator) still carry static state.
+                crate::transforms::emit_utils::class_field_decl_has_runtime_state(self.arena, prop)
             });
         let has_static_block_comma_expr = target_needs_static_block_lowering
             && class.members.nodes.iter().any(|&member_idx| {

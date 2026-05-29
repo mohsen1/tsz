@@ -203,6 +203,13 @@ impl<'a> Printer<'a> {
             || node.is_identifier()
     }
 
+    /// True when the receiver is a bare identifier (a parameter or local), which
+    /// can be referenced directly without a hoisted temp. `this`/`super`/property
+    /// accesses/calls are not plain identifiers and must be captured into a temp.
+    pub(crate) fn receiver_is_plain_identifier(&self, idx: NodeIndex) -> bool {
+        self.arena.get(idx).is_some_and(|node| node.is_identifier())
+    }
+
     pub(in crate::emitter) fn private_destructuring_receiver_needs_temp(
         &self,
         idx: NodeIndex,
@@ -478,9 +485,12 @@ impl<'a> Printer<'a> {
         let mut targets = raw_targets
             .into_iter()
             .map(|(target, access)| {
-                let receiver_temp = (!self.private_member_is_static(&access.clean_name)
-                    || !self.private_call_receiver_is_simple(access.expression))
-                .then(|| self.make_unique_name_hoisted_assignment());
+                // Only a non-identifier receiver (`this`, `super`, property access, call,
+                // etc.) needs a hoisted temp so the destructuring setter can reference the
+                // evaluated receiver once. A bare identifier receiver (a parameter or local)
+                // can be referenced directly, so it needs no temp.
+                let receiver_temp = (!self.receiver_is_plain_identifier(access.expression))
+                    .then(|| self.make_unique_name_hoisted_assignment());
                 PrivateDestructuringTarget {
                     target,
                     receiver_temp,

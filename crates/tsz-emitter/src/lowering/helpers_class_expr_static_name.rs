@@ -44,7 +44,11 @@ impl<'a> LoweringPass<'a> {
                 if needs_private_field_lowering && is_private_identifier(self.arena, prop.name) {
                     return false;
                 }
-                true
+                // A static field that lowers to no runtime statement (a bare type-only
+                // declaration) carries no static comma state and needs no
+                // `__setFunctionName` helper. Fields with runtime state (initializer,
+                // auto-accessor, or decorator) still do. Mirror the printer-side gate.
+                emit_utils::class_field_decl_has_runtime_state(self.arena, prop)
             });
         let has_static_block_comma_expr = self.ctx.needs_es2022_lowering
             && class.members.nodes.iter().any(|&member_idx| {
