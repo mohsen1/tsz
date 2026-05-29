@@ -268,14 +268,19 @@ impl<'a> CheckerState<'a> {
         let Some(def_id) =
             crate::query_boundaries::property_access::def_id(self.ctx.types, object_type)
         else {
-            let display_name = self.format_type_diagnostic(object_type);
-            if self
-                .ctx
-                .binder
-                .global_augmentations
-                .contains_key(&display_name)
-            {
-                return self.resolve_augmentation_property_by_name(&display_name, property_name);
+            // No DefId: look up via the type's structural identifier name rather than the
+            // rendered display string. Global augmentation keys are always simple interface
+            // names; rendering the type produces forms like "Foo<Bar>" that would never
+            // match a key and that vary with printer settings.
+            if let Some(type_name) = self.module_augmentation_lookup_name_for_type(object_type) {
+                if self
+                    .ctx
+                    .binder
+                    .global_augmentations
+                    .contains_key(&type_name)
+                {
+                    return self.resolve_augmentation_property_by_name(&type_name, property_name);
+                }
             }
             return None;
         };
@@ -290,15 +295,19 @@ impl<'a> CheckerState<'a> {
             return self.resolve_augmentation_property_by_name(name, property_name);
         }
 
-        let display_name = self.format_type_diagnostic(object_type);
-        if display_name != *name
-            && self
-                .ctx
-                .binder
-                .global_augmentations
-                .contains_key(&display_name)
-        {
-            return self.resolve_augmentation_property_by_name(&display_name, property_name);
+        // If the symbol's escaped_name didn't match, check the type's structural identifier.
+        // This handles aliased or application-wrapped types where the symbol name and the
+        // augmentation key differ.
+        if let Some(type_name) = self.module_augmentation_lookup_name_for_type(object_type) {
+            if type_name != *name
+                && self
+                    .ctx
+                    .binder
+                    .global_augmentations
+                    .contains_key(&type_name)
+            {
+                return self.resolve_augmentation_property_by_name(&type_name, property_name);
+            }
         }
         None
     }

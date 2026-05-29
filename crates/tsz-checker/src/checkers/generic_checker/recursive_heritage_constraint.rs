@@ -209,18 +209,15 @@ impl<'a> CheckerState<'a> {
         &mut self,
         type_id: TypeId,
     ) -> Option<tsz_binder::SymbolId> {
-        let name = self.format_type_diagnostic(type_id);
-        let name = name.strip_prefix("globalThis.").unwrap_or(&name);
-        if name.is_empty()
-            || !name
-                .chars()
-                .all(|ch| ch == '_' || ch == '$' || ch.is_ascii_alphanumeric())
-        {
-            return None;
-        }
+        // Use the structural identifier name rather than the rendered display string.
+        // `named_type_display_name` returns the type's declared identifier (symbol/def
+        // name) or None for non-named types. This avoids rendering side effects and
+        // "globalThis." prefix artifacts that the previous format_type_diagnostic path
+        // had to strip manually.
+        let name = self.named_type_display_name(type_id)?;
 
         if let Some(index) = &self.ctx.global_file_locals_index
-            && let Some(candidates) = index.get(name)
+            && let Some(candidates) = index.get(name.as_str())
         {
             for &(file_idx, sym_id) in candidates {
                 if self
@@ -238,7 +235,7 @@ impl<'a> CheckerState<'a> {
         let lib_binders = self.get_lib_binders();
         self.ctx
             .binder
-            .get_global_type_with_libs(name, &lib_binders)
+            .get_global_type_with_libs(name.as_str(), &lib_binders)
     }
 
     pub(super) fn member_has_conflicting_constraint_property(
