@@ -324,3 +324,123 @@ var total = Counter.value;
         "Expected later reads of the expando member to remain numeric: {output}"
     );
 }
+
+// Rule: A `name.prop = value` assignment contributes to the function `name`'s
+// expando namespace only when the receiver `name` resolves to the function
+// itself. When an inner block-scoped binding shadows the function name, the
+// assignment belongs to that inner binding and must not be merged into the
+// function namespace — even when the function has no other expando property.
+#[test]
+fn block_shadowed_assignment_does_not_create_function_namespace() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function alpha() {}
+if (true) {
+    const alpha: { tag?: number } = {};
+    alpha.tag = 1;
+}
+
+function beta() {}
+beta.kind = "outer";
+if (true) {
+    const beta = function beta() {};
+    beta.kind = 42;
+}
+"#,
+    );
+
+    // alpha has no real expando property: the only `alpha.tag =` is shadowed.
+    assert!(
+        !output.contains("namespace alpha"),
+        "Expected no namespace for function whose only assignment is block-shadowed: {output}"
+    );
+    assert!(
+        !output.contains("tag"),
+        "Expected the block-shadowed assignment not to leak into output: {output}"
+    );
+    // beta keeps the genuine top-level expando, drops the shadowed inner one.
+    assert!(
+        output.contains("namespace beta") && output.contains("kind: string;"),
+        "Expected top-level expando assignment to remain on the function namespace: {output}"
+    );
+    assert!(
+        !output.contains("kind: number;"),
+        "Expected the block-shadowed numeric assignment to be excluded: {output}"
+    );
+}
+
+// Same rule with different identifier spellings, to prove the fix keys off
+// symbol identity and not specific names.
+#[test]
+fn block_shadowed_assignment_excluded_with_renamed_identifiers() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function widget() {}
+{
+    const widget: { size?: number } = {};
+    widget.size = 3;
+}
+"#,
+    );
+
+    assert!(
+        !output.contains("namespace widget"),
+        "Expected renamed shadowed assignment to produce no function namespace: {output}"
+    );
+    assert!(
+        !output.contains("size"),
+        "Expected renamed block-shadowed assignment to be dropped: {output}"
+    );
+}
+
+// Rule: A single physical `fn.prop = value` assignment that is reachable
+// through both a parenthesized wrapper node and its inner binary node must be
+// recorded exactly once. Otherwise the duplicate collapses into a spurious
+// self-union (`{ foo: number } | { foo: number }`).
+#[test]
+fn parenthesized_expando_assignment_recorded_once() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function gather(): void {}
+(gather.bag = { item: 1 }).item = (gather.lo = 1) + (gather.hi = 0);
+"#,
+    );
+
+    assert!(
+        output.contains("var bag: {\n        item: number;\n    };"),
+        "Expected parenthesized expando object assignment to be recorded once: {output}"
+    );
+    assert!(
+        !output.contains(
+            "var bag: {\n        item: number;\n    } | {\n        item: number;\n    };"
+        ),
+        "Did not expect a spurious self-union from double-counting the assignment: {output}"
+    );
+    assert!(
+        output.contains("var lo: number;") && output.contains("var hi: number;"),
+        "Expected sibling expando assignments inside the same expression: {output}"
+    );
+}
+
+// Same dedupe rule with a bare parenthesized assignment statement and a
+// different function/property spelling.
+#[test]
+fn bare_parenthesized_expando_assignment_recorded_once() {
+    let output = emit_dts_with_usage_analysis(
+        r#"
+function collect(): void {}
+(collect.entry = { value: 1 });
+"#,
+    );
+
+    assert!(
+        output.contains("var entry: {\n        value: number;\n    };"),
+        "Expected bare parenthesized expando assignment to be recorded once: {output}"
+    );
+    assert!(
+        !output.contains(
+            "var entry: {\n        value: number;\n    } | {\n        value: number;\n    };"
+        ),
+        "Did not expect a spurious self-union for the bare parenthesized assignment: {output}"
+    );
+}

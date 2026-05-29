@@ -9,6 +9,30 @@ use tsz_scanner::SyntaxKind;
 
 use super::super::DeclarationEmitter;
 use super::LateBoundAssignmentMember;
+
+/// Accumulator threaded through the recursive late-bound assignment walk.
+///
+/// Holds the ordered member list plus the set of already-recorded resolved
+/// assignment nodes. A single physical `Foo.prop = value` assignment is
+/// reachable through multiple nodes during the walk — most commonly through a
+/// parenthesized/non-null/comma wrapper node *and* its inner binary node, both
+/// of which strip to the same assignment via
+/// `skip_parenthesized_and_assertions_and_comma`. Deduplicating by the resolved
+/// assignment node keeps each expando property recorded exactly once.
+#[derive(Default)]
+struct LateBoundCollect {
+    members: Vec<LateBoundAssignmentMember>,
+    seen_assignments: FxHashSet<NodeIndex>,
+    /// Set when the symbol-filtered walk encountered a `root.prop = value`
+    /// assignment whose receiver matched the function name but resolved to a
+    /// *different* binding (block-level shadowing). Such an assignment belongs
+    /// to the inner binding, not the function, so it is correctly rejected.
+    /// When this happens, the empty-result fallback (which re-walks with
+    /// `root_symbol = None` and would otherwise resurrect the shadowed
+    /// assignment) must be suppressed.
+    saw_shadowed_receiver: bool,
+}
+
 impl<'a> DeclarationEmitter<'a> {
     fn escape_non_ascii_for_double_quote(text: &str) -> String {
         let mut result = String::with_capacity(text.len() + 8);
@@ -324,13 +348,19 @@ impl<'a> DeclarationEmitter<'a> {
         }
     }
 
+    /// Returns the resolved assignment node (after stripping parenthesized,
+    /// non-null, and comma wrappers) together with the member it contributes.
+    /// The resolved node is returned so callers can deduplicate: the same
+    /// physical `Foo.prop = value` assignment is reachable through both a
+    /// parenthesized wrapper node (e.g. `(Foo.prop = value)`) and its inner
+    /// binary node during the recursive walk, and must be recorded once.
     fn late_bound_assignment_member_for_expression(
         &self,
         expr_idx: NodeIndex,
         root_name: &str,
         root_symbol: Option<SymbolId>,
         existing_members: &[LateBoundAssignmentMember],
-    ) -> Option<LateBoundAssignmentMember> {
+    ) -> Option<(NodeIndex, LateBoundAssignmentMember)> {
         let expr_idx = self
             .arena
             .skip_parenthesized_and_assertions_and_comma(expr_idx);
@@ -434,11 +464,68 @@ impl<'a> DeclarationEmitter<'a> {
         }
         .unwrap_or_else(|| "any".to_string());
 
-        Some(LateBoundAssignmentMember {
-            property_name_text,
-            namespace_member_name,
-            type_text,
-        })
+        Some((
+            expr_idx,
+            LateBoundAssignmentMember {
+                property_name_text,
+                namespace_member_name,
+                type_text,
+            },
+        ))
+    }
+
+    /// Returns true when `expr_idx` is a `root_name.prop = value` assignment
+    /// whose receiver matches the function name by spelling but resolves to a
+    /// *different* binding than `root_symbol` (i.e. an inner block-scoped
+    /// `const`/`function`/etc. shadows the outer function). Such an assignment
+    /// is an expando property of the shadowing binding, not of the function,
+    /// so it must not be merged into the function namespace.
+    fn late_bound_assignment_receiver_shadows_root(
+        &self,
+        expr_idx: NodeIndex,
+        root_name: &str,
+        root_symbol: SymbolId,
+    ) -> bool {
+        let expr_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(expr_idx);
+        let Some(expr_node) = self.arena.get(expr_idx) else {
+            return false;
+        };
+        if expr_node.kind != syntax_kind_ext::BINARY_EXPRESSION {
+            return false;
+        }
+        let Some(binary) = self.arena.get_binary_expr(expr_node) else {
+            return false;
+        };
+        if binary.operator_token != SyntaxKind::EqualsToken as u16 {
+            return false;
+        }
+        let lhs_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(binary.left);
+        let Some(lhs_node) = self.arena.get(lhs_idx) else {
+            return false;
+        };
+        if lhs_node.kind != syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+            && lhs_node.kind != syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION
+        {
+            return false;
+        }
+        let Some(lhs_access) = self.arena.get_access_expr(lhs_node) else {
+            return false;
+        };
+        let receiver_idx = self
+            .arena
+            .skip_parenthesized_and_assertions_and_comma(lhs_access.expression);
+        let Some(receiver_name) = self.get_identifier_text(receiver_idx) else {
+            return false;
+        };
+        if receiver_name != root_name {
+            return false;
+        }
+        self.resolve_identifier_symbol(receiver_idx, &receiver_name)
+            .is_some_and(|receiver_symbol| receiver_symbol != root_symbol)
     }
 
     fn late_bound_self_referential_rhs_type_text(
@@ -632,7 +719,7 @@ impl<'a> DeclarationEmitter<'a> {
         root_name: &str,
         root_symbol: Option<SymbolId>,
         declared_members: &FxHashSet<String>,
-        members: &mut Vec<LateBoundAssignmentMember>,
+        collect: &mut LateBoundCollect,
     ) {
         let Some(node) = self.arena.get(node_idx) else {
             return;
@@ -647,13 +734,27 @@ impl<'a> DeclarationEmitter<'a> {
             return;
         }
 
-        if let Some(member) = self.late_bound_assignment_member_for_expression(
+        // Record an applicable `root.prop = value` assignment exactly once. When
+        // the symbol-filtered walk rejects a name-matching assignment because the
+        // receiver resolves to an inner shadowing binding, note it so the caller
+        // can suppress the unfiltered empty-result fallback.
+        if let Some(root_symbol) = root_symbol
+            && self.late_bound_assignment_receiver_shadows_root(node_idx, root_name, root_symbol)
+        {
+            collect.saw_shadowed_receiver = true;
+        }
+        if let Some((assignment_idx, member)) = self.late_bound_assignment_member_for_expression(
             node_idx,
             root_name,
             root_symbol,
-            members,
-        ) {
-            Self::record_late_bound_assignment_member(members, member, declared_members);
+            &collect.members,
+        ) && collect.seen_assignments.insert(assignment_idx)
+        {
+            Self::record_late_bound_assignment_member(
+                &mut collect.members,
+                member,
+                declared_members,
+            );
         }
 
         if let Some(block) = self.arena.get_block(node) {
@@ -663,7 +764,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             return;
@@ -676,7 +777,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
                 if loop_data.condition.is_some() {
                     self.collect_late_bound_assignment_members_from_node(
@@ -684,7 +785,7 @@ impl<'a> DeclarationEmitter<'a> {
                         root_name,
                         root_symbol,
                         declared_members,
-                        members,
+                        collect,
                     );
                 }
                 return;
@@ -696,7 +797,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             if loop_data.condition.is_some() {
@@ -705,7 +806,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             self.collect_late_bound_assignment_members_from_node(
@@ -713,7 +814,7 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             if loop_data.incrementor.is_some() {
                 self.collect_late_bound_assignment_members_from_node(
@@ -721,7 +822,7 @@ impl<'a> DeclarationEmitter<'a> {
                     root_name,
                     root_symbol,
                     declared_members,
-                    members,
+                    collect,
                 );
             }
             return;
@@ -733,21 +834,21 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.expression,
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             self.collect_late_bound_assignment_members_from_node(
                 for_in_of.statement,
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
             return;
         }
@@ -758,7 +859,7 @@ impl<'a> DeclarationEmitter<'a> {
                 root_name,
                 root_symbol,
                 declared_members,
-                members,
+                collect,
             );
         }
     }
@@ -910,7 +1011,7 @@ impl<'a> DeclarationEmitter<'a> {
                 .get_node_symbol(root_name_idx)
                 .or_else(|| binder.file_locals.get(&root_name))
         });
-        let mut members = Vec::new();
+        let mut collect = LateBoundCollect::default();
         let declared_members = self.declared_late_bound_namespace_member_names(&root_name);
         if let Some(scope_idx) = self.containing_module_block_scope(root_name_idx) {
             self.collect_late_bound_assignment_members_from_node(
@@ -918,18 +1019,19 @@ impl<'a> DeclarationEmitter<'a> {
                 &root_name,
                 root_symbol,
                 &declared_members,
-                &mut members,
+                &mut collect,
             );
-            if members.is_empty() && root_symbol.is_some() {
+            if collect.members.is_empty() && root_symbol.is_some() && !collect.saw_shadowed_receiver
+            {
                 self.collect_late_bound_assignment_members_from_node(
                     scope_idx,
                     &root_name,
                     None,
                     &declared_members,
-                    &mut members,
+                    &mut collect,
                 );
             }
-            return members;
+            return collect.members;
         }
 
         let Some(source_file) = self.arena.source_files.first() else {
@@ -944,10 +1046,10 @@ impl<'a> DeclarationEmitter<'a> {
                 &root_name,
                 root_symbol,
                 &declared_members,
-                &mut members,
+                &mut collect,
             );
         }
-        if members.is_empty() && root_symbol.is_some() {
+        if collect.members.is_empty() && root_symbol.is_some() && !collect.saw_shadowed_receiver {
             for &stmt_idx in &source_file.statements.nodes {
                 if self.source_is_js_file && self.js_class_static_member_stmts.contains(&stmt_idx) {
                     continue;
@@ -957,12 +1059,12 @@ impl<'a> DeclarationEmitter<'a> {
                     &root_name,
                     None,
                     &declared_members,
-                    &mut members,
+                    &mut collect,
                 );
             }
         }
 
-        members
+        collect.members
     }
 
     fn containing_module_block_scope(&self, node_idx: NodeIndex) -> Option<NodeIndex> {
@@ -1052,15 +1154,15 @@ impl<'a> DeclarationEmitter<'a> {
             return Vec::new();
         };
         let declared_members = FxHashSet::default();
-        let mut members = Vec::new();
+        let mut collect = LateBoundCollect::default();
         self.collect_late_bound_assignment_members_from_node(
             scope_idx,
             &root_name,
             None,
             &declared_members,
-            &mut members,
+            &mut collect,
         );
-        members
+        collect.members
     }
 
     pub(in crate::declaration_emitter) fn should_emit_ts_late_bound_function_namespace(
