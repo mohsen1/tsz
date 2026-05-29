@@ -680,23 +680,50 @@ impl ParserState {
         let end_pos = self.token_end();
         self.next_token();
 
+        let super_node = self
+            .arena
+            .add_token(SyntaxKind::SuperKeyword as u16, start_pos, end_pos);
+
         // If super is followed by (, ., [, or <, return just the super keyword.
         // The caller (parse_member_expression_rest) will handle the access chain.
-        if !self.is_token(SyntaxKind::OpenParenToken)
-            && !self.is_token(SyntaxKind::DotToken)
-            && !self.is_token(SyntaxKind::OpenBracketToken)
-            && !self.is_token(SyntaxKind::LessThanToken)
+        if self.is_token(SyntaxKind::OpenParenToken)
+            || self.is_token(SyntaxKind::DotToken)
+            || self.is_token(SyntaxKind::OpenBracketToken)
+            || self.is_token(SyntaxKind::LessThanToken)
         {
-            // super must be followed by an argument list or member access.
-            // Emit TS1034 at the current token position (matching tsc's parseExpectedToken).
-            self.parse_error_at_current_token(
-                diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-                diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
-            );
+            return super_node;
         }
 
-        self.arena
-            .add_token(SyntaxKind::SuperKeyword as u16, start_pos, end_pos)
+        // `super` must be followed by an argument list or member access. When it
+        // is not, tsc recovers by consuming an (expected) `.` token and parsing
+        // the right side of the dot, which yields a missing-identifier
+        // PropertyAccessExpression (`super.<missing>`). The downstream emitter
+        // then prints `super.` verbatim, and the static-member super lowering
+        // sees a real property access (e.g. `Reflect.get(base, "", self)` with an
+        // empty key). Matching tsc structurally — rather than returning a bare
+        // `super` keyword — keeps error-recovery emit aligned with tsc.
+        //
+        // Emit TS1034 at the current token position (matching tsc's
+        // `parseExpectedToken(DotToken, ...)`).
+        let missing_name_pos = self.token_pos();
+        self.parse_error_at_current_token(
+            diagnostic_messages::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+            diagnostic_codes::SUPER_MUST_BE_FOLLOWED_BY_AN_ARGUMENT_LIST_OR_MEMBER_ACCESS,
+        );
+
+        // Build `super.<missing>`: a property access whose name is the missing
+        // identifier (NodeIndex::NONE), spanning from `super` to the recovery
+        // point. The dot token is synthetic (no `.` exists in the source).
+        self.arena.add_access_expr(
+            syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION,
+            start_pos,
+            missing_name_pos,
+            AccessExprData {
+                expression: super_node,
+                name_or_argument: NodeIndex::NONE,
+                question_dot_token: false,
+            },
+        )
     }
 
     /// Parse import expression: import(...), import.meta, or import.defer(...)
