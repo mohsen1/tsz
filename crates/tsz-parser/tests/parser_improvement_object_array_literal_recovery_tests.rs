@@ -1,7 +1,30 @@
 //! Tests for parser improvements to reduce TS1005 and TS2300 false positives — object array literal recovery.
 
+use crate::parser::syntax_kind_ext;
 use crate::parser::test_fixture::parse_source;
 use tsz_common::diagnostics::diagnostic_codes;
+
+/// Return the element count of the first array-literal expression in the parse tree.
+fn first_array_literal_element_count(parser: &crate::parser::ParserState) -> Option<usize> {
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .find(|node| node.kind == syntax_kind_ext::ARRAY_LITERAL_EXPRESSION)
+        .and_then(|node| arena.get_literal_expr(node))
+        .map(|data| data.elements.nodes.len())
+}
+
+/// Count expression statements (used to assert that array tails which terminate
+/// the literal re-parse as separate statements, matching tsc's recovery shape).
+fn expression_statement_count(parser: &crate::parser::ParserState) -> usize {
+    let arena = parser.get_arena();
+    arena
+        .nodes
+        .iter()
+        .filter(|node| node.kind == syntax_kind_ext::EXPRESSION_STATEMENT)
+        .count()
+}
 
 #[test]
 fn test_object_literal_statement_recovery_after_shorthand_property() {
@@ -103,6 +126,99 @@ fn test_array_literal_semicolon_recovers_as_missing_comma() {
             && diag.start == close_bracket_pos
             && diag.message == "';' expected."),
         "Expected trailing ';' recovery at the array close bracket, got {diagnostics:?}"
+    );
+}
+
+/// Structural rule: an array-literal member list terminates at a `;` that
+/// cannot begin an array element when the token after the `;` could begin a
+/// fresh statement-level element list. The literal closes at the prior
+/// boundary and the tail re-parses as a separate statement, matching tsc's
+/// recovery node shape. Verified at the AST level (not just diagnostics) and
+/// across element shapes so the rule is not keyed on a specific spelling.
+#[test]
+fn array_literal_terminates_at_semicolon_before_numeric_element() {
+    let source = "var v = [1, 2 ; 3, 4];";
+    let (parser, _root) = parse_source(source);
+
+    assert_eq!(
+        first_array_literal_element_count(&parser),
+        Some(2),
+        "array should terminate at the `;`, keeping only the elements before it; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        expression_statement_count(&parser) >= 1,
+        "the `3, 4` tail after the `;` should re-parse as a statement, not stay inside the array; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+    let semicolon_pos = source.find(';').expect("semicolon position") as u32;
+    assert!(
+        parser
+            .get_diagnostics()
+            .iter()
+            .any(|diag| diag.code == diagnostic_codes::EXPECTED
+                && diag.start == semicolon_pos
+                && diag.message == "',' expected."),
+        "Expected ',' expected at the terminating `;`, got {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+/// Same rule with identifier elements and a renamed binding to prove the
+/// behavior is structural (keyed on token kind) and not on numeric literals
+/// or specific identifier spellings.
+#[test]
+fn array_literal_terminates_at_semicolon_before_identifier_element() {
+    let source = "var arr = [alpha, beta ; gamma, delta];";
+    let (parser, _root) = parse_source(source);
+
+    assert_eq!(
+        first_array_literal_element_count(&parser),
+        Some(2),
+        "array with identifier elements should terminate at the `;`; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        expression_statement_count(&parser) >= 1,
+        "the `gamma, delta` tail should re-parse as a statement; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+/// Negative/boundary case: a `;` immediately before the closing `]` is a
+/// mistyped comma, not a list terminator. The single element is preserved and
+/// the literal still closes on the `]` (no spurious extra statement, and no
+/// dropped element).
+#[test]
+fn array_literal_semicolon_directly_before_close_bracket_keeps_element() {
+    let source = "var v = [first ; ];";
+    let (parser, _root) = parse_source(source);
+
+    assert_eq!(
+        first_array_literal_element_count(&parser),
+        Some(1),
+        "trailing `;` before `]` should keep the element, not terminate early; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+}
+
+/// Well-formed negative case: a correct array literal must not be terminated
+/// early and must not gain any recovery diagnostics.
+#[test]
+fn well_formed_array_literal_is_not_terminated_early() {
+    let source = "var v = [1, 2, 3, 4];";
+    let (parser, _root) = parse_source(source);
+
+    assert_eq!(
+        first_array_literal_element_count(&parser),
+        Some(4),
+        "well-formed array literal should keep all elements; diagnostics: {:?}",
+        parser.get_diagnostics()
+    );
+    assert!(
+        parser.get_diagnostics().is_empty(),
+        "well-formed array literal should not produce recovery diagnostics, got {:?}",
+        parser.get_diagnostics()
     );
 }
 

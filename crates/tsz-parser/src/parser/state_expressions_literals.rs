@@ -1448,14 +1448,36 @@ impl ParserState {
                     let saved_token = self.current_token;
                     let saved_state = self.scanner.save_state();
                     self.next_token(); // look past `;`
-                    let should_continue = self.is_expression_start()
-                        || self.is_token(SyntaxKind::DotDotDotToken)
-                        || self.is_token(SyntaxKind::CloseBracketToken);
+                    // A `;` is not a valid array-element separator and cannot begin
+                    // an array element. tsc's parseDelimitedList aborts the list at
+                    // such a token. When the token following `;` could itself begin a
+                    // fresh statement-level element list (an expression start or
+                    // spread), terminate the array literal at the `;` so the remainder
+                    // re-parses as a separate statement, matching tsc's recovery node
+                    // shape. The `;` is left unconsumed for the outer parser.
+                    let next_can_begin_element =
+                        self.is_expression_start() || self.is_token(SyntaxKind::DotDotDotToken);
+                    let next_is_close_bracket = self.is_token(SyntaxKind::CloseBracketToken);
                     let follows_eof = self.is_token(SyntaxKind::EndOfFileToken);
                     self.scanner.restore_state(saved_state);
                     self.current_token = saved_token;
 
-                    if should_continue {
+                    if next_can_begin_element {
+                        use tsz_common::diagnostics::diagnostic_codes;
+                        self.parse_error_at_current_token(
+                            "',' expected.",
+                            diagnostic_codes::EXPECTED,
+                        );
+                        // Terminate the list at the `;`; do not consume it. The
+                        // enclosing statement parser handles the trailing tokens.
+                        break;
+                    }
+
+                    if next_is_close_bracket {
+                        // `[a ;]` — a trailing `;` immediately before the closer is a
+                        // mistyped comma rather than a list terminator. Report the
+                        // missing comma, consume the `;`, and let the loop close the
+                        // array on the `]`.
                         use tsz_common::diagnostics::diagnostic_codes;
                         self.parse_error_at_current_token(
                             "',' expected.",
