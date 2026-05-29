@@ -1518,14 +1518,21 @@ impl<'a> Printer<'a> {
                 let is_static = self.has_effective_static_modifier_js(&accessor.modifiers);
                 let prev_es5_super_home_depth = self.es5_super_home_function_depth;
                 let prev_es5_super_home_static = self.es5_super_home_is_static;
+                let prev_es5_super_home_object_literal = self.es5_super_home_is_object_literal;
                 self.function_scope_depth += 1;
                 if self.ctx.target_es5 {
                     self.es5_super_home_function_depth = Some(self.function_scope_depth);
                     self.es5_super_home_is_static = is_static;
+                    // See `emit_accessor_body`: ES5 class accessors are lowered
+                    // via the class IR pipeline, so an accessor reaching this
+                    // direct-printer path is an object-literal accessor whose
+                    // `super` home is not prototype-qualified.
+                    self.es5_super_home_is_object_literal = self.class_member_emit_depth == 0;
                 }
                 self.emit_block_with_param_prologue(accessor.body, &transforms);
                 self.es5_super_home_function_depth = prev_es5_super_home_depth;
                 self.es5_super_home_is_static = prev_es5_super_home_static;
+                self.es5_super_home_is_object_literal = prev_es5_super_home_object_literal;
                 self.function_scope_depth -= 1;
             } else {
                 let compact_body = self.should_emit_compact_empty_accessor_body(accessor_node);
@@ -1555,9 +1562,16 @@ impl<'a> Printer<'a> {
             self.function_scope_depth += 1;
             let prev_es5_super_home_depth = self.es5_super_home_function_depth;
             let prev_es5_super_home_static = self.es5_super_home_is_static;
+            let prev_es5_super_home_object_literal = self.es5_super_home_is_object_literal;
             if self.ctx.target_es5 {
                 self.es5_super_home_function_depth = Some(self.function_scope_depth);
                 self.es5_super_home_is_static = is_static;
+                // At ES5, class accessor bodies are lowered through the class IR
+                // pipeline and never reach this direct-printer path, so any
+                // accessor emitted here is an object-literal accessor. Its
+                // `super` home binds to the literal's `__proto__` and must emit
+                // `_super.X`, not `_super.prototype.X`.
+                self.es5_super_home_is_object_literal = self.class_member_emit_depth == 0;
             }
             self.ctx.block_scope_state.enter_scope();
             self.push_temp_scope();
@@ -1571,6 +1585,7 @@ impl<'a> Printer<'a> {
             self.ctx.block_scope_state.exit_scope();
             self.es5_super_home_function_depth = prev_es5_super_home_depth;
             self.es5_super_home_is_static = prev_es5_super_home_static;
+            self.es5_super_home_is_object_literal = prev_es5_super_home_object_literal;
             self.function_scope_depth -= 1;
             self.emitting_function_body_block = prev_emitting_function_body_block;
         } else {

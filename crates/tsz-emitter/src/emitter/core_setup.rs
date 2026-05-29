@@ -372,6 +372,7 @@ impl<'a> Printer<'a> {
             class_member_emit_depth: 0,
             es5_super_home_function_depth: None,
             es5_super_home_is_static: false,
+            es5_super_home_is_object_literal: false,
             is_current_root_js_source: false,
             const_enum_values: FxHashMap::default(),
             const_enum_import_aliases: FxHashMap::default(),

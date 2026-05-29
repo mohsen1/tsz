@@ -9,8 +9,14 @@ use tsz_scanner::SyntaxKind;
 
 impl<'a> Printer<'a> {
     pub(in crate::emitter) fn emit_es5_super_property_base(&mut self) {
+        // An object-literal `super` home binds directly to the literal's
+        // `__proto__`, so it is never prototype-qualified (`_super.X`). A
+        // class instance-method home at the current function scope is
+        // prototype-qualified (`_super.prototype.X`); static homes and homes
+        // captured at an outer scope fall back to the bare `_super` receiver.
         if self.es5_super_home_function_depth == Some(self.function_scope_depth)
             && !self.es5_super_home_is_static
+            && !self.es5_super_home_is_object_literal
         {
             self.write("_super.prototype");
         } else {

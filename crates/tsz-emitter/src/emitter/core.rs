@@ -775,6 +775,11 @@ pub struct Printer<'a> {
     /// Whether the active ES5 `super` home is a static class member.
     pub(crate) es5_super_home_is_static: bool,
 
+    /// Whether the active ES5 `super` home is an object-literal member (method or
+    /// accessor). Object-literal super accesses bind directly to the literal's
+    /// `__proto__` and are emitted as `_super.X`, never `_super.prototype.X`.
+    pub(crate) es5_super_home_is_object_literal: bool,
+
     /// Whether the current root source file has a JavaScript-like extension.
     pub(crate) is_current_root_js_source: bool,
 
