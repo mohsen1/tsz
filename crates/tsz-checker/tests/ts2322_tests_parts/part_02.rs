@@ -71,7 +71,7 @@ fn test_ts2322_namespace_export_assignment_optional_to_required() {
 }
 
 #[test]
-fn test_ts2322_optional_property_required_includes_related_missing_property_detail() {
+fn test_ts2322_optional_property_required_includes_related_optional_property_detail() {
     let source = r#"
         let source: { one?: number } = {};
         let target: { one: number } = source;
@@ -83,14 +83,17 @@ fn test_ts2322_optional_property_required_includes_related_missing_property_deta
         .find(|diag| diag.code == diagnostic_codes::TYPE_IS_NOT_ASSIGNABLE_TO_TYPE)
         .expect("expected TS2322 for optional-to-required property assignment");
 
+    // The source property is present-but-optional, so tsc reports TS2327
+    // ("is optional ... but required"), not the absent-property message TS2741.
     assert!(
         ts2322.related_information.iter().any(|info| {
-            info.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            info.code == diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE
                 && info
                     .message_text
-                    .contains("Property 'one' is missing in type")
+                    .contains("Property 'one' is optional in type")
+                && info.message_text.contains("but required in type")
         }),
-        "Expected TS2322 to include missing-property elaboration as related information, got: {ts2322:?}"
+        "Expected TS2322 to include the TS2327 optional-but-required elaboration, got: {ts2322:?}"
     );
 }
 
@@ -188,7 +191,7 @@ fn test_ts2345_missing_many_properties_formats_related_detail_once() {
 }
 
 #[test]
-fn test_ts2345_optional_property_required_includes_related_missing_property_detail() {
+fn test_ts2345_optional_property_required_includes_related_optional_property_detail() {
     let source = r#"
         declare function takes(value: { one: number }): void;
         const arg: { one?: number } = {};
@@ -203,14 +206,17 @@ fn test_ts2345_optional_property_required_includes_related_missing_property_deta
         })
         .expect("expected TS2345 for optional-to-required argument mismatch");
 
+    // The argument property is present-but-optional, so tsc reports TS2327
+    // ("is optional ... but required"), not the absent-property message TS2741.
     assert!(
         ts2345.related_information.iter().any(|info| {
-            info.code == diagnostic_codes::PROPERTY_IS_MISSING_IN_TYPE_BUT_REQUIRED_IN_TYPE
+            info.code == diagnostic_codes::PROPERTY_IS_OPTIONAL_IN_TYPE_BUT_REQUIRED_IN_TYPE
                 && info
                     .message_text
-                    .contains("Property 'one' is missing in type")
+                    .contains("Property 'one' is optional in type")
+                && info.message_text.contains("but required in type")
         }),
-        "Expected TS2345 to include missing-property elaboration for optional-to-required mismatch, got: {ts2345:?}"
+        "Expected TS2345 to include the TS2327 optional-but-required elaboration, got: {ts2345:?}"
     );
 }
 
