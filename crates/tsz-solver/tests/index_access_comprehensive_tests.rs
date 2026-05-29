@@ -583,8 +583,8 @@ fn test_indirect_cyclic_lazy_index_access_does_not_stack_overflow() {
 // =============================================================================
 
 /// Regression test for `{[K in keyof T]: F<K>}[K]` where K extends keyof T.
-/// When a TypeParameter K has constraint = `keyof T` and the mapped type's
-/// constraint is also `keyof T`, visit_mapped must recognize K as a valid
+/// When a `TypeParameter` K has constraint = `keyof T` and the mapped type's
+/// constraint is also `keyof T`, `visit_mapped` must recognize K as a valid
 /// substitution index. This is the pattern used by class methods:
 ///
 /// ```ts
@@ -652,7 +652,7 @@ fn test_index_access_mapped_constrained_type_param() {
 }
 
 /// Variant: K constraint and mapped constraint are SEPARATE keyof calls
-/// but over the SAME T TypeId — should produce same result since keyof is
+/// but over the SAME T `TypeId` — should produce same result since keyof is
 /// content-addressed.
 #[test]
 fn test_index_access_mapped_constrained_type_param_separate_keyof() {
