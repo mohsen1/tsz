@@ -1425,9 +1425,9 @@ fn fix_missing_type_annotation_wrong_error_code_returns_empty() {
 }
 
 /// When the server did not generate a TS9010 diagnostic (e.g. isolatedDeclarations
-/// is not in the server's inferred options) but the client supplies request_span,
+/// is not in the server's inferred options) but the client supplies `request_span`,
 /// the fix should use the span's start position to locate the variable declaration.
-/// Structural rule: error_codes=[9010] + request_span covers variable name → fix is
+/// Structural rule: `error_codes`=[9010] + `request_span` covers variable name -> fix is
 /// generated from the span even with an empty diagnostics slice.
 #[test]
 fn fix_missing_type_annotation_jsx_self_closing_span_fallback_no_server_diag() {
@@ -1464,7 +1464,7 @@ fn fix_missing_type_annotation_jsx_self_closing_span_fallback_no_server_diag() {
     );
 }
 
-/// Span-based fallback for JsxElement shape (variable named `node`).
+/// Span-based fallback for `JsxElement` shape (variable named `node`).
 /// Confirms the fallback is keyed on the JSX node kind, not on the
 /// diagnostic source.
 #[test]
@@ -1497,7 +1497,7 @@ fn fix_missing_type_annotation_jsx_element_span_fallback_different_name() {
     assert_eq!(direct_text, ": JSX.Element");
 }
 
-/// Span with no request_span and empty diagnostics must return nothing.
+/// Span with no `request_span` and empty diagnostics must return nothing.
 #[test]
 fn fix_missing_type_annotation_no_span_no_diag_returns_empty() {
     let content = "export const el = <div/>;";
