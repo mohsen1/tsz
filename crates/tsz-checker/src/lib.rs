@@ -816,6 +816,9 @@ mod object_spread_optional_merge_tests;
 #[path = "tests/optional_key_extraction_tests.rs"]
 mod optional_key_extraction_tests;
 #[cfg(test)]
+#[path = "tests/optional_private_field_undefined_tests.rs"]
+mod optional_private_field_undefined_tests;
+#[cfg(test)]
 #[path = "tests/overload_anchor_at_argument_tests.rs"]
 mod overload_anchor_at_argument_tests;
 #[cfg(test)]

@@ -257,6 +257,7 @@ impl<'a> CheckerState<'a> {
             let Some(prop) = self.ctx.arena.get_property_decl(node) else {
                 continue;
             };
+            let is_optional = prop.question_token;
             let declared_type = if is_write_context {
                 self.class_property_relation_declared_type(decl_idx, prop)
             } else {
@@ -264,7 +265,7 @@ impl<'a> CheckerState<'a> {
             };
             if let Some(type_id) = declared_type {
                 let evaluated = self.evaluate_type_for_assignability(type_id);
-                let result = if evaluated != type_id
+                let base = if evaluated != type_id
                     && crate::query_boundaries::common::object_shape_for_type(
                         self.ctx.types,
                         evaluated,
@@ -276,20 +277,44 @@ impl<'a> CheckerState<'a> {
                 } else {
                     type_id
                 };
-                // Reading an optional private field (`this.#p` where `#p?: T`)
-                // yields `T | undefined`, just like public optional property
-                // access (`optional_property_type`). Without this, the field
-                // reads as bare `T`, dropping a soundness check (TS2322) and
-                // misfiring "always defined" truthiness (TS2801). The write path
-                // keeps the relation type unchanged. See #10668.
-                if !is_write_context && prop.question_token {
-                    return Some(self.ctx.types.factory().union2(result, TypeId::UNDEFINED));
-                }
-                return Some(result);
+                return Some(self.add_private_field_optionality(
+                    base,
+                    is_optional,
+                    is_write_context,
+                ));
             }
         }
 
         None
+    }
+
+    /// Apply `?`-optionality to a private field's declared type, mirroring how
+    /// public optional fields get `| undefined` through `optional_property_type`.
+    ///
+    /// The private-field declared type is read straight off the annotation, so
+    /// the optional marker would otherwise be dropped — leaving `#x?: T` typed as
+    /// `T` instead of `T | undefined`. Reads always include `undefined` under
+    /// `strictNullChecks`; the assignment-target (write) type only includes it
+    /// when `exactOptionalPropertyTypes` is off, so that flag still rejects
+    /// `this.#x = undefined`.
+    fn add_private_field_optionality(
+        &mut self,
+        type_id: TypeId,
+        is_optional: bool,
+        is_write_context: bool,
+    ) -> TypeId {
+        if !is_optional
+            || !self.ctx.strict_null_checks()
+            || type_id == TypeId::ANY
+            || type_id == TypeId::UNKNOWN
+            || type_id == TypeId::ERROR
+        {
+            return type_id;
+        }
+        if is_write_context && self.ctx.compiler_options.exact_optional_property_types {
+            return type_id;
+        }
+        self.ctx.types.factory().union2(type_id, TypeId::UNDEFINED)
     }
 
     pub(crate) fn get_type_of_private_property_access(
