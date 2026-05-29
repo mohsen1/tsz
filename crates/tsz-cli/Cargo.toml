@@ -90,6 +90,10 @@ path = "tests/parenthesized_type_dts_emit_tests.rs"
 name = "import_equals_alias_dts_emit_tests"
 path = "tests/import_equals_alias_dts_emit_tests.rs"
 
+[[test]]
+name = "inferred_object_index_signature_dts_emit_tests"
+path = "tests/inferred_object_index_signature_dts_emit_tests.rs"
+
 [dev-dependencies]
 tempfile = { workspace = true }
 
