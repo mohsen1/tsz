@@ -67,7 +67,7 @@ test suite against it.
 
 <!-- CONFORMANCE_START -->
 ```
-Progress: [████████████████████] 100.0% (12,579/12,585 tests)
+Progress: [████████████████████] 99.9% (12,889/12,896 tests)
 ```
 <!-- CONFORMANCE_END -->
 
@@ -78,7 +78,7 @@ Progress: [████████████████████] 100.0% 
 <!-- EMIT_START -->
 ```
 JavaScript:  [████████████████████] 99.2% (13,426 / 13,530 tests)
-Declaration: [████████████████████] 98.4% (1,642 / 1,669 tests)
+Declaration: [████████████████████] 98.4% (1,643 / 1,669 tests)
 ```
 <!-- EMIT_END -->
 
