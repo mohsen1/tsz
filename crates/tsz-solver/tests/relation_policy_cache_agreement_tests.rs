@@ -99,6 +99,87 @@ fn subtype_cache_any_propagation_mode_matches_uncached_nested_any() {
 }
 
 #[test]
+fn assignability_cache_strict_any_matches_uncached_relation_policy() {
+    let interner = TypeInterner::new();
+    let db = QueryCache::new(&interner);
+    let value = interner.intern_string("value");
+
+    let source = interner.object(vec![PropertyInfo::new(value, TypeId::ANY)]);
+    let target = interner.object(vec![PropertyInfo::new(value, TypeId::NUMBER)]);
+
+    let ordinary = RelationPolicy::default().with_strict_any_propagation(false);
+    let strict_any = RelationPolicy::default().with_strict_any_propagation(true);
+    let ordinary_key = RelationCacheKey::for_assignability(source, target, ordinary.cache_config());
+    let strict_any_key =
+        RelationCacheKey::for_assignability(source, target, strict_any.cache_config());
+
+    assert_ne!(
+        ordinary_key, strict_any_key,
+        "ordinary and strict-any policies must occupy distinct assignability cache slots",
+    );
+
+    let ordinary_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        ordinary,
+        RelationContext::default(),
+    )
+    .is_related();
+    let strict_any_uncached = query_relation(
+        &interner,
+        source,
+        target,
+        RelationKind::Assignable,
+        strict_any,
+        RelationContext::default(),
+    )
+    .is_related();
+
+    assert!(
+        ordinary_uncached,
+        "ordinary assignability should allow nested `any` to satisfy a number property",
+    );
+    assert!(
+        !strict_any_uncached,
+        "strict-any assignability must not let nested `any` silence the property mismatch",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, ordinary),
+        ordinary_uncached,
+        "cached ordinary any policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary any result must be stored in the ordinary assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_any_key),
+        None,
+        "strict-any lookup must not hit the ordinary any slot",
+    );
+
+    assert_eq!(
+        db.is_assignable_to_with_policy(source, target, strict_any),
+        strict_any_uncached,
+        "cached strict-any policy must match direct query_relation",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(strict_any_key),
+        Some(strict_any_uncached),
+        "strict-any result must be stored in its own assignability slot",
+    );
+    assert_eq!(
+        db.lookup_assignability_cache(ordinary_key),
+        Some(ordinary_uncached),
+        "ordinary any slot must remain intact after the strict-any lookup",
+    );
+}
+
+#[test]
 fn assignability_cache_strict_function_types_matches_uncached_function_variance() {
     let interner = TypeInterner::new();
     let db = QueryCache::new(&interner);
