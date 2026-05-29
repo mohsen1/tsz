@@ -7,7 +7,9 @@ use tsz_common::ScriptTarget;
 use tsz_parser::parser::NodeIndex;
 use tsz_parser::parser::node::{Node, NodeArena};
 use tsz_parser::parser::syntax_kind_ext;
-use tsz_parser::syntax::transform_utils::{contains_arguments_reference, contains_this_reference};
+use tsz_parser::syntax::transform_utils::{
+    arrow_captures_lexical_this, contains_arguments_reference,
+};
 use tsz_scanner::SyntaxKind;
 
 use crate::transforms::emit_utils;
@@ -1303,7 +1305,7 @@ impl<'a> LoweringPass<'a> {
                 return;
             }
 
-            let contains_this = contains_this_reference(self.arena, idx);
+            let contains_this = arrow_captures_lexical_this(self.arena, idx);
             let async_arrow_needs_awaiter_this =
                 arrow.is_async && self.enclosing_function_bodies.len() > 1;
             let captures_this = contains_this || async_arrow_needs_awaiter_this;
@@ -1485,6 +1487,27 @@ impl<'a> LoweringPass<'a> {
         {
             self.transforms
                 .insert(idx, TransformDirective::ES5SuperCall);
+        }
+
+        // ES5 `super.m(...)` / `super[e](...)` lowers to
+        // `_super.prototype.m.call(R, ...)`. When the call sits inside a
+        // `this`-capturing arrow, `R` must be the captured lexical receiver
+        // (`_this`), not the lowered function's own `this`. Mark the callee's
+        // `super` keyword with the active capture name so the printer threads
+        // `_this` into the synthesized `.call(...)` receiver.
+        if self.ctx.target_es5
+            && self.this_capture_level > 0
+            && let Some(super_keyword_idx) = self.super_member_call_super_keyword(call.expression)
+        {
+            let capture_name = self
+                .enclosing_capture_names
+                .last()
+                .cloned()
+                .unwrap_or_else(|| Arc::from("_this"));
+            self.transforms.insert(
+                super_keyword_idx,
+                TransformDirective::SubstituteThis { capture_name },
+            );
         }
 
         // CJS-like dynamic import: import("mod") needs __importStar helper.

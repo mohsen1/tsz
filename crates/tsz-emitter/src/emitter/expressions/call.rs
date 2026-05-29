@@ -288,11 +288,7 @@ impl<'a> Printer<'a> {
                 self.write(".");
                 self.emit(access.name_or_argument);
                 self.write(".call(");
-                if self.ctx.arrow_state.this_capture_depth > 0 {
-                    self.write("_this");
-                } else {
-                    self.write("this");
-                }
+                self.emit_es5_super_call_receiver(access.expression);
                 if let Some(ref args) = call.arguments {
                     for &arg_idx in &args.nodes {
                         self.write(", ");
@@ -311,11 +307,7 @@ impl<'a> Printer<'a> {
                 self.write("[");
                 self.emit(access.name_or_argument);
                 self.write("].call(");
-                if self.ctx.arrow_state.this_capture_depth > 0 {
-                    self.write("_this");
-                } else {
-                    self.write("this");
-                }
+                self.emit_es5_super_call_receiver(access.expression);
                 if let Some(ref args) = call.arguments {
                     for &arg_idx in &args.nodes {
                         self.write(", ");
@@ -1193,11 +1185,7 @@ impl<'a> Printer<'a> {
             self.write(" === void 0 ? void 0 : ");
             self.write(&func_temp);
             self.write(".call(");
-            if self.ctx.arrow_state.this_capture_depth > 0 {
-                self.write("_this");
-            } else {
-                self.write("this");
-            }
+            self.emit_es5_super_call_receiver(access.expression);
             self.emit_optional_call_tail_arguments(args.as_ref());
             if needs_parens {
                 self.write(")");

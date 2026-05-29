@@ -34,6 +34,88 @@ pub fn contains_this_reference(arena: &NodeArena, node_idx: NodeIndex) -> bool {
     contains_target_reference(arena, node_idx, ReferenceTarget::This)
 }
 
+/// Check whether an ES5-lowered arrow body must capture lexical `this`.
+///
+/// An arrow captures `this` when it spells `this`, OR when it contains a
+/// `super.m(...)` / `super[e](...)` **call**: at ES5 such a call lowers to
+/// `_super.prototype.m.call(_this, ...)`, threading the captured receiver.
+/// A bare `super.x` / `super[e]` property **access** lowers to
+/// `_super.prototype.x` and references no `this`, so it does not by itself
+/// force a `var _this = this;` capture. The lexical-boundary rules match
+/// [`contains_this_reference`]: nested non-arrow functions stop propagation
+/// while arrows and computed member names stay in scope.
+#[must_use]
+pub fn arrow_captures_lexical_this(arena: &NodeArena, node_idx: NodeIndex) -> bool {
+    let Some(node) = arena.get(node_idx) else {
+        return false;
+    };
+
+    // A literal `this` keyword (or `this` identifier from recovery) captures.
+    if node.kind == SyntaxKind::ThisKeyword as u16 {
+        return true;
+    }
+    if node.is_identifier()
+        && arena
+            .get_identifier(node)
+            .is_some_and(|identifier| identifier.escaped_text == "this")
+    {
+        return true;
+    }
+
+    // A `super(...)`-shaped call where the callee resolves to `super` threads
+    // the captured receiver into the lowered `.call(_this, ...)` form.
+    if (node.kind == syntax_kind_ext::CALL_EXPRESSION)
+        && let Some(call) = arena.get_call_expr(node)
+        && call_expression_callee_is_super(arena, call.expression)
+    {
+        return true;
+    }
+
+    target_reference_children(arena, node_idx, ReferenceTarget::This)
+        .into_iter()
+        .any(|child_idx| arrow_captures_lexical_this(arena, child_idx))
+}
+
+/// Whether a call-expression callee is a direct `super` member call:
+/// `super.m`, `super[e]`, `super(...)`, or those wrapped in parentheses.
+///
+/// Only a member access whose immediate base is `super` counts. A chained
+/// access such as `super.a.b()` is a normal call on `super.a` (which lowers
+/// to `_super.prototype.a`), not a super call, so it does not capture `this`.
+fn call_expression_callee_is_super(arena: &NodeArena, callee_idx: NodeIndex) -> bool {
+    let callee_idx = unwrap_parentheses(arena, callee_idx);
+    let Some(node) = arena.get(callee_idx) else {
+        return false;
+    };
+    if node.kind == SyntaxKind::SuperKeyword as u16 {
+        return true;
+    }
+    if (node.kind == syntax_kind_ext::PROPERTY_ACCESS_EXPRESSION
+        || node.kind == syntax_kind_ext::ELEMENT_ACCESS_EXPRESSION)
+        && let Some(access) = arena.get_access_expr(node)
+    {
+        let base_idx = unwrap_parentheses(arena, access.expression);
+        return arena
+            .get(base_idx)
+            .is_some_and(|base| base.kind == SyntaxKind::SuperKeyword as u16);
+    }
+    false
+}
+
+/// Unwrap nested parenthesized expressions to the inner expression.
+fn unwrap_parentheses(arena: &NodeArena, mut idx: NodeIndex) -> NodeIndex {
+    while let Some(node) = arena.get(idx) {
+        if node.kind == syntax_kind_ext::PARENTHESIZED_EXPRESSION
+            && let Some(paren) = arena.get_parenthesized(node)
+        {
+            idx = paren.expression;
+            continue;
+        }
+        break;
+    }
+    idx
+}
+
 /// Collect `this` references that appear in computed member names of a class.
 ///
 /// This follows the same scope rules as `contains_this_reference`: nested non-arrow
