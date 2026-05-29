@@ -360,7 +360,12 @@ impl<'a> CheckerState<'a> {
                     // to avoid false positives with recursive conditional types.
                     // For classes: always check because recursive tuple spreads (e.g.,
                     // `Foo<[...Elements, "abc"]>`) need depth detection even with type params.
-                    let should_check_depth = is_class || !args_have_type_params;
+                    let computed_recursive_alias = is_type_alias
+                        && self.type_alias_has_computed_recursive_conditional_body(sym_id);
+                    let default_reset_recursive_alias = is_type_alias
+                        && self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
+                    let should_check_depth =
+                        is_class || !args_have_type_params || default_reset_recursive_alias;
                     if should_check_depth {
                         // During symbol resolution, ensure_relation_input_ready is skipped,
                         // leaving the alias body unregistered in the TypeEnvironment. Without
@@ -382,8 +387,6 @@ impl<'a> CheckerState<'a> {
                         // probes. The TS2589-specific evaluator treats any repeated
                         // Application cycle as overflow, which is too aggressive for
                         // bounded recursive conditional aliases.
-                        let computed_recursive_alias = is_type_alias
-                            && self.type_alias_has_computed_recursive_conditional_body(sym_id);
                         let (exceeded, tuple_too_large) =
                             if computed_recursive_alias && let Some(base_def_id) = base_def_id {
                                 (
@@ -1218,7 +1221,11 @@ impl<'a> CheckerState<'a> {
                                     })
                                 },
                             );
-                        if !args_have_type_params {
+                        let computed_recursive_alias =
+                            self.type_alias_has_computed_recursive_conditional_body(sym_id);
+                        let default_reset_recursive_alias =
+                            self.type_alias_has_default_reset_recursive_conditional_body(sym_id);
+                        if !args_have_type_params || default_reset_recursive_alias {
                             // Clear overflow flags before probing.
                             self.ctx.types.take_tuple_too_large();
                             self.ctx.depth_exceeded.set(false);
@@ -1228,8 +1235,6 @@ impl<'a> CheckerState<'a> {
                             // bounded recursive conditional aliases.
                             let app_def_id = query::get_application_info(self.ctx.types, result)
                                 .and_then(|(base, _)| query::get_lazy_def_id(self.ctx.types, base));
-                            let computed_recursive_alias =
-                                self.type_alias_has_computed_recursive_conditional_body(sym_id);
                             let (exceeded, tuple_too_large) =
                                 if computed_recursive_alias && let Some(app_def_id) = app_def_id {
                                     (
