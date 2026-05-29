@@ -155,6 +155,10 @@ name = "tuple_infer_mapped_recursive_tests"
 path = "tests/tuple_infer_mapped_recursive_tests.rs"
 
 [[test]]
+name = "variadic_tuple_recursive_zip_tests"
+path = "tests/variadic_tuple_recursive_zip_tests.rs"
+
+[[test]]
 name = "reverse_mapped_inference_tests"
 path = "tests/reverse_mapped_inference_tests.rs"
 
