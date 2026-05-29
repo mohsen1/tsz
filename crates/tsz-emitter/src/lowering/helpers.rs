@@ -991,6 +991,66 @@ impl<'a> LoweringPass<'a> {
         None
     }
 
+    /// Returns `true` when the class-expression initializer is bound by a
+    /// `using` / `await using` declaration that this target lowers to an
+    /// `__addDisposableResource(env, <class>, ...)` call. That lowering moves
+    /// the class out of direct-assignment position, so JS named evaluation no
+    /// longer assigns the binding name to the (anonymous) class; tsc therefore
+    /// captures the class in a temp and calls `__setFunctionName` explicitly.
+    /// Plain `var`/`let`/`const`/parameter/property/assignment bindings keep
+    /// the class in named-evaluation position and need no such helper.
+    pub(super) fn class_expr_binding_loses_named_evaluation(&self, class_idx: NodeIndex) -> bool {
+        if self.ctx.options.target.supports_es2025() {
+            // `using` declarations are emitted verbatim; named evaluation holds.
+            return false;
+        }
+        let mut current = class_idx;
+        let mut hops = 0;
+        while hops < 8 {
+            let Some(parent_idx) = self
+                .arena
+                .get_extended(current)
+                .map(|ext| ext.parent)
+                .filter(|p| !p.is_none())
+            else {
+                return false;
+            };
+            let Some(parent_node) = self.arena.get(parent_idx) else {
+                return false;
+            };
+            match parent_node.kind {
+                syntax_kind_ext::PARENTHESIZED_EXPRESSION
+                | syntax_kind_ext::TYPE_ASSERTION
+                | syntax_kind_ext::AS_EXPRESSION
+                | syntax_kind_ext::SATISFIES_EXPRESSION
+                | syntax_kind_ext::NON_NULL_EXPRESSION => {
+                    current = parent_idx;
+                    hops += 1;
+                }
+                syntax_kind_ext::VARIABLE_DECLARATION => {
+                    // The owning declaration list carries the `using` flag.
+                    let Some(list_idx) = self
+                        .arena
+                        .get_extended(parent_idx)
+                        .map(|ext| ext.parent)
+                        .filter(|p| !p.is_none())
+                    else {
+                        return false;
+                    };
+                    let Some(list_node) = self.arena.get(list_idx) else {
+                        return false;
+                    };
+                    if list_node.kind != syntax_kind_ext::VARIABLE_DECLARATION_LIST {
+                        return false;
+                    }
+                    return (list_node.flags as u32 & tsz_parser::parser::node_flags::USING) != 0;
+                }
+                _ => return false,
+            }
+        }
+        false
+    }
+
     fn property_declaration_binding_name_ref(&self, name_idx: NodeIndex) -> Option<&str> {
         let name_node = self.arena.get(name_idx)?;
         if name_node.kind == SyntaxKind::Identifier as u16

@@ -56,8 +56,16 @@ impl<'a> LoweringPass<'a> {
                     member.kind == syntax_kind_ext::CLASS_STATIC_BLOCK_DECLARATION
                 })
             });
-        let has_static_computed_method_or_accessor =
-            class.members.nodes.iter().any(|&member_idx| {
+        // A computed-named *static method or accessor* is emitted inline in the
+        // class body, so it carries no post-construction static state. It only
+        // forces the `(_tmp = class {...}, __setFunctionName(_tmp, "X"), _tmp)`
+        // wrapping when the binding *also* loses JS named evaluation -- i.e. a
+        // `using`/`await using` declaration lowered to `__addDisposableResource`
+        // that moves the class out of direct-assignment position. A plain
+        // `var X = class {...}` keeps named evaluation and needs no helper.
+        let has_static_computed_method_or_accessor = self
+            .class_expr_binding_loses_named_evaluation(class_idx)
+            && class.members.nodes.iter().any(|&member_idx| {
                 self.arena
                     .get(member_idx)
                     .is_some_and(|member| match member.kind {
